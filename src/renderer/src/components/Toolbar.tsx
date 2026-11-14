@@ -12,6 +12,7 @@ import {
 import type { DownloadNotice, IdentityStatus, NavState } from '@shared/types'
 import { isActiveDownload } from '@shared/downloads'
 import { AddressBar } from './AddressBar'
+import type { PopoverAnchor } from './Popover'
 import { securitySummary } from '../lib/security'
 import { cn } from '../lib/cn'
 
@@ -31,7 +32,7 @@ interface ToolbarProps {
   onOpenDownloads: () => void
   onOpenHistory: () => void
   onHistoryMenu: (direction: 'back' | 'forward') => void
-  onOpenSiteInfo: () => void
+  onOpenSiteInfo: (anchor: PopoverAnchor) => void
   onOpenSettings: () => void
   onOpenMenu: () => void
 }

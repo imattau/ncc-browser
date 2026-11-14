@@ -12,10 +12,11 @@ import { ERROR_COPY } from '@shared/types'
 import type { AnchorInfo, NavState, TransportSecurity } from '@shared/types'
 import { clearnetState } from '../lib/clearnet'
 import { cn } from '../lib/cn'
-import { Popover } from './Popover'
+import { Popover, type PopoverAnchor } from './Popover'
 
 interface SiteInfoPanelProps {
   state: NavState
+  anchorRect: PopoverAnchor | null
   onClose: () => void
   onOpenSettings: () => void
   onReload: () => void
@@ -23,6 +24,7 @@ interface SiteInfoPanelProps {
 
 export function SiteInfoPanel({
   state,
+  anchorRect,
   onClose,
   onOpenSettings,
   onReload
@@ -37,6 +39,8 @@ export function SiteInfoPanel({
       title="Site information"
       subtitle={state.displayUrl || 'NCC page'}
       testId="site-info"
+      anchor={anchorRect}
+      widthPx={380}
       onClose={onClose}
       footer={
         <div className="flex items-center justify-between gap-2">

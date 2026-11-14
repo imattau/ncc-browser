@@ -13,6 +13,7 @@ import type {
 import { ChromeMenu } from './components/ChromeMenu'
 import { DownloadsPanel } from './components/DownloadsPanel'
 import { HistoryPanel } from './components/HistoryPanel'
+import { type PopoverAnchor } from './components/Popover'
 import { SettingsPage, type SettingsSection } from './components/SettingsPage'
 import { SignerPrompt } from './components/SignerPrompt'
 import { SiteInfoPanel } from './components/SiteInfoPanel'
@@ -47,6 +48,7 @@ export function App() {
   const [signerRequest, setSignerRequest] = useState<SignerRequest | null>(null)
   const [history, setHistory] = useState<TabHistory | null>(null)
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('general')
+  const [siteInfoAnchor, setSiteInfoAnchor] = useState<PopoverAnchor | null>(null)
 
   /**
    * One overlay at a time. The shell hides every content view while an overlay is
@@ -329,7 +331,10 @@ export function App() {
         onOpenDownloads={() => showOverlay('downloads')}
         onOpenHistory={openHistory}
         onHistoryMenu={(direction) => void window.ncc.showHistoryMenu(direction)}
-        onOpenSiteInfo={() => showOverlay('site-info')}
+        onOpenSiteInfo={(anchor) => {
+          setSiteInfoAnchor(anchor)
+          showOverlay('site-info')
+        }}
         onOpenSettings={() => openSettings('identity')}
         onOpenMenu={() => showOverlay('menu')}
       />
@@ -381,6 +386,7 @@ export function App() {
       {overlay === 'site-info' ? (
         <SiteInfoPanel
           state={state}
+          anchorRect={siteInfoAnchor}
           onClose={closeOverlay}
           onOpenSettings={() => openSettings('general')}
           onReload={() => {

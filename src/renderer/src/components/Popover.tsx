@@ -8,10 +8,19 @@ interface PopoverProps {
   /** Tailwind top offset, below the tab strip or the toolbar. */
   topClass?: string
   widthClass?: string
+  /** Pixel width used when anchored. */
+  widthPx?: number
+  /** Viewport position from an anchor element; opens directly under it. */
+  anchor?: PopoverAnchor | null
   testId: string
   onClose: () => void
   footer?: ReactNode
   children: ReactNode
+}
+
+export interface PopoverAnchor {
+  top: number
+  left: number
 }
 
 /**
@@ -23,6 +32,8 @@ export function Popover({
   subtitle,
   topClass = 'top-[104px]',
   widthClass = 'w-[340px]',
+  widthPx = 340,
+  anchor,
   testId,
   onClose,
   footer,
@@ -42,6 +53,11 @@ export function Popover({
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [onClose])
 
+  const anchored = Boolean(anchor)
+  const left = anchor
+    ? Math.min(Math.max(8, anchor.left), Math.max(8, window.innerWidth - widthPx - 8))
+    : 0
+
   return (
     <div
       className="fixed inset-0 z-[90] bg-black/35 backdrop-blur-[1px]"
@@ -53,7 +69,10 @@ export function Popover({
         aria-modal="true"
         aria-label={title}
         data-popover={testId}
-        className={`ncc-fade-in absolute right-3 ${topClass} ${widthClass} overflow-hidden rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] shadow-[0_30px_90px_rgba(0,0,0,0.6)]`}
+        className={`ncc-fade-in absolute overflow-hidden rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] shadow-[0_30px_90px_rgba(0,0,0,0.6)] ${
+          anchored ? '' : `right-3 ${topClass} ${widthClass}`
+        }`}
+        style={anchor ? { top: Math.round(anchor.top + 6), left, width: widthPx } : undefined}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-3 border-b border-[color:var(--color-line)] px-3.5 py-2.5">

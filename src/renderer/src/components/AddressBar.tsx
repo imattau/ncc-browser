@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Lock, Star } from 'lucide-react'
 import type { SecuritySummary } from '../lib/security'
+import type { PopoverAnchor } from './Popover'
 import { cn } from '../lib/cn'
 
 interface AddressBarProps {
@@ -10,7 +11,7 @@ interface AddressBarProps {
   bookmarked: boolean
   security: SecuritySummary
   onToggleBookmark: () => void
-  onOpenSiteInfo: () => void
+  onOpenSiteInfo: (anchor: PopoverAnchor) => void
   onNavigate: (input: string) => void
   onFocusChange?: (focused: boolean) => void
 }
@@ -67,7 +68,10 @@ export function AddressBar({
           aria-label={`Site security (${security.label})`}
           title={security.tooltip}
           disabled={!security.clickable}
-          onClick={onOpenSiteInfo}
+          onClick={(event) => {
+            const rect = event.currentTarget.getBoundingClientRect()
+            onOpenSiteInfo({ top: rect.bottom, left: rect.left })
+          }}
           className={cn(
             'relative inline-flex h-5 w-5 shrink-0 items-center justify-center rounded transition-colors hover:bg-white/10 disabled:cursor-default disabled:hover:bg-transparent',
             lockTone(security.tone)

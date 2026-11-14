@@ -721,6 +721,26 @@ async function main() {
       'opens the site information panel',
       (await evaluate(chrome, 'Boolean(document.querySelector("[data-popover=site-info]"))')) === true
     )
+    const infoPosition = await evaluate(
+      chrome,
+      `(() => {
+        const button = document.querySelector('[data-security-button]').getBoundingClientRect()
+        const panel = document.querySelector('[data-popover=site-info]').getBoundingClientRect()
+        return {
+          buttonBottom: Math.round(button.bottom),
+          buttonLeft: Math.round(button.left),
+          panelTop: Math.round(panel.top),
+          panelLeft: Math.round(panel.left)
+        }
+      })()`
+    )
+    check(
+      'site info opens under the padlock',
+      infoPosition.panelTop >= infoPosition.buttonBottom &&
+        infoPosition.panelTop - infoPosition.buttonBottom <= 20 &&
+        Math.abs(infoPosition.panelLeft - infoPosition.buttonLeft) <= 20,
+      JSON.stringify(infoPosition)
+    )
     check(
       'site info explains the missing anchor',
       (await evaluate(chrome, 'document.body.innerText')).includes('No NCC-02 service record')
