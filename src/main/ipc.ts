@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron'
+import { COMMANDS, type CommandId } from '@shared/commands'
 import type { LocatorCacheStore } from './cache-store'
 import type { ConfigStore } from './config'
 import type { EndpointHealth } from './ncc/health'
@@ -22,6 +23,8 @@ export interface IpcDeps {
 }
 
 export function registerIpc(deps: IpcDeps): void {
+  const commandIds = new Set<string>(COMMANDS.map((command) => command.id))
+
   ipcMain.handle('ncc:navigate', (_event, input: unknown) => deps.shell.navigate(String(input ?? '')))
 
   ipcMain.handle('ncc:back', () => deps.shell.back())
@@ -112,6 +115,20 @@ export function registerIpc(deps: IpcDeps): void {
     }
     if (typeof id !== 'string') return
     deps.approvals.respond(id, { allow: allow === true, remember: remember === true })
+  })
+
+  ipcMain.handle('ncc:command', (event, command: unknown) => {
+    if (event.sender !== deps.shell.window.webContents) return
+    if (typeof command !== 'string' || !commandIds.has(command)) return
+    deps.shell.runCommand(command as CommandId)
+  })
+
+  ipcMain.handle('ncc:set-overlay', (event, payload: unknown) => {
+    if (event.sender !== deps.shell.window.webContents) return
+    if (!payload || typeof payload !== 'object') return
+    const { reason, active } = payload as { reason?: unknown; active?: unknown }
+    if (reason !== 'menu') return
+    deps.shell.setOverlay('menu', active === true)
   })
 }
 

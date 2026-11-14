@@ -25,6 +25,23 @@ const api: NccApi = {
   revokePermission: (origin) => ipcRenderer.invoke('ncc:revoke-permission', origin),
   respondToSigner: (id, allow, remember) =>
     ipcRenderer.invoke('ncc:signer-response', { id, allow, remember }),
+  runCommand: (command) => ipcRenderer.invoke('ncc:command', command),
+  setOverlay: (reason, active) => ipcRenderer.invoke('ncc:set-overlay', { reason, active }),
+  onOpenSettings: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: { section: string }): void =>
+      listener(payload)
+    ipcRenderer.on('ncc:open-settings', handler)
+    return () => {
+      ipcRenderer.removeListener('ncc:open-settings', handler)
+    }
+  },
+  onCloseMenu: (listener) => {
+    const handler = (): void => listener()
+    ipcRenderer.on('ncc:close-menu', handler)
+    return () => {
+      ipcRenderer.removeListener('ncc:close-menu', handler)
+    }
+  },
   onSignerRequest: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, request: SignerRequest): void =>
       listener(request)
@@ -39,6 +56,13 @@ const api: NccApi = {
     ipcRenderer.on('ncc:signer-resolved', handler)
     return () => {
       ipcRenderer.removeListener('ncc:signer-resolved', handler)
+    }
+  },
+  onFocusAddress: (listener) => {
+    const handler = (): void => listener()
+    ipcRenderer.on('ncc:focus-address', handler)
+    return () => {
+      ipcRenderer.removeListener('ncc:focus-address', handler)
     }
   },
   onState: (listener) => {

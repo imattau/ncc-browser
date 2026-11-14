@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowLeft, ArrowRight, KeyRound, RotateCw, Settings, X } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, ArrowRight, KeyRound, Menu, RotateCw, X } from 'lucide-react'
 import type { IdentityStatus, NavState } from '@shared/types'
 import { AddressBar } from './AddressBar'
 import { SecurityBadge } from './SecurityBadge'
@@ -15,6 +15,7 @@ interface ToolbarProps {
   onReload: () => void
   onStop: () => void
   onOpenSettings: () => void
+  onOpenMenu: () => void
 }
 
 export function Toolbar({
@@ -27,7 +28,8 @@ export function Toolbar({
   onForward,
   onReload,
   onStop,
-  onOpenSettings
+  onOpenSettings,
+  onOpenMenu
 }: ToolbarProps) {
   const showFailure = state.failure && state.failure.code !== 'invalid-address'
 
@@ -87,8 +89,8 @@ export function Toolbar({
         ) : null}
       </button>
 
-      <NavButton label="Relays & settings" onClick={onOpenSettings}>
-        <Settings className="h-4 w-4" />
+      <NavButton label="Menu" onClick={onOpenMenu}>
+        <Menu className="h-4 w-4" />
       </NavButton>
     </header>
   )

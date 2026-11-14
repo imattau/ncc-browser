@@ -24,18 +24,11 @@ export function AddressBar({ value, loading, hint, onNavigate, onFocusChange }: 
       inputRef.current?.focus()
       inputRef.current?.select()
     }
-    const onKeyDown = (event: KeyboardEvent): void => {
-      const modifier = event.metaKey || event.ctrlKey
-      if (modifier && event.key.toLowerCase() === 'l') {
-        event.preventDefault()
-        focusAddress()
-      }
-    }
-    window.addEventListener('keydown', onKeyDown)
     window.addEventListener('ncc:focus-address', focusAddress)
+    const unsubscribe = window.ncc.onFocusAddress(focusAddress)
     return () => {
-      window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('ncc:focus-address', focusAddress)
+      unsubscribe()
     }
   }, [])
 

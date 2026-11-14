@@ -1,4 +1,4 @@
-import { app, safeStorage, session, type Session } from 'electron'
+import { app, Menu, safeStorage, session, type Session } from 'electron'
 import { join } from 'node:path'
 import { nip19 } from 'nostr-tools'
 import { ApprovalBroker } from './approval'
@@ -126,7 +126,7 @@ app.whenReady().then(async () => {
       shell.window.webContents.send(channel, payload)
       return true
     },
-    setOverlay: (visible) => shell?.setApprovalMode(visible),
+    setOverlay: (visible) => shell?.setOverlay('approval', visible),
     timeoutMs: 120_000
   })
 
@@ -140,6 +140,18 @@ app.whenReady().then(async () => {
   registerNip07(nip07, contentSession)
 
   shell.window.on('closed', () => approvals.cancelAll())
+
+  // No in-window menu bar: shortcuts are handled in main, the rest lives in the
+  // hamburger menu. macOS still needs a system application menu.
+  if (process.platform === 'darwin') {
+    // Keep the system app/edit menus for macOS conventions, but no windowMenu: its
+    // Cmd+W close accelerator would fight the tab-level shortcut.
+    Menu.setApplicationMenu(
+      Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }])
+    )
+  } else {
+    Menu.setApplicationMenu(null)
+  }
 
   registerIpc({ shell, config, resolver, pins, cacheStore, health, identity, permissions, approvals })
 

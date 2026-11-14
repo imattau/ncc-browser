@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type { CommandId } from '@shared/commands'
 import type { DownloadNotice, IdentityStatus, NavState, SignerRequest } from '@shared/types'
+import { ChromeMenu } from './components/ChromeMenu'
 import { SettingsDialog } from './components/SettingsDialog'
 import { SignerPrompt } from './components/SignerPrompt'
 import { TabStrip } from './components/TabStrip'
@@ -23,11 +25,30 @@ const EMPTY_STATE: NavState = {
 export function App() {
   const [state, setState] = useState<NavState>(EMPTY_STATE)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
   const [hint, setHint] = useState<string | null>(null)
   const [downloads, setDownloads] = useState<DownloadNotice[]>([])
   const [identity, setIdentity] = useState<IdentityStatus | null>(null)
   const [signerRequest, setSignerRequest] = useState<SignerRequest | null>(null)
   const downloadTimers = useRef(new Map<string, number>())
+
+  const closeMenu = useCallback(() => {
+    setMenuOpen(false)
+    void window.ncc.setOverlay('menu', false)
+  }, [])
+
+  const openMenu = useCallback(() => {
+    setMenuOpen(true)
+    void window.ncc.setOverlay('menu', true)
+  }, [])
+
+  const runCommand = useCallback(
+    (command: CommandId) => {
+      closeMenu()
+      void window.ncc.runCommand(command)
+    },
+    [closeMenu]
+  )
 
   useEffect(() => {
     let alive = true
@@ -52,15 +73,30 @@ export function App() {
   }, [])
 
   useEffect(() => {
-    const offRequest = window.ncc.onSignerRequest((request) => setSignerRequest(request))
+    const unsubscribe = window.ncc.onSignerRequest((request) => {
+      closeMenu()
+      setSignerRequest(request)
+    })
     const offResolved = window.ncc.onSignerResolved((id) =>
       setSignerRequest((current) => (current?.id === id ? null : current))
     )
     return () => {
-      offRequest()
+      unsubscribe()
       offResolved()
     }
-  }, [])
+  }, [closeMenu])
+
+  useEffect(() => {
+    const offOpen = window.ncc.onOpenSettings(() => {
+      closeMenu()
+      setSettingsOpen(true)
+    })
+    const offClose = window.ncc.onCloseMenu(closeMenu)
+    return () => {
+      offOpen()
+      offClose()
+    }
+  }, [closeMenu])
 
   useEffect(() => {
     const unsubscribe = window.ncc.onDownload((notice) => {
@@ -125,65 +161,20 @@ export function App() {
   )
 
   useEffect(() => {
+    // Global shortcuts (Ctrl+L/T/W/R, Alt+←/→, Ctrl+Tab) live in the application menu
+    // so they keep working while the remote page has focus. Escape is the one key that
+    // cannot be a menu accelerator; the content view handles it in main, this covers
+    // the case where the chrome itself has focus.
     const onKeyDown = (event: KeyboardEvent): void => {
-      const modifier = event.metaKey || event.ctrlKey
-
-      if (modifier && event.key.toLowerCase() === 't') {
-        event.preventDefault()
-        newTab()
-        return
-      }
-      if (modifier && event.key.toLowerCase() === 'w') {
-        event.preventDefault()
-        closeTab()
-        return
-      }
-      if (modifier && event.key === 'Tab') {
-        event.preventDefault()
-        const tabs = state.tabs
-        if (tabs.length < 2) return
-        const index = tabs.findIndex((tab) => tab.id === state.activeTabId)
-        const next = event.shiftKey
-          ? tabs[(index - 1 + tabs.length) % tabs.length]
-          : tabs[(index + 1) % tabs.length]
-        if (next) selectTab(next.id)
-        return
-      }
-      if (modifier && event.key.toLowerCase() === 'r') {
-        event.preventDefault()
-        reload()
-        return
-      }
       if (event.key === 'Escape' && state.loading) {
         event.preventDefault()
         stop()
-        return
-      }
-      if (event.altKey && event.key === 'ArrowLeft') {
-        event.preventDefault()
-        back()
-        return
-      }
-      if (event.altKey && event.key === 'ArrowRight') {
-        event.preventDefault()
-        forward()
       }
     }
 
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [
-    back,
-    closeTab,
-    forward,
-    newTab,
-    reload,
-    selectTab,
-    state.activeTabId,
-    state.loading,
-    state.tabs,
-    stop
-  ])
+  }, [state.loading, stop])
 
   return (
     <div className="flex h-full flex-col bg-[color:var(--color-ink)]">
@@ -207,6 +198,7 @@ export function App() {
         onReload={reload}
         onStop={stop}
         onOpenSettings={() => setSettingsOpen(true)}
+        onOpenMenu={openMenu}
       />
 
       <main className="relative min-h-0 flex-1 overflow-hidden">
@@ -218,6 +210,15 @@ export function App() {
         onClose={() => setSettingsOpen(false)}
         onIdentityChange={setIdentity}
       />
+
+      {menuOpen ? (
+        <ChromeMenu
+          state={state}
+          identity={identity}
+          onCommand={runCommand}
+          onClose={closeMenu}
+        />
+      ) : null}
 
       {signerRequest ? (
         <SignerPrompt request={signerRequest} onRespond={respondToSigner} />

@@ -10,7 +10,7 @@
  * Run: npm run e2e
  */
 
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { createHash, createPublicKey } from 'node:crypto'
 import { createServer } from 'node:http'
 import { createServer as createHttpsServer } from 'node:https'
@@ -444,6 +444,19 @@ async function startXvfb() {
   throw new Error('Xvfb did not start')
 }
 
+function xdotool(display, args) {
+  return spawnSync('xdotool', args, {
+    env: { ...process.env, DISPLAY: display },
+    encoding: 'utf8'
+  })
+}
+
+function findElectronWindow(display) {
+  const result = xdotool(display, ['search', '--onlyvisible', '--name', 'NCC Browser'])
+  if (result.status !== 0) return null
+  return result.stdout.trim().split('\n').filter(Boolean)[0] ?? null
+}
+
 async function main() {
   mkdirSync(ARTIFACTS, { recursive: true })
 
@@ -503,6 +516,7 @@ async function main() {
       '.',
       '--no-sandbox',
       '--disable-gpu',
+      '--ozone-platform=x11',
       '--remote-debugging-port=9333',
       '--remote-allow-origins=*',
       `ncc://${serviceNpub}/web/`
@@ -755,6 +769,70 @@ async function main() {
     check('closes the active tab', afterClose === 1, `(got ${afterClose})`)
     hinted.close()
 
+    // Global shortcuts must work while the page, not the chrome, has focus.
+    if (spawnSync('which', ['xdotool']).status === 0) {
+      const windowId = findElectronWindow(xvfb.display)
+      check('finds the browser window for shortcut tests', Boolean(windowId))
+
+      if (windowId) {
+        xdotool(xvfb.display, ['windowfocus', '--sync', windowId])
+        xdotool(xvfb.display, ['mousemove', '--window', windowId, '600', '500'])
+        xdotool(xvfb.display, ['click', '1'])
+        await sleep(300)
+
+        xdotool(xvfb.display, ['key', '--window', windowId, '--clearmodifiers', 'ctrl+t'])
+        await sleep(600)
+        const afterShortcutNew = await evaluate(
+          chrome,
+          'document.querySelectorAll(\'[role="tab"]\').length'
+        )
+        check(
+          'Ctrl+T opens a tab while the page is focused',
+          afterShortcutNew === 2,
+          `(got ${afterShortcutNew})`
+        )
+
+        // Focus the content of the new (blank) tab before using Ctrl+W.
+        xdotool(xvfb.display, ['windowfocus', '--sync', windowId])
+        xdotool(xvfb.display, ['mousemove', '--window', windowId, '600', '400'])
+        xdotool(xvfb.display, ['click', '1'])
+        await sleep(250)
+        xdotool(xvfb.display, ['windowfocus', '--sync', windowId])
+        xdotool(xvfb.display, ['key', '--window', windowId, '--clearmodifiers', 'ctrl+w'])
+        await sleep(600)
+        const afterShortcutClose = await evaluate(
+          chrome,
+          'document.querySelectorAll(\'[role="tab"]\').length'
+        )
+        check(
+          'Ctrl+W closes a tab while the page is focused',
+          afterShortcutClose === 1,
+          `(got ${afterShortcutClose})`
+        )
+
+        // Leave the original tab active even if the shortcut test failed.
+        const tabCountNow = await evaluate(
+          chrome,
+          'document.querySelectorAll(\'[role="tab"]\').length'
+        )
+        if (tabCountNow > 1) {
+          await evaluate(chrome, 'window.ncc.closeTab()')
+          await sleep(300)
+        }
+
+        xdotool(xvfb.display, ['windowfocus', '--sync', windowId])
+        xdotool(xvfb.display, ['key', '--window', windowId, '--clearmodifiers', 'ctrl+l'])
+        await sleep(300)
+        const focusedLabel = await evaluate(
+          chrome,
+          'document.activeElement?.getAttribute("aria-label") ?? ""'
+        )
+        check('Ctrl+L focuses the address bar', focusedLabel === 'Address', String(focusedLabel))
+      }
+    } else {
+      console.log('  skip  global shortcut e2e (xdotool not installed)')
+    }
+
     // Mismatch: same k, different certificate. Must fail closed.
     await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/bogus/` })
     const mismatchText = await waitForText(cdp, 'Transport identity mismatch', 80)
@@ -769,6 +847,35 @@ async function main() {
     await sleep(400)
     const chromeShot = await chrome.send('Page.captureScreenshot', { format: 'png' })
     writeFileSync(join(ARTIFACTS, 'chrome.png'), Buffer.from(chromeShot.data, 'base64'))
+
+    // Hamburger menu: the menu-bar commands live in the toolbar.
+    await evaluate(chrome, 'document.querySelector(\'button[aria-label="Menu"]\').click()')
+    await waitForText(chrome, 'Focus address bar', 40)
+    check(
+      'opens the in-app menu',
+      (await evaluate(chrome, 'Boolean(document.querySelector("[data-chrome-menu]"))')) === true
+    )
+
+    const menuShot = await chrome.send('Page.captureScreenshot', { format: 'png' })
+    writeFileSync(join(ARTIFACTS, 'menu.png'), Buffer.from(menuShot.data, 'base64'))
+
+    const tabsBeforeMenu = await evaluate(
+      chrome,
+      'document.querySelectorAll(\'[role="tab"]\').length'
+    )
+    await evaluate(chrome, 'document.querySelector(\'[data-command="new-tab"]\').click()')
+    await sleep(600)
+    const tabsAfterMenu = await evaluate(
+      chrome,
+      'document.querySelectorAll(\'[role="tab"]\').length'
+    )
+    check(
+      'menu command opens a tab',
+      tabsAfterMenu === tabsBeforeMenu + 1,
+      `(${tabsBeforeMenu} → ${tabsAfterMenu})`
+    )
+    await evaluate(chrome, 'window.ncc.closeTab()')
+    await sleep(300)
 
     // Failure case: a different pubkey with no locator at all.
     await cdp.send('Page.navigate', { url: `ncc://${missingNpub}/web/` })

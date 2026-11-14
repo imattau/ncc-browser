@@ -1,6 +1,12 @@
-import { BrowserWindow, WebContentsView, shell, type WebContents } from 'electron'
+import { BrowserWindow, WebContentsView, app, shell, type Input, type WebContents } from 'electron'
 import { parseNccAddress, toDisplayUrl, toInternalUrl, type NccAddress } from '@shared/ncc-url'
 import { CHROME_HEIGHT } from '@shared/layout'
+import type { CommandId } from '@shared/commands'
+import {
+  installChromeContextMenu,
+  installContentContextMenu
+} from './context-menu'
+import { commandForInput } from './shortcuts'
 import type {
   DownloadNotice,
   NavState,
@@ -55,7 +61,7 @@ export class BrowserShell {
   private readonly tabs: Tab[] = []
   private activeId: string | null = null
   private nextTabId = 1
-  private approvalMode = false
+  private readonly overlays = new Set<string>()
 
   constructor(deps: ShellDeps) {
     this.deps = deps
@@ -78,6 +84,11 @@ export class BrowserShell {
     })
 
     this.wireWindow()
+    installChromeContextMenu(this.window.webContents, () => this.window)
+    this.window.webContents.on('before-input-event', (event, input) =>
+      this.handleInput(event, input)
+    )
+    this.window.on('blur', () => this.sendChrome('ncc:close-menu'))
     this.window.once('ready-to-show', () => this.window.show())
   }
 
@@ -153,14 +164,18 @@ export class BrowserShell {
   }
 
   /**
-   * Hide all content views while an approval popup is open. The chrome renderer then
-   * owns the whole window surface, so the modal is real UI instead of a native dialog.
+   * Hide all content views while chrome-owned UI needs the whole window: the approval
+   * sheet or the hamburger menu. Reasons are reference-counted so one closing does not
+   * reveal the page underneath the other.
    */
-  setApprovalMode(active: boolean): void {
-    if (this.approvalMode === active) return
-    this.approvalMode = active
+  setOverlay(reason: string, active: boolean): void {
+    const wasHidden = this.overlays.size > 0
+    if (active) this.overlays.add(reason)
+    else this.overlays.delete(reason)
+    const hidden = this.overlays.size > 0
+    if (wasHidden === hidden) return
 
-    if (active) {
+    if (hidden) {
       for (const tab of this.tabs) {
         try {
           tab.view.setVisible(false)
@@ -173,11 +188,77 @@ export class BrowserShell {
 
     const activeTab = this.activeTab()
     if (!activeTab) return
+    if (activeTab.mode === 'blank') return
     activeTab.view.setBounds(this.contentBounds())
     try {
       activeTab.view.setVisible(true)
     } catch {
       // Fallback handled by showOnly on the next activation.
+    }
+  }
+
+  runCommand(command: CommandId): void {
+    switch (command) {
+      case 'new-tab':
+        this.newTab()
+        this.focusAddress()
+        break
+      case 'close-tab':
+        this.closeTab()
+        break
+      case 'next-tab':
+        this.nextTab()
+        break
+      case 'previous-tab':
+        this.previousTab()
+        break
+      case 'focus-address':
+        this.focusAddress()
+        break
+      case 'back':
+        this.back()
+        break
+      case 'forward':
+        this.forward()
+        break
+      case 'reload':
+        this.reload()
+        break
+      case 'force-reload':
+        this.forceReload()
+        break
+      case 'stop':
+        this.stop()
+        break
+      case 'zoom-in':
+        this.zoomIn()
+        break
+      case 'zoom-out':
+        this.zoomOut()
+        break
+      case 'zoom-reset':
+        this.zoomReset()
+        break
+      case 'toggle-page-devtools':
+        this.togglePageDevTools()
+        break
+      case 'toggle-browser-devtools':
+        this.toggleChromeDevTools()
+        break
+      case 'open-settings':
+        this.sendChrome('ncc:open-settings', { section: 'general' })
+        break
+      case 'open-identity':
+        this.sendChrome('ncc:open-settings', { section: 'identity' })
+        break
+      case 'open-spec':
+        void shell.openExternal(
+          'https://github.com/imattau/nostr-community-conventions/blob/master/ncc-05/README.md'
+        )
+        break
+      case 'quit':
+        app.quit()
+        break
     }
   }
 
@@ -208,6 +289,45 @@ export class BrowserShell {
 
   stop(): void {
     this.activeTab()?.view.webContents.stop()
+  }
+
+  /** Focus the address bar in the trusted chrome, regardless of page focus. */
+  focusAddress(): void {
+    if (this.window.isDestroyed()) return
+    this.window.focus()
+    this.window.webContents.send('ncc:focus-address')
+  }
+
+  nextTab(): void {
+    this.cycleTab(1)
+  }
+
+  previousTab(): void {
+    this.cycleTab(-1)
+  }
+
+  forceReload(): void {
+    this.activeTab()?.view.webContents.reloadIgnoringCache()
+  }
+
+  zoomIn(): void {
+    this.adjustZoom(0.1)
+  }
+
+  zoomOut(): void {
+    this.adjustZoom(-0.1)
+  }
+
+  zoomReset(): void {
+    this.activeTab()?.view.webContents.setZoomFactor(1)
+  }
+
+  togglePageDevTools(): void {
+    this.activeTab()?.view.webContents.toggleDevTools()
+  }
+
+  toggleChromeDevTools(): void {
+    this.window.webContents.toggleDevTools()
   }
 
   /** Called by the protocol handler for document-level activity only. */
@@ -247,6 +367,7 @@ export class BrowserShell {
       tab.displayUrl = text
       tab.security = null
       tab.failure = null
+      this.showOnly(tab.id)
       await this.load(tab, text)
       return
     }
@@ -271,6 +392,7 @@ export class BrowserShell {
     tab.displayUrl = toDisplayUrl(internal)
     tab.security = null
     tab.failure = null
+    this.showOnly(tab.id)
     await this.load(tab, internal)
   }
 
@@ -330,7 +452,7 @@ export class BrowserShell {
     for (const tab of this.tabs) {
       const isActive = tab.id === id
       if (isActive) tab.view.setBounds(bounds)
-      const visible = isActive && !this.approvalMode
+      const visible = isActive && tab.mode !== 'blank' && this.overlays.size === 0
       try {
         tab.view.setVisible(visible)
       } catch {
@@ -409,6 +531,16 @@ export class BrowserShell {
     })
 
     contents.on('will-attach-webview', (event) => event.preventDefault())
+
+    installContentContextMenu(contents, {
+      getWindow: () => this.window,
+      openInNewTab: (url) => {
+        void this.openInNewTab(url)
+      }
+    })
+
+    // Keyboard shortcuts are routed in main so they work while the page has focus.
+    contents.on('before-input-event', (event, input) => this.handleInput(event, input))
   }
 
   private async openInNewTab(url: string): Promise<void> {
@@ -465,6 +597,60 @@ export class BrowserShell {
     return this.tabs.find((tab) => tab.id === this.activeId) ?? null
   }
 
+  private handleInput(event: { preventDefault(): void }, input: Input): void {
+    const command = commandForInput(input)
+    if (command) {
+      event.preventDefault()
+      this.runCommand(command)
+      return
+    }
+
+    if (input.type === 'keyDown' && input.key === 'Escape') {
+      const tab = this.activeTab()
+      if (tab?.loading) {
+        event.preventDefault()
+        tab.view.webContents.stop()
+      }
+    }
+  }
+
+  private sendChrome(channel: string, payload?: unknown): boolean {
+    if (this.window.isDestroyed()) return false
+    this.window.webContents.send(channel, payload)
+    return true
+  }
+
+  private cycleTab(delta: number): void {
+    if (this.tabs.length < 2) return
+    const index = this.tabs.findIndex((tab) => tab.id === this.activeId)
+    const next = this.tabs[(index + delta + this.tabs.length) % this.tabs.length]
+    if (next) this.activateTab(next.id)
+  }
+
+  private adjustZoom(delta: number): void {
+    const contents = this.activeTab()?.view.webContents
+    if (!contents) return
+    const next = Math.min(3, Math.max(0.25, contents.getZoomFactor() + delta))
+    contents.setZoomFactor(Number(next.toFixed(2)))
+  }
+
+  private updateWindowTitle(): void {
+    if (this.window.isDestroyed()) return
+    const tab = this.activeTab()
+    if (!tab) {
+      this.window.setTitle('NCC Browser')
+      return
+    }
+    const title = tabTitle(tab)
+    const label = title && title !== 'New tab' ? title : tab.displayUrl
+    if (!label) {
+      this.window.setTitle('NCC Browser')
+      return
+    }
+    const trimmed = label.length > 90 ? `${label.slice(0, 90)}…` : label
+    this.window.setTitle(`${trimmed} — NCC Browser`)
+  }
+
   private wireWindow(): void {
     const layout = (): void => {
       const active = this.activeTab()
@@ -500,6 +686,7 @@ export class BrowserShell {
 
   private syncState(): void {
     if (this.window.isDestroyed()) return
+    this.updateWindowTitle()
     this.window.webContents.send('ncc:state', this.getState())
   }
 }

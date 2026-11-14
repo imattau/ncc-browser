@@ -1,3 +1,4 @@
+import type { CommandId } from './commands'
 import type {
   AppConfig,
   DownloadNotice,
@@ -39,8 +40,13 @@ export interface NccApi {
   signerPermissions(): Promise<SignerPermission[]>
   revokePermission(origin: string): Promise<SignerPermission[]>
   respondToSigner(id: string, allow: boolean, remember: boolean): Promise<void>
+  runCommand(command: CommandId): Promise<void>
+  setOverlay(reason: 'menu', active: boolean): Promise<void>
   onSignerRequest(listener: (request: SignerRequest) => void): () => void
   onSignerResolved(listener: (id: string) => void): () => void
+  onFocusAddress(listener: () => void): () => void
+  onOpenSettings(listener: (payload: { section: string }) => void): () => void
+  onCloseMenu(listener: () => void): () => void
   onState(listener: (state: NavState) => void): () => void
   onDownload(listener: (notice: DownloadNotice) => void): () => void
 }

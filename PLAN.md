@@ -213,6 +213,10 @@ is CJS and the package is ESM-only.
   cooldowns, the persistent locator cache, `ncc://` link interception, sanitised
   downloads, and the inbuilt NIP-07 signer (local key + NIP-46 remote signing) with
   per-service approvals.
+- **M3.5 — Chrome polish:** ✅ no application menu bar; a hamburger menu with every
+  command; shortcuts routed in main via `before-input-event` (work while the page is
+  focused); native context menus for links, images and editable fields; window title
+  follows the active tab; blank tabs show the welcome page.
 - **M4 — Publisher:** separate MKStack app (`stacks mkstack`) that publishes a `30058`
   for a local port via NIP-07, plus NCC-02 anchoring/`k` trust UI in the browser.
 - **M5 — Polish:** tabs, bookmarks, session restore, custom titlebar.

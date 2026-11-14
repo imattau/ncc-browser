@@ -47,6 +47,28 @@ npx electron . 'ncc://npub1…/web'
 
 ---
 
+## Browser chrome
+
+No native menu bar: every command lives in the toolbar's hamburger menu, and shortcuts
+are routed by the main process so they keep working while the remote page has focus.
+
+![Hamburger menu](./docs/menu.png)
+
+- **Tabs** — new/close/switch, middle-click close, per-tab title and loading state.
+  A blank tab shows the welcome screen.
+- **Toolbar** — back/forward, reload/stop, address bar, security badge, identity key,
+  hamburger menu.
+- **Shortcuts** (also shown in the menu): `Ctrl+T`, `Ctrl+W`, `Ctrl+Tab` /
+  `Ctrl+Shift+Tab`, `Ctrl+L`, `Ctrl+R`, `Ctrl+Shift+R`, `Ctrl+.`, `Alt+←/→`,
+  `Ctrl++/-/0`, `Ctrl+Shift+I/J`, `Ctrl+Q`. On macOS `Cmd` replaces `Ctrl`.
+- **Right-click** — links (open in new tab, copy address), images (open, copy address,
+  save), editable fields (cut/copy/paste/select all), plus back/forward/reload and
+  inspect element.
+- **Window title** follows the active page.
+- **Downloads** surface as chips in the tab strip with saved/failed state.
+
+---
+
 ## Address model
 
 ```
@@ -210,8 +232,11 @@ src/main
   config.ts          relay list, gossip toggle, persisted to userData
   cache-store.ts     on-disk locator cache (public records only)
   downloads.ts       sanitised filenames, dedupe, save paths
-  ipc.ts             navigate / tabs / history / relays / identity
+  ipc.ts             navigate / tabs / history / relays / identity / commands
   error-page.ts      self-contained failure screens
+  shortcuts.ts       pure: key event → command
+  context-menu-model.ts  pure: context menu contents
+  context-menu.ts    native context menus for content and chrome
   ncc/locator.ts     pure: candidates, payload validation, endpoint normalisation
   ncc/resolver.ts    relay query, gossip, selection, decrypt, cache, dedupe
   ncc/routing.ts     pure: path joining and Location rewriting
@@ -229,8 +254,8 @@ src/main
 src/preload
   index.ts           contextBridge → window.ncc (chrome only)
   content.ts         contextBridge → window.nostr (top-level page frames only)
-src/renderer         React tabs, toolbar, signer sheet, security badge, settings, welcome
-src/shared           ncc:// parser, types, relay validation (no Node imports)
+src/renderer         React tabs, toolbar, hamburger menu, signer sheet, settings, welcome
+src/shared           ncc:// parser, types, relay validation, commands (no Node imports)
 ```
 
 Remote content runs with `sandbox: true`, `contextIsolation: true`, no Node, and its own
@@ -242,9 +267,9 @@ general IPC bridge.
 ## Testing
 
 ```bash
-npm test       # 150 unit tests: URL parser, locator rules, resolver, routing, pins,
+npm test       # 166 unit tests: URL parser, locator rules, resolver, routing, pins,
                # signer crypto, identity storage, NIP-46, approvals, permissions,
-               # relays, downloads
+               # shortcuts, context menus, relays, downloads
 npm run e2e    # real Electron window against a mock relay and local HTTP services
 ```
 
@@ -255,9 +280,10 @@ proxying, relative-link resolution, the synthetic origin, the address bar, plain
 `pinned` transport state, refusal of a certificate that does not match `k`, `ncc://`
 link-driven service switching, NIP-65 gossip to a second relay, tab open/close, the
 persistent cache on disk, the full NIP-07 path (in-app approval sheet, public key,
-verifiable signature, NIP-04/44 round-trips, no provider in subframes), and a **real
-NIP-46 round-trip against a mock bunker** — connect, remote signing, remote decryption of
-a targeted locator, and disconnect. Screenshots land in
+verifiable signature, NIP-04/44 round-trips, no provider in subframes), the hamburger
+menu, **real global shortcuts sent through X** (Ctrl+T/W/L while the page is focused),
+and a **real NIP-46 round-trip against a mock bunker** — connect, remote signing, remote
+decryption of a targeted locator, and disconnect. Screenshots land in
 `/tmp/opencode/ncc-browser-e2e/`.
 
 To try it against a real publisher, run [`ncc-sidecar`](../nostr-community-conventions/ncc-06/ncc-sidecar/)
