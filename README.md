@@ -10,14 +10,15 @@ Built with Electron 45, React 19, and Vite. The resolver is a spec-correct
 implementation on top of `nostr-tools`, not a wrapper around `ncc-05-js` (see
 [Why not `ncc-05-js`](#why-not-ncc-05-js)).
 
-**Status:** M0–M2 of [PLAN.md](./PLAN.md) are implemented: resolution, proxy protocol,
-pinning, browser chrome, error pages, and relay settings.
+**Status:** M0–M3 of [PLAN.md](./PLAN.md) are implemented: resolution, proxy protocol,
+pinning, browser chrome, tabs, NIP-65 gossip, endpoint cooldowns, a persistent locator
+cache, downloads, and relay/gossip settings.
 
 ![Start screen](./docs/welcome.png)
 
-| Resolved page | Failure page |
+| Tabs | Failure page |
 | --- | --- |
-| ![Toolbar with a resolved plaintext service](./docs/toolbar.png) | ![No locator published](./docs/error-page.png) |
+| ![Two tabs with a resolved service](./docs/tabs.png) | ![No locator published](./docs/error-page.png) |
 
 ---
 
@@ -68,16 +69,20 @@ fresh, valid record wins and the matched tag is reported in the UI.
 1. Decode the npub to hex.
 2. Query configured relays once for
    `{kinds:[30058], authors:[hex], '#d':[candidates]}`.
-3. Verify every event signature and author.
-4. Select the newest record per `d` tag (`created_at` desc, then lexicographically
+3. When gossip is on, also fetch the identity's NIP-65 relay list (kind `10002`) and
+   add its read/both relays to the same query (capped at 8, read-only entries).
+4. Verify every event signature and author.
+5. Select the newest record per `d` tag (`created_at` desc, then lexicographically
    smallest `id`).
-5. Decode the payload: plaintext JSON, or NIP-44 if a signer is configured.
-6. Enforce expiry: the earliest of the `expiration` tag and `updated_at + ttl`.
+6. Decode the payload: plaintext JSON, or NIP-44 if a signer is configured.
+7. Enforce expiry: the earliest of the `expiration` tag and `updated_at + ttl`.
    Expired records are never used.
-7. Normalise endpoints (`url` / `uri`, scheme-less values, `tcp`→`http`), sort by
+8. Normalise endpoints (`url` / `uri`, scheme-less values, `tcp`→`http`), sort by
    priority (default `1000`) and family, then try them in order.
-8. Cache until `expiry` (capped at 120 s so rotations are noticed), negative-cache
-   failures for 15 s, and dedupe concurrent resolutions.
+9. Cache in memory until `expiry` (capped at 120 s so rotations are noticed) and write
+   public records to `userData/locator-cache.json` for fast, restart-safe resolution.
+   Encrypted records are never persisted. Failures are negative-cached for 15 s, and
+   failed endpoints cool down with exponential backoff (15 s → 5 min).
 
 Each failure gets its own page: `invalid-address`, `no-record`, `expired`,
 `undecryptable`, `invalid-payload`, `no-endpoint`, `relay-error`, `timeout`, and

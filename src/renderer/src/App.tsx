@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react'
-import type { NavState } from '@shared/types'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import type { DownloadNotice, NavState } from '@shared/types'
 import { SettingsDialog } from './components/SettingsDialog'
+import { TabStrip } from './components/TabStrip'
 import { Toolbar } from './components/Toolbar'
 import { Welcome } from './components/Welcome'
 
@@ -13,13 +14,17 @@ const EMPTY_STATE: NavState = {
   canGoBack: false,
   canGoForward: false,
   security: null,
-  failure: null
+  failure: null,
+  tabs: [],
+  activeTabId: null
 }
 
 export function App() {
   const [state, setState] = useState<NavState>(EMPTY_STATE)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [hint, setHint] = useState<string | null>(null)
+  const [downloads, setDownloads] = useState<DownloadNotice[]>([])
+  const downloadTimers = useRef(new Map<string, number>())
 
   useEffect(() => {
     let alive = true
@@ -30,6 +35,29 @@ export function App() {
     return () => {
       alive = false
       unsubscribe()
+    }
+  }, [])
+
+  useEffect(() => {
+    const unsubscribe = window.ncc.onDownload((notice) => {
+      setDownloads((current) => [...current.filter((item) => item.id !== notice.id), notice])
+
+      const existing = downloadTimers.current.get(notice.id)
+      if (existing) window.clearTimeout(existing)
+
+      if (notice.state !== 'started') {
+        const timer = window.setTimeout(() => {
+          setDownloads((current) => current.filter((item) => item.id !== notice.id))
+          downloadTimers.current.delete(notice.id)
+        }, 4000)
+        downloadTimers.current.set(notice.id, timer)
+      }
+    })
+
+    return () => {
+      unsubscribe()
+      for (const timer of downloadTimers.current.values()) window.clearTimeout(timer)
+      downloadTimers.current.clear()
     }
   }, [])
 
@@ -47,10 +75,46 @@ export function App() {
   const reload = useCallback(() => void window.ncc.reload(), [])
   const stop = useCallback(() => void window.ncc.stop(), [])
 
+  const newTab = useCallback(() => {
+    setHint(null)
+    void window.ncc.newTab().then(() => {
+      window.dispatchEvent(new Event('ncc:focus-address'))
+    })
+  }, [])
+
+  const closeTab = useCallback((id?: string) => {
+    void window.ncc.closeTab(id)
+  }, [])
+
+  const selectTab = useCallback((id: string) => {
+    void window.ncc.selectTab(id)
+  }, [])
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       const modifier = event.metaKey || event.ctrlKey
 
+      if (modifier && event.key.toLowerCase() === 't') {
+        event.preventDefault()
+        newTab()
+        return
+      }
+      if (modifier && event.key.toLowerCase() === 'w') {
+        event.preventDefault()
+        closeTab()
+        return
+      }
+      if (modifier && event.key === 'Tab') {
+        event.preventDefault()
+        const tabs = state.tabs
+        if (tabs.length < 2) return
+        const index = tabs.findIndex((tab) => tab.id === state.activeTabId)
+        const next = event.shiftKey
+          ? tabs[(index - 1 + tabs.length) % tabs.length]
+          : tabs[(index + 1) % tabs.length]
+        if (next) selectTab(next.id)
+        return
+      }
       if (modifier && event.key.toLowerCase() === 'r') {
         event.preventDefault()
         reload()
@@ -74,10 +138,30 @@ export function App() {
 
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [back, forward, reload, stop, state.loading])
+  }, [
+    back,
+    closeTab,
+    forward,
+    newTab,
+    reload,
+    selectTab,
+    state.activeTabId,
+    state.loading,
+    state.tabs,
+    stop
+  ])
 
   return (
     <div className="flex h-full flex-col bg-[color:var(--color-ink)]">
+      <TabStrip
+        tabs={state.tabs}
+        activeTabId={state.activeTabId}
+        downloads={downloads}
+        onSelect={selectTab}
+        onClose={closeTab}
+        onNew={newTab}
+      />
+
       <Toolbar
         state={state}
         hint={hint}

@@ -1,8 +1,11 @@
 import { app, session, type Session } from 'electron'
 import { join } from 'node:path'
 import { nip19 } from 'nostr-tools'
+import { LocatorCacheStore } from './cache-store'
 import { ConfigStore } from './config'
+import { installDownloadHandler } from './downloads'
 import { registerIpc } from './ipc'
+import { EndpointHealth } from './ncc/health'
 import { closeSharedPool, NccResolver, signerFromSecret, type LocatorSigner } from './ncc/resolver'
 import { installCertificatePinning, PinStore } from './pins'
 import { installNccProtocol, registerNccScheme } from './protocol'
@@ -26,11 +29,15 @@ let contentSession: Session | null = null
 app.whenReady().then(() => {
   const config = new ConfigStore()
   const pins = new PinStore()
+  const health = new EndpointHealth()
+  const cacheStore = new LocatorCacheStore(join(app.getPath('userData'), 'locator-cache.json'))
   const activeService = new Map<string, string>()
   const endpointOwners = new Map<string, { pubkey: string; service: string }>()
 
   const resolver = new NccResolver({
     relays: () => config.getRelays(),
+    gossip: () => config.get().gossip,
+    cacheStore,
     signer: locatorSignerFromEnv()
   })
 
@@ -42,9 +49,14 @@ app.whenReady().then(() => {
     session: contentSession,
     resolver,
     pins,
+    health,
     activeService,
     endpointOwners,
     onActivity: (activity) => shell?.reportActivity(activity)
+  })
+
+  installDownloadHandler(contentSession, {
+    notify: (notice) => shell?.notifyDownload(notice)
   })
 
   shell = new BrowserShell({
@@ -53,12 +65,12 @@ app.whenReady().then(() => {
     rendererFile: join(__dirname, '../renderer/index.html'),
     activeService,
     onContentWebContents: (contents) => {
-      // Prevent remote content from ever loading with Node privileges.
+      // Remote content must never be able to keep the window from closing.
       contents.on('will-prevent-unload', (event) => event.preventDefault())
     }
   })
 
-  registerIpc({ shell, config, resolver, pins })
+  registerIpc({ shell, config, resolver, pins, cacheStore, health })
 
   // Optional launch address: `ncc-browser ncc://npub1…/service`
   const startupAddress = findStartupAddress()

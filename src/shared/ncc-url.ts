@@ -77,7 +77,9 @@ export function parseNccAddress(raw: string): NccAddress {
   }
 
   const pathname = url.pathname
-  const withoutLeading = pathname.replace(/^\/+/, '')
+  let withoutLeading = pathname.replace(/^\/+/, '')
+  // Internal/self-referential URLs may carry the explicit service prefix.
+  if (withoutLeading.startsWith('_/')) withoutLeading = withoutLeading.slice(2)
   const slash = withoutLeading.indexOf('/')
   const rawService = slash === -1 ? withoutLeading : withoutLeading.slice(0, slash)
   const rest = slash === -1 ? '' : withoutLeading.slice(slash + 1)
@@ -130,8 +132,7 @@ export function buildNccUrl(address: BuildAddress): string {
   return `${base}${path}${address.search ?? ''}${address.hash ?? ''}`
 }
 
-/**
- * The address to hand to `loadURL`: service roots always end in a slash so that a
+/** The address to hand to `loadURL`: service roots always end in a slash so that a
  * page's relative links (`docs/x`) resolve inside the service instead of above it.
  */
 export function toLoadUrl(address: NccAddress): string {
@@ -143,10 +144,59 @@ export function toLoadUrl(address: NccAddress): string {
   })
 }
 
-/** Route an inbound protocol request to a service and a pass-through path. */
+/**
+ * Internal, unambiguous origin form: `ncc://<npub>/_/<service>/<path>`.
+ *
+ * Every navigation the shell initiates uses this form, so a service can never be
+ * confused with a path segment. The address bar renders the clean form instead.
+ */
+export function toInternalUrl(address: NccAddress): string {
+  return buildInternalUrl(address)
+}
+
+export function buildInternalUrl(address: BuildAddress): string {
+  const service = address.service || DEFAULT_SERVICE
+  let path = address.path ?? '/'
+  if (!path.startsWith('/')) path = `/${path}`
+  return `ncc://${address.pubkey}/_/${service}${path}${address.search ?? ''}${address.hash ?? ''}`
+}
+
+/** Turn an internal URL into the clean form shown to the user. */
+export function toDisplayUrl(url: string): string {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return url
+  }
+  if (parsed.protocol !== 'ncc:') return url
+
+  const raw = parsed.pathname.replace(/^\/+/, '')
+  if (!(raw === '_' || raw.startsWith('_/'))) return url
+
+  const rest = raw === '_' ? '' : raw.slice(2)
+  const slash = rest.indexOf('/')
+  const service = slash === -1 ? rest : rest.slice(0, slash)
+  const tail = slash === -1 ? '' : rest.slice(slash + 1)
+  if (!service) return url
+
+  const servicePart = service === DEFAULT_SERVICE ? '' : `/${service}`
+  const path = tail ? `/${tail}` : '/'
+  return `ncc://${parsed.hostname}${servicePart}${path}${parsed.search}${parsed.hash}`
+}
+
+/**
+ * Route an inbound protocol request to a service and a pass-through path.
+ *
+ * The order matters: an explicit `/_/<service>/…` wins, then the service of the
+ * referring page (which is how absolute-path subresources of a background tab are
+ * attributed correctly), then the active service for that pubkey, and only then the
+ * first path segment.
+ */
 export function routeNccPath(
   pathname: string,
-  activeService: string | null
+  activeService: string | null,
+  refererService: string | null = null
 ): { service: string; path: string } | null {
   const raw = pathname.replace(/^\/+/, '')
 
@@ -161,6 +211,10 @@ export function routeNccPath(
     return { service, path: tail ? `/${tail}` : '/' }
   }
 
+  if (refererService) {
+    return { service: refererService, path: pathname || '/' }
+  }
+
   if (activeService) {
     return { service: activeService, path: pathname || '/' }
   }
@@ -171,6 +225,42 @@ export function routeNccPath(
   if (!service) return { service: DEFAULT_SERVICE, path: pathname || '/' }
   if (!isValidServiceName(service)) return null
   return { service, path: tail ? `/${tail}` : '/' }
+}
+
+/**
+ * Derive the service namespace from a same-origin referer. This is what makes
+ * absolute-path subresources unambiguous when several tabs share an npub.
+ */
+export function serviceFromReferer(
+  referer: string | null | undefined,
+  pubkey: string
+): string | null {
+  if (!referer) return null
+  let url: URL
+  try {
+    url = new URL(referer)
+  } catch {
+    return null
+  }
+  if (url.protocol !== 'ncc:') return null
+  if (url.hostname.toLowerCase() !== pubkey.toLowerCase()) return null
+
+  const raw = url.pathname.replace(/^\/+/, '')
+  if (!raw) return null
+
+  if (raw === '_' || raw.startsWith('_/')) {
+    const rest = raw.slice(2)
+    const service = rest.split('/')[0]
+    return service && isValidServiceName(service) ? service : null
+  }
+
+  let service: string
+  try {
+    service = decodeURIComponent(raw.split('/')[0])
+  } catch {
+    return null
+  }
+  return service && isValidServiceName(service) ? service : null
 }
 
 /** Strip the scheme so the toolbar can show a compact address. */

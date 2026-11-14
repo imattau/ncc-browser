@@ -1,5 +1,7 @@
 import { ipcMain } from 'electron'
+import type { LocatorCacheStore } from './cache-store'
 import type { ConfigStore } from './config'
+import type { EndpointHealth } from './ncc/health'
 import type { NccResolver } from './ncc/resolver'
 import type { PinStore } from './pins'
 import type { BrowserShell } from './shell'
@@ -9,6 +11,8 @@ export interface IpcDeps {
   config: ConfigStore
   resolver: NccResolver
   pins: PinStore
+  cacheStore: LocatorCacheStore
+  health: EndpointHealth
 }
 
 export function registerIpc(deps: IpcDeps): void {
@@ -19,17 +23,43 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle('ncc:reload', () => deps.shell.reload())
   ipcMain.handle('ncc:stop', () => deps.shell.stop())
 
+  ipcMain.handle('ncc:new-tab', (_event, input: unknown) =>
+    deps.shell.newTab(typeof input === 'string' ? input : undefined)
+  )
+  ipcMain.handle('ncc:close-tab', (_event, id: unknown) =>
+    deps.shell.closeTab(typeof id === 'string' ? id : undefined)
+  )
+  ipcMain.handle('ncc:select-tab', (_event, id: unknown) => {
+    if (typeof id === 'string') deps.shell.selectTab(id)
+  })
+
   ipcMain.handle('ncc:get-state', () => deps.shell.getState())
   ipcMain.handle('ncc:get-config', () => deps.config.get())
 
   ipcMain.handle('ncc:set-relays', (_event, relays: unknown) => {
     try {
       const config = deps.config.setRelays(relays)
-      deps.resolver.clearCache()
-      deps.pins.clear()
+      resetCaches(deps)
       return { ok: true, config }
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
   })
+
+  ipcMain.handle('ncc:set-gossip', (_event, value: unknown) => {
+    try {
+      const config = deps.config.setGossip(value)
+      resetCaches(deps)
+      return { ok: true, config }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+}
+
+function resetCaches(deps: IpcDeps): void {
+  deps.resolver.clearCache()
+  deps.cacheStore.clear()
+  deps.pins.clear()
+  deps.health.clear()
 }

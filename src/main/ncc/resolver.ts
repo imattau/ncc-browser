@@ -23,6 +23,7 @@ import {
   type ResolveOutcome,
   type ResolvedService
 } from '@shared/types'
+import type { LocatorStore } from '../cache-store'
 
 export interface LocatorSigner {
   getPublicKey(): Promise<string> | string
@@ -41,6 +42,10 @@ export interface ResolverOptions {
   /** Upper bound on a positive cache entry, so rotations are noticed. */
   maxCacheSeconds?: number
   negativeCacheSeconds?: number
+  /** Follow the target identity's NIP-65 relay list (kind 10002). */
+  gossip?: () => boolean
+  /** Optional on-disk cache for public records. */
+  cacheStore?: LocatorStore
 }
 
 interface Cached {
@@ -129,6 +134,20 @@ export class NccResolver {
     if (cached && cached.expiresAt > this.now()) return cached.outcome
     if (cached) this.cache.delete(key)
 
+    const persisted = this.options.cacheStore?.get(hex, normalizedService) ?? null
+    if (persisted) {
+      const ttl = Math.min(
+        persisted.expiresAt - this.now(),
+        this.options.maxCacheSeconds ?? DEFAULT_MAX_CACHE_SECONDS
+      )
+      if (ttl > 0) {
+        const outcome: ResolveOutcome = { ok: true, record: persisted }
+        this.cache.set(key, { outcome, expiresAt: this.now() + ttl })
+        return outcome
+      }
+      this.options.cacheStore?.delete(hex, normalizedService)
+    }
+
     const running = this.inflight.get(key)
     if (running) return running
 
@@ -164,10 +183,13 @@ export class NccResolver {
     hexPubkey: string,
     service: string
   ): Promise<ResolveOutcome> {
-    const relays = this.options.relays().filter(Boolean)
-    if (relays.length === 0) {
+    const configured = [...new Set(this.options.relays().filter(Boolean))]
+    if (configured.length === 0) {
       return failure('relay-error', 'No relays are configured')
     }
+
+    const discovered = this.shouldGossip() ? await this.discoverRelays(hexPubkey, configured) : []
+    const relays = [...new Set([...configured, ...discovered])]
 
     const candidates = candidateDTags(service)
     let events: Event[]
@@ -255,6 +277,8 @@ export class NccResolver {
           encrypted: decoded.value.encrypted
         }
 
+        if (!record.encrypted) this.options.cacheStore?.set(record)
+
         return { ok: true, record }
       }
     }
@@ -280,6 +304,48 @@ export class NccResolver {
       'No NCC-05 locator found for this service',
       `Tried d=${candidates.join(', ')} on ${relays.length} relay(s)`
     )
+  }
+
+  /** Follow the target's NIP-65 list, read-only entries only, capped and deduped. */
+  private async discoverRelays(hexPubkey: string, configured: string[]): Promise<string[]> {
+    try {
+      const events = await withTimeout(
+        this.query(configured, { kinds: [10002], authors: [hexPubkey], limit: 5 }),
+        Math.min(this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS, 4000)
+      )
+
+      const relayList = events
+        .filter((event) => event.kind === 10002 && event.pubkey === hexPubkey && verifyEvent(event))
+        .sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id))[0]
+      if (!relayList) return []
+
+      const relays: string[] = []
+      for (const tag of relayList.tags) {
+        if (tag[0] !== 'r' || !tag[1]) continue
+        if (tag[2] === 'write') continue // NCC-05 §2.1: read or both
+        let url: URL
+        try {
+          url = new URL(tag[1])
+        } catch {
+          continue
+        }
+        if (url.protocol !== 'wss:' && url.protocol !== 'ws:') continue
+        const value = tag[1].replace(/\/$/, '')
+        if (!relays.includes(value) && !configured.includes(value)) relays.push(value)
+      }
+      return relays.slice(0, 8)
+    } catch {
+      // Gossip is a hint mechanism; its failure must not affect resolution.
+      return []
+    }
+  }
+
+  private shouldGossip(): boolean {
+    try {
+      return this.options.gossip?.() === true
+    } catch {
+      return false
+    }
   }
 
   private async decode(event: Event): Promise<DecodeResult> {

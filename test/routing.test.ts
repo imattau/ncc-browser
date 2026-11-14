@@ -28,20 +28,20 @@ describe('joinPaths', () => {
 
 describe('rewriteLocation', () => {
   it('rewrites a relative redirect into the service namespace', () => {
-    expect(rewriteLocation('/login', context())).toBe(`ncc://${PUBKEY}/web/login`)
-    expect(rewriteLocation('next', context())).toBe(`ncc://${PUBKEY}/web/next`)
+    expect(rewriteLocation('/login', context())).toBe(`ncc://${PUBKEY}/_/web/login`)
+    expect(rewriteLocation('next', context())).toBe(`ncc://${PUBKEY}/_/web/next`)
   })
 
   it('rewrites redirects to the same endpoint origin', () => {
     expect(rewriteLocation(`${ENDPOINT}/home?x=1#top`, context())).toBe(
-      `ncc://${PUBKEY}/web/home?x=1#top`
+      `ncc://${PUBKEY}/_/web/home?x=1#top`
     )
   })
 
   it('rewrites redirects to the same owner but another endpoint', () => {
     const owners = new Map([[`https://other.example`, { pubkey: PUBKEY, service: 'api' }]])
     expect(rewriteLocation('https://other.example/v1', context({ endpointOwners: owners }))).toBe(
-      `ncc://${PUBKEY}/api/v1`
+      `ncc://${PUBKEY}/_/api/v1`
     )
   })
 
@@ -59,7 +59,7 @@ describe('rewriteLocation', () => {
   })
 
   it('keeps an already-service-prefixed ncc path from doubling', () => {
-    expect(withService(PUBKEY, 'web', '/web/a', '?q=1')).toBe(`ncc://${PUBKEY}/web/a?q=1`)
-    expect(withService(PUBKEY, 'web', '/a')).toBe(`ncc://${PUBKEY}/web/a`)
+    expect(withService(PUBKEY, 'web', '/web/a', '?q=1')).toBe(`ncc://${PUBKEY}/_/web/a?q=1`)
+    expect(withService(PUBKEY, 'web', '/a')).toBe(`ncc://${PUBKEY}/_/web/a`)
   })
 })

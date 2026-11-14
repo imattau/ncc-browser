@@ -4,7 +4,7 @@
  * Electron.
  */
 
-import { buildNccUrl } from '@shared/ncc-url'
+import { buildInternalUrl } from '@shared/ncc-url'
 
 export interface RewriteContext {
   pubkey: string
@@ -43,7 +43,7 @@ export function rewriteLocation(location: string, context: RewriteContext): stri
   if (resolved.protocol !== 'http:' && resolved.protocol !== 'https:') return location
 
   if (resolved.origin === context.endpointOrigin) {
-    return buildNccUrl({
+    return buildInternalUrl({
       pubkey: context.pubkey,
       service: context.service,
       path: resolved.pathname,
@@ -54,7 +54,7 @@ export function rewriteLocation(location: string, context: RewriteContext): stri
 
   const owner = context.endpointOwners.get(resolved.origin)
   if (owner && owner.pubkey === context.pubkey) {
-    return buildNccUrl({
+    return buildInternalUrl({
       pubkey: owner.pubkey,
       service: owner.service,
       path: resolved.pathname,
@@ -77,7 +77,7 @@ export function withService(
   const prefix = `/${service}`
   const path =
     pathname === prefix || pathname.startsWith(`${prefix}/`) ? pathname.slice(prefix.length) : pathname
-  return buildNccUrl({
+  return buildInternalUrl({
     pubkey,
     service,
     path: path || '/',

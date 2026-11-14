@@ -14,7 +14,7 @@ import { spawn } from 'node:child_process'
 import { createHash, createPublicKey } from 'node:crypto'
 import { createServer } from 'node:http'
 import { createServer as createHttpsServer } from 'node:https'
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { WebSocketServer, WebSocket } from 'ws'
@@ -47,6 +47,7 @@ function matches(filters, event) {
 }
 
 async function startRelay() {
+  const events = []
   const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 })
   await new Promise((resolve) => wss.once('listening', resolve))
 
@@ -61,14 +62,14 @@ async function startRelay() {
       const [verb, ...rest] = message
       if (verb === 'REQ') {
         const [subId, ...filters] = rest
-        for (const event of relayEvents) {
+        for (const event of events) {
           if (matches(filters, event)) socket.send(JSON.stringify(['EVENT', subId, event]))
         }
         socket.send(JSON.stringify(['EOSE', subId]))
       }
       if (verb === 'EVENT') {
         const event = rest[0]
-        relayEvents.push(event)
+        events.push(event)
         socket.send(JSON.stringify(['OK', event.id, true, '']))
       }
       if (verb === 'CLOSE') {
@@ -77,15 +78,16 @@ async function startRelay() {
     })
   })
 
-  return { wss, port: wss.address().port }
+  return { wss, port: wss.address().port, events }
 }
 
-async function startService() {
+async function startService(npub) {
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>NCC E2E</title>
 <link rel="stylesheet" href="/style.css"></head>
 <body><h1 id="headline">NCC E2E OK</h1>
 <p id="proxied">resolved-and-proxied</p>
-<a id="next" href="second">second</a></body></html>`
+<a id="next" href="second">second</a>
+<a id="cross" href="ncc://${npub}/_/secure/">secure service</a></body></html>`
 
   const server = createServer((request, response) => {
     if (request.url === '/style.css') {
@@ -98,6 +100,11 @@ async function startService() {
       response.end('<!doctype html><title>Second</title><h1 id="second">SECOND PAGE</h1>')
       return
     }
+    if (request.url === '/hinted') {
+      response.writeHead(200, { 'content-type': 'text/html' })
+      response.end('<!doctype html><title>Hinted</title><h1 id="hinted">HINTED OK</h1>')
+      return
+    }
     response.writeHead(200, { 'content-type': 'text/html' })
     response.end(html)
   })
@@ -106,7 +113,7 @@ async function startService() {
   return { server, port: server.address().port }
 }
 
-function publishLocator(d, endpoints) {
+function publishLocator(relay, d, endpoints) {
   const content = JSON.stringify({
     v: 1,
     ttl: 3600,
@@ -122,7 +129,21 @@ function publishLocator(d, endpoints) {
     },
     serviceSk
   )
-  relayEvents.push(event)
+  relay.events.push(event)
+  return event
+}
+
+function publishRelayList(relay, hintRelayUrl) {
+  const event = finalizeEvent(
+    {
+      kind: 10002,
+      created_at: Math.floor(Date.now() / 1000),
+      tags: [['r', hintRelayUrl]],
+      content: ''
+    },
+    serviceSk
+  )
+  relay.events.push(event)
   return event
 }
 
@@ -251,8 +272,9 @@ async function startXvfb() {
 async function main() {
   mkdirSync(ARTIFACTS, { recursive: true })
 
-  const { wss, port: relayPort } = await startRelay()
-  const { server, port: servicePort } = await startService()
+  const relayA = await startRelay()
+  const relayB = await startRelay()
+  const { server, port: servicePort } = await startService(serviceNpub)
 
   // Two HTTPS services on different loopback addresses: one presents the pinned
   // certificate, the other presents a different one while claiming the same `k`.
@@ -270,16 +292,23 @@ async function main() {
   const secure = await startSecureService('127.0.0.1', goodCert.cert, goodCert.private, 'SECURE OK')
   const bogus = await startSecureService('127.0.0.2', badCert.cert, badCert.private, 'BOGUS OK')
 
-  const event = publishLocator('web', [
+  const event = publishLocator(relayA, 'web', [
     { type: 'http', uri: `127.0.0.1:${servicePort}`, priority: 1, family: 'ipv4' }
   ])
-  publishLocator('secure', [
+  publishLocator(relayA, 'secure', [
     { type: 'https', uri: `127.0.0.1:${secure.port}`, priority: 1, family: 'ipv4', k: pinnedK }
   ])
-  publishLocator('bogus', [
+  publishLocator(relayA, 'bogus', [
     { type: 'https', uri: `127.0.0.2:${bogus.port}`, priority: 1, family: 'ipv4', k: pinnedK }
   ])
-  console.log(`relay ws://127.0.0.1:${relayPort} · service http://127.0.0.1:${servicePort}`)
+  // `hinted` only exists on relay B; relay A holds the NIP-65 list pointing there.
+  publishRelayList(relayA, `ws://127.0.0.1:${relayB.port}`)
+  publishLocator(relayB, 'hinted', [
+    { type: 'http', uri: `127.0.0.1:${servicePort}`, priority: 1, family: 'ipv4' }
+  ])
+
+  console.log(`relay A ws://127.0.0.1:${relayA.port} · relay B ws://127.0.0.1:${relayB.port}`)
+  console.log(`service http://127.0.0.1:${servicePort}`)
   console.log(`pinned https://127.0.0.1:${secure.port} · k ${pinnedK.slice(0, 12)}…`)
   console.log(`npub ${serviceNpub} · locator ${event.id.slice(0, 12)}…`)
 
@@ -288,7 +317,7 @@ async function main() {
   mkdirSync(userData, { recursive: true })
   writeFileSync(
     join(userData, 'config.json'),
-    `${JSON.stringify({ relays: [`ws://127.0.0.1:${relayPort}`] }, null, 2)}\n`
+    `${JSON.stringify({ relays: [`ws://127.0.0.1:${relayA.port}`], gossip: true }, null, 2)}\n`
   )
 
   const xvfb = await startXvfb()
@@ -329,7 +358,8 @@ async function main() {
     server.close()
     secure.server.close()
     bogus.server.close()
-    wss.close()
+    relayA.wss.close()
+    relayB.wss.close()
   }
 
   try {
@@ -349,14 +379,14 @@ async function main() {
     const href = await evaluate(cdp, 'document.querySelector("#next")?.href ?? ""')
     check(
       'relative links resolve inside the service',
-      String(href) === `ncc://${serviceNpub}/web/second`,
+      String(href) === `ncc://${serviceNpub}/_/web/second`,
       String(href)
     )
 
     const location = await evaluate(cdp, 'location.href')
     check(
       'document URL keeps the service namespace',
-      String(location) === `ncc://${serviceNpub}/web/`,
+      String(location) === `ncc://${serviceNpub}/_/web/`,
       String(location)
     )
 
@@ -372,18 +402,45 @@ async function main() {
       chrome,
       'document.querySelector(\'input[aria-label="Address"]\')?.value ?? ""'
     )
-    check('address bar shows the ncc address', String(address).includes(serviceNpub), String(address))
+    check(
+      'address bar shows the clean ncc address',
+      String(address) === `ncc://${serviceNpub}/web/`,
+      String(address)
+    )
+    check('address bar hides the internal service prefix', !String(address).includes('/_/'), String(address))
 
     const chromeText = await evaluate(chrome, 'document.body.innerText')
     check('toolbar reports plaintext transport', String(chromeText).includes('plaintext'), String(chromeText))
 
-    // Pinned TLS: a self-signed certificate whose SPKI matches the locator's k.
-    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/secure/` })
+    // ncc:// links inside content must go through the shell so the service changes.
+    await evaluate(cdp, 'document.querySelector("#cross").click()')
     const secureText = await waitForText(cdp, 'SECURE OK', 80)
-    check('loads a self-signed endpoint pinned by k', secureText.includes('SECURE OK'))
+    check('ncc:// link switches service', secureText.includes('SECURE OK'))
     await sleep(250)
     const pinnedText = await evaluate(chrome, 'document.body.innerText')
     check('toolbar reports pinned transport', String(pinnedText).includes('pinned'), String(pinnedText))
+
+    // Tabs + gossip: a new tab resolves a service that only exists on the hinted relay.
+    await evaluate(chrome, 'window.ncc.newTab()')
+    await evaluate(chrome, `window.ncc.navigate('ncc://${serviceNpub}/_/hinted/hinted')`)
+    const hintedTarget = await waitForTarget((entry) => entry.url?.includes('/hinted/hinted'))
+    const hinted = new Cdp(hintedTarget.webSocketDebuggerUrl)
+    await hinted.connect()
+    const hintedText = await waitForText(hinted, 'HINTED OK', 80)
+    check('follows NIP-65 relay hints', hintedText.includes('HINTED OK'))
+
+    await sleep(300)
+    const tabCount = await evaluate(chrome, 'document.querySelectorAll(\'[role="tab"]\').length')
+    check('opens a second tab', tabCount === 2, `(got ${tabCount})`)
+
+    const tabsShot = await chrome.send('Page.captureScreenshot', { format: 'png' })
+    writeFileSync(join(ARTIFACTS, 'tabs.png'), Buffer.from(tabsShot.data, 'base64'))
+
+    await evaluate(chrome, 'window.ncc.closeTab()')
+    await sleep(300)
+    const afterClose = await evaluate(chrome, 'document.querySelectorAll(\'[role="tab"]\').length')
+    check('closes the active tab', afterClose === 1, `(got ${afterClose})`)
+    hinted.close()
 
     // Mismatch: same k, different certificate. Must fail closed.
     await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/bogus/` })
@@ -412,6 +469,15 @@ async function main() {
 
     const errorShot = await cdp.send('Page.captureScreenshot', { format: 'png' })
     writeFileSync(join(ARTIFACTS, 'no-record.png'), Buffer.from(errorShot.data, 'base64'))
+
+    // The locator cache lives next to the config and holds only public records.
+    const cachePath = join(userData, 'locator-cache.json')
+    check('persists resolved locators to disk', existsSync(cachePath))
+    if (existsSync(cachePath)) {
+      const cached = JSON.parse(readFileSync(cachePath, 'utf8'))
+      check('cache contains resolved services', Object.keys(cached.entries ?? {}).length >= 2)
+      check('cache never contains encrypted records', !/\"encrypted\":\s*true/.test(readFileSync(cachePath, 'utf8')))
+    }
 
     cdp.close()
     chrome.close()

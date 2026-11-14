@@ -10,6 +10,7 @@ import {
 } from 'nostr-tools'
 import { NccResolver, signerFromSecret, toHexPubkey } from '../src/main/ncc/resolver'
 import type { QueryFn } from '../src/main/ncc/resolver'
+import type { ResolvedService } from '../src/shared/types'
 
 const NOW = 1_800_000_000
 const AUTHOR_SK = generateSecretKey()
@@ -60,6 +61,24 @@ function locatorEvent(options: EventOptions = {}): Event {
     },
     options.secretKey ?? AUTHOR_SK
   )
+}
+
+function relayListEvent(tags: string[][], createdAt = NOW - 5): Event {
+  return finalizeEvent({ kind: 10002, created_at: createdAt, tags, content: '' }, AUTHOR_SK)
+}
+
+function memoryStore() {
+  const map = new Map<string, ResolvedService>()
+  return {
+    map,
+    get: (hex: string, service: string) => map.get(`${hex}:${service}`) ?? null,
+    set: (record: ResolvedService) => {
+      map.set(`${record.hexPubkey}:${record.service}`, record)
+    },
+    delete: (hex: string, service: string) => {
+      map.delete(`${hex}:${service}`)
+    }
+  }
 }
 
 function resolverWith(events: Event[] | QueryFn, overrides: Partial<ConstructorParameters<typeof NccResolver>[0]> = {}) {
@@ -287,5 +306,95 @@ describe('NccResolver', () => {
     if (outcome.ok) return
     expect(outcome.code).toBe('invalid-address')
     expect(query).not.toHaveBeenCalled()
+  })
+
+  it('follows NIP-65 relay hints when gossip is enabled', async () => {
+    const calls: Array<{ relays: string[]; filter: Filter }> = []
+    const query: QueryFn = async (relays, filter) => {
+      calls.push({ relays, filter })
+      if (filter.kinds?.includes(10002)) {
+        return [relayListEvent([['r', 'wss://hint.example'], ['r', 'wss://write.example', 'write']])]
+      }
+      return relays.includes('wss://hint.example') ? [locatorEvent()] : []
+    }
+
+    const resolver = new NccResolver({
+      relays: () => ['wss://primary.example'],
+      query,
+      now: () => NOW,
+      gossip: () => true
+    })
+
+    const outcome = await resolver.resolve(NPUB)
+    expect(outcome.ok).toBe(true)
+
+    const locatorCall = calls.find((call) => call.filter.kinds?.includes(30058))
+    expect(locatorCall?.relays).toContain('wss://primary.example')
+    expect(locatorCall?.relays).toContain('wss://hint.example')
+    expect(locatorCall?.relays).not.toContain('wss://write.example')
+  })
+
+  it('does not ask for a relay list when gossip is disabled', async () => {
+    const query = vi.fn<QueryFn>(async (_relays, filter) =>
+      filter.kinds?.includes(10002) ? [] : [locatorEvent()]
+    )
+    const resolver = new NccResolver({
+      relays: () => ['wss://primary.example'],
+      query,
+      now: () => NOW,
+      gossip: () => false
+    })
+    await resolver.resolve(NPUB)
+    expect(query.mock.calls.some((call) => call[1].kinds?.includes(10002))).toBe(false)
+  })
+
+  it('resolves anyway when the gossip lookup fails', async () => {
+    const query: QueryFn = async (_relays, filter) => {
+      if (filter.kinds?.includes(10002)) throw new Error('hint relay down')
+      return [locatorEvent()]
+    }
+    const resolver = new NccResolver({
+      relays: () => ['wss://primary.example'],
+      query,
+      now: () => NOW,
+      gossip: () => true
+    })
+    const outcome = await resolver.resolve(NPUB)
+    expect(outcome.ok).toBe(true)
+  })
+
+  it('reads public records from the persistent store without querying', async () => {
+    const store = memoryStore()
+    const first = resolverWith([locatorEvent()], { cacheStore: store }).resolver
+    const initial = await first.resolve(NPUB)
+    expect(initial.ok).toBe(true)
+    expect(store.map.size).toBe(1)
+
+    const query = vi.fn<QueryFn>(async () => {
+      throw new Error('should not query relays')
+    })
+    const second = new NccResolver({
+      relays: () => ['wss://relay.test'],
+      query,
+      now: () => NOW,
+      cacheStore: store
+    })
+    const outcome = await second.resolve(NPUB)
+    expect(outcome.ok).toBe(true)
+    if (!initial.ok || !outcome.ok) return
+    expect(outcome.record.eventId).toBe(initial.record.eventId)
+    expect(query).not.toHaveBeenCalled()
+  })
+
+  it('never persists an encrypted record', async () => {
+    const readerSk = generateSecretKey()
+    const store = memoryStore()
+    const resolver = resolverWith([locatorEvent({ encryptTo: getPublicKey(readerSk) })], {
+      signer: signerFromSecret(readerSk),
+      cacheStore: store
+    }).resolver
+    const outcome = await resolver.resolve(NPUB)
+    expect(outcome.ok).toBe(true)
+    expect(store.map.size).toBe(0)
   })
 })

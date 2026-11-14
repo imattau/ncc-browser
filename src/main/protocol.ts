@@ -1,7 +1,8 @@
 import { protocol, type Session } from 'electron'
-import { isNostrId, routeNccPath } from '@shared/ncc-url'
+import { isNostrId, routeNccPath, serviceFromReferer } from '@shared/ncc-url'
 import type { TransportSecurity } from '@shared/types'
 import { renderErrorPage, renderPlainFailure } from './error-page'
+import { orderByHealth, type EndpointHealth } from './ncc/health'
 import { joinPaths, rewriteLocation } from './ncc/routing'
 import type { NccResolver } from './ncc/resolver'
 import type { PinStore } from './pins'
@@ -46,6 +47,7 @@ export interface ProtocolDeps {
   session: Session
   resolver: NccResolver
   pins: PinStore
+  health: EndpointHealth
   activeService: Map<string, string>
   /** Endpoint origin → the NCC address it was resolved for, used to rewrite redirects. */
   endpointOwners: Map<string, { pubkey: string; service: string }>
@@ -93,7 +95,12 @@ async function handleNccRequest(request: Request, deps: ProtocolDeps): Promise<R
     )
   }
 
-  const routed = routeNccPath(requestUrl.pathname, deps.activeService.get(pubkey) ?? null)
+  const refererService = serviceFromReferer(request.headers.get('referer'), pubkey)
+  const routed = routeNccPath(
+    requestUrl.pathname,
+    deps.activeService.get(pubkey) ?? null,
+    refererService
+  )
   if (!routed) {
     return failureResponse(request, 'invalid-address', 'Could not determine the service', request.url)
   }
@@ -116,7 +123,7 @@ async function handleNccRequest(request: Request, deps: ProtocolDeps): Promise<R
   const failures: string[] = []
   let certificateFailure: 'k-mismatch' | 'certificate-expired' | null = null
 
-  for (const endpoint of outcome.record.endpoints) {
+  for (const endpoint of orderByHealth(outcome.record.endpoints, deps.health)) {
     let target: URL
     try {
       target = new URL(endpoint.url)
@@ -138,6 +145,7 @@ async function handleNccRequest(request: Request, deps: ProtocolDeps): Promise<R
       response = await deps.session.fetch(target.toString(), forwardedInit(request, target, pubkey))
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
+      deps.health.recordFailure(endpoint.url)
       const rejection = endpoint.k ? deps.pins.consumeRejection(target.hostname) : undefined
       failures.push(`${target.host}: ${message}${rejection ? ` (${rejection.reason})` : ''}`)
 
@@ -151,6 +159,8 @@ async function handleNccRequest(request: Request, deps: ProtocolDeps): Promise<R
       }
       continue
     }
+
+    deps.health.recordSuccess(endpoint.url)
 
     if (isDocumentRequest(request)) {
       const transport: TransportSecurity =

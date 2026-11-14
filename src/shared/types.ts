@@ -69,6 +69,22 @@ export interface SecurityInfo {
 
 export type PageMode = 'blank' | 'ncc' | 'web' | 'error'
 
+export interface TabSummary {
+  id: string
+  title: string
+  url: string
+  loading: boolean
+}
+
+export type DownloadState = 'started' | 'completed' | 'failed' | 'cancelled'
+
+export interface DownloadNotice {
+  id: string
+  filename: string
+  state: DownloadState
+  path?: string
+}
+
 export interface NavState {
   mode: PageMode
   /** Canonical address shown in the address bar. */
@@ -80,10 +96,14 @@ export interface NavState {
   canGoForward: boolean
   security: SecurityInfo | null
   failure: { code: string; message: string } | null
+  tabs: TabSummary[]
+  activeTabId: string | null
 }
 
 export interface AppConfig {
   relays: string[]
+  /** Follow NIP-65 relay hints published by the target identity. */
+  gossip: boolean
 }
 
 export const DEFAULT_RELAYS = [

@@ -9,6 +9,7 @@ interface SettingsDialogProps {
 
 export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const [draft, setDraft] = useState('')
+  const [gossip, setGossip] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -17,7 +18,10 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     if (!open) return
     setError(null)
     setSaved(false)
-    void window.ncc.getConfig().then((config) => setDraft(config.relays.join('\n')))
+    void window.ncc.getConfig().then((config) => {
+      setDraft(config.relays.join('\n'))
+      setGossip(config.gossip)
+    })
   }, [open])
 
   useEffect(() => {
@@ -41,13 +45,26 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       .split('\n')
       .map((line) => line.trim())
       .filter(Boolean)
-    const result = await window.ncc.setRelays(relays)
-    setLoading(false)
-    if (!result.ok) {
-      setError(result.error ?? 'Could not save relays')
+
+    const relayResult = await window.ncc.setRelays(relays)
+    if (!relayResult.ok) {
+      setLoading(false)
+      setError(relayResult.error ?? 'Could not save relays')
       return
     }
-    setDraft((result.config?.relays ?? relays).join('\n'))
+
+    const gossipResult = await window.ncc.setGossip(gossip)
+    setLoading(false)
+    if (!gossipResult.ok) {
+      setError(gossipResult.error ?? 'Could not save gossip setting')
+      return
+    }
+
+    const config = gossipResult.config ?? relayResult.config
+    if (config) {
+      setDraft(config.relays.join('\n'))
+      setGossip(config.gossip)
+    }
     setSaved(true)
   }
 
@@ -92,13 +109,34 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             <p className="mt-2 text-xs text-[color:var(--color-danger)]">{error}</p>
           ) : saved ? (
             <p className="mt-2 text-xs text-[color:var(--color-ok)]">
-              Saved. The resolver cache was cleared.
+              Saved. The resolver and locator cache were cleared.
             </p>
           ) : (
             <p className="mt-2 text-xs text-[color:var(--color-muted)]">
               Defaults: {DEFAULT_RELAYS.join(', ')}
             </p>
           )}
+
+          <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] p-3.5">
+            <input
+              type="checkbox"
+              checked={gossip}
+              onChange={(event) => {
+                setGossip(event.target.checked)
+                setSaved(false)
+              }}
+              className="mt-0.5 h-4 w-4 accent-[color:var(--color-accent)]"
+            />
+            <span>
+              <span className="block text-[12px] font-medium text-[#e7e9ef]">
+                Follow NIP-65 relay hints
+              </span>
+              <span className="mt-0.5 block text-[11.5px] leading-relaxed text-[color:var(--color-muted)]">
+                Ask the target identity&apos;s relay list where it actually publishes. More
+                reliable, at the cost of one extra metadata lookup on the configured relays.
+              </span>
+            </span>
+          </label>
         </div>
 
         <div className="flex items-center justify-between gap-2 border-t border-[color:var(--color-line)] px-5 py-3.5">

@@ -20,16 +20,23 @@ export function AddressBar({ value, loading, hint, onNavigate, onFocusChange }: 
   }, [value, focused])
 
   useEffect(() => {
+    const focusAddress = (): void => {
+      inputRef.current?.focus()
+      inputRef.current?.select()
+    }
     const onKeyDown = (event: KeyboardEvent): void => {
       const modifier = event.metaKey || event.ctrlKey
       if (modifier && event.key.toLowerCase() === 'l') {
         event.preventDefault()
-        inputRef.current?.focus()
-        inputRef.current?.select()
+        focusAddress()
       }
     }
     window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
+    window.addEventListener('ncc:focus-address', focusAddress)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('ncc:focus-address', focusAddress)
+    }
   }, [])
 
   return (

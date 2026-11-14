@@ -33,16 +33,25 @@ export class ConfigStore {
     return this.get()
   }
 
+  setGossip(value: unknown): AppConfig {
+    this.config = { ...this.get(), gossip: value === true }
+    this.write()
+    return this.get()
+  }
+
   private read(): AppConfig {
     try {
       if (existsSync(this.path)) {
         const parsed = JSON.parse(readFileSync(this.path, 'utf8')) as Partial<AppConfig>
-        return { relays: normalizeRelays(parsed.relays ?? defaultRelays()) }
+        return {
+          relays: normalizeRelays(parsed.relays ?? defaultRelays()),
+          gossip: parsed.gossip !== false
+        }
       }
     } catch (error) {
       console.warn('[config] could not read config, using defaults:', error)
     }
-    return { relays: defaultRelays() }
+    return { relays: defaultRelays(), gossip: true }
   }
 
   private write(): void {

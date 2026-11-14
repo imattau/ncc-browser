@@ -5,6 +5,9 @@ import {
   looksLikeNccInput,
   parseNccAddress,
   routeNccPath,
+  serviceFromReferer,
+  toDisplayUrl,
+  toInternalUrl,
   toLoadUrl
 } from '../src/shared/ncc-url'
 
@@ -54,6 +57,13 @@ describe('parseNccAddress', () => {
     expect(() => parseNccAddress('')).toThrow(/Enter an address/)
   })
 
+  it('parses the explicit /_/<service>/ form', () => {
+    const address = parseNccAddress(`ncc://${NPUB}/_/secure/x`)
+    expect(address.service).toBe('secure')
+    expect(address.path).toBe('/x')
+    expect(parseNccAddress(`ncc://${NPUB}/_/secure/`).path).toBe('/')
+  })
+
   it('rejects hosts that are not npubs', () => {
     expect(() => parseNccAddress('ncc://example.com/web')).toThrow(/npub/)
   })
@@ -87,6 +97,17 @@ describe('buildNccUrl', () => {
     expect(toLoadUrl(parseNccAddress(`ncc://${NPUB}/web/x`))).toBe(`ncc://${NPUB}/web/x`)
     expect(toLoadUrl(parseNccAddress(`ncc://${NPUB}`))).toBe(`ncc://${NPUB}/`)
   })
+
+  it('builds an unambiguous internal URL and a clean display URL', () => {
+    const address = parseNccAddress(`ncc://${NPUB}/web/docs?x=1#top`)
+    const internal = toInternalUrl(address)
+    expect(internal).toBe(`ncc://${NPUB}/_/web/docs?x=1#top`)
+    expect(toDisplayUrl(internal)).toBe(`ncc://${NPUB}/web/docs?x=1#top`)
+
+    expect(toDisplayUrl(`ncc://${NPUB}/_/addr/`)).toBe(`ncc://${NPUB}/`)
+    expect(toInternalUrl(parseNccAddress(`ncc://${NPUB}`))).toBe(`ncc://${NPUB}/_/addr/`)
+    expect(toDisplayUrl('https://example.com')).toBe('https://example.com')
+  })
 })
 
 describe('routeNccPath', () => {
@@ -104,9 +125,35 @@ describe('routeNccPath', () => {
     expect(routeNccPath('/_/web', null)).toEqual({ service: 'web', path: '/' })
   })
 
+  it('prefers the referrer service over the active service', () => {
+    expect(routeNccPath('/style.css', 'active', 'referring')).toEqual({
+      service: 'referring',
+      path: '/style.css'
+    })
+    expect(routeNccPath('/_/explicit/x', 'active', 'referring')).toEqual({
+      service: 'explicit',
+      path: '/x'
+    })
+  })
+
   it('rejects an empty or invalid explicit service', () => {
     expect(routeNccPath('/_/', null)).toBeNull()
     expect(routeNccPath('/_/bad%2Fname', null)).toBeNull()
+  })
+})
+
+describe('serviceFromReferer', () => {
+  it('extracts the service from a same-origin referer', () => {
+    expect(serviceFromReferer(`ncc://${NPUB}/web/docs`, NPUB)).toBe('web')
+    expect(serviceFromReferer(`ncc://${NPUB}/_/api/v1`, NPUB)).toBe('api')
+    expect(serviceFromReferer(`ncc://${NPUB.toUpperCase()}/web/`, NPUB)).toBe('web')
+  })
+
+  it('ignores referers from another identity or scheme', () => {
+    expect(serviceFromReferer(`ncc://${HEX}/web/`, NPUB)).toBeNull()
+    expect(serviceFromReferer('https://example.com/web', NPUB)).toBeNull()
+    expect(serviceFromReferer(null, NPUB)).toBeNull()
+    expect(serviceFromReferer(`ncc://${NPUB}/`, NPUB)).toBeNull()
   })
 })
 
