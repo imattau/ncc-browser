@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 import { ERROR_COPY } from '@shared/types'
 import type { AnchorInfo, NavState, TransportSecurity } from '@shared/types'
+import { clearnetState } from '../lib/clearnet'
 import { cn } from '../lib/cn'
 import { Popover } from './Popover'
 
@@ -59,18 +60,7 @@ export function SiteInfoPanel({
       <div className="space-y-3 px-2 py-1.5">
         {failure ? <FailureBlock code={failure.code} message={failure.message} /> : null}
 
-        {web ? (
-          <div className="flex items-start gap-2 rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] p-3">
-            <Globe className="mt-0.5 h-4 w-4 shrink-0 text-[color:var(--color-muted)]" />
-            <div>
-              <p className="text-[12px] font-medium text-[#e7e9ef]">Clearnet page</p>
-              <p className="mt-1 text-[11px] leading-relaxed text-[color:var(--color-muted)]">
-                Loaded directly with normal Chromium transport security. NCC resolution
-                and NCC-02 anchoring were not involved.
-              </p>
-            </div>
-          </div>
-        ) : null}
+        {web ? <ClearnetBlock url={state.url || state.displayUrl} /> : null}
 
         {!web && security ? (
           <TransportBlock
@@ -106,6 +96,39 @@ export function SiteInfoPanel({
         ) : null}
       </div>
     </Popover>
+  )
+}
+
+function ClearnetBlock({ url }: { url: string }) {
+  const state = clearnetState(url)
+  const secure = state.label === 'secure'
+  const insecure = state.label === 'insecure'
+  const Icon = secure ? Lock : insecure ? ShieldAlert : Globe
+  const tone = secure
+    ? 'text-[color:var(--color-ok)]'
+    : insecure
+      ? 'text-[color:var(--color-warn)]'
+      : 'text-[color:var(--color-muted)]'
+  const title = secure ? 'Secure HTTPS' : insecure ? 'Not secure (HTTP)' : 'Clearnet page'
+  const hint = secure
+    ? 'Normal CA-validated TLS. NCC resolution and NCC-02 anchoring were not involved.'
+    : insecure
+      ? 'This page travels over plaintext HTTP. Anyone on the network can read or modify it.'
+      : 'Loaded directly from the clearnet. NCC resolution and NCC-02 anchoring were not involved.'
+
+  return (
+    <div className="rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] p-3">
+      <p className={cn('flex items-center gap-1.5 text-[11.5px] font-medium', tone)}>
+        <Icon className="h-3.5 w-3.5" />
+        {title}
+      </p>
+      <p className="mt-1 text-[11px] leading-relaxed text-[color:var(--color-muted)]">
+        {hint}
+      </p>
+      {state.host ? (
+        <p className="mt-1 truncate font-mono text-[10px] text-[#5d6575]">{state.host}</p>
+      ) : null}
+    </div>
   )
 }
 

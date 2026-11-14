@@ -1,5 +1,6 @@
-import { Globe, Lock } from 'lucide-react'
+import { Lock } from 'lucide-react'
 import type { NavState } from '@shared/types'
+import { clearnetState } from '../lib/clearnet'
 import { cn } from '../lib/cn'
 
 interface SecurityButtonProps {
@@ -7,7 +8,7 @@ interface SecurityButtonProps {
   onOpen: () => void
 }
 
-type Tone = 'ok' | 'accent' | 'warn' | 'danger' | 'muted'
+type Tone = 'ok' | 'warn' | 'danger' | 'muted'
 
 /**
  * One compact lock instead of separate transport, anchor and failure chips.
@@ -21,35 +22,39 @@ export function SecurityButton({ state, onOpen }: SecurityButtonProps) {
   const failure = state.failure
   const web = state.mode === 'web'
   const anchor = security?.anchor ?? null
+  const webState = web ? clearnetState(state.url || state.displayUrl) : null
 
   const tone: Tone = failure
     ? 'danger'
-    : web
-      ? 'muted'
+    : webState
+      ? webState.tone
       : !security
         ? 'muted'
         : security.transport === 'pinned-tls'
           ? 'ok'
           : security.transport === 'tls'
-            ? 'accent'
+            ? 'ok'
             : security.transport === 'plaintext'
               ? 'warn'
               : 'muted'
 
   const label = failure
     ? 'failure'
-    : web
-      ? 'web'
+    : webState
+      ? webState.label
       : !security
         ? 'ncc'
         : security.transport
   const anchorState = anchor?.status ?? 'none'
-  const Icon = web ? Globe : Lock
 
   const tooltip = failure
     ? `Security problem: ${failure.code} — click for details`
-    : web
-      ? 'Clearnet page — click for details'
+    : webState
+      ? webState.label === 'secure'
+        ? `Secure HTTPS · ${webState.host} — click for details`
+        : webState.label === 'insecure'
+          ? `Not secure · HTTP · ${webState.host} — click for details`
+          : 'Clearnet page — click for details'
       : !security
         ? 'NCC page — resolution details'
         : `${transportLabel(security.transport)} · ${security.host}${anchor ? ` · NCC-02 ${anchor.status}` : ''} — click for details`
@@ -69,7 +74,7 @@ export function SecurityButton({ state, onOpen }: SecurityButtonProps) {
         toneText(tone)
       )}
     >
-      <Icon className="h-4 w-4" />
+      <Lock className="h-4 w-4" />
       {!web && !failure && anchor ? (
         <span
           aria-hidden
@@ -87,8 +92,6 @@ function toneText(tone: Tone): string {
   switch (tone) {
     case 'ok':
       return 'text-[color:var(--color-ok)]'
-    case 'accent':
-      return 'text-[color:var(--color-accent)]'
     case 'warn':
       return 'text-[color:var(--color-warn)]'
     case 'danger':

@@ -1321,6 +1321,23 @@ async function main() {
       (await evaluate(publisherCdp, 'typeof window.nostr')) === 'object'
     )
 
+    const publisherSecurity = await readSecurity(chrome)
+    check(
+      'clearnet HTTP shows an insecure lock',
+      publisherSecurity?.label === 'insecure' && publisherSecurity?.tone === 'warn',
+      JSON.stringify(publisherSecurity)
+    )
+    const clearnetShot = await chrome.send('Page.captureScreenshot', { format: 'png' })
+    writeFileSync(join(ARTIFACTS, 'clearnet.png'), Buffer.from(clearnetShot.data, 'base64'))
+    await evaluate(chrome, 'document.querySelector("[data-security-button]").click()')
+    await waitForText(chrome, 'Site information', 40)
+    check(
+      'clearnet site info explains HTTP',
+      (await evaluate(chrome, 'document.body.innerText')).includes('Not secure (HTTP)')
+    )
+    await evaluate(chrome, 'document.querySelector(\'[aria-label="Close Site information"]\').click()')
+    await sleep(250)
+
     await evaluate(
       publisherCdp,
       `Array.from(document.querySelectorAll('button')).find((button) => button.textContent.includes('Connect signer')).click()`

@@ -191,14 +191,15 @@ proc records *why* it refused and the protocol handler consumes that record to s
 
 The toolbar has one lock instead of separate transport and trust chips:
 
-- **green** — pinned TLS (the endpoint certificate matches the signed `k`), with a green
-  dot when NCC-02 anchoring is present;
-- **blue** — TLS through normal CA validation;
+- **green** — secure TLS, either pinned (the endpoint certificate matches the signed
+  `k`) or CA-validated, with a green dot when NCC-02 anchoring is present;
 - **amber** — plaintext HTTP (the locator is signed, the content is not authenticated);
 - **red** — the page failed security or resolution (`k-mismatch`, `no-anchor`,
   `no-record`, …).
 
-Clicking the lock opens **Site information**: transport, host, NCC-02 anchor, `u`/`k`,
+Clearnet pages use the same lock: green for HTTPS, amber for plaintext HTTP, and red
+when the page fails to load. Clicking the lock opens **Site information**, where pinned
+TLS is marked `k verified`; it also shows transport, host, NCC-02 anchor, `u`/`k`,
 expiry and the failure explanation. The small dot is the anchor state (green anchored,
 amber expired/invalid, grey unanchored). `TESTKEY:`-style placeholder fingerprints are
 treated as “no pin”, not as a match.
@@ -366,10 +367,11 @@ general IPC bridge.
 ## Testing
 
 ```bash
-npm test       # 221 unit tests: URL parser, locator rules, resolver, routing, pins,
+npm test       # 224 unit tests: URL parser, locator rules, resolver, routing, pins,
                # signer crypto, identity storage, NIP-46, approvals, permissions,
                # shortcuts, context menus, relays, downloads, tab order, bookmarks,
-               # favicons, session storage, NCC-02 anchoring, publisher events
+               # favicons, session storage, NCC-02 anchoring, clearnet lock state,
+               # publisher events
 npm run e2e    # real Electron window against a mock relay and local HTTP services
 ```
 
