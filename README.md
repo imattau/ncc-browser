@@ -99,8 +99,8 @@ working while the remote page has focus.
   Right-click a tab for reload, duplicate, mute, copy address, close, close others and
   close to the right. A blank tab shows the welcome screen.
 - **Toolbar** — back/forward (right-click or hold for a jump list), reload/stop,
-  history, address bar with bookmark star, a single colour-coded security lock,
-  downloads with progress, identity key, hamburger menu.
+  history, address bar with a colour-coded padlock and bookmark star, downloads with
+  progress, identity key, hamburger menu.
 - **Settings** is a page, not a modal: `General`, `Identity & signer`, `Trusted services`
   and `About`, with a back-to-browsing button. `Esc` also leaves it.
 - **Shortcuts** (also shown in the menu): `Ctrl+T`, `Ctrl+W`, `Ctrl+Tab` /
@@ -189,7 +189,7 @@ Chromium reports every refused certificate as a generic `net::ERR_FAILED`, so th
 proc records *why* it refused and the protocol handler consumes that record to show
 `k-mismatch` or `certificate-expired` instead of a vague "unreachable".
 
-The toolbar has one lock instead of separate transport and trust chips:
+The address bar has one padlock instead of separate transport and trust chips:
 
 - **green** — secure TLS, either pinned (the endpoint certificate matches the signed
   `k`) or CA-validated, with a green dot when NCC-02 anchoring is present;
@@ -197,9 +197,9 @@ The toolbar has one lock instead of separate transport and trust chips:
 - **red** — the page failed security or resolution (`k-mismatch`, `no-anchor`,
   `no-record`, …).
 
-Clearnet pages use the same lock: green for HTTPS, amber for plaintext HTTP, and red
-when the page fails to load. Clicking the lock opens **Site information**, where pinned
-TLS is marked `k verified`; it also shows transport, host, NCC-02 anchor, `u`/`k`,
+Clearnet pages use the same padlock: green for HTTPS, amber for plaintext HTTP, and red
+when the page fails to load. Clicking the padlock opens **Site information**, where
+pinned TLS is marked `k verified`; it also shows transport, host, NCC-02 anchor, `u`/`k`,
 expiry and the failure explanation. The small dot is the anchor state (green anchored,
 amber expired/invalid, grey unanchored). `TESTKEY:`-style placeholder fingerprints are
 treated as “no pin”, not as a match.
@@ -218,9 +218,9 @@ default: it uses a fresh NCC-02 record when one exists and flags the service as
 `unanchored` when it does not. Settings → General → **Require NCC-02 service records**
 turns that into a hard requirement.
 
-- **Site information** — click the security lock for the service id, anchor event, `u`
-  endpoint, `k`, key relation, expiry and transport. A red lock means the page failed;
-  its panel carries the error code and explanation.
+- **Site information** — click the address-bar padlock for the service id, anchor event,
+  `u` endpoint, `k`, key relation, expiry and transport. A red padlock means the page
+  failed; its panel carries the error code and explanation.
 - **Fallback** — when NCC-05 has no usable endpoint, a valid NCC-02 `u` endpoint can
   serve the page (marked as an NCC-02 fallback). This is how a private service with no
   public locator still works.
@@ -367,7 +367,7 @@ general IPC bridge.
 ## Testing
 
 ```bash
-npm test       # 224 unit tests: URL parser, locator rules, resolver, routing, pins,
+npm test       # 229 unit tests: URL parser, locator rules, resolver, routing, pins,
                # signer crypto, identity storage, NIP-46, approvals, permissions,
                # shortcuts, context menus, relays, downloads, tab order, bookmarks,
                # favicons, session storage, NCC-02 anchoring, clearnet lock state,
@@ -380,7 +380,8 @@ serves an HTTP page with an external stylesheet, a favicon, a downloadable file,
 self-signed HTTPS services, builds and serves the publisher app, then drives the running
 browser over the Chrome DevTools Protocol. It asserts rendering, subresource proxying,
 relative-link resolution, the synthetic origin, the address bar, the colour-coded
-security lock and its site information panel, refusal of a certificate that does not match `k`, `ncc://` link-driven
+padlock and its site information panel, refusal of a certificate that does not match
+`k`, `ncc://` link-driven
 service switching, NIP-65 gossip to a second relay, tab open/close, drag reordering, mute
 state, tab overflow, the persistent cache and session file on disk, **session restore
 across a real app restart**, the full NIP-07 path (in-app approval sheet, focus

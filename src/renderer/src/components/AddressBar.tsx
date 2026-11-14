@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Lock, Star } from 'lucide-react'
+import type { SecuritySummary } from '../lib/security'
 import { cn } from '../lib/cn'
 
 interface AddressBarProps {
@@ -7,7 +8,9 @@ interface AddressBarProps {
   loading: boolean
   hint: string | null
   bookmarked: boolean
+  security: SecuritySummary
   onToggleBookmark: () => void
+  onOpenSiteInfo: () => void
   onNavigate: (input: string) => void
   onFocusChange?: (focused: boolean) => void
 }
@@ -17,7 +20,9 @@ export function AddressBar({
   loading,
   hint,
   bookmarked,
+  security,
   onToggleBookmark,
+  onOpenSiteInfo,
   onNavigate,
   onFocusChange
 }: AddressBarProps) {
@@ -53,7 +58,32 @@ export function AddressBar({
           focused && 'shadow-[0_0_0_3px_rgba(138,180,255,0.10)]'
         )}
       >
-        <Lock className="h-3.5 w-3.5 shrink-0 text-[color:var(--color-muted)]" />
+        <button
+          type="button"
+          data-security-button
+          data-security-tone={security.tone}
+          data-security-label={security.label}
+          data-anchor-state={security.anchorState}
+          aria-label={`Site security (${security.label})`}
+          title={security.tooltip}
+          disabled={!security.clickable}
+          onClick={onOpenSiteInfo}
+          className={cn(
+            'relative inline-flex h-5 w-5 shrink-0 items-center justify-center rounded transition-colors hover:bg-white/10 disabled:cursor-default disabled:hover:bg-transparent',
+            lockTone(security.tone)
+          )}
+        >
+          <Lock className="h-3.5 w-3.5" />
+          {security.anchorState !== 'none' ? (
+            <span
+              aria-hidden
+              className={cn(
+                'absolute right-0.5 top-0.5 h-1 w-1 rounded-full',
+                anchorDot(security.anchorState)
+              )}
+            />
+          ) : null}
+        </button>
         <input
           ref={inputRef}
           value={draft}
@@ -114,4 +144,25 @@ export function AddressBar({
       ) : null}
     </div>
   )
+}
+
+function lockTone(tone: SecuritySummary['tone']): string {
+  switch (tone) {
+    case 'ok':
+      return 'text-[color:var(--color-ok)]'
+    case 'warn':
+      return 'text-[color:var(--color-warn)]'
+    case 'danger':
+      return 'text-[color:var(--color-danger)]'
+    default:
+      return 'text-[color:var(--color-muted)]'
+  }
+}
+
+function anchorDot(state: string): string {
+  if (state === 'anchored') return 'bg-[color:var(--color-ok)]'
+  if (state === 'expired' || state === 'invalid' || state === 'required-missing') {
+    return 'bg-[color:var(--color-warn)]'
+  }
+  return 'bg-[#5d6575]'
 }

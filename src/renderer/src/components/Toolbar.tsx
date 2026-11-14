@@ -12,7 +12,7 @@ import {
 import type { DownloadNotice, IdentityStatus, NavState } from '@shared/types'
 import { isActiveDownload } from '@shared/downloads'
 import { AddressBar } from './AddressBar'
-import { SecurityButton } from './SecurityButton'
+import { securitySummary } from '../lib/security'
 import { cn } from '../lib/cn'
 
 interface ToolbarProps {
@@ -57,6 +57,7 @@ export function Toolbar({
   onOpenMenu
 }: ToolbarProps) {
   const activeDownloads = downloads.filter((notice) => isActiveDownload(notice.state)).length
+  const security = securitySummary(state)
 
   return (
     <header className="relative z-10 flex h-[60px] shrink-0 items-center gap-2 border-b border-[color:var(--color-line)] bg-[color:var(--color-panel)] px-3">
@@ -98,11 +99,11 @@ export function Toolbar({
         loading={state.loading}
         hint={hint}
         bookmarked={bookmarked}
+        security={security}
         onToggleBookmark={onToggleBookmark}
+        onOpenSiteInfo={onOpenSiteInfo}
         onNavigate={onNavigate}
       />
-
-      <SecurityButton state={state} onOpen={onOpenSiteInfo} />
 
       {downloads.length > 0 ? (
         <button
