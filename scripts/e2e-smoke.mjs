@@ -115,6 +115,7 @@ async function startRelay() {
 }
 
 async function startService(npub) {
+  let counter = 0
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>NCC E2E</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="stylesheet" href="/style.css"></head>
@@ -125,6 +126,15 @@ async function startService(npub) {
 <a id="cross" href="ncc://${npub}/_/secure/">secure service</a></body></html>`
 
   const server = createServer((request, response) => {
+    if (request.url === '/counter') {
+      counter += 1
+      response.writeHead(200, {
+        'content-type': 'text/html',
+        'cache-control': 'public, max-age=3600'
+      })
+      response.end(`<!doctype html><title>Counter</title><h1 id="counter">${counter}</h1>`)
+      return
+    }
     if (request.url === '/style.css') {
       response.writeHead(200, { 'content-type': 'text/css' })
       response.end('body { background-color: rgb(12, 34, 56); }')
@@ -1498,6 +1508,18 @@ async function main() {
     const disabled = await evaluate(chrome, 'window.ncc.setAnchorRequired(false)')
     check('restores optional anchoring', disabled?.config?.anchorRequired === false)
     await sleep(400)
+
+    // The toolbar refresh must bypass the HTTP cache. The test service sets
+    // max-age=3600 and increments a counter per actual document request.
+    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/web/counter` })
+    const counterOne = await waitForText(cdp, '1', 80)
+    check('loads the cache-counter page', counterOne.includes('1'))
+    await evaluate(
+      chrome,
+      'document.querySelector(\'button[aria-label^="Refresh page"]\').click()'
+    )
+    const counterTwo = await waitForText(cdp, '2', 80)
+    check('refresh button bypasses the cache', counterTwo.includes('2'))
 
     // Failure case: a different pubkey with no locator at all.
     await cdp.send('Page.navigate', { url: `ncc://${missingNpub}/web/` })

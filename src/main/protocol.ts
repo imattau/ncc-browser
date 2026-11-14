@@ -184,7 +184,15 @@ async function handleNccRequest(request: Request, deps: ProtocolDeps): Promise<R
       })
     }
 
-    return toBrowserResponse(response, requestUrl, target, pubkey, service, deps)
+    return toBrowserResponse(
+      response,
+      requestUrl,
+      target,
+      pubkey,
+      service,
+      deps,
+      isDocumentRequest(request)
+    )
   }
 
   const code = certificateFailure ?? 'endpoint-unreachable'
@@ -243,13 +251,22 @@ function toBrowserResponse(
   target: URL,
   pubkey: string,
   service: string,
-  deps: ProtocolDeps
+  deps: ProtocolDeps,
+  documentRequest: boolean
 ): Response {
   const headers = new Headers(response.headers)
   for (const name of HOP_BY_HOP) headers.delete(name)
   // fetch already decoded the body, so the originals would corrupt it.
   headers.delete('content-encoding')
   headers.delete('content-length')
+
+  // A top-level ncc:// document is a live view of a locator-bound endpoint. Do not
+  // let Chromium serve a stale cached copy; subresources keep the endpoint's policy.
+  if (documentRequest) {
+    headers.set('cache-control', 'no-store')
+    headers.delete('etag')
+    headers.delete('last-modified')
+  }
 
   const location = headers.get('location')
   if (location) {

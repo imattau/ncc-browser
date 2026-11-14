@@ -26,6 +26,7 @@ export interface NccApi {
   back(): Promise<void>
   forward(): Promise<void>
   reload(): Promise<void>
+  forceReload(): Promise<void>
   stop(): Promise<void>
   newTab(input?: string): Promise<string>
   closeTab(id?: string): Promise<void>

@@ -81,7 +81,7 @@ export function Toolbar({
         <ArrowRight className="h-4 w-4" />
       </NavButton>
       <NavButton
-        label={state.loading ? 'Stop (Esc)' : 'Reload (Ctrl+R)'}
+        label={state.loading ? 'Stop (Esc)' : 'Refresh page, bypassing cache (Ctrl+Shift+R)'}
         onClick={state.loading ? onStop : onReload}
         disabled={state.mode === 'blank'}
       >

@@ -36,6 +36,7 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle('ncc:back', () => deps.shell.back())
   ipcMain.handle('ncc:forward', () => deps.shell.forward())
   ipcMain.handle('ncc:reload', () => deps.shell.reload())
+  ipcMain.handle('ncc:force-reload', () => deps.shell.forceReload())
   ipcMain.handle('ncc:stop', () => deps.shell.stop())
 
   ipcMain.handle('ncc:new-tab', (_event, input: unknown) =>

@@ -320,7 +320,7 @@ export class BrowserShell {
         this.reload()
         break
       case 'force-reload':
-        this.forceReload()
+        void this.forceReload()
         break
       case 'stop':
         this.stop()
@@ -410,8 +410,20 @@ export class BrowserShell {
     this.cycleTab(-1)
   }
 
-  forceReload(): void {
-    this.activeTab()?.view.webContents.reloadIgnoringCache()
+  async forceReload(): Promise<void> {
+    const tab = this.activeTab()
+    if (!tab) return
+    const contents = tab.view.webContents
+    // Chromium keeps custom-scheme documents in the network cache even for
+    // reloadIgnoringCache. Clear the content session first so a forced refresh
+    // actually re-enters the ncc:// handler and fetches the current document.
+    try {
+      await contents.session.clearCache()
+    } catch (error) {
+      console.warn('[shell] could not clear the content cache:', error)
+    }
+    if (contents.isDestroyed()) return
+    contents.reloadIgnoringCache()
   }
 
   zoomIn(): void {

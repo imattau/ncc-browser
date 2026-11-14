@@ -193,7 +193,9 @@ export function App() {
 
   const back = useCallback(() => void window.ncc.back(), [])
   const forward = useCallback(() => void window.ncc.forward(), [])
-  const reload = useCallback(() => void window.ncc.reload(), [])
+  // The toolbar's refresh action bypasses the HTTP cache; Ctrl+R remains a normal
+  // reload, and Ctrl+Shift+R / the menu's Force reload use the same path as this.
+  const reload = useCallback(() => void window.ncc.forceReload(), [])
   const stop = useCallback(() => void window.ncc.stop(), [])
 
   const newTab = useCallback(() => {

@@ -7,6 +7,7 @@ const api: NccApi = {
   back: () => ipcRenderer.invoke('ncc:back'),
   forward: () => ipcRenderer.invoke('ncc:forward'),
   reload: () => ipcRenderer.invoke('ncc:reload'),
+  forceReload: () => ipcRenderer.invoke('ncc:force-reload'),
   stop: () => ipcRenderer.invoke('ncc:stop'),
   newTab: (input) => ipcRenderer.invoke('ncc:new-tab', input),
   closeTab: (id) => ipcRenderer.invoke('ncc:close-tab', id),

@@ -98,15 +98,17 @@ working while the remote page has focus.
   overflow button appears when the strip cannot fit every tab, with a searchable list.
   Right-click a tab for reload, duplicate, mute, copy address, close, close others and
   close to the right. A blank tab shows the welcome screen.
-- **Toolbar** — back/forward (right-click or hold for a jump list), reload/stop,
-  history, address bar with a colour-coded padlock and bookmark star, downloads with
-  progress, identity key, hamburger menu.
+- **Toolbar** — back/forward (right-click or hold for a jump list), reload/stop
+  (the refresh button bypasses the HTTP cache), history, address bar with a
+  colour-coded padlock and bookmark star, downloads with progress, identity key,
+  hamburger menu.
 - **Settings** is a page, not a modal: `General`, `Identity & signer`, `Trusted services`
   and `About`, with a back-to-browsing button. `Esc` also leaves it.
 - **Shortcuts** (also shown in the menu): `Ctrl+T`, `Ctrl+W`, `Ctrl+Tab` /
   `Ctrl+Shift+Tab`, `Ctrl+L`, `Ctrl+R`, `Ctrl+Shift+R`, `Ctrl+.`, `Ctrl+D` (bookmark),
   `Ctrl+H` (history), `Ctrl+J` (downloads), `Alt+←/→`, `Ctrl++/-/0`, `Ctrl+Shift+I/J`,
-  `Ctrl+Q`. On macOS `Cmd` replaces `Ctrl`.
+  `Ctrl+Q`. On macOS `Cmd` replaces `Ctrl`. `Ctrl+R` is a normal reload; the toolbar
+  refresh uses the `Ctrl+Shift+R` path (clear the content session cache, then reload).
 - **Right-click content** — links (open in new tab, copy address), images (open, copy
   address, save), editable fields (cut/copy/paste/select all), plus back/forward/reload
   and inspect element.
@@ -388,7 +390,8 @@ across a real app restart**, the full NIP-07 path (in-app approval sheet, focus
 containment, public key, verifiable signature, NIP-04/44 round-trips, no provider in
 subframes), NCC-02 anchoring (trust panel, `u` fallback, required-mode refusal), the
 settings page, the downloads panel (a real file written to disk), the per-tab history
-panel, bookmarks, the hamburger menu, **real global shortcuts sent through X**
+panel, bookmarks, a toolbar refresh against a `max-age` cached document, the hamburger
+menu, **real global shortcuts sent through X**
 (Ctrl+T/W/L while the page is focused), a **real NIP-46 round-trip against a mock
 bunker** — connect, remote signing, remote decryption of a targeted locator, and
 disconnect — and the **publisher app publishing through the built-in signer and being
