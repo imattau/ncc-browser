@@ -11,12 +11,15 @@
  */
 
 import { spawn } from 'node:child_process'
+import { createHash, createPublicKey } from 'node:crypto'
 import { createServer } from 'node:http'
+import { createServer as createHttpsServer } from 'node:https'
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { WebSocketServer, WebSocket } from 'ws'
 import { finalizeEvent, generateSecretKey, getPublicKey, nip19 } from 'nostr-tools'
+import selfsigned from 'selfsigned'
 
 const ROOT = new URL('..', import.meta.url).pathname
 const ARTIFACTS = '/tmp/opencode/ncc-browser-e2e'
@@ -103,24 +106,38 @@ async function startService() {
   return { server, port: server.address().port }
 }
 
-function publishLocator(port) {
+function publishLocator(d, endpoints) {
   const content = JSON.stringify({
     v: 1,
     ttl: 3600,
     updated_at: Math.floor(Date.now() / 1000),
-    endpoints: [{ type: 'http', uri: `127.0.0.1:${port}`, priority: 1, family: 'ipv4' }]
+    endpoints
   })
   const event = finalizeEvent(
     {
       kind: 30058,
       created_at: Math.floor(Date.now() / 1000),
-      tags: [['d', 'web']],
+      tags: [['d', d]],
       content
     },
     serviceSk
   )
   relayEvents.push(event)
   return event
+}
+
+async function startSecureService(host, cert, key, headline) {
+  const server = createHttpsServer({ cert, key }, (_request, response) => {
+    response.writeHead(200, { 'content-type': 'text/html' })
+    response.end(`<!doctype html><title>secure</title><h1 id="headline">${headline}</h1>`)
+  })
+  await new Promise((resolve) => server.listen(0, host, resolve))
+  return { server, port: server.address().port }
+}
+
+function spkiFingerprint(pem) {
+  const spki = createPublicKey(pem).export({ type: 'spki', format: 'der' })
+  return createHash('sha256').update(spki).digest('base64url')
 }
 
 async function fetchJson(url, attempts = 60) {
@@ -236,8 +253,34 @@ async function main() {
 
   const { wss, port: relayPort } = await startRelay()
   const { server, port: servicePort } = await startService()
-  const event = publishLocator(servicePort)
+
+  // Two HTTPS services on different loopback addresses: one presents the pinned
+  // certificate, the other presents a different one while claiming the same `k`.
+  const goodCert = await selfsigned.generate([{ name: 'commonName', value: '127.0.0.1' }], {
+    notAfterDate: new Date(Date.now() + 2 * 86_400_000),
+    keySize: 2048,
+    extensions: [{ name: 'subjectAltName', altNames: [{ type: 7, ip: '127.0.0.1' }] }]
+  })
+  const badCert = await selfsigned.generate([{ name: 'commonName', value: '127.0.0.2' }], {
+    notAfterDate: new Date(Date.now() + 2 * 86_400_000),
+    keySize: 2048,
+    extensions: [{ name: 'subjectAltName', altNames: [{ type: 7, ip: '127.0.0.2' }] }]
+  })
+  const pinnedK = spkiFingerprint(goodCert.cert)
+  const secure = await startSecureService('127.0.0.1', goodCert.cert, goodCert.private, 'SECURE OK')
+  const bogus = await startSecureService('127.0.0.2', badCert.cert, badCert.private, 'BOGUS OK')
+
+  const event = publishLocator('web', [
+    { type: 'http', uri: `127.0.0.1:${servicePort}`, priority: 1, family: 'ipv4' }
+  ])
+  publishLocator('secure', [
+    { type: 'https', uri: `127.0.0.1:${secure.port}`, priority: 1, family: 'ipv4', k: pinnedK }
+  ])
+  publishLocator('bogus', [
+    { type: 'https', uri: `127.0.0.2:${bogus.port}`, priority: 1, family: 'ipv4', k: pinnedK }
+  ])
   console.log(`relay ws://127.0.0.1:${relayPort} · service http://127.0.0.1:${servicePort}`)
+  console.log(`pinned https://127.0.0.1:${secure.port} · k ${pinnedK.slice(0, 12)}…`)
   console.log(`npub ${serviceNpub} · locator ${event.id.slice(0, 12)}…`)
 
   const configHome = mkdtempSync(join(tmpdir(), 'ncc-e2e-'))
@@ -284,6 +327,8 @@ async function main() {
     electron.kill('SIGTERM')
     xvfb.proc.kill('SIGTERM')
     server.close()
+    secure.server.close()
+    bogus.server.close()
     wss.close()
   }
 
@@ -331,6 +376,25 @@ async function main() {
 
     const chromeText = await evaluate(chrome, 'document.body.innerText')
     check('toolbar reports plaintext transport', String(chromeText).includes('plaintext'), String(chromeText))
+
+    // Pinned TLS: a self-signed certificate whose SPKI matches the locator's k.
+    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/secure/` })
+    const secureText = await waitForText(cdp, 'SECURE OK', 80)
+    check('loads a self-signed endpoint pinned by k', secureText.includes('SECURE OK'))
+    await sleep(250)
+    const pinnedText = await evaluate(chrome, 'document.body.innerText')
+    check('toolbar reports pinned transport', String(pinnedText).includes('pinned'), String(pinnedText))
+
+    // Mismatch: same k, different certificate. Must fail closed.
+    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/bogus/` })
+    const mismatchText = await waitForText(cdp, 'Transport identity mismatch', 80)
+    check(
+      'refuses a certificate that does not match k',
+      mismatchText.includes('Transport identity mismatch')
+    )
+    await sleep(250)
+    const mismatchChrome = await evaluate(chrome, 'document.body.innerText')
+    check('toolbar reports k-mismatch', String(mismatchChrome).includes('k-mismatch'), String(mismatchChrome))
 
     await sleep(400)
     const chromeShot = await chrome.send('Page.captureScreenshot', { format: 'png' })

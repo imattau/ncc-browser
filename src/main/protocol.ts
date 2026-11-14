@@ -29,7 +29,8 @@ const FAILURE_STATUS: Record<string, number> = {
   'relay-error': 503,
   timeout: 504,
   'endpoint-unreachable': 502,
-  'k-mismatch': 502
+  'k-mismatch': 502,
+  'certificate-expired': 502
 }
 
 export interface ProtocolActivity {
@@ -113,7 +114,7 @@ async function handleNccRequest(request: Request, deps: ProtocolDeps): Promise<R
   }
 
   const failures: string[] = []
-  let certificateFailure = false
+  let certificateFailure: 'k-mismatch' | 'certificate-expired' | null = null
 
   for (const endpoint of outcome.record.endpoints) {
     let target: URL
@@ -137,9 +138,15 @@ async function handleNccRequest(request: Request, deps: ProtocolDeps): Promise<R
       response = await deps.session.fetch(target.toString(), forwardedInit(request, target, pubkey))
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      failures.push(`${target.host}: ${message}`)
+      const rejection = endpoint.k ? deps.pins.consumeRejection(target.hostname) : undefined
+      failures.push(`${target.host}: ${message}${rejection ? ` (${rejection.reason})` : ''}`)
+
+      if (rejection) {
+        certificateFailure = rejection.reason === 'expired-cert' ? 'certificate-expired' : 'k-mismatch'
+        break
+      }
       if (/CERT|SSL|TLS/i.test(message)) {
-        certificateFailure = true
+        certificateFailure = 'k-mismatch'
         break
       }
       continue
@@ -164,7 +171,7 @@ async function handleNccRequest(request: Request, deps: ProtocolDeps): Promise<R
     return toBrowserResponse(response, requestUrl, target, pubkey, service, deps)
   }
 
-  const code = certificateFailure ? 'k-mismatch' : 'endpoint-unreachable'
+  const code = certificateFailure ?? 'endpoint-unreachable'
   if (isDocumentRequest(request)) {
     deps.onActivity({
       pubkey,
@@ -179,7 +186,9 @@ async function handleNccRequest(request: Request, deps: ProtocolDeps): Promise<R
     code,
     code === 'k-mismatch'
       ? 'The endpoint certificate does not match the locator fingerprint'
-      : 'Every endpoint in the locator refused the connection',
+      : code === 'certificate-expired'
+        ? 'The endpoint certificate has expired'
+        : 'Every endpoint in the locator refused the connection',
     request.url,
     failures.join('\n')
   )

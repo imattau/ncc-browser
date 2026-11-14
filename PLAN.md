@@ -146,7 +146,9 @@ endpoint without invalidating the record (NCC-05 §7).
   selection never affects validity.
 - **Transport:** if the endpoint is `https` and carries `k`, the content session pins
   the SPKI. Match → accept, even for a self-signed cert. Mismatch → hard failure
-  (`k-mismatch`), never a fallback.
+  (`k-mismatch`), never a fallback. Chromium reports a refused certificate as a generic
+  `net::ERR_FAILED`, so the verify proc records the reason and the handler consumes it.
+  Pins are keyed by hostname because the verify proc does not expose the port.
 - **No `k`:** Chromium's default verification applies. Self-signed certs fail, and the
   toolbar shows `unverified TLS`.
 - **`http://` endpoint:** integrity is only whatever the locator signature implies

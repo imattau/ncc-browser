@@ -103,6 +103,10 @@ that hostname via `setCertificateVerifyProc`, DANE-style:
 - mismatch → hard refusal (`k-mismatch`), never a fallback;
 - no `k` → Chromium's normal CA verification applies.
 
+Chromium reports every refused certificate as a generic `net::ERR_FAILED`, so the verify
+proc records *why* it refused and the protocol handler consumes that record to show
+`k-mismatch` or `certificate-expired` instead of a vague "unreachable".
+
 The toolbar always shows which mode is in effect: `pinned`, `tls`, or `plaintext`
 (amber — the locator is signed, the content is not authenticated). `TESTKEY:`-style
 placeholder fingerprints are treated as "no pin", not as a match.
@@ -143,15 +147,16 @@ Remote content runs with `sandbox: true`, `contextIsolation: true`, no Node, and
 ## Testing
 
 ```bash
-npm test       # 60+ unit tests: URL parser, locator rules, resolver, routing, relays
+npm test       # 70 unit tests: URL parser, locator rules, resolver, routing, pins, relays
 npm run e2e    # real Electron window against a mock relay and a local HTTP service
 ```
 
-The end-to-end test starts a WebSocket relay, signs a real `30058` event, serves a page
-with an external stylesheet, then drives the running app over the Chrome DevTools
-Protocol. It asserts rendering, subresource proxying, relative-link resolution, the
-synthetic origin, the address bar, the security badge, and the `no-record` error page.
-Screenshots land in `/tmp/opencode/ncc-browser-e2e/`.
+The end-to-end test starts a WebSocket relay, signs real `30058` events, serves an HTTP
+page with an external stylesheet and two self-signed HTTPS services, then drives the
+running app over the Chrome DevTools Protocol. It asserts rendering, subresource
+proxying, relative-link resolution, the synthetic origin, the address bar, plaintext vs
+`pinned` transport state, refusal of a certificate that does not match `k`, and the
+`no-record` error page. Screenshots land in `/tmp/opencode/ncc-browser-e2e/`.
 
 To try it against a real publisher, run [`ncc-sidecar`](../nostr-community-conventions/ncc-06/ncc-sidecar/)
 or [`ncc_publish.py`](../nostr-community-conventions/ncc_publish.py), point both sides at
@@ -197,6 +202,9 @@ material out of this browser entirely. See [soapbox.pub/mkstack](https://soapbox
   that npub. Relative links are unambiguous.
 - **Cookies** are stored per `ncc://<npub>` origin. `Set-Cookie` headers carrying a
   `Domain=` attribute from the endpoint will be dropped by Chromium.
+- **Pins are keyed by hostname, not host:port** — Chromium's verify proc does not expose
+  the port. Two HTTPS services on the same IP with different certificates can collide;
+  give each its own address for now.
 - **No Tor.** `.onion` and `ws`/`wss`-only endpoints are recognised but not fetchable as
   pages.
 - **No NIP-65 gossip** yet; only the configured relay list is queried.

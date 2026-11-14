@@ -133,5 +133,9 @@ export const ERROR_COPY: Record<string, { title: string; hint: string }> = {
   'k-mismatch': {
     title: 'Transport identity mismatch',
     hint: 'The TLS certificate presented by the endpoint does not match the fingerprint signed into the locator. The connection was refused.'
+  },
+  'certificate-expired': {
+    title: 'Transport certificate expired',
+    hint: 'The endpoint presented a certificate that is no longer valid. The locator pins a transport identity; an expired certificate cannot satisfy it.'
   }
 }
