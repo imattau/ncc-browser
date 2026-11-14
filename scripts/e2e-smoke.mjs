@@ -18,7 +18,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { WebSocketServer, WebSocket } from 'ws'
-import { finalizeEvent, generateSecretKey, getPublicKey, nip19 } from 'nostr-tools'
+import { finalizeEvent, generateSecretKey, getPublicKey, nip19, verifyEvent } from 'nostr-tools'
 import selfsigned from 'selfsigned'
 
 const ROOT = new URL('..', import.meta.url).pathname
@@ -29,6 +29,9 @@ const servicePk = getPublicKey(serviceSk)
 const serviceNpub = nip19.npubEncode(servicePk)
 const missingSk = generateSecretKey()
 const missingNpub = nip19.npubEncode(getPublicKey(missingSk))
+const signerSk = generateSecretKey()
+const signerPk = getPublicKey(signerSk)
+const peerPk = getPublicKey(generateSecretKey())
 
 const relayEvents = []
 
@@ -338,7 +341,9 @@ async function main() {
         ...process.env,
         DISPLAY: xvfb.display,
         XDG_CONFIG_HOME: configHome,
-        ELECTRON_DISABLE_SECURITY_WARNINGS: '1'
+        ELECTRON_DISABLE_SECURITY_WARNINGS: '1',
+        NCC_IDENTITY_NSEC: nip19.nsecEncode(signerSk),
+        NCC_SIGNER_AUTO_APPROVE: '1'
       },
       stdio: ['ignore', 'pipe', 'pipe']
     }
@@ -411,6 +416,51 @@ async function main() {
 
     const chromeText = await evaluate(chrome, 'document.body.innerText')
     check('toolbar reports plaintext transport', String(chromeText).includes('plaintext'), String(chromeText))
+
+    // NIP-07: the identity lives in the main process and is exposed to page content only.
+    const identityStatus = await evaluate(chrome, 'window.ncc.identity()')
+    check(
+      'identity is available to the chrome UI',
+      identityStatus?.configured === true && identityStatus?.source === 'env',
+      JSON.stringify(identityStatus)
+    )
+    check(
+      'chrome renderer has no nostr provider',
+      (await evaluate(chrome, 'typeof window.nostr')) === 'undefined'
+    )
+
+    const nip07 = await evaluate(
+      cdp,
+      `(async () => {
+        const pub = await window.nostr.getPublicKey()
+        const event = await window.nostr.signEvent({
+          kind: 1,
+          created_at: ${Math.floor(Date.now() / 1000)},
+          tags: [],
+          content: 'nip07 e2e'
+        })
+        const peer = '${peerPk}'
+        const wrapped = await window.nostr.nip44.encrypt(peer, 'secret message')
+        const plain = await window.nostr.nip44.decrypt(peer, wrapped)
+        const legacy = await window.nostr.nip04.encrypt(peer, 'legacy')
+        const legacyPlain = await window.nostr.nip04.decrypt(peer, legacy)
+        const frame = document.createElement('iframe')
+        frame.srcdoc = '<html><body>frame</body></html>'
+        document.body.appendChild(frame)
+        await new Promise((resolve) => { frame.onload = resolve })
+        const iframeHasNostr = typeof frame.contentWindow.nostr !== 'undefined'
+        frame.remove()
+        return { pub, event, plain, legacyPlain, iframeHasNostr }
+      })()`
+    )
+    check('NIP-07 exposes the configured public key', nip07.pub === signerPk, String(nip07.pub))
+    check(
+      'NIP-07 signs a verifiable event',
+      verifyEvent(nip07.event) === true && nip07.event.pubkey === signerPk
+    )
+    check('NIP-44 round-trips through the signer', nip07.plain === 'secret message')
+    check('NIP-04 round-trips through the signer', nip07.legacyPlain === 'legacy')
+    check('NIP-07 is not exposed to subframes', nip07.iframeHasNostr === false)
 
     // ncc:// links inside content must go through the shell so the service changes.
     await evaluate(cdp, 'document.querySelector("#cross").click()')

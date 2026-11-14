@@ -10,15 +10,15 @@ Built with Electron 45, React 19, and Vite. The resolver is a spec-correct
 implementation on top of `nostr-tools`, not a wrapper around `ncc-05-js` (see
 [Why not `ncc-05-js`](#why-not-ncc-05-js)).
 
-**Status:** M0–M3 of [PLAN.md](./PLAN.md) are implemented: resolution, proxy protocol,
-pinning, browser chrome, tabs, NIP-65 gossip, endpoint cooldowns, a persistent locator
-cache, downloads, and relay/gossip settings.
+**Status:** M0–M3 of [PLAN.md](./PLAN.md) are implemented, plus an inbuilt NIP-07 signer:
+resolution, proxy protocol, pinning, browser chrome, tabs, NIP-65 gossip, endpoint
+cooldowns, a persistent locator cache, downloads, relay/gossip settings, and identity.
 
 ![Start screen](./docs/welcome.png)
 
-| Tabs | Failure page |
-| --- | --- |
-| ![Two tabs with a resolved service](./docs/tabs.png) | ![No locator published](./docs/error-page.png) |
+| Tabs | Failure page | Settings & identity |
+| --- | --- | --- |
+| ![Two tabs with a resolved service](./docs/tabs.png) | ![No locator published](./docs/error-page.png) | ![Settings with relays and identity](./docs/settings.png) |
 
 ---
 
@@ -116,12 +116,43 @@ The toolbar always shows which mode is in effect: `pinned`, `tls`, or `plaintext
 (amber — the locator is signed, the content is not authenticated). `TESTKEY:`-style
 placeholder fingerprints are treated as "no pin", not as a match.
 
-Locator content is decrypted only when an encrypted record is addressed to you. There is
-no keychain and no signing in v0.1; for deliberate testing:
+Locator content is decrypted only when an encrypted record is addressed to you. The
+identity from Settings is used for that automatically; there is no separate locator key.
 
-```bash
-NCC_LOCATOR_NSEC=nsec1… npm run dev
-```
+---
+
+## Nostr identity and NIP-07
+
+The browser has a built-in signer, so pages get a normal `window.nostr` without any
+extension. It is available on **top-level `ncc://` pages and clearnet pages**, and it is
+not injected into subframes or into the trusted chrome.
+
+Supported methods: `getPublicKey`, `signEvent`, `nip04.encrypt/decrypt`,
+`nip44.encrypt/decrypt`, and `getRelays`.
+
+- **The secret key never leaves the main process.** Pages send a request over IPC; the
+  main process signs or decrypts and returns only the result.
+- **At rest** the key is encrypted with Electron `safeStorage` (OS keychain). If no
+  keychain is available, it stays in memory for the session and the UI says so.
+- **Approval is per service.** The first request shows a native dialog with the event
+  being signed; "Always allow" is remembered per `ncc://<npub>/<service>` for NCC pages,
+  and per origin for clearnet. Settings lists trusted services with a revoke button.
+- **Validation** rejects malformed kinds, non-string tags, events more than 15 minutes in
+  the future, and content over 1 MB before anything reaches the signer.
+- **Development overrides:** `NCC_IDENTITY_NSEC` loads a key from the environment, and
+  `NCC_SIGNER_AUTO_APPROVE=1` skips the approval dialog (used by the e2e suite).
+
+Settings → Identity imports an `nsec` (or 64-char hex), generates a new identity, shows
+the npub, and removes it.
+
+### Why not browser extensions?
+
+Chrome extension content scripts only match `http`, `https`, `file`, and `ftp` URLs. A
+`socks`-style signer extension (nos2x, Alby, …) can therefore never inject into an
+`ncc://` page, no matter how Electron loads it. Electron also cannot install extensions
+from the Chrome Web Store, only unpacked ones, and MV3 extension support is partial.
+For NCC pages the built-in provider is the only mechanism that works; unpacked extension
+support for clearnet pages is a possible later addition.
 
 ---
 
@@ -129,39 +160,54 @@ NCC_LOCATOR_NSEC=nsec1… npm run dev
 
 ```
 src/main
-  index.ts        app lifecycle, launch address, optional signer from env
-  shell.ts        BrowserWindow (chrome) + WebContentsView (content)
-  protocol.ts     ses.protocol.handle('ncc') — resolve, fetch, rewrite, error pages
-  pins.ts         SPKI pin store + setCertificateVerifyProc
-  config.ts       relay list persisted to userData/config.json
-  ipc.ts          navigate / history / relays / state
-  error-page.ts   self-contained failure screens
-  ncc/locator.ts  pure: candidates, payload validation, endpoint normalisation
-  ncc/resolver.ts relay query, selection, decrypt, cache, dedupe
-  ncc/routing.ts  pure: path joining and Location rewriting
-src/preload       contextBridge → window.ncc (chrome only)
-src/renderer      React toolbar, address bar, security badge, relay settings, welcome
-src/shared        ncc:// parser, types, relay validation (no Node imports)
+  index.ts           app lifecycle, launch address, identity wiring
+  shell.ts           BrowserWindow (chrome) + one WebContentsView per tab
+  protocol.ts        ses.protocol.handle('ncc') — resolve, fetch, rewrite, error pages
+  pins.ts            SPKI pin store + setCertificateVerifyProc
+  config.ts          relay list, gossip toggle, persisted to userData
+  cache-store.ts     on-disk locator cache (public records only)
+  downloads.ts       sanitised filenames, dedupe, save paths
+  ipc.ts             navigate / tabs / history / relays / identity
+  error-page.ts      self-contained failure screens
+  ncc/locator.ts     pure: candidates, payload validation, endpoint normalisation
+  ncc/resolver.ts    relay query, gossip, selection, decrypt, cache, dedupe
+  ncc/routing.ts     pure: path joining and Location rewriting
+  ncc/health.ts      endpoint cooldowns
+  signer/crypto.ts   pure: template validation, signing, NIP-04/44
+  signer/identity.ts encrypted key storage (safeStorage codec injected)
+  signer/permissions.ts  per-service approvals
+  signer/service.ts  approvals queue + native dialog
+  signer/ipc.ts      NIP-07 IPC, caller origin derived from the main frame
+src/preload
+  index.ts           contextBridge → window.ncc (chrome only)
+  content.ts         contextBridge → window.nostr (top-level page frames only)
+src/renderer         React tabs, toolbar, security badge, settings, welcome
+src/shared           ncc:// parser, types, relay validation (no Node imports)
 ```
 
 Remote content runs with `sandbox: true`, `contextIsolation: true`, no Node, and its own
-`persist:ncc-content` partition. It has no preload and no IPC surface.
+`persist:ncc-content` partition. Its only exposed surface is `window.nostr`; there is no
+general IPC bridge.
 
 ---
 
 ## Testing
 
 ```bash
-npm test       # 70 unit tests: URL parser, locator rules, resolver, routing, pins, relays
-npm run e2e    # real Electron window against a mock relay and a local HTTP service
+npm test       # 123 unit tests: URL parser, locator rules, resolver, routing, pins,
+               # signer crypto, identity storage, permissions, relays, downloads
+npm run e2e    # real Electron window against a mock relay and local HTTP services
 ```
 
 The end-to-end test starts a WebSocket relay, signs real `30058` events, serves an HTTP
 page with an external stylesheet and two self-signed HTTPS services, then drives the
 running app over the Chrome DevTools Protocol. It asserts rendering, subresource
 proxying, relative-link resolution, the synthetic origin, the address bar, plaintext vs
-`pinned` transport state, refusal of a certificate that does not match `k`, and the
-`no-record` error page. Screenshots land in `/tmp/opencode/ncc-browser-e2e/`.
+`pinned` transport state, refusal of a certificate that does not match `k`, `ncc://`
+link-driven service switching, NIP-65 gossip to a second relay, tab open/close, the
+persistent cache on disk, and the full NIP-07 path (public key, verifiable signature,
+NIP-04/44 round-trips, no provider in subframes). Screenshots land in
+`/tmp/opencode/ncc-browser-e2e/`.
 
 To try it against a real publisher, run [`ncc-sidecar`](../nostr-community-conventions/ncc-06/ncc-sidecar/)
 or [`ncc_publish.py`](../nostr-community-conventions/ncc_publish.py), point both sides at
@@ -201,19 +247,25 @@ material out of this browser entirely. See [soapbox.pub/mkstack](https://soapbox
 
 ## Known limitations (v0.1)
 
-- **One content view.** Multiple tabs on the same `npub` need a per-view origin; today
-  the active-service map is per pubkey.
-- **Absolute-path subresources** (`/style.css`) are attributed to the active service for
-  that npub. Relative links are unambiguous.
-- **Cookies** are stored per `ncc://<npub>` origin. `Set-Cookie` headers carrying a
-  `Domain=` attribute from the endpoint will be dropped by Chromium.
+- **Absolute-path subresources** (`/style.css`) are attributed to the page's service via
+  the `Referer` header, falling back to the active service for that npub. A page-authored
+  cross-service link must use the explicit `/_/<service>/…` form; root-relative links
+  stay inside the current service.
+- **Cookies** are stored per `ncc://<npub>` origin, shared by all services of that
+  identity. `Set-Cookie` headers carrying a `Domain=` attribute from the endpoint are
+  dropped by Chromium.
 - **Pins are keyed by hostname, not host:port** — Chromium's verify proc does not expose
   the port. Two HTTPS services on the same IP with different certificates can collide;
   give each its own address for now.
 - **No Tor.** `.onion` and `ws`/`wss`-only endpoints are recognised but not fetchable as
   pages.
-- **No NIP-65 gossip** yet; only the configured relay list is queried.
-- **Encrypted locators** require `NCC_LOCATOR_NSEC`; there is no signer UI.
+- **NIP-07 approvals use a native dialog.** There is no NIP-46 remote signer yet, and
+  "always allow" is per `ncc://<npub>/<service>` (or per web origin). A compromised
+  service on a trusted origin can sign anything, so revoke trust when a service changes
+  hands.
+- **No extension support.** Chrome extensions cannot inject into `ncc://` pages (content
+  script match patterns exclude custom schemes) and Electron cannot install Web Store
+  extensions. The inbuilt signer is the supported path.
 - **Clearnet pages** load directly, with normal Chromium error handling.
 
 ---

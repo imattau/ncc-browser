@@ -39,6 +39,8 @@ export interface ResolverOptions {
   timeoutMs?: number
   now?: () => number
   signer?: LocatorSigner | null
+  /** Resolved lazily, so an identity imported after startup is picked up. */
+  getSigner?: () => LocatorSigner | null
   /** Upper bound on a positive cache entry, so rotations are noticed. */
   maxCacheSeconds?: number
   negativeCacheSeconds?: number
@@ -362,16 +364,23 @@ export class NccResolver {
       }
     }
 
-    if (!this.options.signer) return { ok: false, reason: 'undecryptable' }
+    if (!this.currentSigner()) return { ok: false, reason: 'undecryptable' }
 
     try {
-      const conversationKey = await this.options.signer.getConversationKey(event.pubkey)
+      const conversationKey = await (this.currentSigner() as LocatorSigner).getConversationKey(
+        event.pubkey
+      )
       const plaintext = nip44.decrypt(content, conversationKey)
       const payload = parsePayload(JSON.parse(plaintext))
       return payload ? { ok: true, value: { payload, encrypted: true } } : { ok: false, reason: 'invalid' }
     } catch {
       return { ok: false, reason: 'undecryptable' }
     }
+  }
+
+  private currentSigner(): LocatorSigner | null {
+    const dynamic = this.options.getSigner?.()
+    return dynamic ?? this.options.signer ?? null
   }
 }
 

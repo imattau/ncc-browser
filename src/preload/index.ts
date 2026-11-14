@@ -15,6 +15,12 @@ const api: NccApi = {
   getConfig: () => ipcRenderer.invoke('ncc:get-config'),
   setRelays: (relays) => ipcRenderer.invoke('ncc:set-relays', relays),
   setGossip: (value) => ipcRenderer.invoke('ncc:set-gossip', value),
+  identity: () => ipcRenderer.invoke('ncc:identity-status'),
+  importIdentity: (secret) => ipcRenderer.invoke('ncc:identity-import', secret),
+  generateIdentity: () => ipcRenderer.invoke('ncc:identity-generate'),
+  removeIdentity: () => ipcRenderer.invoke('ncc:identity-remove'),
+  signerPermissions: () => ipcRenderer.invoke('ncc:signer-permissions'),
+  revokePermission: (origin) => ipcRenderer.invoke('ncc:revoke-permission', origin),
   onState: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, state: NavState): void => listener(state)
     ipcRenderer.on('ncc:state', handler)

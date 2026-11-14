@@ -12,6 +12,7 @@ import type { ProtocolActivity } from './protocol'
 
 export interface ShellDeps {
   preloadPath: string
+  contentPreloadPath: string
   rendererUrl?: string
   rendererFile: string
   activeService: Map<string, string>
@@ -260,7 +261,12 @@ export class BrowserShell {
   }
 
   private createTab(): Tab {
-    const view = new WebContentsView({ webPreferences: { ...CONTENT_WEB_PREFERENCES } })
+    const view = new WebContentsView({
+      webPreferences: {
+        ...CONTENT_WEB_PREFERENCES,
+        preload: this.deps.contentPreloadPath
+      }
+    })
     const tab: Tab = {
       id: `t${this.nextTabId++}`,
       view,

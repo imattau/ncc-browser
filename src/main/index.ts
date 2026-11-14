@@ -1,4 +1,4 @@
-import { app, session, type Session } from 'electron'
+import { app, safeStorage, session, type Session } from 'electron'
 import { join } from 'node:path'
 import { nip19 } from 'nostr-tools'
 import { LocatorCacheStore } from './cache-store'
@@ -10,6 +10,10 @@ import { closeSharedPool, NccResolver, signerFromSecret, type LocatorSigner } fr
 import { installCertificatePinning, PinStore } from './pins'
 import { installNccProtocol, registerNccScheme } from './protocol'
 import { BrowserShell } from './shell'
+import { IdentityStore } from './signer/identity'
+import { registerNip07 } from './signer/ipc'
+import { PermissionStore } from './signer/permissions'
+import { Nip07Service } from './signer/service'
 
 // Custom schemes must be registered before the app is ready.
 registerNccScheme()
@@ -34,11 +38,33 @@ app.whenReady().then(() => {
   const activeService = new Map<string, string>()
   const endpointOwners = new Map<string, { pubkey: string; service: string }>()
 
+  const identity = new IdentityStore({
+    filePath: join(app.getPath('userData'), 'identity.json'),
+    codec: {
+      available: safeStorage.isEncryptionAvailable(),
+      encrypt: (plaintext) => safeStorage.encryptString(plaintext).toString('base64'),
+      decrypt: (ciphertext) => safeStorage.decryptString(Buffer.from(ciphertext, 'base64'))
+    }
+  })
+  if (process.env.NCC_IDENTITY_NSEC) {
+    try {
+      identity.setFromEnv(process.env.NCC_IDENTITY_NSEC)
+      console.warn('[signer] using NCC_IDENTITY_NSEC (development only)')
+    } catch (error) {
+      console.warn('[signer] ignoring NCC_IDENTITY_NSEC:', error instanceof Error ? error.message : error)
+    }
+  }
+
+  const permissions = new PermissionStore(
+    join(app.getPath('userData'), 'signer-permissions.json')
+  )
+  const envLocatorSigner = locatorSignerFromEnv()
+
   const resolver = new NccResolver({
     relays: () => config.getRelays(),
     gossip: () => config.get().gossip,
     cacheStore,
-    signer: locatorSignerFromEnv()
+    getSigner: () => identity.getSigner() ?? envLocatorSigner
   })
 
   contentSession = session.fromPartition(CONTENT_PARTITION)
@@ -59,8 +85,18 @@ app.whenReady().then(() => {
     notify: (notice) => shell?.notifyDownload(notice)
   })
 
+  const nip07 = new Nip07Service({
+    identity,
+    permissions,
+    getWindow: () => shell?.window ?? null,
+    getRelays: () => config.getRelays(),
+    autoApprove: process.env.NCC_SIGNER_AUTO_APPROVE === '1'
+  })
+  registerNip07(nip07, contentSession)
+
   shell = new BrowserShell({
     preloadPath: join(__dirname, '../preload/index.js'),
+    contentPreloadPath: join(__dirname, '../preload/content.js'),
     rendererUrl: process.env.ELECTRON_RENDERER_URL,
     rendererFile: join(__dirname, '../renderer/index.html'),
     activeService,
@@ -70,7 +106,7 @@ app.whenReady().then(() => {
     }
   })
 
-  registerIpc({ shell, config, resolver, pins, cacheStore, health })
+  registerIpc({ shell, config, resolver, pins, cacheStore, health, identity, permissions })
 
   // Optional launch address: `ncc-browser ncc://npub1…/service`
   const startupAddress = findStartupAddress()

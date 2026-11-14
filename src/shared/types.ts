@@ -106,6 +106,29 @@ export interface AppConfig {
   gossip: boolean
 }
 
+export type IdentitySource = 'none' | 'env' | 'file' | 'session'
+
+export interface IdentityStatus {
+  configured: boolean
+  npub?: string
+  hexPubkey?: string
+  source: IdentitySource
+  /** True when the key is encrypted at rest with the OS keychain. */
+  persisted: boolean
+  /** False when the OS offers no secure storage; the key then lives for this session. */
+  encryptionAvailable: boolean
+}
+
+export interface SignerPermission {
+  /** `ncc://<npub>` or a web origin. */
+  origin: string
+  label: string
+  trusted: boolean
+  /** Epoch milliseconds. */
+  createdAt: number
+  lastUsedAt: number
+}
+
 export const DEFAULT_RELAYS = [
   'wss://relay.damus.io',
   'wss://nos.lol',

@@ -20,6 +20,7 @@ source, not assumed.
 | D5 | **`k` pinning from day one.** Content session gets `setCertificateVerifyProc`; expected SPKI comes from the locator's `k`. | NCC-02/NCC-06 define `k` as `base64url(sha256(SPKI DER))`, DANE-style, explicitly permitting self-signed certs. `ncc-06-js` only compares *declared* metadata — it never touches the wire. Electron can enforce the real thing in ~40 lines. |
 | D6 | **v0.1 resolves unanchored NCC-05**; NCC-02 anchoring is M4. | Requiring a `30059` record would exclude the simplest publishers. We still surface `k` when the locator carries it and apply it. |
 | D7 | **UI stack mirrors MKStack** (React 19 + Vite + TS + Tailwind 4 + shadcn-style components). | MKStack is a *web app* template — it cannot be a browser (no custom scheme, no CORS bypass, no SPKI pinning, no navigation control). Its value to this project is the UI/stack and, later, the M4 publisher app, which is a perfect MKStack job (NIP-07 publish flow). |
+| D8 | **Inbuilt NIP-07 signer, not extensions.** | Extension content scripts only match `http/https/file/ftp`, so a nos2x/Alby-style signer cannot inject into `ncc://` pages at all. Electron also cannot install Web Store extensions and its MV3 support is partial. The signer therefore lives in the main process and is exposed through a dedicated content preload. |
 
 ### Why not MKStack as the app shell
 
@@ -154,8 +155,15 @@ endpoint without invalidating the record (NCC-05 §7).
 - **`http://` endpoint:** integrity is only whatever the locator signature implies
   about *location*, not content. Toolbar shows `plaintext`; this is surfaced, not
   silently downgraded.
-- **Key storage:** none in v0.1. Optional signer is loaded from
-  `NCC_LOCATOR_NSEC` (dev only) or a user-supplied NIP-46 bunker in M4.
+- **Key storage:** the secret key never leaves the main process. It is encrypted with
+  Electron `safeStorage` when an OS keychain exists, otherwise held in memory for the
+  session and labelled as such. Pages reach it only through NIP-07 IPC, with a native
+  approval per `ncc://<npub>/<service>` (or web origin) and an "always allow" list that
+  Settings can revoke. NIP-46 remote signing is M4.
+- **Signer surface:** `window.nostr` is injected into top-level page frames only, never
+  into subframes or the trusted chrome. The IPC handler derives the caller's origin from
+  the main frame, so a page cannot claim another identity. Events are validated and
+  bounded (kind, tag shape, 15-minute clock skew, 1 MB content) before signing.
 - **Renderer isolation:** content view uses `sandbox: true`, `contextIsolation: true`,
   no Node, its own `persist:ncc-content` partition. The chrome UI never shares a
   session or origin with remote content.
@@ -196,8 +204,9 @@ is CJS and the package is ESM-only.
   `WebContentsView`, SPKI pinning, trailing-slash + redirect rewriting.
 - **M2 — Browser chrome** ✅ this commit: address bar, back/forward/reload, loading and
   security state, distinct error pages, relay settings persisted to disk.
-- **M3 — Robustness:** NIP-65 gossip, per-view origins for tabs, endpoint health
-  cooldowns, cache persistence, `ncc://` link interception, downloads.
+- **M3 — Robustness:** ✅ NIP-65 gossip, tabs with referrer-scoped routing, endpoint
+  cooldowns, the persistent locator cache, `ncc://` link interception, sanitised
+  downloads, and the inbuilt NIP-07 signer with per-service approvals.
 - **M4 — Publisher:** separate MKStack app (`stacks mkstack`) that publishes a `30058`
   for a local port via NIP-07, plus NCC-02 anchoring/`k` trust UI in the browser.
 - **M5 — Polish:** tabs, bookmarks, session restore, custom titlebar.

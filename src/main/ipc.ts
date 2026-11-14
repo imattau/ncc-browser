@@ -4,6 +4,8 @@ import type { ConfigStore } from './config'
 import type { EndpointHealth } from './ncc/health'
 import type { NccResolver } from './ncc/resolver'
 import type { PinStore } from './pins'
+import type { IdentityStore } from './signer/identity'
+import type { PermissionStore } from './signer/permissions'
 import type { BrowserShell } from './shell'
 
 export interface IpcDeps {
@@ -13,6 +15,8 @@ export interface IpcDeps {
   pins: PinStore
   cacheStore: LocatorCacheStore
   health: EndpointHealth
+  identity: IdentityStore
+  permissions: PermissionStore
 }
 
 export function registerIpc(deps: IpcDeps): void {
@@ -54,6 +58,36 @@ export function registerIpc(deps: IpcDeps): void {
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
+  })
+
+  ipcMain.handle('ncc:identity-status', () => deps.identity.status())
+
+  ipcMain.handle('ncc:identity-import', (_event, secret: unknown) => {
+    const status = deps.identity.import(String(secret ?? ''))
+    deps.resolver.clearCache()
+    deps.cacheStore.clear()
+    return status
+  })
+
+  ipcMain.handle('ncc:identity-generate', () => {
+    const status = deps.identity.generate()
+    deps.resolver.clearCache()
+    deps.cacheStore.clear()
+    return status
+  })
+
+  ipcMain.handle('ncc:identity-remove', () => {
+    const status = deps.identity.remove()
+    deps.resolver.clearCache()
+    deps.cacheStore.clear()
+    return status
+  })
+
+  ipcMain.handle('ncc:signer-permissions', () => deps.permissions.list())
+
+  ipcMain.handle('ncc:revoke-permission', (_event, origin: unknown) => {
+    if (typeof origin === 'string') deps.permissions.revoke(origin)
+    return deps.permissions.list()
   })
 }
 
