@@ -1,0 +1,27 @@
+{
+  "name": "ncc-publisher",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Publish NCC-05 locators and NCC-02 service records for a local service using a NIP-07 signer",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "lucide-react": "^0.545.0",
+    "nostr-tools": "^2.26.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.5",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "tailwindcss": "^4.3.5",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.8"
+  }
+}

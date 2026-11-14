@@ -32,6 +32,7 @@ interface ToolbarProps {
   onOpenDownloads: () => void
   onOpenHistory: () => void
   onHistoryMenu: (direction: 'back' | 'forward') => void
+  onOpenTrust: () => void
   onOpenSettings: () => void
   onOpenMenu: () => void
 }
@@ -52,6 +53,7 @@ export function Toolbar({
   onOpenDownloads,
   onOpenHistory,
   onHistoryMenu,
+  onOpenTrust,
   onOpenSettings,
   onOpenMenu
 }: ToolbarProps) {
@@ -114,7 +116,7 @@ export function Toolbar({
         </button>
       ) : null}
 
-      <SecurityBadge state={state} />
+      <SecurityBadge state={state} onOpenTrust={onOpenTrust} />
 
       {downloads.length > 0 ? (
         <button

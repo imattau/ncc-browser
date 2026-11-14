@@ -1,6 +1,6 @@
 import { protocol, type Session } from 'electron'
 import { isNostrId, routeNccPath, serviceFromReferer } from '@shared/ncc-url'
-import type { TransportSecurity } from '@shared/types'
+import type { AnchorInfo, TransportSecurity } from '@shared/types'
 import { renderErrorPage, renderPlainFailure } from './error-page'
 import { orderByHealth, type EndpointHealth } from './ncc/health'
 import { joinPaths, rewriteLocation } from './ncc/routing'
@@ -31,7 +31,11 @@ const FAILURE_STATUS: Record<string, number> = {
   timeout: 504,
   'endpoint-unreachable': 502,
   'k-mismatch': 502,
-  'certificate-expired': 502
+  'certificate-expired': 502,
+  'no-anchor': 404,
+  'anchor-expired': 410,
+  'anchor-invalid': 502,
+  'anchor-k-mismatch': 502
 }
 
 export interface ProtocolActivity {
@@ -40,6 +44,7 @@ export interface ProtocolActivity {
   endpointHost?: string
   transport: TransportSecurity
   pinned: boolean
+  anchor?: AnchorInfo | null
   failureCode?: string
 }
 
@@ -174,7 +179,8 @@ async function handleNccRequest(request: Request, deps: ProtocolDeps): Promise<R
         service,
         endpointHost: target.hostname,
         transport,
-        pinned: transport === 'pinned-tls'
+        pinned: transport === 'pinned-tls',
+        anchor: outcome.record.anchor ?? null
       })
     }
 

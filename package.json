@@ -13,7 +13,9 @@
     "typecheck": "tsc -p tsconfig.node.json && tsc -p tsconfig.web.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "e2e": "npm run build && node scripts/e2e-smoke.mjs"
+    "publisher:dev": "npm --prefix publisher run dev",
+    "publisher:build": "npm --prefix publisher run build",
+    "e2e": "npm run build && npm run publisher:build && node scripts/e2e-smoke.mjs"
   },
   "dependencies": {
     "@nostrify/nostrify": "^0.55.1",

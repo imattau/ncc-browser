@@ -18,6 +18,46 @@ export interface ResolvedEndpoint {
   family: EndpointFamily
   /** SPKI fingerprint from the locator (`k`), if the publisher supplied one. */
   k: string | null
+  /** Which document supplied the fingerprint that is actually pinned. */
+  kSource?: 'ncc-02' | 'ncc-05' | null
+}
+
+export interface ServiceAnchor {
+  eventId: string
+  dTag: string
+  /** Fetchable http(s) `u` endpoint, when the record publishes one. */
+  endpoint: string | null
+  /** The raw `u` value, including non-web schemes such as `wss://` or `onion://`. */
+  rawEndpoint: string | null
+  k: string | null
+  /** Unix seconds; 0 means the record carries no `exp` tag. */
+  expiresAt: number
+  updatedAt: number
+}
+
+export type AnchorStatus =
+  | 'anchored'
+  | 'unanchored'
+  | 'expired'
+  | 'invalid'
+  | 'required-missing'
+
+export type AnchorKeyMatch =
+  | 'match'
+  | 'mismatch'
+  | 'anchor-only'
+  | 'locator-only'
+  | 'none'
+
+export interface AnchorInfo {
+  status: AnchorStatus
+  record: ServiceAnchor | null
+  /** True when the page is being served from the NCC-02 `u` fallback. */
+  fallback: boolean
+  /** How the NCC-02 and NCC-05 transport fingerprints relate. */
+  kMatch: AnchorKeyMatch
+  /** Whether the user requires NCC-02 anchoring. */
+  required: boolean
 }
 
 export interface ResolvedService {
@@ -34,6 +74,8 @@ export interface ResolvedService {
   updatedAt: number
   eventId: string
   encrypted: boolean
+  /** NCC-02 trust anchor, when one was found. */
+  anchor?: AnchorInfo
 }
 
 export type ResolveErrorCode =
@@ -45,6 +87,10 @@ export type ResolveErrorCode =
   | 'no-endpoint'
   | 'relay-error'
   | 'timeout'
+  | 'no-anchor'
+  | 'anchor-expired'
+  | 'anchor-invalid'
+  | 'anchor-k-mismatch'
 
 export interface ResolveFailure {
   ok: false
@@ -65,6 +111,8 @@ export interface SecurityInfo {
   /** Host of the endpoint that served the current document, never the full URL. */
   host: string
   pinned: boolean
+  /** NCC-02 trust anchor attached to the locator that served this page. */
+  anchor: AnchorInfo | null
 }
 
 export type PageMode = 'blank' | 'ncc' | 'web' | 'error'
@@ -114,7 +162,14 @@ export interface Bookmark {
 }
 
 /** Reasons the chrome needs the whole window surface, hiding content views. */
-export const OVERLAY_REASONS = ['menu', 'settings', 'downloads', 'history', 'tabs'] as const
+export const OVERLAY_REASONS = [
+  'menu',
+  'settings',
+  'downloads',
+  'history',
+  'tabs',
+  'trust'
+] as const
 
 export type OverlayReason = (typeof OVERLAY_REASONS)[number]
 
@@ -138,6 +193,8 @@ export interface AppConfig {
   relays: string[]
   /** Follow NIP-65 relay hints published by the target identity. */
   gossip: boolean
+  /** Refuse services that have no fresh NCC-02 service record (kind 30059). */
+  anchorRequired: boolean
 }
 
 export type IdentitySource = 'none' | 'env' | 'file' | 'session'
@@ -236,6 +293,22 @@ export const ERROR_COPY: Record<string, { title: string; hint: string }> = {
   timeout: {
     title: 'Resolution timed out',
     hint: 'The relays did not answer in time. This is often a slow or unreachable relay.'
+  },
+  'no-anchor': {
+    title: 'No NCC-02 service record',
+    hint: 'Anchored mode is on, so this service must publish a fresh kind 30059 service record. Publish one from the NCC publisher, or turn off "Require NCC-02 service records" in settings.'
+  },
+  'anchor-expired': {
+    title: 'NCC-02 service record expired',
+    hint: 'The service record exists but its exp tag has passed. Anchored mode fails closed until the publisher refreshes it.'
+  },
+  'anchor-invalid': {
+    title: 'NCC-02 service record is invalid',
+    hint: 'The kind 30059 event is missing a valid d tag, has an invalid exp tag, or failed signature verification.'
+  },
+  'anchor-k-mismatch': {
+    title: 'Transport key conflicts with NCC-02',
+    hint: 'The NCC-02 service record and the NCC-05 locator advertise different transport fingerprints for the same endpoint. The browser refused the endpoint.'
   },
   'endpoint-unreachable': {
     title: 'Endpoint unreachable',

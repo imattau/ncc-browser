@@ -88,6 +88,7 @@ app.whenReady().then(async () => {
   const resolver = new NccResolver({
     relays: () => config.getRelays(),
     gossip: () => config.get().gossip,
+    anchorRequired: () => config.get().anchorRequired,
     cacheStore,
     getSigner: () => identity.locatorSigner() ?? envLocatorSigner
   })

@@ -5,8 +5,8 @@ import { normalizeRelays, defaultRelays } from '@shared/relays'
 import type { AppConfig } from '@shared/types'
 
 /**
- * Tiny JSON settings store in `userData`. Deliberately not a dependency: the only
- * setting in v0.1 is the relay list.
+ * Tiny JSON settings store in `userData`: relay list, NIP-65 gossip, and whether a
+ * fresh NCC-02 service record is required.
  */
 export class ConfigStore {
   private filePath: string | null = null
@@ -39,19 +39,26 @@ export class ConfigStore {
     return this.get()
   }
 
+  setAnchorRequired(value: unknown): AppConfig {
+    this.config = { ...this.get(), anchorRequired: value === true }
+    this.write()
+    return this.get()
+  }
+
   private read(): AppConfig {
     try {
       if (existsSync(this.path)) {
         const parsed = JSON.parse(readFileSync(this.path, 'utf8')) as Partial<AppConfig>
         return {
           relays: normalizeRelays(parsed.relays ?? defaultRelays()),
-          gossip: parsed.gossip !== false
+          gossip: parsed.gossip !== false,
+          anchorRequired: parsed.anchorRequired === true
         }
       }
     } catch (error) {
       console.warn('[config] could not read config, using defaults:', error)
     }
-    return { relays: defaultRelays(), gossip: true }
+    return { relays: defaultRelays(), gossip: true, anchorRequired: false }
   }
 
   private write(): void {

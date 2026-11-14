@@ -18,7 +18,7 @@ source, not assumed.
 | D3 | **Own resolver on `nostr-tools`**, not `ncc-05-js` as a runtime dependency. | Verified: `ncc-05-js@1.2.0` has no `dist/`, queries `30058` with no `#d` filter, then returns the author's single freshest event across all `d` tags (`src/index.ts:393-458`). With >1 service per `npub`, older services become unresolvable. It also decrypts only the newest candidate and returns expired payloads when `strict:false`. All three are fatal for a browser. We keep its payload model and fix the lookup. |
 | D4 | **Clean URLs, proxy every request.** `ncc://<npub>/<service>/…`; the handler resolves and forwards *all* requests, not just top-level documents. | Subresources re-enter the handler, so they work without CORS, without mixed-content blocking, and with pinning applied to every request. Originating page stays on a synthetic origin, so the raw `ip:port` is never exposed to page JS. |
 | D5 | **`k` pinning from day one.** Content session gets `setCertificateVerifyProc`; expected SPKI comes from the locator's `k`. | NCC-02/NCC-06 define `k` as `base64url(sha256(SPKI DER))`, DANE-style, explicitly permitting self-signed certs. `ncc-06-js` only compares *declared* metadata — it never touches the wire. Electron can enforce the real thing in ~40 lines. |
-| D6 | **v0.1 resolves unanchored NCC-05**; NCC-02 anchoring is M4. | Requiring a `30059` record would exclude the simplest publishers. We still surface `k` when the locator carries it and apply it. |
+| D6 | **v0.1 resolves unanchored by default**; NCC-02 anchoring is implemented as an optional trust layer with a required mode. | Requiring a `30059` record would exclude the simplest publishers. Anchors are used when present, `u` can serve as a fallback, and Settings can require a fresh anchor. |
 | D7 | **UI stack mirrors MKStack** (React 19 + Vite + TS + Tailwind 4 + shadcn-style components). | MKStack is a *web app* template — it cannot be a browser (no custom scheme, no CORS bypass, no SPKI pinning, no navigation control). Its value to this project is the UI/stack and, later, the M4 publisher app, which is a perfect MKStack job (NIP-07 publish flow). |
 | D8 | **Inbuilt NIP-07 signer, not extensions; NIP-46 for remote keys.** | Extension content scripts only match `http/https/file/ftp`, so a nos2x/Alby-style signer cannot inject into `ncc://` pages at all. Electron also cannot install Web Store extensions and its MV3 support is partial. The signer therefore lives in the main process, behind a dedicated content preload, and can delegate to a NIP-46 remote signer (`BunkerURI`/`NConnectSigner`/`NPool` from Nostrify). |
 
@@ -94,8 +94,9 @@ service, which is what a proxy should do. Service roots are 302'd to a trailing 
 relative URLs resolve inside the service namespace.
 
 **Known limitation (documented, not hidden):** with more than one tab on the same
-`npub`, the active-service map is ambiguous. v0.1 ships one content view; multi-tab
-adds a per-view session key to the synthetic origin (`ncc://<npub>/_/s/<session>/…`).
+`npub`, the active-service map is ambiguous for root-relative subresources. The browser
+uses a shared content session and attributes those requests through the `Referer`; pages
+that need an unambiguous cross-service reference use the explicit `/_/<service>/…` form.
 
 ### Redirects
 
@@ -217,8 +218,11 @@ is CJS and the package is ESM-only.
   command; shortcuts routed in main via `before-input-event` (work while the page is
   focused); native context menus for links, images and editable fields; window title
   follows the active tab; blank tabs show the welcome page.
-- **M4 — Publisher:** separate MKStack app (`stacks mkstack`) that publishes a `30058`
-  for a local port via NIP-07, plus NCC-02 anchoring/`k` trust UI in the browser.
+- **M4 — Publisher:** ✅ separate MKStack-style app in `publisher/`: NIP-07 signer,
+  local host/port endpoints, public or NIP-44-encrypted `kind 30058` locators, optional
+  `kind 30059` NCC-02 anchors, relay status and an `ncc://` address. Browser side: NCC-02
+  anchoring with `u` fallback, comparable-`k` application, conflict refusal, a trust
+  panel, and a required-anchoring setting.
 - **M5 — Polish:** ✅ custom frameless title bar; tab favicons, audio/mute indicator,
   drag reordering, overflow menu and tab context menu; downloads manager with progress,
   cancel and reveal; per-tab history panel and back/forward jump lists; local bookmarks;

@@ -10,10 +10,10 @@ Built with Electron 45, React 19, and Vite. The resolver is a spec-correct
 implementation on top of `nostr-tools`, not a wrapper around `ncc-05-js` (see
 [Why not `ncc-05-js`](#why-not-ncc-05-js)).
 
-**Status:** M0–M3 of [PLAN.md](./PLAN.md) are implemented, plus an inbuilt NIP-07 signer
-with local keys and NIP-46 remote signing, and the M5 chrome work: a custom title bar,
-tab favicons/audio/mute, drag reordering, tab overflow, tab context menus, a downloads
-manager, per-tab history, bookmarks, session restore, and a full settings page.
+**Status:** M0–M5 are implemented. That includes the resolver, proxy and pinning, the
+browser chrome and signer, NCC-02 anchoring with a trust panel, and the separate
+publisher app in [`publisher/`](./publisher/): a NIP-07 flow for publishing NCC-05
+locators and NCC-02 service records for a local port.
 
 ![Start screen](./docs/welcome.png)
 
@@ -21,9 +21,13 @@ manager, per-tab history, bookmarks, session restore, and a full settings page.
 | --- | --- | --- |
 | ![Two tabs with a resolved service](./docs/tabs.png) | ![No locator published](./docs/error-page.png) | ![Settings page with identity and remote signer](./docs/settings.png) |
 
-| Downloads | Tab history | Browser menu |
+| Downloads | Tab history | NCC-02 trust |
 | --- | --- | --- |
-| ![Downloads panel with progress and reveal](./docs/downloads.png) | ![Per-tab history panel](./docs/history.png) | ![Hamburger menu with grouped commands](./docs/menu.png) |
+| ![Downloads panel with progress and reveal](./docs/downloads.png) | ![Per-tab history panel](./docs/history.png) | ![Service trust panel with anchor details](./docs/trust.png) |
+
+| Browser menu | Settings: relays & anchoring | Publisher |
+| --- | --- | --- |
+| ![Hamburger menu with grouped commands](./docs/menu.png) | ![Relays and NCC-02 anchoring settings](./docs/settings-general.png) | ![NCC Publisher with signer and result](./docs/publisher.png) |
 
 ---
 
@@ -48,6 +52,37 @@ URLs. A URL passed on the command line opens on launch:
 npm run build
 npx electron . 'ncc://npub1…/web'
 ```
+
+---
+
+## Publishing a service
+
+[`publisher/`](./publisher/) is a separate single-page app that publishes a locator for a
+service running on a local port. It asks a **NIP-07** provider to sign; it never handles
+an `nsec`.
+
+```bash
+npm install               # root dependencies also cover the publisher
+npm run publisher:dev     # http://localhost:5173
+```
+
+You can also `cd publisher && npm install && npm run dev`.
+
+Open that URL in NCC Browser to use the built-in signer (the approval sheet appears as
+usual), or open it in a normal browser with a NIP-07 extension. Fill in the service id,
+host/port, relays, and publish. The result is:
+
+```
+ncc://<your npub>/<service>
+```
+
+The publisher emits a `kind 30058` locator (plaintext or NIP-44-encrypted to your own
+key) and, by default, a `kind 30059` NCC-02 anchor with the primary endpoint and optional
+TLS `k`. Use `127.0.0.1` when the publisher and browser are on one machine; use a LAN
+address and open the firewall for another device.
+
+Build the static app with `npm run publisher:build` (`publisher/dist`). See
+[`publisher/README.md`](./publisher/README.md) for the operational details.
 
 ---
 
@@ -164,6 +199,32 @@ locator key.
 
 ---
 
+## NCC-02 anchoring and trust
+
+NCC-02 service records (`kind 30059`) are the identity and trust anchor for a service;
+NCC-05 supplies the reachable endpoint. The browser is in **optional anchoring** mode by
+default: it uses a fresh NCC-02 record when one exists and flags the service as
+`unanchored` when it does not. Settings → General → **Require NCC-02 service records**
+turns that into a hard requirement.
+
+- **Trust panel** — click the anchor badge in the toolbar for the service id, anchor
+  event, `u` endpoint, `k`, key relation, expiry and transport.
+- **Fallback** — when NCC-05 has no usable endpoint, a valid NCC-02 `u` endpoint can
+  serve the page (marked as an NCC-02 fallback). This is how a private service with no
+  public locator still works.
+- **Key binding** — a comparable NCC-02 `k` fills in a missing endpoint fingerprint; if
+  NCC-02 and NCC-05 advertise different fingerprints for the same origin, the endpoint
+  is refused (`anchor-k-mismatch`). A key is only applied to an `https` endpoint.
+- **Required mode failures** — `no-anchor`, `anchor-expired` and `anchor-invalid` have
+  their own error pages. Optional mode keeps browsing and shows the anchor status in the
+  toolbar.
+- **Expiry** — `exp` is enforced; a record without `exp` is accepted for compatibility
+  and shown as “no exp tag”.
+
+Attestations (`kind 30060`) and revocations (`kind 30061`) are not evaluated yet.
+
+---
+
 ## Nostr identity and NIP-07
 
 The browser has a built-in signer, so pages get a normal `window.nostr` without any
@@ -261,7 +322,8 @@ src/main
   context-menu-model.ts  pure: context menu contents
   context-menu.ts    native context menus for content and chrome
   ncc/locator.ts     pure: candidates, payload validation, endpoint normalisation
-  ncc/resolver.ts    relay query, gossip, selection, decrypt, cache, dedupe
+  ncc/anchor.ts      pure: NCC-02 parse/select, k application, u fallback
+  ncc/resolver.ts    relay query, gossip, anchoring, decrypt, cache, dedupe
   ncc/routing.ts     pure: path joining and Location rewriting
   ncc/health.ts      endpoint cooldowns
   signer/crypto.ts   pure: template validation, signing, NIP-04/44
@@ -281,6 +343,7 @@ src/renderer         React chrome: tabs, toolbar, menu, downloads, history, sett
                      signer sheet, welcome
 src/shared           ncc:// parser, types, relay validation, commands, tab order,
                      download formatting (no Node imports)
+publisher/           separate Vite/React/Tailwind app: NIP-07 locator + NCC-02 publisher
 ```
 
 Remote content runs with `sandbox: true`, `contextIsolation: true`, no Node, and its own
@@ -292,28 +355,30 @@ general IPC bridge.
 ## Testing
 
 ```bash
-npm test       # 187 unit tests: URL parser, locator rules, resolver, routing, pins,
+npm test       # 221 unit tests: URL parser, locator rules, resolver, routing, pins,
                # signer crypto, identity storage, NIP-46, approvals, permissions,
                # shortcuts, context menus, relays, downloads, tab order, bookmarks,
-               # favicons, session storage
+               # favicons, session storage, NCC-02 anchoring, publisher events
 npm run e2e    # real Electron window against a mock relay and local HTTP services
 ```
 
-The end-to-end test starts a WebSocket relay, signs real `30058` events, serves an HTTP
-page with an external stylesheet, a favicon, a downloadable file, and two self-signed
-HTTPS services, then drives the running app over the Chrome DevTools Protocol. It
-asserts rendering, subresource proxying, relative-link resolution, the synthetic origin,
-the address bar, plaintext vs `pinned` transport state, refusal of a certificate that
-does not match `k`, `ncc://` link-driven service switching, NIP-65 gossip to a second
-relay, tab open/close, drag reordering, mute state, tab overflow, the persistent cache
-and session file on disk, **session restore across a real app restart**, the full NIP-07
-path (in-app approval sheet, focus containment, public key, verifiable signature,
-NIP-04/44 round-trips, no provider in subframes), the settings page, the downloads panel
-(a real file written to disk), the per-tab history panel, bookmarks, the hamburger menu,
-**real global shortcuts sent through X** (Ctrl+T/W/L while the page is focused), and a
-**real NIP-46 round-trip against a mock bunker** — connect, remote signing, remote
-decryption of a targeted locator, and disconnect. Screenshots land in
-`/tmp/opencode/ncc-browser-e2e/`.
+The end-to-end test starts a WebSocket relay, signs real `30058` and `30059` events,
+serves an HTTP page with an external stylesheet, a favicon, a downloadable file, and two
+self-signed HTTPS services, builds and serves the publisher app, then drives the running
+browser over the Chrome DevTools Protocol. It asserts rendering, subresource proxying,
+relative-link resolution, the synthetic origin, the address bar, plaintext vs `pinned`
+transport state, refusal of a certificate that does not match `k`, `ncc://` link-driven
+service switching, NIP-65 gossip to a second relay, tab open/close, drag reordering, mute
+state, tab overflow, the persistent cache and session file on disk, **session restore
+across a real app restart**, the full NIP-07 path (in-app approval sheet, focus
+containment, public key, verifiable signature, NIP-04/44 round-trips, no provider in
+subframes), NCC-02 anchoring (trust panel, `u` fallback, required-mode refusal), the
+settings page, the downloads panel (a real file written to disk), the per-tab history
+panel, bookmarks, the hamburger menu, **real global shortcuts sent through X**
+(Ctrl+T/W/L while the page is focused), a **real NIP-46 round-trip against a mock
+bunker** — connect, remote signing, remote decryption of a targeted locator, and
+disconnect — and the **publisher app publishing through the built-in signer and being
+resolved back by the browser**. Screenshots land in `/tmp/opencode/ncc-browser-e2e/`.
 
 To try it against a real publisher, run [`ncc-sidecar`](../nostr-community-conventions/ncc-06/ncc-sidecar/)
 or [`ncc_publish.py`](../nostr-community-conventions/ncc_publish.py), point both sides at
@@ -372,6 +437,13 @@ material out of this browser entirely. See [soapbox.pub/mkstack](https://soapbox
 - **NIP-46 coverage depends on the signer.** Private locators need `nip44_decrypt`, and
   some signers only implement signing. Without `safeStorage` the session is not persisted
   and must be reconnected after a restart.
+- **NCC-02 attestations and revocations are not evaluated.** Anchoring checks the
+  service record, its `exp`, its `u`/`k`, and conflicts with NCC-05. Third-party
+  `kind 30060` attestations and `kind 30061` revocations need a local trust policy before
+  they can change a decision.
+- **The publisher signs through NIP-07 only.** It is a static web app and never handles
+  an `nsec`; in NCC Browser the built-in provider can delegate to a local key or NIP-46
+  signer. Keep the publisher app separate from any service content.
 - **No extension support.** Chrome extensions cannot inject into `ncc://` pages (content
   script match patterns exclude custom schemes) and Electron cannot install Web Store
   extensions. The inbuilt provider is the supported path.

@@ -67,6 +67,31 @@ function relayListEvent(tags: string[][], createdAt = NOW - 5): Event {
   return finalizeEvent({ kind: 10002, created_at: createdAt, tags, content: '' }, AUTHOR_SK)
 }
 
+interface AnchorOptions {
+  d?: string
+  u?: string | null
+  k?: string | null
+  exp?: number | null
+  createdAt?: number
+  secretKey?: Uint8Array
+}
+
+function anchorEvent(options: AnchorOptions = {}): Event {
+  const tags: string[][] = [['d', options.d ?? 'addr']]
+  if (options.u) tags.push(['u', options.u])
+  if (options.k) tags.push(['k', options.k])
+  if (options.exp !== null) tags.push(['exp', String(options.exp ?? NOW + 600)])
+  return finalizeEvent(
+    {
+      kind: 30059,
+      created_at: options.createdAt ?? NOW - 10,
+      tags,
+      content: ''
+    },
+    options.secretKey ?? AUTHOR_SK
+  )
+}
+
 function memoryStore() {
   const map = new Map<string, ResolvedService>()
   return {
@@ -118,7 +143,7 @@ describe('NccResolver', () => {
     expect(outcome.record.encrypted).toBe(false)
 
     const filter = (query as ReturnType<typeof vi.fn>).mock.calls[0][1] as Filter
-    expect(filter.kinds).toEqual([30058])
+    expect(filter.kinds).toEqual([30058, 30059])
     expect(filter.authors).toEqual([AUTHOR_PK])
     expect(filter['#d']).toEqual(['addr'])
   })
@@ -410,5 +435,106 @@ describe('NccResolver', () => {
     const outcome = await resolver.resolve(NPUB)
     expect(outcome.ok).toBe(true)
     expect(store.map.size).toBe(0)
+  })
+
+  it('attaches an NCC-02 anchor and applies its transport key', async () => {
+    const anchor = anchorEvent({
+      d: 'addr',
+      u: 'https://127.0.0.1:8443',
+      k: 'ANCHOR-KEY'
+    })
+    const locator = locatorEvent({
+      payload: {
+        ttl: 600,
+        updated_at: NOW,
+        endpoints: [{ type: 'https', uri: '127.0.0.1:8443' }]
+      }
+    })
+    const { resolver } = resolverWith([locator, anchor])
+    const outcome = await resolver.resolve(NPUB)
+
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+    expect(outcome.record.anchor?.status).toBe('anchored')
+    expect(outcome.record.anchor?.record?.eventId).toBe(anchor.id)
+    expect(outcome.record.anchor?.fallback).toBe(false)
+    expect(outcome.record.anchor?.kMatch).toBe('anchor-only')
+    expect(outcome.record.endpoints[0].k).toBe('ANCHOR-KEY')
+    expect(outcome.record.endpoints[0].kSource).toBe('ncc-02')
+  })
+
+  it('treats a matching NCC-05 key and NCC-02 key as anchored', async () => {
+    const anchor = anchorEvent({ d: 'addr', u: 'https://127.0.0.1:8443', k: 'SAME' })
+    const locator = locatorEvent({
+      payload: {
+        ttl: 600,
+        updated_at: NOW,
+        endpoints: [{ type: 'https', uri: '127.0.0.1:8443', k: 'SAME' }]
+      }
+    })
+    const { resolver } = resolverWith([locator, anchor])
+    const outcome = await resolver.resolve(NPUB)
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+    expect(outcome.record.anchor?.kMatch).toBe('match')
+    expect(outcome.record.endpoints[0].kSource).toBe('ncc-05')
+  })
+
+  it('falls back to the NCC-02 u endpoint when NCC-05 is missing', async () => {
+    const anchor = anchorEvent({ d: 'web', u: 'http://10.0.0.9:8080', k: null })
+    const { resolver } = resolverWith([anchor])
+    const outcome = await resolver.resolve(NPUB, 'web')
+
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+    expect(outcome.record.eventId).toBe(anchor.id)
+    expect(outcome.record.dTag).toBe('web')
+    expect(outcome.record.endpoints[0].url).toBe('http://10.0.0.9:8080/')
+    expect(outcome.record.anchor?.fallback).toBe(true)
+  })
+
+  it('requires an anchor when anchored mode is on', async () => {
+    const { resolver } = resolverWith([locatorEvent()], { anchorRequired: () => true })
+    const outcome = await resolver.resolve(NPUB)
+    expect(outcome.ok).toBe(false)
+    if (outcome.ok) return
+    expect(outcome.code).toBe('no-anchor')
+  })
+
+  it('reports an expired anchor distinctly in anchored mode', async () => {
+    const { resolver } = resolverWith(
+      [locatorEvent(), anchorEvent({ exp: NOW - 1 })],
+      { anchorRequired: () => true }
+    )
+    const outcome = await resolver.resolve(NPUB)
+    expect(outcome.ok).toBe(false)
+    if (outcome.ok) return
+    expect(outcome.code).toBe('anchor-expired')
+  })
+
+  it('fails closed when NCC-02 and NCC-05 pin different keys for one origin', async () => {
+    const anchor = anchorEvent({ d: 'addr', u: 'https://127.0.0.1:8443', k: 'ANCHOR' })
+    const locator = locatorEvent({
+      payload: {
+        ttl: 600,
+        updated_at: NOW,
+        endpoints: [{ type: 'https', uri: '127.0.0.1:8443', k: 'LOCATOR' }]
+      }
+    })
+    const { resolver } = resolverWith([locator, anchor])
+    const outcome = await resolver.resolve(NPUB)
+    expect(outcome.ok).toBe(false)
+    if (outcome.ok) return
+    expect(outcome.code).toBe('anchor-k-mismatch')
+  })
+
+  it('does not apply an anchor key to a different origin', async () => {
+    const anchor = anchorEvent({ d: 'addr', u: 'https://other.example:8443', k: 'ANCHOR' })
+    const { resolver } = resolverWith([locatorEvent(), anchor])
+    const outcome = await resolver.resolve(NPUB)
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+    expect(outcome.record.anchor?.kMatch).toBe('none')
+    expect(outcome.record.endpoints[0].k).toBeNull()
   })
 })

@@ -9,6 +9,13 @@
 
 import { SimplePool, getPublicKey, nip19, nip44, verifyEvent, type Event, type Filter } from 'nostr-tools'
 import {
+  ANCHOR_KIND,
+  anchorFallbackRecord,
+  anchorInfo,
+  applyAnchor,
+  selectAnchor
+} from './anchor'
+import {
   candidateDTags,
   dTagSource,
   normalizeEndpoints,
@@ -50,6 +57,8 @@ export interface ResolverOptions {
   negativeCacheSeconds?: number
   /** Follow the target identity's NIP-65 relay list (kind 10002). */
   gossip?: () => boolean
+  /** Refuse services without a fresh NCC-02 anchor (kind 30059). */
+  anchorRequired?: () => boolean
   /** Optional on-disk cache for public records. */
   cacheStore?: LocatorStore
 }
@@ -141,16 +150,23 @@ export class NccResolver {
     if (cached) this.cache.delete(key)
 
     const persisted = this.options.cacheStore?.get(hex, normalizedService) ?? null
-    if (persisted) {
+    const requiresAnchor = this.shouldRequireAnchor()
+    if (persisted && (!requiresAnchor || persisted.anchor?.status === 'anchored')) {
       const ttl = Math.min(
         persisted.expiresAt - this.now(),
         this.options.maxCacheSeconds ?? DEFAULT_MAX_CACHE_SECONDS
       )
       if (ttl > 0) {
-        const outcome: ResolveOutcome = { ok: true, record: persisted }
+        const record = persisted.anchor
+          ? { ...persisted, anchor: { ...persisted.anchor, required: requiresAnchor } }
+          : persisted
+        const outcome: ResolveOutcome = { ok: true, record }
         this.cache.set(key, { outcome, expiresAt: this.now() + ttl })
         return outcome
       }
+      this.options.cacheStore?.delete(hex, normalizedService)
+    } else if (persisted) {
+      // An old cache entry may predate anchoring, or its anchor may have expired.
       this.options.cacheStore?.delete(hex, normalizedService)
     }
 
@@ -198,14 +214,15 @@ export class NccResolver {
     const relays = [...new Set([...configured, ...discovered])]
 
     const candidates = candidateDTags(service)
+    const required = this.shouldRequireAnchor()
     let events: Event[]
     try {
       events = await withTimeout(
         this.query(relays, {
-          kinds: [30058],
+          kinds: [30058, ANCHOR_KIND],
           authors: [hexPubkey],
           '#d': candidates,
-          limit: 50
+          limit: 80
         }),
         this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS
       )
@@ -215,6 +232,28 @@ export class NccResolver {
         return failure('timeout', 'Relays did not answer in time', relays.join(', '))
       }
       return failure('relay-error', 'Could not query relays', message)
+    }
+
+    const now = this.now()
+    const anchorSelection = selectAnchor(events, hexPubkey, candidates, now)
+    const baseAnchor = anchorInfo(anchorSelection, required)
+
+    if (required && anchorSelection.status !== 'anchored') {
+      const code =
+        anchorSelection.status === 'expired'
+          ? 'anchor-expired'
+          : anchorSelection.status === 'invalid'
+            ? 'anchor-invalid'
+            : 'no-anchor'
+      return failure(
+        code,
+        code === 'no-anchor'
+          ? 'Anchored mode requires a fresh NCC-02 service record'
+          : code === 'anchor-expired'
+            ? 'The NCC-02 service record has expired'
+            : 'The NCC-02 service record is invalid',
+        `Tried kind ${ANCHOR_KIND} for d=${candidates.join(', ')}`
+      )
     }
 
     const seen = new Set<string>()
@@ -239,11 +278,11 @@ export class NccResolver {
       })
     }
 
-    const now = this.now()
     let sawUndecryptable = false
     let sawExpired = false
     let sawInvalid = false
     let sawNoEndpoint = false
+    let record: ResolvedService | null = null
 
     for (const dTag of candidates) {
       const bucket = byDTag.get(dTag)
@@ -270,7 +309,7 @@ export class NccResolver {
           continue
         }
 
-        const record: ResolvedService = {
+        record = {
           pubkey,
           hexPubkey,
           service,
@@ -282,10 +321,40 @@ export class NccResolver {
           eventId: event.id,
           encrypted: decoded.value.encrypted
         }
+        break
+      }
+      if (record) break
+    }
 
-        if (!record.encrypted) this.options.cacheStore?.set(record)
+    if (record) {
+      const applied = applyAnchor(record.endpoints, anchorSelection.anchor)
+      if (applied.endpoints.length === 0 && applied.conflicts > 0) {
+        return failure(
+          'anchor-k-mismatch',
+          'The NCC-02 and NCC-05 transport fingerprints conflict',
+          `Anchor ${anchorSelection.anchor?.eventId ?? ''}`
+        )
+      }
 
-        return { ok: true, record }
+      record.endpoints = applied.endpoints
+      record.anchor = { ...baseAnchor, kMatch: applied.kMatch }
+      if (!record.encrypted) this.options.cacheStore?.set(record)
+      return { ok: true, record }
+    }
+
+    // NCC-02 anchoring allows the service record's public `u` endpoint to work when
+    // NCC-05 has no usable locator (NCC-05 §7 fallback).
+    if (anchorSelection.status === 'anchored' && anchorSelection.anchor.endpoint) {
+      const fallback = anchorFallbackRecord(
+        { pubkey, hexPubkey, service },
+        baseAnchor,
+        anchorSelection.anchor,
+        now,
+        this.options.maxCacheSeconds ?? DEFAULT_MAX_CACHE_SECONDS
+      )
+      if (fallback) {
+        this.options.cacheStore?.set(fallback)
+        return { ok: true, record: fallback }
       }
     }
 
@@ -349,6 +418,14 @@ export class NccResolver {
   private shouldGossip(): boolean {
     try {
       return this.options.gossip?.() === true
+    } catch {
+      return false
+    }
+  }
+
+  private shouldRequireAnchor(): boolean {
+    try {
+      return this.options.anchorRequired?.() === true
     } catch {
       return false
     }

@@ -594,7 +594,8 @@ export class BrowserShell {
       tab.security = {
         transport: activity.transport,
         host: activity.endpointHost ?? '',
-        pinned: activity.pinned
+        pinned: activity.pinned,
+        anchor: activity.anchor ?? null
       }
     }
     this.syncState()

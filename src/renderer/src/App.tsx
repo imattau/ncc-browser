@@ -18,6 +18,7 @@ import { SignerPrompt } from './components/SignerPrompt'
 import { TabOverflowMenu } from './components/TabOverflowMenu'
 import { TabStrip } from './components/TabStrip'
 import { Toolbar } from './components/Toolbar'
+import { TrustPanel } from './components/TrustPanel'
 import { Welcome } from './components/Welcome'
 
 const EMPTY_STATE: NavState = {
@@ -328,6 +329,7 @@ export function App() {
         onOpenDownloads={() => showOverlay('downloads')}
         onOpenHistory={openHistory}
         onHistoryMenu={(direction) => void window.ncc.showHistoryMenu(direction)}
+        onOpenTrust={() => showOverlay('trust')}
         onOpenSettings={() => openSettings('identity')}
         onOpenMenu={() => showOverlay('menu')}
       />
@@ -373,6 +375,15 @@ export function App() {
           onClose={closeOverlay}
           onSelect={selectHistory}
           onClear={clearHistory}
+        />
+      ) : null}
+
+      {overlay === 'trust' ? (
+        <TrustPanel
+          security={state.security}
+          address={state.displayUrl}
+          onClose={closeOverlay}
+          onOpenSettings={() => openSettings('general')}
         />
       ) : null}
 

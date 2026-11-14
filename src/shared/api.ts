@@ -55,6 +55,7 @@ export interface NccApi {
   closeWindow(): Promise<void>
   setRelays(relays: string[]): Promise<SetRelaysResult>
   setGossip(value: boolean): Promise<SetRelaysResult>
+  setAnchorRequired(value: boolean): Promise<SetRelaysResult>
   identity(): Promise<IdentityStatus>
   importIdentity(secret: string): Promise<IdentityStatus>
   generateIdentity(): Promise<IdentityStatus>

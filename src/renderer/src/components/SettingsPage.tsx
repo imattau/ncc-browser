@@ -52,6 +52,7 @@ export function SettingsPage({
 
   const [draft, setDraft] = useState('')
   const [gossip, setGossip] = useState(true)
+  const [anchorRequired, setAnchorRequired] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -83,6 +84,7 @@ export function SettingsPage({
     ]).then(([config, status, trusted]) => {
       setDraft(config.relays.join('\n'))
       setGossip(config.gossip)
+      setAnchorRequired(config.anchorRequired)
       setIdentity(status)
       setPermissions(trusted)
     })
@@ -120,16 +122,24 @@ export function SettingsPage({
     }
 
     const gossipResult = await window.ncc.setGossip(gossip)
-    setLoading(false)
     if (!gossipResult.ok) {
+      setLoading(false)
       setError(gossipResult.error ?? 'Could not save gossip setting')
       return
     }
 
-    const config = gossipResult.config ?? relayResult.config
+    const anchorResult = await window.ncc.setAnchorRequired(anchorRequired)
+    setLoading(false)
+    if (!anchorResult.ok) {
+      setError(anchorResult.error ?? 'Could not save anchoring setting')
+      return
+    }
+
+    const config = anchorResult.config ?? gossipResult.config ?? relayResult.config
     if (config) {
       setDraft(config.relays.join('\n'))
       setGossip(config.gossip)
+      setAnchorRequired(config.anchorRequired)
     }
     setSaved(true)
   }
@@ -324,11 +334,35 @@ export function SettingsPage({
                   </span>
                 </label>
 
+                <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] p-3.5">
+                  <input
+                    type="checkbox"
+                    id="anchor-required"
+                    checked={anchorRequired}
+                    onChange={(event) => {
+                      setAnchorRequired(event.target.checked)
+                      setSaved(false)
+                    }}
+                    className="mt-0.5 h-4 w-4 accent-[color:var(--color-accent)]"
+                  />
+                  <span>
+                    <span className="block text-[12px] font-medium text-[#e7e9ef]">
+                      Require NCC-02 service records
+                    </span>
+                    <span className="mt-0.5 block text-[11.5px] leading-relaxed text-[color:var(--color-muted)]">
+                      Fail closed unless the identity publishes a fresh kind 30059 service
+                      record with the same service id. When off, NCC-02 is shown as an
+                      optional trust anchor.
+                    </span>
+                  </span>
+                </label>
+
                 <div className="mt-3 flex items-center justify-between gap-2">
                   <button
                     type="button"
                     onClick={() => {
                       setDraft(DEFAULT_RELAYS.join('\n'))
+                      setAnchorRequired(false)
                       setSaved(false)
                     }}
                     className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[11.5px] text-[color:var(--color-muted)] hover:bg-white/5 hover:text-white"
@@ -342,7 +376,7 @@ export function SettingsPage({
                     disabled={loading}
                     className="rounded-lg bg-[color:var(--color-accent)] px-3.5 py-1.5 text-[11.5px] font-semibold text-[#0b0c10] disabled:opacity-60"
                   >
-                    {loading ? 'Saving…' : 'Save relays'}
+                    {loading ? 'Saving…' : 'Save settings'}
                   </button>
                 </div>
               </div>

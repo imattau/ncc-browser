@@ -36,6 +36,7 @@ const api: NccApi = {
   closeWindow: () => ipcRenderer.invoke('ncc:window-close'),
   setRelays: (relays) => ipcRenderer.invoke('ncc:set-relays', relays),
   setGossip: (value) => ipcRenderer.invoke('ncc:set-gossip', value),
+  setAnchorRequired: (value) => ipcRenderer.invoke('ncc:set-anchor-required', value),
   identity: () => ipcRenderer.invoke('ncc:identity-status'),
   importIdentity: (secret) => ipcRenderer.invoke('ncc:identity-import', secret),
   generateIdentity: () => ipcRenderer.invoke('ncc:identity-generate'),

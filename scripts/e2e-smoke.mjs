@@ -16,7 +16,7 @@ import { createServer } from 'node:http'
 import { createServer as createHttpsServer } from 'node:https'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, extname } from 'node:path'
 import { WebSocketServer, WebSocket } from 'ws'
 import {
   SimplePool,
@@ -163,6 +163,42 @@ async function startService(npub) {
   return { server, port: server.address().port }
 }
 
+async function startPublisher() {
+  const root = join(ROOT, 'publisher', 'dist')
+  if (!existsSync(join(root, 'index.html'))) {
+    throw new Error('publisher/dist is missing; run npm run publisher:build')
+  }
+
+  const types = {
+    '.html': 'text/html; charset=utf-8',
+    '.js': 'text/javascript; charset=utf-8',
+    '.css': 'text/css; charset=utf-8',
+    '.svg': 'image/svg+xml',
+    '.json': 'application/json',
+    '.woff2': 'font/woff2'
+  }
+
+  const server = createServer((request, response) => {
+    const url = new URL(request.url ?? '/', 'http://localhost')
+    let pathname = decodeURIComponent(url.pathname)
+    if (pathname === '/') pathname = '/index.html'
+    const file = join(root, pathname)
+    if (!file.startsWith(root) || !existsSync(file)) {
+      response.writeHead(404, { 'content-type': 'text/plain' })
+      response.end('not found')
+      return
+    }
+    response.writeHead(200, {
+      'content-type': types[extname(file)] ?? 'application/octet-stream',
+      'cache-control': 'no-store'
+    })
+    response.end(readFileSync(file))
+  })
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  return { server, port: server.address().port }
+}
+
 function publishLocator(relay, d, endpoints) {
   const content = JSON.stringify({
     v: 1,
@@ -211,6 +247,23 @@ function publishEncryptedLocator(relay, d, endpoints, recipientPk) {
       created_at: Math.floor(Date.now() / 1000),
       tags: [['d', d]],
       content: nip44.encrypt(payload, key)
+    },
+    serviceSk
+  )
+  relay.events.push(event)
+  return event
+}
+
+function publishAnchor(relay, d, { u, k, exp } = {}) {
+  const tags = [['d', d], ['exp', String(exp ?? Math.floor(Date.now() / 1000) + 3600)]]
+  if (u) tags.push(['u', u])
+  if (k) tags.push(['k', k])
+  const event = finalizeEvent(
+    {
+      kind: 30059,
+      created_at: Math.floor(Date.now() / 1000),
+      tags,
+      content: ''
     },
     serviceSk
   )
@@ -484,6 +537,7 @@ async function main() {
   const relayA = await startRelay()
   const relayB = await startRelay()
   const { server, port: servicePort } = await startService(serviceNpub)
+  const publisher = await startPublisher()
 
   // Two HTTPS services on different loopback addresses: one presents the pinned
   // certificate, the other presents a different one while claiming the same `k`.
@@ -510,6 +564,10 @@ async function main() {
   publishLocator(relayA, 'bogus', [
     { type: 'https', uri: `127.0.0.2:${bogus.port}`, priority: 1, family: 'ipv4', k: pinnedK }
   ])
+  // NCC-02 anchors: one public service with a matching key, and one service that only
+  // has a `u` endpoint (no NCC-05 locator) to exercise the anchored fallback.
+  publishAnchor(relayA, 'secure', { u: `https://127.0.0.1:${secure.port}`, k: pinnedK })
+  publishAnchor(relayA, 'ncc02only', { u: `http://127.0.0.1:${servicePort}` })
   // `hinted` only exists on relay B; relay A holds the NIP-65 list pointing there.
   publishRelayList(relayA, `ws://127.0.0.1:${relayB.port}`)
   publishLocator(relayB, 'hinted', [
@@ -518,6 +576,7 @@ async function main() {
 
   console.log(`relay A ws://127.0.0.1:${relayA.port} · relay B ws://127.0.0.1:${relayB.port}`)
   console.log(`service http://127.0.0.1:${servicePort}`)
+  console.log(`publisher http://127.0.0.1:${publisher.port}`)
   console.log(`pinned https://127.0.0.1:${secure.port} · k ${pinnedK.slice(0, 12)}…`)
   console.log(`npub ${serviceNpub} · locator ${event.id.slice(0, 12)}…`)
 
@@ -574,6 +633,7 @@ async function main() {
     restarted?.kill('SIGTERM')
     xvfb.proc.kill('SIGTERM')
     server.close()
+    publisher.server.close()
     secure.server.close()
     bogus.server.close()
     relayA.wss.close()
@@ -629,6 +689,21 @@ async function main() {
 
     const chromeText = await evaluate(chrome, 'document.body.innerText')
     check('toolbar reports plaintext transport', String(chromeText).includes('plaintext'), String(chromeText))
+    check('reports an unanchored service', String(chromeText).includes('unanchored'), String(chromeText))
+
+    // The trust panel explains what anchoring would add for an unanchored service.
+    await evaluate(chrome, 'document.querySelector("[data-anchor-badge]").click()')
+    await waitForText(chrome, 'Service trust', 40)
+    check(
+      'opens the service trust panel',
+      (await evaluate(chrome, 'Boolean(document.querySelector("[data-popover=trust]"))')) === true
+    )
+    check(
+      'trust panel explains the missing anchor',
+      (await evaluate(chrome, 'document.body.innerText')).includes('No NCC-02 service record')
+    )
+    await evaluate(chrome, 'document.querySelector(\'[aria-label="Close Service trust"]\').click()')
+    await sleep(250)
 
     // Favicons are fetched in main and handed to the chrome as data URLs.
     const favicon = await waitForValue(
@@ -661,6 +736,12 @@ async function main() {
       'settings page switches sections',
       (await evaluate(chrome, 'Boolean(document.querySelector("#relays"))')) === true
     )
+    check(
+      'settings page exposes NCC-02 anchoring',
+      (await evaluate(chrome, 'Boolean(document.querySelector("#anchor-required"))')) === true
+    )
+    const generalShot = await chrome.send('Page.captureScreenshot', { format: 'png' })
+    writeFileSync(join(ARTIFACTS, 'settings-general.png'), Buffer.from(generalShot.data, 'base64'))
     await evaluate(chrome, 'document.querySelector(\'[data-settings-page] header button\').click()')
     await sleep(350)
     check(
@@ -851,6 +932,54 @@ async function main() {
     await sleep(250)
     const pinnedText = await evaluate(chrome, 'document.body.innerText')
     check('toolbar reports pinned transport', String(pinnedText).includes('pinned'), String(pinnedText))
+    check(
+      'toolbar reports NCC-02 anchoring',
+      String(pinnedText).includes('anchored'),
+      String(pinnedText)
+    )
+
+    await evaluate(chrome, 'document.querySelector("[data-anchor-badge]").click()')
+    await waitForText(chrome, 'Service trust', 40)
+    const trustText = await evaluate(chrome, 'document.body.innerText')
+    check(
+      'trust panel shows the matching transport keys',
+      String(trustText).includes('same transport key'),
+      String(trustText)
+    )
+    check('trust panel shows the anchor service id', String(trustText).includes('secure'))
+    const trustShot = await chrome.send('Page.captureScreenshot', { format: 'png' })
+    writeFileSync(join(ARTIFACTS, 'trust.png'), Buffer.from(trustShot.data, 'base64'))
+    await evaluate(chrome, 'document.querySelector(\'[aria-label="Close Service trust"]\').click()')
+    await sleep(250)
+
+    // A service with only an NCC-02 record uses its `u` endpoint as the fallback.
+    await evaluate(chrome, `window.ncc.newTab('ncc://${serviceNpub}/_/ncc02only/')`)
+    const fallbackTarget = await waitForTarget((entry) =>
+      String(entry.url).includes('/ncc02only/')
+    )
+    const fallbackCdp = new Cdp(fallbackTarget.webSocketDebuggerUrl)
+    await fallbackCdp.connect()
+    const fallbackText = await waitForText(fallbackCdp, 'NCC E2E OK', 80)
+    check('serves the NCC-02 u fallback', fallbackText.includes('NCC E2E OK'))
+    await sleep(300)
+    const fallbackChrome = await evaluate(chrome, 'document.body.innerText')
+    check(
+      'toolbar marks the NCC-02 fallback',
+      String(fallbackChrome).includes('ncc-02'),
+      String(fallbackChrome)
+    )
+    await evaluate(chrome, 'document.querySelector("[data-anchor-badge]").click()')
+    await waitForText(chrome, 'Service trust', 40)
+    check(
+      'trust panel explains the fallback',
+      (await evaluate(chrome, 'document.body.innerText')).includes(
+        'served from the NCC-02 `u` endpoint'
+      )
+    )
+    await evaluate(chrome, 'document.querySelector(\'[aria-label="Close Service trust"]\').click()')
+    await evaluate(chrome, 'window.ncc.closeTab()')
+    fallbackCdp.close()
+    await sleep(400)
 
     // Tabs + gossip: a new tab resolves a service that only exists on the hinted relay.
     await evaluate(chrome, 'window.ncc.newTab()')
@@ -1134,6 +1263,153 @@ async function main() {
       `window.ncc.removeBookmark(${JSON.stringify(bookmarked[0].url)})`
     )
     check('removes a bookmark', unbookmarked?.length === 0, JSON.stringify(unbookmarked))
+
+    // M4: the publisher app, signed by the browser's built-in NIP-07 provider, then
+    // resolved back through the browser from the same relay.
+    await evaluate(chrome, `window.ncc.newTab('http://127.0.0.1:${publisher.port}/')`)
+    const publisherTarget = await waitForTarget((entry) =>
+      String(entry.url).startsWith(`http://127.0.0.1:${publisher.port}`)
+    )
+    const publisherCdp = new Cdp(publisherTarget.webSocketDebuggerUrl)
+    await publisherCdp.connect()
+    const publisherText = await waitForText(publisherCdp, 'NCC Publisher', 80)
+    check('serves the publisher app', publisherText.includes('NCC Publisher'))
+    check(
+      'publisher gets the built-in NIP-07 provider',
+      (await evaluate(publisherCdp, 'typeof window.nostr')) === 'object'
+    )
+
+    await evaluate(
+      publisherCdp,
+      `Array.from(document.querySelectorAll('button')).find((button) => button.textContent.includes('Connect signer')).click()`
+    )
+    await waitForText(chrome, 'Signer request', 60)
+    check(
+      'publisher signing reaches the approval sheet',
+      (await evaluate(chrome, 'document.body.innerText')).includes(
+        `127.0.0.1:${publisher.port}`
+      )
+    )
+    await evaluate(
+      chrome,
+      `(() => {
+        const remember = document.querySelector('[data-signer-remember]')
+        if (remember && !remember.checked) remember.click()
+        document.querySelector('[data-signer-allow]').click()
+        return true
+      })()`
+    )
+    const publisherNpub = await waitForValue(
+      publisherCdp,
+      'document.querySelector(\'p[title^="npub1"]\')?.textContent?.trim() ?? ""',
+      80
+    )
+    check('publisher derives the signer npub', publisherNpub === signerNpub, String(publisherNpub))
+
+    await evaluate(
+      publisherCdp,
+      `(() => {
+        const set = (selector, value) => {
+          const element = document.querySelector(selector)
+          const proto = element instanceof HTMLTextAreaElement
+            ? HTMLTextAreaElement.prototype
+            : HTMLInputElement.prototype
+          Object.getOwnPropertyDescriptor(proto, 'value').set.call(element, value)
+          element.dispatchEvent(new Event('input', { bubbles: true }))
+        }
+        set('input[aria-label="Service id"]', 'pubtest')
+        set('input[aria-label="Host"]', '127.0.0.1')
+        set('input[aria-label="Port"]', '${servicePort}')
+        set('textarea[aria-label="Relays"]', 'ws://127.0.0.1:${relayA.port}')
+        return true
+      })()`
+    )
+    await sleep(400)
+    check(
+      'publisher previews the clean address',
+      (await evaluate(publisherCdp, 'document.body.innerText')).includes(
+        `ncc://${signerNpub}/pubtest`
+      )
+    )
+
+    await evaluate(
+      publisherCdp,
+      `Array.from(document.querySelectorAll('button')).find((button) => button.textContent.includes('Sign & publish')).click()`
+    )
+    await waitForText(publisherCdp, 'Published', 80)
+    const publisherShot = await publisherCdp.send('Page.captureScreenshot', { format: 'png' })
+    writeFileSync(join(ARTIFACTS, 'publisher.png'), Buffer.from(publisherShot.data, 'base64'))
+
+    let publishedLocator = null
+    let publishedAnchor = null
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      publishedLocator = relayA.events.find(
+        (event) =>
+          event.kind === 30058 &&
+          event.tags.some((tag) => tag[0] === 'd' && tag[1] === 'pubtest')
+      )
+      publishedAnchor = relayA.events.find(
+        (event) =>
+          event.kind === 30059 &&
+          event.tags.some((tag) => tag[0] === 'd' && tag[1] === 'pubtest')
+      )
+      if (publishedLocator && publishedAnchor) break
+      await sleep(200)
+    }
+    check('publisher publishes the NCC-05 locator', Boolean(publishedLocator))
+    check('publisher publishes the NCC-02 anchor', Boolean(publishedAnchor))
+    check(
+      'published locator has a valid signature',
+      publishedLocator ? verifyEvent(publishedLocator) : false
+    )
+    const publishedPayload = publishedLocator ? JSON.parse(publishedLocator.content) : null
+    check(
+      'published locator points at the local port',
+      String(publishedPayload?.endpoints?.[0]?.url).includes(`:${servicePort}`),
+      String(publishedPayload?.endpoints?.[0]?.url)
+    )
+
+    await evaluate(chrome, `window.ncc.navigate('ncc://${signerNpub}/pubtest/')`)
+    const publishedTarget = await waitForTarget((entry) =>
+      String(entry.url).includes('/pubtest/')
+    )
+    const publishedCdp = new Cdp(publishedTarget.webSocketDebuggerUrl)
+    await publishedCdp.connect()
+    const publishedText = await waitForText(publishedCdp, 'NCC E2E OK', 80)
+    check('browser resolves the freshly published locator', publishedText.includes('NCC E2E OK'))
+    await sleep(300)
+    check(
+      'published service shows its NCC-02 anchor',
+      (await evaluate(chrome, 'document.body.innerText')).includes('anchored')
+    )
+    await evaluate(chrome, 'window.ncc.closeTab()')
+    publishedCdp.close()
+    publisherCdp.close()
+    await sleep(400)
+
+    // Anchored mode fails closed for a service with no NCC-02 record.
+    const required = await evaluate(chrome, 'window.ncc.setAnchorRequired(true)')
+    check(
+      'enables required anchoring',
+      required?.ok === true && required?.config?.anchorRequired === true,
+      JSON.stringify(required)
+    )
+    await evaluate(chrome, `window.ncc.newTab('ncc://${serviceNpub}/_/web/')`)
+    const requiredTarget = await waitForTarget((entry) => String(entry.url).includes('/_/web/'))
+    const requiredCdp = new Cdp(requiredTarget.webSocketDebuggerUrl)
+    await requiredCdp.connect()
+    const requiredText = await waitForText(requiredCdp, 'No NCC-02 service record', 80)
+    check('anchored mode refuses an unanchored service', requiredText.includes('No NCC-02 service record'))
+    await sleep(300)
+    check(
+      'toolbar reports no-anchor',
+      (await evaluate(chrome, 'document.body.innerText')).includes('no-anchor')
+    )
+    await evaluate(chrome, 'window.ncc.closeTab()')
+    requiredCdp.close()
+    const disabled = await evaluate(chrome, 'window.ncc.setAnchorRequired(false)')
+    check('restores optional anchoring', disabled?.config?.anchorRequired === false)
+    await sleep(400)
 
     // Failure case: a different pubkey with no locator at all.
     await cdp.send('Page.navigate', { url: `ncc://${missingNpub}/web/` })

@@ -118,6 +118,18 @@ export function registerIpc(deps: IpcDeps): void {
     }
   })
 
+  ipcMain.handle('ncc:set-anchor-required', (_event, value: unknown) => {
+    try {
+      const config = deps.config.setAnchorRequired(value)
+      // Anchoring changes trust policy, not resolution inputs. Drop memoised outcomes
+      // but keep public locator cache entries: unanchored ones are rechecked on use.
+      deps.resolver.clearCache()
+      return { ok: true, config }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
   ipcMain.handle('ncc:identity-status', () => deps.identity.status())
 
   ipcMain.handle('ncc:identity-import', async (_event, secret: unknown) => {
