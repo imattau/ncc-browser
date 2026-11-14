@@ -1,0 +1,96 @@
+appId: io.github.imattau.nccbrowser
+productName: NCC Browser
+executableName: ncc-browser
+copyright: Copyright © 2026 lostcause
+
+directories:
+  output: release
+  buildResources: build
+
+# The main and renderer bundles are self-contained (nostr-tools is inlined), so no
+# production node_modules are shipped.
+files:
+  - out/**/*
+  - package.json
+  - '!**/*.map'
+  - '!node_modules/**/*'
+
+asar: true
+compression: normal
+npmRebuild: false
+removePackageScripts: true
+
+mac:
+  category: public.app-category.utilities
+  icon: build/icon.png
+  artifactName: ${name}-${version}-mac-${arch}.${ext}
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+    - target: zip
+      arch: [x64, arm64]
+  # Ad-hoc signing keeps the arm64 app launchable without an Apple Developer ID.
+  # Replace with a real identity (and notarize) for a signed public release.
+  identity: '-'
+  hardenedRuntime: false
+  gatekeeperAssess: false
+  notarize: false
+
+dmg:
+  artifactName: ${name}-${version}-mac-${arch}.${ext}
+  title: ${productName} ${version}
+
+win:
+  icon: build/icon.png
+  artifactName: ${name}-${version}-win-${arch}-setup.${ext}
+  target:
+    - target: nsis
+      arch: [x64]
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: NCC Browser
+  artifactName: ${name}-${version}-win-${arch}-setup.${ext}
+
+linux:
+  icon: build/icon.png
+  category: Network;WebBrowser
+  synopsis: Browse Nostr identity services without DNS
+  description: >-
+    NCC Browser resolves ncc://<npub>/<service> through NCC-05 locators and
+    renders the service bound to that Nostr identity.
+  maintainer: lostcause
+  vendor: lostcause
+  syncDesktopName: true
+  mimeTypes:
+    - x-scheme-handler/ncc
+  artifactName: ${name}-${version}-linux-${arch}.${ext}
+  target:
+    - target: deb
+      arch: [x64]
+    - target: rpm
+      arch: [x64]
+    - target: flatpak
+      arch: [x64]
+
+flatpak:
+  runtime: org.freedesktop.Platform
+  runtimeVersion: '26.08'
+  sdk: org.freedesktop.Sdk
+  base: org.electronjs.Electron2.BaseApp
+  baseVersion: '26.08'
+  useWaylandFlags: true
+  finishArgs:
+    - --socket=wayland
+    - --socket=x11
+    - --share=ipc
+    - --share=network
+    - --device=dri
+    - --socket=pulseaudio
+    - --filesystem=xdg-download
+    - --talk-name=org.freedesktop.Notifications
+    - --talk-name=org.kde.StatusNotifierWatcher

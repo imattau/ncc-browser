@@ -436,6 +436,46 @@ See [soapbox.pub/mkstack](https://soapbox.pub/mkstack).
 
 ---
 
+## Packaging and releases
+
+Releases are built by [`.github/workflows/release.yml`](./.github/workflows/release.yml)
+from a version tag. The workflow runs the typecheck and unit tests once, then builds on
+three runners and attaches every artifact to a single GitHub release:
+
+| Platform | Artifacts |
+| --- | --- |
+| Linux | `ncc-browser-<version>-linux-amd64.deb`, `…-linux-x86_64.rpm`, `…-linux-x86_64.flatpak` |
+| macOS | `ncc-browser-<version>-mac-x64.dmg` / `-arm64.dmg` and matching `.zip` |
+| Windows | `ncc-browser-<version>-win-x64-setup.exe` (NSIS) |
+
+The release job also uploads `SHA256SUMS.txt`. Pushing a tag is the whole release flow:
+
+```bash
+npm version patch --no-git-tag-version   # or edit package.json
+git commit -am "Release v0.1.4"
+git tag -a v0.1.4 -m "NCC Browser v0.1.4"
+git push origin main --follow-tags
+```
+
+The workflow rewrites `package.json` to the tag version before building, so pre-release
+tags such as `v0.2.0-beta.1` are published as a GitHub pre-release. A manual
+`workflow_dispatch` run builds and uploads the artifacts without creating a release.
+
+To build locally:
+
+```bash
+npm run dist:linux   # deb + rpm + flatpak (needs rpm, flatpak and flatpak-builder)
+npm run dist:mac     # dmg + zip for x64 and arm64 (run on macOS)
+npm run dist:win     # NSIS installer (run on Windows)
+```
+
+Builds are unsigned: the macOS app is ad-hoc signed but not notarized, and the Windows
+installer has no Authenticode signature, so both show the usual "unidentified developer"
+or SmartScreen prompts. The Flatpak bundle declares the flathub
+`org.electronjs.Electron2.BaseApp//26.08` runtime.
+
+---
+
 ## Known limitations (v0.1)
 
 - **Absolute-path subresources** (`/style.css`) are attributed to the page's service via
@@ -472,6 +512,9 @@ See [soapbox.pub/mkstack](https://soapbox.pub/mkstack).
   Nostr.
 - **The title bar is app-drawn.** The window is frameless on every platform, so window
   controls and dragging are part of the chrome rather than the OS theme.
+- **Installers are unsigned.** macOS builds are ad-hoc signed only, Windows builds have
+  no Authenticode certificate, and there is no auto-update channel yet. Signed builds and
+  updates need maintainer certificates and a publishing key.
 - **Clearnet pages** load directly, with normal Chromium error handling.
 
 ---

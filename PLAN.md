@@ -228,6 +228,11 @@ is CJS and the package is ESM-only.
   cancel and reveal; per-tab history panel and back/forward jump lists; local bookmarks;
   session restore (tabs + window geometry); settings moved from a modal to a full page;
   focus trapping for dialogs and popovers.
+- **M6 — Packaging:** ✅ electron-builder targets for Linux (deb, rpm, flatpak), macOS
+  (dmg + zip, x64 and arm64, ad-hoc signed) and Windows (NSIS); a tag-driven GitHub
+  Actions release workflow that verifies, builds on three runners, publishes the
+  artifacts and writes `SHA256SUMS.txt`. Signing certificates and auto-update are still
+  outstanding.
 
 ---
 
