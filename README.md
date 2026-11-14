@@ -424,9 +424,12 @@ MKStack is a web-app framework: it cannot register a custom scheme, bypass CORS 
 `ip:port`, pin a TLS SPKI, or control navigation, so it cannot be the browser itself.
 
 The renderer deliberately uses the same stack MKStack generates (React 19 + Vite +
-TypeScript + Tailwind + small shadcn-style components), and the planned M4 publisher is a
-separate MKStack app (`stacks mkstack`) that publishes locators via NIP-07 — keeping key
-material out of this browser entirely. See [soapbox.pub/mkstack](https://soapbox.pub/mkstack).
+TypeScript + Tailwind + small shadcn-style components). The M4 publisher lives in
+[`publisher/`](./publisher/) and uses the same stack; the Stacks alias was unreachable
+from this environment, so it was built directly rather than generated with
+`stacks clone mkstack`. It still follows the intended split: the publisher handles the
+NIP-07 publishing flow and key material never enters this browser's trusted chrome.
+See [soapbox.pub/mkstack](https://soapbox.pub/mkstack).
 
 ---
 
