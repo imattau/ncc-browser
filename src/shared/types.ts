@@ -108,15 +108,22 @@ export interface AppConfig {
 
 export type IdentitySource = 'none' | 'env' | 'file' | 'session'
 
+export type IdentityMode = 'none' | 'local' | 'nip46'
+
 export interface IdentityStatus {
   configured: boolean
+  mode: IdentityMode
   npub?: string
   hexPubkey?: string
   source: IdentitySource
-  /** True when the key is encrypted at rest with the OS keychain. */
+  /** True when the key (or NIP-46 session) is encrypted at rest with the OS keychain. */
   persisted: boolean
   /** False when the OS offers no secure storage; the key then lives for this session. */
   encryptionAvailable: boolean
+  /** NIP-46 relays, when mode is `nip46`. */
+  relays?: string[]
+  /** NIP-46 connection acknowledged by the remote signer. */
+  connected?: boolean
 }
 
 export interface SignerPermission {

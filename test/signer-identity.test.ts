@@ -12,19 +12,20 @@ function tempFile(): string {
 function base64Codec(available = true): IdentityCodec {
   return {
     available,
-    encrypt: (plain) => Buffer.from(plain, 'utf8').toString('base64'),
-    decrypt: (cipher) => Buffer.from(cipher, 'base64').toString('utf8')
+    encrypt: async (plain) => Buffer.from(plain, 'utf8').toString('base64'),
+    decrypt: async (cipher) => Buffer.from(cipher, 'base64').toString('utf8')
   }
 }
 
 describe('IdentityStore', () => {
-  it('imports an nsec and persists it encrypted', () => {
+  it('imports an nsec and persists it encrypted', async () => {
     const file = tempFile()
     const secret = generateSecretKey()
-    const store = new IdentityStore({ filePath: file, codec: base64Codec(), now: () => 1234 })
+    const store = await IdentityStore.open({ filePath: file, codec: base64Codec(), now: () => 1234 })
 
-    const status = store.import(nip19.nsecEncode(secret))
+    const status = await store.import(nip19.nsecEncode(secret))
     expect(status.configured).toBe(true)
+    expect(status.mode).toBe('local')
     expect(status.npub).toBe(nip19.npubEncode(getPublicKey(secret)))
     expect(status.source).toBe('file')
     expect(status.persisted).toBe(true)
@@ -35,27 +36,29 @@ describe('IdentityStore', () => {
     expect(JSON.parse(raw).ciphertext).toBeTruthy()
   })
 
-  it('loads a stored identity in a new instance', () => {
+  it('loads a stored identity in a new instance', async () => {
     const file = tempFile()
     const secret = generateSecretKey()
-    new IdentityStore({ filePath: file, codec: base64Codec() }).import(nip19.nsecEncode(secret))
+    await (
+      await IdentityStore.open({ filePath: file, codec: base64Codec() })
+    ).import(nip19.nsecEncode(secret))
 
-    const reloaded = new IdentityStore({ filePath: file, codec: base64Codec() })
+    const reloaded = await IdentityStore.open({ filePath: file, codec: base64Codec() })
     expect(reloaded.status().npub).toBe(nip19.npubEncode(getPublicKey(secret)))
     expect([...reloaded.getSecret()!]).toEqual([...secret])
   })
 
-  it('generates a new identity', () => {
-    const store = new IdentityStore({ filePath: tempFile(), codec: base64Codec() })
-    const status = store.generate()
+  it('generates a new identity', async () => {
+    const store = await IdentityStore.open({ filePath: tempFile(), codec: base64Codec() })
+    const status = await store.generate()
     expect(status.configured).toBe(true)
     expect(status.npub?.startsWith('npub1')).toBe(true)
   })
 
-  it('keeps the key in memory when no keychain is available', () => {
+  it('keeps the key in memory when no keychain is available', async () => {
     const file = tempFile()
-    const store = new IdentityStore({ filePath: file, codec: base64Codec(false) })
-    const status = store.import(nip19.nsecEncode(generateSecretKey()))
+    const store = await IdentityStore.open({ filePath: file, codec: base64Codec(false) })
+    const status = await store.import(nip19.nsecEncode(generateSecretKey()))
     expect(status.source).toBe('session')
     expect(status.persisted).toBe(false)
     expect(status.encryptionAvailable).toBe(false)
@@ -63,34 +66,35 @@ describe('IdentityStore', () => {
     expect(store.getSecret()).not.toBeNull()
   })
 
-  it('removes the identity and the stored file', () => {
+  it('removes the identity and the stored file', async () => {
     const file = tempFile()
-    const store = new IdentityStore({ filePath: file, codec: base64Codec() })
-    store.generate()
+    const store = await IdentityStore.open({ filePath: file, codec: base64Codec() })
+    await store.generate()
     const status = store.remove()
     expect(status.configured).toBe(false)
+    expect(status.mode).toBe('none')
     expect(existsSync(file)).toBe(false)
   })
 
-  it('ignores a corrupt or undecryptable file', () => {
+  it('ignores a corrupt or undecryptable file', async () => {
     const file = tempFile()
     writeFileSync(file, 'garbage')
-    expect(new IdentityStore({ filePath: file, codec: base64Codec() }).status().configured).toBe(
+    expect((await IdentityStore.open({ filePath: file, codec: base64Codec() })).status().configured).toBe(
       false
     )
 
     writeFileSync(file, JSON.stringify({ version: 1, ciphertext: 'not-base64-json' }))
     const codec = base64Codec()
-    codec.decrypt = () => {
+    codec.decrypt = async () => {
       throw new Error('bad key')
     }
-    expect(new IdentityStore({ filePath: file, codec }).status().configured).toBe(false)
+    expect((await IdentityStore.open({ filePath: file, codec })).status().configured).toBe(false)
   })
 
-  it('lets the environment override a stored identity', () => {
+  it('lets the environment override a stored identity', async () => {
     const file = tempFile()
-    const store = new IdentityStore({ filePath: file, codec: base64Codec() })
-    store.generate()
+    const store = await IdentityStore.open({ filePath: file, codec: base64Codec() })
+    await store.generate()
     const envSecret = generateSecretKey()
     const status = store.setFromEnv(nip19.nsecEncode(envSecret))
     expect(status.source).toBe('env')
@@ -98,10 +102,10 @@ describe('IdentityStore', () => {
   })
 
   it('provides a locator signer', async () => {
-    const store = new IdentityStore({ filePath: tempFile(), codec: base64Codec() })
-    store.generate()
+    const store = await IdentityStore.open({ filePath: tempFile(), codec: base64Codec() })
+    await store.generate()
     const signer = store.getSigner()
     expect(signer).not.toBeNull()
-    expect(await signer!.getPublicKey()).toBe(store.status().hexPubkey)
+    expect(await signer!.getPublicKey!()).toBe(store.status().hexPubkey)
   })
 })

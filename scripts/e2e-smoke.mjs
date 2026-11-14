@@ -18,7 +18,16 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { WebSocketServer, WebSocket } from 'ws'
-import { finalizeEvent, generateSecretKey, getPublicKey, nip19, verifyEvent } from 'nostr-tools'
+import {
+  SimplePool,
+  finalizeEvent,
+  generateSecretKey,
+  getPublicKey,
+  nip04,
+  nip19,
+  nip44,
+  verifyEvent
+} from 'nostr-tools'
 import selfsigned from 'selfsigned'
 
 const ROOT = new URL('..', import.meta.url).pathname
@@ -31,6 +40,7 @@ const missingSk = generateSecretKey()
 const missingNpub = nip19.npubEncode(getPublicKey(missingSk))
 const signerSk = generateSecretKey()
 const signerPk = getPublicKey(signerSk)
+const signerNpub = nip19.npubEncode(signerPk)
 const peerPk = getPublicKey(generateSecretKey())
 
 const relayEvents = []
@@ -51,10 +61,15 @@ function matches(filters, event) {
 
 async function startRelay() {
   const events = []
+  const sockets = new Set()
   const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 })
   await new Promise((resolve) => wss.once('listening', resolve))
 
   wss.on('connection', (socket) => {
+    const subs = []
+    sockets.add(socket)
+    socket.on('close', () => sockets.delete(socket))
+
     socket.on('message', (raw) => {
       let message
       try {
@@ -65,20 +80,35 @@ async function startRelay() {
       const [verb, ...rest] = message
       if (verb === 'REQ') {
         const [subId, ...filters] = rest
+        if (filters.some((filter) => filter?.kinds?.includes(24133))) {
+          console.log(`  relay REQ 24133 ${JSON.stringify(filters)}`)
+        }
+        subs.push({ subId, filters })
         for (const event of events) {
           if (matches(filters, event)) socket.send(JSON.stringify(['EVENT', subId, event]))
         }
         socket.send(JSON.stringify(['EOSE', subId]))
       }
+      if (verb === 'CLOSE') {
+        const index = subs.findIndex((sub) => sub.subId === rest[0])
+        if (index !== -1) subs.splice(index, 1)
+      }
       if (verb === 'EVENT') {
         const event = rest[0]
+        if (event.kind === 24133) console.log(`  relay EVENT 24133 ${JSON.stringify(event.tags)}`)
         events.push(event)
         socket.send(JSON.stringify(['OK', event.id, true, '']))
-      }
-      if (verb === 'CLOSE') {
-        // stateless mock: nothing to clean up
+        for (const peer of sockets) {
+          for (const sub of peer.subs ?? []) {
+            if (matches(sub.filters, event)) {
+              peer.send(JSON.stringify(['EVENT', sub.subId, event]))
+            }
+          }
+        }
       }
     })
+
+    socket.subs = subs
   })
 
   return { wss, port: wss.address().port, events }
@@ -148,6 +178,131 @@ function publishRelayList(relay, hintRelayUrl) {
   )
   relay.events.push(event)
   return event
+}
+
+function publishEncryptedLocator(relay, d, endpoints, recipientPk) {
+  const payload = JSON.stringify({
+    v: 1,
+    ttl: 3600,
+    updated_at: Math.floor(Date.now() / 1000),
+    endpoints
+  })
+  const key = nip44.getConversationKey(serviceSk, recipientPk)
+  const event = finalizeEvent(
+    {
+      kind: 30058,
+      created_at: Math.floor(Date.now() / 1000),
+      tags: [['d', d]],
+      content: nip44.encrypt(payload, key)
+    },
+    serviceSk
+  )
+  relay.events.push(event)
+  return event
+}
+
+/**
+ * Minimal NIP-46 bunker for the e2e run: subscribes to kind 24133 requests addressed
+ * to it, decrypts them, and answers connect / get_public_key / sign_event / nip44*.
+ */
+function startBunker(relayUrl, bunkerSk) {
+  const bunkerPk = getPublicKey(bunkerSk)
+  const pool = new SimplePool()
+  let signRequests = 0
+  let decryptRequests = 0
+
+  const respond = async (clientPk, id, payload) => {
+    const key = nip44.getConversationKey(bunkerSk, clientPk)
+    const event = finalizeEvent(
+      {
+        kind: 24133,
+        created_at: Math.floor(Date.now() / 1000),
+        tags: [['p', clientPk]],
+        content: nip44.encrypt(JSON.stringify({ id, ...payload }), key)
+      },
+      bunkerSk
+    )
+    await pool.publish([relayUrl], event)
+  }
+
+  const handle = async (event) => {
+    let request
+    try {
+      const key = nip44.getConversationKey(bunkerSk, event.pubkey)
+      request = JSON.parse(nip44.decrypt(event.content, key))
+    } catch {
+      return
+    }
+    console.log(`  bunker <- ${request.method}`)
+
+    const params = request.params ?? []
+    try {
+      switch (request.method) {
+        case 'connect':
+          await respond(event.pubkey, request.id, { result: params[1] ?? 'ack' })
+          break
+        case 'get_public_key':
+          await respond(event.pubkey, request.id, { result: bunkerPk })
+          break
+        case 'ping':
+          await respond(event.pubkey, request.id, { result: 'pong' })
+          break
+        case 'sign_event': {
+          signRequests += 1
+          const signed = finalizeEvent(JSON.parse(params[0]), bunkerSk)
+          await respond(event.pubkey, request.id, { result: JSON.stringify(signed) })
+          break
+        }
+        case 'nip44_encrypt': {
+          const key = nip44.getConversationKey(bunkerSk, params[0])
+          await respond(event.pubkey, request.id, { result: nip44.encrypt(params[1], key) })
+          break
+        }
+        case 'nip44_decrypt': {
+          decryptRequests += 1
+          const key = nip44.getConversationKey(bunkerSk, params[0])
+          await respond(event.pubkey, request.id, { result: nip44.decrypt(params[1], key) })
+          break
+        }
+        case 'nip04_encrypt': {
+          const key = nip04.encrypt(bunkerSk, params[0], params[1])
+          await respond(event.pubkey, request.id, { result: key })
+          break
+        }
+        case 'nip04_decrypt': {
+          const key = nip04.decrypt(bunkerSk, params[0], params[1])
+          await respond(event.pubkey, request.id, { result: key })
+          break
+        }
+        default:
+          await respond(event.pubkey, request.id, { error: `unsupported method ${request.method}` })
+      }
+    } catch (error) {
+      await respond(event.pubkey, request.id, {
+        error: error instanceof Error ? error.message : String(error)
+      }).catch(() => undefined)
+    }
+  }
+
+  const sub = pool.subscribeMany(
+    [relayUrl],
+    { kinds: [24133], '#p': [bunkerPk] },
+    {
+      onevent: (event) => {
+        void handle(event)
+      }
+    }
+  )
+
+  return {
+    bunkerPk,
+    signRequests: () => signRequests,
+    decryptRequests: () => decryptRequests,
+    close: () => {
+      sub.close()
+      pool.close([relayUrl])
+    }
+  }
 }
 
 async function startSecureService(host, cert, key, headline) {
@@ -343,7 +498,8 @@ async function main() {
         XDG_CONFIG_HOME: configHome,
         ELECTRON_DISABLE_SECURITY_WARNINGS: '1',
         NCC_IDENTITY_NSEC: nip19.nsecEncode(signerSk),
-        NCC_SIGNER_AUTO_APPROVE: '1'
+        NCC_SIGNER_AUTO_APPROVE: '1',
+        NCC_NIP46_TIMEOUT_MS: '15000'
       },
       stdio: ['ignore', 'pipe', 'pipe']
     }
@@ -357,7 +513,10 @@ async function main() {
     logs += chunk.toString()
   })
 
+  let bunker = null
+
   const cleanup = () => {
+    bunker?.close()
     electron.kill('SIGTERM')
     xvfb.proc.kill('SIGTERM')
     server.close()
@@ -461,6 +620,59 @@ async function main() {
     check('NIP-44 round-trips through the signer', nip07.plain === 'secret message')
     check('NIP-04 round-trips through the signer', nip07.legacyPlain === 'legacy')
     check('NIP-07 is not exposed to subframes', nip07.iframeHasNostr === false)
+
+    // NIP-46: a mock bunker over the same relay. First publish a locator encrypted to
+    // the remote signer, so resolution itself must go through the remote signer.
+    const bunkerKey = generateSecretKey()
+    bunker = startBunker(`ws://127.0.0.1:${relayA.port}`, bunkerKey)
+    const bunkerNpub = nip19.npubEncode(bunker.bunkerPk)
+    const bunkerUri = `bunker://${bunker.bunkerPk}?relay=${encodeURIComponent(
+      `ws://127.0.0.1:${relayA.port}`
+    )}&secret=e2e-secret`
+
+    publishEncryptedLocator(
+      relayA,
+      'private',
+      [{ type: 'http', uri: `127.0.0.1:${servicePort}`, priority: 1, family: 'ipv4' }],
+      bunker.bunkerPk
+    )
+
+    const connected = await evaluate(
+      chrome,
+      `window.ncc.identityConnectBunker(${JSON.stringify(bunkerUri)})`
+    )
+    check(
+      'connects a NIP-46 remote signer',
+      connected?.mode === 'nip46' && connected?.npub === bunkerNpub,
+      JSON.stringify(connected)
+    )
+
+    const remotePub = await evaluate(cdp, 'window.nostr.getPublicKey()')
+    check('NIP-07 uses the remote signer', remotePub === bunker.bunkerPk, String(remotePub))
+
+    const remoteEvent = await evaluate(
+      cdp,
+      `window.nostr.signEvent({ kind: 1, created_at: ${Math.floor(Date.now() / 1000)}, tags: [], content: 'remote e2e' })`
+    )
+    check(
+      'remote signer signs a verifiable event',
+      verifyEvent(remoteEvent) === true && remoteEvent.pubkey === bunker.bunkerPk
+    )
+    check('the remote signer received the request', bunker.signRequests() >= 1)
+
+    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/private/` })
+    const privateText = await waitForText(cdp, 'NCC E2E OK', 80)
+    check('remote signer decrypts a targeted locator', privateText.includes('NCC E2E OK'))
+    check('locator decryption went through NIP-46', bunker.decryptRequests() >= 1)
+
+    const disconnected = await evaluate(chrome, 'window.ncc.identityDisconnect()')
+    check(
+      'disconnecting returns to the local identity',
+      disconnected?.mode === 'local' && disconnected?.npub === signerNpub,
+      JSON.stringify(disconnected)
+    )
+    bunker?.close()
+    bunker = null
 
     // ncc:// links inside content must go through the shell so the service changes.
     await evaluate(cdp, 'document.querySelector("#cross").click()')

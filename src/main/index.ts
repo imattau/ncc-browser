@@ -12,8 +12,10 @@ import { installNccProtocol, registerNccScheme } from './protocol'
 import { BrowserShell } from './shell'
 import { IdentityStore } from './signer/identity'
 import { registerNip07 } from './signer/ipc'
+import { IdentityManager } from './signer/manager'
 import { PermissionStore } from './signer/permissions'
 import { Nip07Service } from './signer/service'
+import { Nip46SessionStore } from './signer/session'
 
 // Custom schemes must be registered before the app is ready.
 registerNccScheme()
@@ -30,7 +32,7 @@ const CONTENT_PARTITION = 'persist:ncc-content'
 let shell: BrowserShell | null = null
 let contentSession: Session | null = null
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   const config = new ConfigStore()
   const pins = new PinStore()
   const health = new EndpointHealth()
@@ -38,22 +40,42 @@ app.whenReady().then(() => {
   const activeService = new Map<string, string>()
   const endpointOwners = new Map<string, { pubkey: string; service: string }>()
 
-  const identity = new IdentityStore({
-    filePath: join(app.getPath('userData'), 'identity.json'),
-    codec: {
-      available: safeStorage.isEncryptionAvailable(),
-      encrypt: (plaintext) => safeStorage.encryptString(plaintext).toString('base64'),
-      decrypt: (ciphertext) => safeStorage.decryptString(Buffer.from(ciphertext, 'base64'))
+  const encryptionAvailable = await safeStorage.isAsyncEncryptionAvailable()
+  const identityCodec = {
+    available: encryptionAvailable,
+    encrypt: async (plaintext: string): Promise<string> => {
+      const encrypted = await safeStorage.encryptStringAsync(plaintext)
+      return encrypted.toString('base64')
+    },
+    decrypt: async (ciphertext: string): Promise<string> => {
+      const decrypted = await safeStorage.decryptStringAsync(Buffer.from(ciphertext, 'base64'))
+      return decrypted.result
     }
+  }
+
+  const localIdentity = await IdentityStore.open({
+    filePath: join(app.getPath('userData'), 'identity.json'),
+    codec: identityCodec
   })
   if (process.env.NCC_IDENTITY_NSEC) {
     try {
-      identity.setFromEnv(process.env.NCC_IDENTITY_NSEC)
+      localIdentity.setFromEnv(process.env.NCC_IDENTITY_NSEC)
       console.warn('[signer] using NCC_IDENTITY_NSEC (development only)')
     } catch (error) {
       console.warn('[signer] ignoring NCC_IDENTITY_NSEC:', error instanceof Error ? error.message : error)
     }
   }
+
+  const sessions = new Nip46SessionStore(
+    join(app.getPath('userData'), 'nip46-session.json'),
+    identityCodec
+  )
+  const identity = await IdentityManager.create({
+    local: localIdentity,
+    sessions,
+    encryptionAvailable,
+    timeoutMs: Number(process.env.NCC_NIP46_TIMEOUT_MS) || 60_000
+  })
 
   const permissions = new PermissionStore(
     join(app.getPath('userData'), 'signer-permissions.json')
@@ -64,7 +86,7 @@ app.whenReady().then(() => {
     relays: () => config.getRelays(),
     gossip: () => config.get().gossip,
     cacheStore,
-    getSigner: () => identity.getSigner() ?? envLocatorSigner
+    getSigner: () => identity.locatorSigner() ?? envLocatorSigner
   })
 
   contentSession = session.fromPartition(CONTENT_PARTITION)

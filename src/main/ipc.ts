@@ -4,7 +4,7 @@ import type { ConfigStore } from './config'
 import type { EndpointHealth } from './ncc/health'
 import type { NccResolver } from './ncc/resolver'
 import type { PinStore } from './pins'
-import type { IdentityStore } from './signer/identity'
+import type { IdentityManager } from './signer/manager'
 import type { PermissionStore } from './signer/permissions'
 import type { BrowserShell } from './shell'
 
@@ -15,7 +15,7 @@ export interface IpcDeps {
   pins: PinStore
   cacheStore: LocatorCacheStore
   health: EndpointHealth
-  identity: IdentityStore
+  identity: IdentityManager
   permissions: PermissionStore
 }
 
@@ -62,24 +62,33 @@ export function registerIpc(deps: IpcDeps): void {
 
   ipcMain.handle('ncc:identity-status', () => deps.identity.status())
 
-  ipcMain.handle('ncc:identity-import', (_event, secret: unknown) => {
-    const status = deps.identity.import(String(secret ?? ''))
-    deps.resolver.clearCache()
-    deps.cacheStore.clear()
+  ipcMain.handle('ncc:identity-import', async (_event, secret: unknown) => {
+    const status = await deps.identity.importLocal(String(secret ?? ''))
+    resetCaches(deps)
     return status
   })
 
-  ipcMain.handle('ncc:identity-generate', () => {
-    const status = deps.identity.generate()
-    deps.resolver.clearCache()
-    deps.cacheStore.clear()
+  ipcMain.handle('ncc:identity-generate', async () => {
+    const status = await deps.identity.generateLocal()
+    resetCaches(deps)
     return status
   })
 
-  ipcMain.handle('ncc:identity-remove', () => {
-    const status = deps.identity.remove()
-    deps.resolver.clearCache()
-    deps.cacheStore.clear()
+  ipcMain.handle('ncc:identity-remove', async () => {
+    const status = await deps.identity.removeLocal()
+    resetCaches(deps)
+    return status
+  })
+
+  ipcMain.handle('ncc:identity-connect-bunker', async (_event, url: unknown) => {
+    const status = await deps.identity.connectRemote(String(url ?? ''))
+    resetCaches(deps)
+    return status
+  })
+
+  ipcMain.handle('ncc:identity-disconnect', async () => {
+    const status = await deps.identity.disconnectRemote()
+    resetCaches(deps)
     return status
   })
 

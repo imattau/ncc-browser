@@ -33,6 +33,8 @@ export interface NccApi {
   importIdentity(secret: string): Promise<IdentityStatus>
   generateIdentity(): Promise<IdentityStatus>
   removeIdentity(): Promise<IdentityStatus>
+  identityConnectBunker(url: string): Promise<IdentityStatus>
+  identityDisconnect(): Promise<IdentityStatus>
   signerPermissions(): Promise<SignerPermission[]>
   revokePermission(origin: string): Promise<SignerPermission[]>
   onState(listener: (state: NavState) => void): () => void

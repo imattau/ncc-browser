@@ -26,8 +26,12 @@ import {
 import type { LocatorStore } from '../cache-store'
 
 export interface LocatorSigner {
-  getPublicKey(): Promise<string> | string
-  getConversationKey(peerPubkey: string): Promise<Uint8Array> | Uint8Array
+  /** Optional: NIP-46 providers may skip this, since decryption is an RPC. */
+  getPublicKey?(): Promise<string> | string
+  /** Local keys can derive a conversation key directly. */
+  getConversationKey?(peerPubkey: string): Promise<Uint8Array> | Uint8Array
+  /** Remote signers decrypt NIP-44 payloads without exposing a key. */
+  decrypt44?(peerPubkey: string, ciphertext: string): Promise<string> | string
 }
 
 export type QueryFn = (relays: string[], filter: Filter) => Promise<Event[]>
@@ -364,13 +368,18 @@ export class NccResolver {
       }
     }
 
-    if (!this.currentSigner()) return { ok: false, reason: 'undecryptable' }
+    const signer = this.currentSigner()
+    if (!signer) return { ok: false, reason: 'undecryptable' }
 
     try {
-      const conversationKey = await (this.currentSigner() as LocatorSigner).getConversationKey(
-        event.pubkey
-      )
-      const plaintext = nip44.decrypt(content, conversationKey)
+      let plaintext: string
+      if (signer.decrypt44) {
+        plaintext = await signer.decrypt44(event.pubkey, content)
+      } else if (signer.getConversationKey) {
+        plaintext = nip44.decrypt(content, await signer.getConversationKey(event.pubkey))
+      } else {
+        return { ok: false, reason: 'undecryptable' }
+      }
       const payload = parsePayload(JSON.parse(plaintext))
       return payload ? { ok: true, value: { payload, encrypted: true } } : { ok: false, reason: 'invalid' }
     } catch {

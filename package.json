@@ -16,6 +16,7 @@
     "e2e": "npm run build && node scripts/e2e-smoke.mjs"
   },
   "dependencies": {
+    "@nostrify/nostrify": "^0.55.1",
     "lucide-react": "^0.545.0",
     "nostr-tools": "^2.26.0",
     "react": "^19.3.1",

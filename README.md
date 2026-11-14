@@ -10,9 +10,10 @@ Built with Electron 45, React 19, and Vite. The resolver is a spec-correct
 implementation on top of `nostr-tools`, not a wrapper around `ncc-05-js` (see
 [Why not `ncc-05-js`](#why-not-ncc-05-js)).
 
-**Status:** M0–M3 of [PLAN.md](./PLAN.md) are implemented, plus an inbuilt NIP-07 signer:
-resolution, proxy protocol, pinning, browser chrome, tabs, NIP-65 gossip, endpoint
-cooldowns, a persistent locator cache, downloads, relay/gossip settings, and identity.
+**Status:** M0–M3 of [PLAN.md](./PLAN.md) are implemented, plus an inbuilt NIP-07 signer
+with local keys and NIP-46 remote signing: resolution, proxy protocol, pinning, browser
+chrome, tabs, NIP-65 gossip, endpoint cooldowns, a persistent locator cache, downloads,
+relay/gossip settings, and identity.
 
 ![Start screen](./docs/welcome.png)
 
@@ -130,29 +131,61 @@ not injected into subframes or into the trusted chrome.
 Supported methods: `getPublicKey`, `signEvent`, `nip04.encrypt/decrypt`,
 `nip44.encrypt/decrypt`, and `getRelays`.
 
-- **The secret key never leaves the main process.** Pages send a request over IPC; the
-  main process signs or decrypts and returns only the result.
-- **At rest** the key is encrypted with Electron `safeStorage` (OS keychain). If no
-  keychain is available, it stays in memory for the session and the UI says so.
+The identity can be either a **local key** or a **NIP-46 remote signer**; pages cannot
+tell the difference.
+
+- **Signing never happens in the page.** Pages send a request over IPC; the main process
+  signs locally or forwards it to the remote signer, and returns only the result.
+- **Local keys at rest** are encrypted with Electron `safeStorage` (OS keychain). If no
+  keychain is available, the key stays in memory for the session and the UI says so.
 - **Approval is per service.** The first request shows a native dialog with the event
   being signed; "Always allow" is remembered per `ncc://<npub>/<service>` for NCC pages,
   and per origin for clearnet. Settings lists trusted services with a revoke button.
 - **Validation** rejects malformed kinds, non-string tags, events more than 15 minutes in
   the future, and content over 1 MB before anything reaches the signer.
-- **Development overrides:** `NCC_IDENTITY_NSEC` loads a key from the environment, and
-  `NCC_SIGNER_AUTO_APPROVE=1` skips the approval dialog (used by the e2e suite).
+- **Development overrides:** `NCC_IDENTITY_NSEC` loads a local key from the environment,
+  `NCC_SIGNER_AUTO_APPROVE=1` skips the approval dialog, and `NCC_NIP46_TIMEOUT_MS`
+  changes the remote-signer timeout (default 60 s). All three are for development/e2e.
 
-Settings → Identity imports an `nsec` (or 64-char hex), generates a new identity, shows
-the npub, and removes it.
+### Remote signing (NIP-46)
+
+Settings → Identity → **Remote signer** accepts a `bunker://` URL (Amber, Nostr Connect,
+nsec.app, …). The flow is:
+
+1. The browser generates a **client key** used only to encrypt the NIP-46 channel and
+   signs the connect request.
+2. The remote signer approves the connection on the user's device; the browser stores
+   the session (remote pubkey, relays, secret, encrypted client key) in `userData`.
+3. Every NIP-07 call becomes a `kind 24133` request to the signer. The browser still shows
+   its own per-service approval first, so the user sees *which service* is asking; the
+   device then confirms the signature.
+4. Disconnecting removes the session and falls back to any saved local key.
+
+Targeted NCC-05 locators work too: the browser calls the signer's `nip44_decrypt` with
+the publisher's pubkey instead of deriving a conversation key, so the identity key never
+has to exist locally. A signer that does not implement `nip44_decrypt` can still browse
+public locators.
+
+NIP-46 sessions are encrypted with `safeStorage` like local keys. Without an OS keychain
+the session is ephemeral and must be reconnected after a restart.
+
+### Why Nostrify?
+
+Only the NIP-46 client uses [`@nostrify/nostrify`](https://nostrify.dev/): `BunkerURI`
+for parsing, `NConnectSigner` for request correlation, encryption negotiation and
+response validation, and `NPool`/`NRelay1` for multi-relay transport. That is the part
+where hand-rolling tends to produce subtle bugs. It is bundled into the main process
+only; the renderer and the NCC resolver still use `nostr-tools` directly, and no Nostrify
+state or React bindings leak into the UI.
 
 ### Why not browser extensions?
 
 Chrome extension content scripts only match `http`, `https`, `file`, and `ftp` URLs. A
-`socks`-style signer extension (nos2x, Alby, …) can therefore never inject into an
-`ncc://` page, no matter how Electron loads it. Electron also cannot install extensions
-from the Chrome Web Store, only unpacked ones, and MV3 extension support is partial.
-For NCC pages the built-in provider is the only mechanism that works; unpacked extension
-support for clearnet pages is a possible later addition.
+signer extension (nos2x, Alby, …) can therefore never inject into an `ncc://` page, no
+matter how Electron loads it. Electron also cannot install extensions from the Chrome Web
+Store, only unpacked ones, and MV3 extension support is partial. For NCC pages the
+built-in provider is the only mechanism that works; unpacked extension support for
+clearnet pages is a possible later addition.
 
 ---
 
@@ -174,8 +207,12 @@ src/main
   ncc/routing.ts     pure: path joining and Location rewriting
   ncc/health.ts      endpoint cooldowns
   signer/crypto.ts   pure: template validation, signing, NIP-04/44
-  signer/identity.ts encrypted key storage (safeStorage codec injected)
+  signer/identity.ts encrypted local key storage (async safeStorage codec)
   signer/permissions.ts  per-service approvals
+  signer/provider.ts local identity provider
+  signer/nip46.ts    NIP-46 provider (Nostrify BunkerURI/NConnectSigner/NPool)
+  signer/session.ts  persisted NIP-46 session (encrypted client key)
+  signer/manager.ts  one active identity: local key or remote signer
   signer/service.ts  approvals queue + native dialog
   signer/ipc.ts      NIP-07 IPC, caller origin derived from the main frame
 src/preload
@@ -194,8 +231,8 @@ general IPC bridge.
 ## Testing
 
 ```bash
-npm test       # 123 unit tests: URL parser, locator rules, resolver, routing, pins,
-               # signer crypto, identity storage, permissions, relays, downloads
+npm test       # 145 unit tests: URL parser, locator rules, resolver, routing, pins,
+               # signer crypto, identity storage, NIP-46, permissions, relays, downloads
 npm run e2e    # real Electron window against a mock relay and local HTTP services
 ```
 
@@ -205,9 +242,10 @@ running app over the Chrome DevTools Protocol. It asserts rendering, subresource
 proxying, relative-link resolution, the synthetic origin, the address bar, plaintext vs
 `pinned` transport state, refusal of a certificate that does not match `k`, `ncc://`
 link-driven service switching, NIP-65 gossip to a second relay, tab open/close, the
-persistent cache on disk, and the full NIP-07 path (public key, verifiable signature,
-NIP-04/44 round-trips, no provider in subframes). Screenshots land in
-`/tmp/opencode/ncc-browser-e2e/`.
+persistent cache on disk, the full NIP-07 path (public key, verifiable signature,
+NIP-04/44 round-trips, no provider in subframes), and a **real NIP-46 round-trip against
+a mock bunker** — connect, remote signing, remote decryption of a targeted locator, and
+disconnect. Screenshots land in `/tmp/opencode/ncc-browser-e2e/`.
 
 To try it against a real publisher, run [`ncc-sidecar`](../nostr-community-conventions/ncc-06/ncc-sidecar/)
 or [`ncc_publish.py`](../nostr-community-conventions/ncc_publish.py), point both sides at
@@ -259,13 +297,16 @@ material out of this browser entirely. See [soapbox.pub/mkstack](https://soapbox
   give each its own address for now.
 - **No Tor.** `.onion` and `ws`/`wss`-only endpoints are recognised but not fetchable as
   pages.
-- **NIP-07 approvals use a native dialog.** There is no NIP-46 remote signer yet, and
-  "always allow" is per `ncc://<npub>/<service>` (or per web origin). A compromised
-  service on a trusted origin can sign anything, so revoke trust when a service changes
-  hands.
+- **NIP-07 approvals use a native dialog.** "Always allow" is per
+  `ncc://<npub>/<service>` (or per web origin). A compromised service on a trusted origin
+  can sign anything, so revoke trust when a service changes hands. With a NIP-46 signer
+  the device also confirms each signature.
+- **NIP-46 coverage depends on the signer.** Private locators need `nip44_decrypt`, and
+  some signers only implement signing. Without `safeStorage` the session is not persisted
+  and must be reconnected after a restart.
 - **No extension support.** Chrome extensions cannot inject into `ncc://` pages (content
   script match patterns exclude custom schemes) and Electron cannot install Web Store
-  extensions. The inbuilt signer is the supported path.
+  extensions. The inbuilt provider is the supported path.
 - **Clearnet pages** load directly, with normal Chromium error handling.
 
 ---

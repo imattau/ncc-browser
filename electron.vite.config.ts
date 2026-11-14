@@ -9,7 +9,9 @@ export default defineConfig({
   main: {
     // nostr-tools is ESM-only and the main process is bundled as CJS, so it must be
     // inlined rather than externalised.
-    plugins: [externalizeDepsPlugin({ exclude: ['nostr-tools'] })],
+    plugins: [
+      externalizeDepsPlugin({ exclude: ['nostr-tools', '@nostrify/nostrify'] })
+    ],
     resolve: { alias: sharedAlias },
     build: {
       rollupOptions: {

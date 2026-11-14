@@ -1,7 +1,7 @@
 /**
  * Identity storage. The secret key never leaves the main process; it is encrypted with
  * Electron's `safeStorage` (OS keychain) when that is available and kept in memory
- * otherwise.
+ * otherwise. Encryption is async because Electron 45 deprecated the synchronous API.
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -26,8 +26,8 @@ interface IdentityFile {
 export interface IdentityCodec {
   /** Whether the OS can protect the key at rest. */
   available: boolean
-  encrypt(plaintext: string): string
-  decrypt(ciphertext: string): string
+  encrypt(plaintext: string): Promise<string>
+  decrypt(ciphertext: string): Promise<string>
 }
 
 export interface IdentityStoreOptions {
@@ -42,17 +42,25 @@ export class IdentityStore {
   private persisted = false
   private readonly options: IdentityStoreOptions
   private readonly now: () => number
+  private loaded = false
 
   constructor(options: IdentityStoreOptions) {
     this.options = options
     this.now = options.now ?? (() => Math.floor(Date.now() / 1000))
-    this.load()
+  }
+
+  /** Read and decrypt the stored key, if any. */
+  static async open(options: IdentityStoreOptions): Promise<IdentityStore> {
+    const store = new IdentityStore(options)
+    await store.load()
+    return store
   }
 
   status(): IdentityStatus {
     const configured = this.secret !== null
     return {
       configured,
+      mode: configured ? 'local' : 'none',
       npub: configured ? npubOf(this.secret as Uint8Array) : undefined,
       hexPubkey: configured ? hexPubkeyOf(this.secret as Uint8Array) : undefined,
       source: this.source,
@@ -65,7 +73,7 @@ export class IdentityStore {
     return this.secret
   }
 
-  /** Used both for NIP-07 and for decrypting locators addressed to this identity. */
+  /** Used by tests and by the local provider; NIP-46 does not expose a key. */
   getSigner(): LocatorSigner | null {
     const secret = this.secret
     if (!secret) return null
@@ -75,16 +83,16 @@ export class IdentityStore {
     }
   }
 
-  import(input: string): IdentityStatus {
+  async import(input: string): Promise<IdentityStatus> {
     const secret = parseSecretKey(input)
     this.secret = secret
-    this.persist()
+    await this.persist()
     return this.status()
   }
 
-  generate(): IdentityStatus {
+  async generate(): Promise<IdentityStatus> {
     this.secret = generateSecretKey()
-    this.persist()
+    await this.persist()
     return this.status()
   }
 
@@ -109,13 +117,17 @@ export class IdentityStore {
     return this.status()
   }
 
-  private load(): void {
+  private async load(): Promise<void> {
+    if (this.loaded) return
+    this.loaded = true
+    if (!this.options.codec.available) return
+
     try {
       if (!existsSync(this.options.filePath)) return
       const parsed = JSON.parse(readFileSync(this.options.filePath, 'utf8')) as Partial<IdentityFile>
       if (parsed.version !== 1 || typeof parsed.ciphertext !== 'string') return
 
-      const hex = this.options.codec.decrypt(parsed.ciphertext)
+      const hex = await this.options.codec.decrypt(parsed.ciphertext)
       this.secret = parseSecretKey(hex)
       this.source = 'file'
       this.persisted = true
@@ -124,7 +136,7 @@ export class IdentityStore {
     }
   }
 
-  private persist(): void {
+  private async persist(): Promise<void> {
     if (!this.secret) return
 
     if (!this.options.codec.available) {
@@ -138,7 +150,7 @@ export class IdentityStore {
       mkdirSync(dirname(this.options.filePath), { recursive: true })
       const payload: IdentityFile = {
         version: 1,
-        ciphertext: this.options.codec.encrypt(secretKeyToHex(this.secret)),
+        ciphertext: await this.options.codec.encrypt(secretKeyToHex(this.secret)),
         createdAt: this.now()
       }
       const tmp = `${this.options.filePath}.tmp`

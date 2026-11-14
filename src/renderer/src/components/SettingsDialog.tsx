@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Copy, KeyRound, RotateCcw, ShieldCheck, Trash2, X } from 'lucide-react'
+import { Copy, KeyRound, RotateCcw, ShieldCheck, Smartphone, Trash2, X } from 'lucide-react'
 import { DEFAULT_RELAYS } from '@shared/types'
 import type { IdentityStatus, SignerPermission } from '@shared/types'
 
@@ -27,6 +27,9 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const [identityError, setIdentityError] = useState<string | null>(null)
   const [identityBusy, setIdentityBusy] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [bunker, setBunker] = useState('')
+  const [connectBusy, setConnectBusy] = useState(false)
+  const [remoteError, setRemoteError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -34,6 +37,9 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     setSaved(false)
     setIdentityError(null)
     setSecret('')
+    setBunker('')
+    setRemoteError(null)
+    setConnectBusy(false)
     void Promise.all([
       window.ncc.getConfig(),
       window.ncc.identity(),
@@ -112,6 +118,32 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       window.setTimeout(() => setCopied(false), 1400)
     } catch {
       // clipboard unavailable
+    }
+  }
+
+  const connectBunker = async (): Promise<void> => {
+    setConnectBusy(true)
+    setRemoteError(null)
+    try {
+      setIdentity(await window.ncc.identityConnectBunker(bunker))
+      setBunker('')
+      setPermissions(await window.ncc.signerPermissions())
+    } catch (connectError) {
+      setRemoteError(errorMessage(connectError))
+    } finally {
+      setConnectBusy(false)
+    }
+  }
+
+  const disconnectRemote = async (): Promise<void> => {
+    setIdentityBusy(true)
+    setRemoteError(null)
+    try {
+      setIdentity(await window.ncc.identityDisconnect())
+    } catch (disconnectError) {
+      setRemoteError(errorMessage(disconnectError))
+    } finally {
+      setIdentityBusy(false)
     }
   }
 
@@ -198,7 +230,50 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               never leaves the main process.
             </p>
 
-            {identity?.configured ? (
+            {identity?.mode === 'nip46' ? (
+              <div className="mt-3 rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-[color:var(--color-accent)]">
+                    <Smartphone className="h-3.5 w-3.5" />
+                    Remote signer (NIP-46)
+                  </span>
+                  <button
+                    type="button"
+                    disabled={identityBusy}
+                    onClick={() => void disconnectRemote()}
+                    className="rounded-lg border border-[color:var(--color-line)] px-2.5 py-1 text-[11px] text-[color:var(--color-muted)] hover:bg-white/5 hover:text-white disabled:opacity-40"
+                  >
+                    Disconnect
+                  </button>
+                </div>
+                <div className="mt-2 flex items-start justify-between gap-2">
+                  <code className="min-w-0 break-all font-mono text-[11.5px] leading-relaxed text-[#c9d1e0]">
+                    {identity.npub}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={() => void copyNpub()}
+                    title="Copy npub"
+                    className="shrink-0 rounded-lg p-1.5 text-[color:var(--color-muted)] hover:bg-white/5 hover:text-white"
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <p className="mt-2 inline-flex flex-wrap items-center gap-1.5 text-[11px] text-[color:var(--color-muted)]">
+                  <ShieldCheck className="h-3.5 w-3.5 text-[color:var(--color-ok)]" />
+                  {identity.connected ? 'Connected' : 'Connects on first request'}
+                  {identity.persisted
+                    ? ' · session encrypted at rest'
+                    : ' · session not persisted'}
+                  {copied ? ' · copied' : ''}
+                </p>
+                {identity.relays?.length ? (
+                  <p className="mt-1 truncate font-mono text-[10.5px] text-[#5d6575]">
+                    {identity.relays.join(' · ')}
+                  </p>
+                ) : null}
+              </div>
+            ) : identity?.configured ? (
               <div className="mt-3 rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] p-3">
                 <div className="flex items-start justify-between gap-2">
                   <code className="min-w-0 break-all font-mono text-[11.5px] leading-relaxed text-[#c9d1e0]">

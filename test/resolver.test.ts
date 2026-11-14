@@ -177,6 +177,20 @@ describe('NccResolver', () => {
     expect(outcome.record.encrypted).toBe(true)
   })
 
+  it('decrypts through a signer that only exposes decrypt44 (NIP-46)', async () => {
+    const readerSk = generateSecretKey()
+    const readerPk = getPublicKey(readerSk)
+    const decrypt44 = vi.fn(async (peer: string, ciphertext: string) =>
+      nip44.decrypt(ciphertext, nip44.getConversationKey(readerSk, peer))
+    )
+    const { resolver } = resolverWith([locatorEvent({ encryptTo: readerPk })], {
+      signer: { decrypt44 }
+    })
+    const outcome = await resolver.resolve(NPUB)
+    expect(outcome.ok).toBe(true)
+    expect(decrypt44).toHaveBeenCalledTimes(1)
+  })
+
   it('reports undecryptable when no signer is configured', async () => {
     const { resolver } = resolverWith([locatorEvent({ encryptTo: OTHER_PK })])
     const outcome = await resolver.resolve(NPUB)
