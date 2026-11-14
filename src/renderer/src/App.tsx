@@ -1,9 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CommandId } from '@shared/commands'
-import type { DownloadNotice, IdentityStatus, NavState, SignerRequest } from '@shared/types'
+import { sortDownloads } from '@shared/downloads'
+import type {
+  Bookmark,
+  DownloadNotice,
+  IdentityStatus,
+  NavState,
+  OverlayReason,
+  SignerRequest,
+  TabHistory
+} from '@shared/types'
 import { ChromeMenu } from './components/ChromeMenu'
-import { SettingsDialog } from './components/SettingsDialog'
+import { DownloadsPanel } from './components/DownloadsPanel'
+import { HistoryPanel } from './components/HistoryPanel'
+import { SettingsPage, type SettingsSection } from './components/SettingsPage'
 import { SignerPrompt } from './components/SignerPrompt'
+import { TabOverflowMenu } from './components/TabOverflowMenu'
 import { TabStrip } from './components/TabStrip'
 import { Toolbar } from './components/Toolbar'
 import { Welcome } from './components/Welcome'
@@ -19,35 +31,43 @@ const EMPTY_STATE: NavState = {
   security: null,
   failure: null,
   tabs: [],
-  activeTabId: null
+  activeTabId: null,
+  windowMaximized: false
 }
 
 export function App() {
   const [state, setState] = useState<NavState>(EMPTY_STATE)
-  const [settingsOpen, setSettingsOpen] = useState(false)
-  const [menuOpen, setMenuOpen] = useState(false)
+  const [overlay, setOverlay] = useState<OverlayReason | null>(null)
+  const overlayRef = useRef<OverlayReason | null>(null)
   const [hint, setHint] = useState<string | null>(null)
   const [downloads, setDownloads] = useState<DownloadNotice[]>([])
+  const [bookmarks, setBookmarks] = useState<Bookmark[]>([])
   const [identity, setIdentity] = useState<IdentityStatus | null>(null)
   const [signerRequest, setSignerRequest] = useState<SignerRequest | null>(null)
-  const downloadTimers = useRef(new Map<string, number>())
+  const [history, setHistory] = useState<TabHistory | null>(null)
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>('general')
 
-  const closeMenu = useCallback(() => {
-    setMenuOpen(false)
-    void window.ncc.setOverlay('menu', false)
+  /**
+   * One overlay at a time. The shell hides every content view while an overlay is
+   * open, so popovers can cover the page area instead of being clipped to the chrome.
+   */
+  const showOverlay = useCallback((next: OverlayReason | null) => {
+    const current = overlayRef.current
+    if (current === next) return
+    if (current) void window.ncc.setOverlay(current, false)
+    overlayRef.current = next
+    setOverlay(next)
+    if (next) void window.ncc.setOverlay(next, true)
   }, [])
 
-  const openMenu = useCallback(() => {
-    setMenuOpen(true)
-    void window.ncc.setOverlay('menu', true)
-  }, [])
+  const closeOverlay = useCallback(() => showOverlay(null), [showOverlay])
 
-  const runCommand = useCallback(
-    (command: CommandId) => {
-      closeMenu()
-      void window.ncc.runCommand(command)
+  const openSettings = useCallback(
+    (section: SettingsSection = 'general') => {
+      setSettingsSection(section)
+      showOverlay('settings')
     },
-    [closeMenu]
+    [showOverlay]
   )
 
   useEffect(() => {
@@ -73,8 +93,36 @@ export function App() {
   }, [])
 
   useEffect(() => {
+    let alive = true
+    void window.ncc.bookmarks().then((next) => {
+      if (alive) setBookmarks(next)
+    })
+    const offBookmarks = window.ncc.onBookmarks(setBookmarks)
+    return () => {
+      alive = false
+      offBookmarks()
+    }
+  }, [])
+
+  useEffect(() => {
+    let alive = true
+    void window.ncc.downloads().then((next) => {
+      if (alive) setDownloads(next)
+    })
+    const unsubscribe = window.ncc.onDownload((notice) => {
+      setDownloads((current) =>
+        sortDownloads([...current.filter((item) => item.id !== notice.id), notice])
+      )
+    })
+    return () => {
+      alive = false
+      unsubscribe()
+    }
+  }, [])
+
+  useEffect(() => {
     const unsubscribe = window.ncc.onSignerRequest((request) => {
-      closeMenu()
+      showOverlay(null)
       setSignerRequest(request)
     })
     const offResolved = window.ncc.onSignerResolved((id) =>
@@ -84,42 +132,52 @@ export function App() {
       unsubscribe()
       offResolved()
     }
-  }, [closeMenu])
+  }, [showOverlay])
 
   useEffect(() => {
-    const offOpen = window.ncc.onOpenSettings(() => {
-      closeMenu()
-      setSettingsOpen(true)
+    const offOpen = window.ncc.onOpenSettings((payload) =>
+      openSettings(payload.section === 'identity' ? 'identity' : 'general')
+    )
+    const offClose = window.ncc.onCloseMenu(() => {
+      // Window blur closes menus and popovers, but not a page the user is editing.
+      if (overlayRef.current && overlayRef.current !== 'settings') showOverlay(null)
     })
-    const offClose = window.ncc.onCloseMenu(closeMenu)
     return () => {
       offOpen()
       offClose()
     }
-  }, [closeMenu])
+  }, [openSettings, showOverlay])
+
+  const refreshHistory = useCallback(async () => {
+    const next = await window.ncc.tabHistory()
+    setHistory(next)
+    return next
+  }, [])
+
+  const openHistory = useCallback(() => {
+    void refreshHistory()
+    showOverlay('history')
+  }, [refreshHistory, showOverlay])
 
   useEffect(() => {
-    const unsubscribe = window.ncc.onDownload((notice) => {
-      setDownloads((current) => [...current.filter((item) => item.id !== notice.id), notice])
-
-      const existing = downloadTimers.current.get(notice.id)
-      if (existing) window.clearTimeout(existing)
-
-      if (notice.state !== 'started') {
-        const timer = window.setTimeout(() => {
-          setDownloads((current) => current.filter((item) => item.id !== notice.id))
-          downloadTimers.current.delete(notice.id)
-        }, 4000)
-        downloadTimers.current.set(notice.id, timer)
-      }
-    })
-
+    const offHistory = window.ncc.onOpenHistory(openHistory)
+    const offDownloads = window.ncc.onOpenDownloads(() => showOverlay('downloads'))
     return () => {
-      unsubscribe()
-      for (const timer of downloadTimers.current.values()) window.clearTimeout(timer)
-      downloadTimers.current.clear()
+      offHistory()
+      offDownloads()
     }
-  }, [])
+  }, [openHistory, showOverlay])
+
+  useEffect(() => {
+    if (overlay !== 'history') return
+    let alive = true
+    void window.ncc.tabHistory().then((next) => {
+      if (alive) setHistory(next)
+    })
+    return () => {
+      alive = false
+    }
+  }, [overlay, state.url, state.activeTabId])
 
   useEffect(() => {
     setHint(state.failure?.code === 'invalid-address' ? state.failure.message : null)
@@ -150,6 +208,66 @@ export function App() {
     void window.ncc.selectTab(id)
   }, [])
 
+  const moveTab = useCallback((id: string, toIndex: number) => {
+    void window.ncc.moveTab(id, toIndex)
+  }, [])
+
+  const toggleMute = useCallback((id: string) => {
+    void window.ncc.toggleMute(id)
+  }, [])
+
+  const tabContextMenu = useCallback((id: string) => {
+    void window.ncc.showTabMenu(id)
+  }, [])
+
+  const toggleBookmark = useCallback(() => {
+    void window.ncc.toggleBookmark().then(setBookmarks)
+  }, [])
+
+  const removeBookmark = useCallback((url: string) => {
+    void window.ncc.removeBookmark(url).then(setBookmarks)
+  }, [])
+
+  const openBookmark = useCallback(
+    (url: string) => {
+      closeOverlay()
+      navigate(url)
+    },
+    [closeOverlay, navigate]
+  )
+
+  const selectHistory = useCallback(
+    (index: number) => {
+      closeOverlay()
+      void window.ncc.goToHistoryIndex(index)
+    },
+    [closeOverlay]
+  )
+
+  const clearHistory = useCallback(() => {
+    void window.ncc.clearHistory().then(refreshHistory)
+  }, [refreshHistory])
+
+  const cancelDownload = useCallback((id: string) => {
+    void window.ncc.cancelDownload(id).then(setDownloads)
+  }, [])
+
+  const revealDownload = useCallback((id: string) => {
+    void window.ncc.revealDownload(id)
+  }, [])
+
+  const clearDownloads = useCallback(() => {
+    void window.ncc.clearDownloads().then(setDownloads)
+  }, [])
+
+  const runCommand = useCallback(
+    (command: CommandId) => {
+      closeOverlay()
+      void window.ncc.runCommand(command)
+    },
+    [closeOverlay]
+  )
+
   const respondToSigner = useCallback(
     (allow: boolean, remember: boolean) => {
       const request = signerRequest
@@ -161,10 +279,8 @@ export function App() {
   )
 
   useEffect(() => {
-    // Global shortcuts (Ctrl+L/T/W/R, Alt+←/→, Ctrl+Tab) live in the application menu
-    // so they keep working while the remote page has focus. Escape is the one key that
-    // cannot be a menu accelerator; the content view handles it in main, this covers
-    // the case where the chrome itself has focus.
+    // Escape stops a loading page from the chrome side; main handles it while the
+    // remote page has focus, and dialogs close themselves with the same key.
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key === 'Escape' && state.loading) {
         event.preventDefault()
@@ -176,15 +292,24 @@ export function App() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [state.loading, stop])
 
+  const bookmarked = state.displayUrl !== '' && bookmarks.some((item) => item.url === state.displayUrl)
+
   return (
-    <div className="flex h-full flex-col bg-[color:var(--color-ink)]">
+    <div className="flex h-full flex-col overflow-hidden bg-[color:var(--color-ink)]">
       <TabStrip
         tabs={state.tabs}
         activeTabId={state.activeTabId}
-        downloads={downloads}
+        windowMaximized={state.windowMaximized}
         onSelect={selectTab}
         onClose={closeTab}
         onNew={newTab}
+        onMove={moveTab}
+        onContextMenu={tabContextMenu}
+        onToggleMute={toggleMute}
+        onOverflow={() => showOverlay('tabs')}
+        onMinimize={() => void window.ncc.minimizeWindow()}
+        onToggleMaximize={() => void window.ncc.toggleMaximizeWindow()}
+        onCloseWindow={() => void window.ncc.closeWindow()}
       />
 
       <Toolbar
@@ -192,31 +317,79 @@ export function App() {
         hint={hint}
         identity={identity}
         signerPending={signerRequest !== null}
+        bookmarked={bookmarked}
+        downloads={downloads}
         onNavigate={navigate}
         onBack={back}
         onForward={forward}
         onReload={reload}
         onStop={stop}
-        onOpenSettings={() => setSettingsOpen(true)}
-        onOpenMenu={openMenu}
+        onToggleBookmark={toggleBookmark}
+        onOpenDownloads={() => showOverlay('downloads')}
+        onOpenHistory={openHistory}
+        onHistoryMenu={(direction) => void window.ncc.showHistoryMenu(direction)}
+        onOpenSettings={() => openSettings('identity')}
+        onOpenMenu={() => showOverlay('menu')}
       />
 
       <main className="relative min-h-0 flex-1 overflow-hidden">
-        {state.mode === 'blank' ? <Welcome onOpenSettings={() => setSettingsOpen(true)} /> : null}
+        {overlay === 'settings' ? (
+          <SettingsPage
+            open
+            initialSection={settingsSection}
+            onClose={closeOverlay}
+            onIdentityChange={setIdentity}
+          />
+        ) : state.mode === 'blank' ? (
+          <Welcome onOpenSettings={() => openSettings('general')} />
+        ) : null}
       </main>
 
-      <SettingsDialog
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        onIdentityChange={setIdentity}
-      />
-
-      {menuOpen ? (
+      {overlay === 'menu' ? (
         <ChromeMenu
           state={state}
           identity={identity}
+          bookmarks={bookmarks}
           onCommand={runCommand}
-          onClose={closeMenu}
+          onOpenBookmark={openBookmark}
+          onRemoveBookmark={removeBookmark}
+          onClose={closeOverlay}
+        />
+      ) : null}
+
+      {overlay === 'downloads' ? (
+        <DownloadsPanel
+          downloads={downloads}
+          onClose={closeOverlay}
+          onCancel={cancelDownload}
+          onReveal={revealDownload}
+          onClear={clearDownloads}
+        />
+      ) : null}
+
+      {overlay === 'history' ? (
+        <HistoryPanel
+          history={history}
+          onClose={closeOverlay}
+          onSelect={selectHistory}
+          onClear={clearHistory}
+        />
+      ) : null}
+
+      {overlay === 'tabs' ? (
+        <TabOverflowMenu
+          tabs={state.tabs}
+          activeTabId={state.activeTabId}
+          onSelect={(id) => {
+            closeOverlay()
+            selectTab(id)
+          }}
+          onCloseTab={closeTab}
+          onNewTab={() => {
+            closeOverlay()
+            newTab()
+          }}
+          onClose={closeOverlay}
         />
       ) : null}
 

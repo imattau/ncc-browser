@@ -1,16 +1,26 @@
 import { useEffect, useRef, useState } from 'react'
-import { Lock, Search } from 'lucide-react'
+import { Lock, Star } from 'lucide-react'
 import { cn } from '../lib/cn'
 
 interface AddressBarProps {
   value: string
   loading: boolean
   hint: string | null
+  bookmarked: boolean
+  onToggleBookmark: () => void
   onNavigate: (input: string) => void
   onFocusChange?: (focused: boolean) => void
 }
 
-export function AddressBar({ value, loading, hint, onNavigate, onFocusChange }: AddressBarProps) {
+export function AddressBar({
+  value,
+  loading,
+  hint,
+  bookmarked,
+  onToggleBookmark,
+  onNavigate,
+  onFocusChange
+}: AddressBarProps) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [draft, setDraft] = useState(value)
   const [focused, setFocused] = useState(false)
@@ -82,7 +92,19 @@ export function AddressBar({ value, loading, hint, onNavigate, onFocusChange }: 
         {loading ? (
           <span className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-[color:var(--color-accent)]/30 border-t-[color:var(--color-accent)]" />
         ) : (
-          <Search className="h-3.5 w-3.5 shrink-0 text-[#3f4553]" />
+          <button
+            type="button"
+            aria-label={bookmarked ? 'Remove bookmark' : 'Bookmark this page'}
+            title={bookmarked ? 'Remove bookmark (Ctrl+D)' : 'Bookmark this page (Ctrl+D)'}
+            disabled={value.trim().length === 0}
+            onClick={onToggleBookmark}
+            className={cn(
+              'shrink-0 rounded p-0.5 transition-colors hover:bg-white/5 disabled:cursor-default disabled:opacity-30',
+              bookmarked ? 'text-[color:var(--color-warn)]' : 'text-[#3f4553] hover:text-[#c9d1e0]'
+            )}
+          >
+            <Star className="h-3.5 w-3.5" fill={bookmarked ? 'currentColor' : 'none'} />
+          </button>
         )}
       </div>
       {hint ? (

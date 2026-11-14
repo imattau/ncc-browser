@@ -1,17 +1,33 @@
-import { BrowserWindow, WebContentsView, app, shell, type Input, type WebContents } from 'electron'
+import {
+  BrowserWindow,
+  Menu,
+  WebContentsView,
+  app,
+  clipboard,
+  screen,
+  shell,
+  type Input,
+  type WebContents
+} from 'electron'
 import { parseNccAddress, toDisplayUrl, toInternalUrl, type NccAddress } from '@shared/ncc-url'
 import { CHROME_HEIGHT } from '@shared/layout'
 import type { CommandId } from '@shared/commands'
+import { reorderTabs } from '@shared/tabs'
 import {
   installChromeContextMenu,
   installContentContextMenu
 } from './context-menu'
 import { commandForInput } from './shortcuts'
+import { fetchFavicon } from './favicon'
+import type { BookmarkStore } from './bookmarks'
+import type { SavedSession, SavedWindow, SessionStore } from './session-store'
 import type {
+  Bookmark,
   DownloadNotice,
   NavState,
   PageMode,
   SecurityInfo,
+  TabHistory,
   TabSummary
 } from '@shared/types'
 import type { ProtocolActivity } from './protocol'
@@ -22,6 +38,9 @@ export interface ShellDeps {
   rendererUrl?: string
   rendererFile: string
   activeService: Map<string, string>
+  bookmarks: BookmarkStore
+  sessionStore: SessionStore
+  initialSession?: SavedSession | null
   onContentWebContents?: (contents: WebContents) => void
 }
 
@@ -35,6 +54,9 @@ interface Tab {
   security: SecurityInfo | null
   failure: { code: string; message: string } | null
   loading: boolean
+  favicon: string | null
+  audible: boolean
+  muted: boolean
 }
 
 const CONTENT_WEB_PREFERENCES = {
@@ -62,15 +84,23 @@ export class BrowserShell {
   private activeId: string | null = null
   private nextTabId = 1
   private readonly overlays = new Set<string>()
+  private saveTimer: NodeJS.Timeout | null = null
 
   constructor(deps: ShellDeps) {
     this.deps = deps
+    const savedWindow = deps.initialSession?.window
+    const bounds = restoreWindowBounds(savedWindow)
 
     this.window = new BrowserWindow({
-      width: 1280,
-      height: 860,
+      width: bounds.width,
+      height: bounds.height,
+      ...(bounds.x !== undefined && bounds.y !== undefined
+        ? { x: bounds.x, y: bounds.y }
+        : {}),
       minWidth: 760,
       minHeight: 480,
+      // The tab strip is the title bar: custom drag region and window controls.
+      frame: false,
       backgroundColor: '#0b0c10',
       show: false,
       title: 'NCC Browser',
@@ -89,6 +119,10 @@ export class BrowserShell {
       this.handleInput(event, input)
     )
     this.window.on('blur', () => this.sendChrome('ncc:close-menu'))
+    // A chrome reload (dev HMR, devtools) loses which overlay owned the surface.
+    this.window.webContents.on('did-finish-load', () => this.clearOverlays())
+    this.restoreTabs(deps.initialSession)
+    if (savedWindow?.maximized) this.window.maximize()
     this.window.once('ready-to-show', () => this.window.show())
   }
 
@@ -109,7 +143,10 @@ export class BrowserShell {
       id: tab.id,
       title: tabTitle(tab),
       url: tab.displayUrl,
-      loading: tab.loading
+      loading: tab.loading,
+      favicon: tab.favicon,
+      audible: tab.audible,
+      muted: tab.muted
     }))
 
     return {
@@ -123,7 +160,8 @@ export class BrowserShell {
       security: active?.security ?? null,
       failure: active?.failure ?? null,
       tabs,
-      activeTabId: this.activeId
+      activeTabId: this.activeId,
+      windowMaximized: this.window.isMaximized()
     }
   }
 
@@ -155,7 +193,58 @@ export class BrowserShell {
       if (next) this.showOnly(next.id)
     }
 
+    this.scheduleSessionSave()
     this.syncState()
+  }
+
+  /** Move a tab to an index measured before the move (drop position in the strip). */
+  moveTab(id: string, toIndex: number): void {
+    const next = reorderTabs(this.tabs, id, toIndex)
+    if (next.every((tab, index) => tab === this.tabs[index])) return
+    this.tabs.splice(0, this.tabs.length, ...next)
+    this.scheduleSessionSave()
+    this.syncState()
+  }
+
+  duplicateTab(id?: string): string | null {
+    const source = id ? this.tabs.find((tab) => tab.id === id) : this.activeTab()
+    if (!source) return null
+    const tab = this.createTab()
+    this.activateTab(tab.id)
+    if (source.mode !== 'blank' && source.displayUrl) {
+      void this.navigateInTab(tab, source.displayUrl)
+    }
+    return tab.id
+  }
+
+  toggleMute(id?: string): void {
+    const tab = id ? this.tabs.find((entry) => entry.id === id) : this.activeTab()
+    if (!tab) return
+    const contents = tab.view.webContents
+    tab.muted = !contents.isAudioMuted()
+    contents.setAudioMuted(tab.muted)
+    this.syncState()
+  }
+
+  closeOtherTabs(id?: string): void {
+    const keep = id ? this.tabs.find((tab) => tab.id === id) : this.activeTab()
+    if (!keep) return
+    this.activateTab(keep.id)
+    for (const tab of [...this.tabs]) {
+      if (tab.id !== keep.id) this.closeTab(tab.id)
+    }
+  }
+
+  closeTabsToRight(id?: string): void {
+    const anchor = id ? this.tabs.find((tab) => tab.id === id) : this.activeTab()
+    if (!anchor) return
+    const index = this.tabs.indexOf(anchor)
+    for (const tab of [...this.tabs.slice(index + 1)]) this.closeTab(tab.id)
+  }
+
+  reloadTab(id?: string): void {
+    const tab = id ? this.tabs.find((entry) => entry.id === id) : this.activeTab()
+    tab?.view.webContents.reload()
   }
 
   selectTab(id: string): void {
@@ -195,6 +284,12 @@ export class BrowserShell {
     } catch {
       // Fallback handled by showOnly on the next activation.
     }
+  }
+
+  private clearOverlays(): void {
+    if (this.overlays.size === 0) return
+    this.overlays.clear()
+    if (this.activeId) this.showOnly(this.activeId)
   }
 
   runCommand(command: CommandId): void {
@@ -244,6 +339,15 @@ export class BrowserShell {
         break
       case 'toggle-browser-devtools':
         this.toggleChromeDevTools()
+        break
+      case 'toggle-bookmark':
+        this.toggleBookmark()
+        break
+      case 'open-history':
+        this.sendChrome('ncc:open-history')
+        break
+      case 'open-downloads':
+        this.sendChrome('ncc:open-downloads')
         break
       case 'open-settings':
         this.sendChrome('ncc:open-settings', { section: 'general' })
@@ -328,6 +432,153 @@ export class BrowserShell {
 
   toggleChromeDevTools(): void {
     this.window.webContents.toggleDevTools()
+  }
+
+  minimizeWindow(): void {
+    this.window.minimize()
+  }
+
+  toggleMaximizeWindow(): void {
+    if (this.window.isMaximized()) this.window.unmaximize()
+    else this.window.maximize()
+  }
+
+  closeWindow(): void {
+    this.window.close()
+  }
+
+  /** The active tab's history, so the chrome can offer a real jump list. */
+  getTabHistory(id?: string): TabHistory {
+    const tab = id ? this.tabs.find((entry) => entry.id === id) : this.activeTab()
+    if (!tab) return { entries: [], activeIndex: -1 }
+    const history = tab.view.webContents.navigationHistory
+    const entries = history.getAllEntries().map((entry, index) => ({
+      index,
+      title: entry.title?.trim() || entry.url,
+      url: entry.url
+    }))
+    return { entries, activeIndex: history.getActiveIndex() }
+  }
+
+  goToHistoryIndex(index: number): void {
+    const tab = this.activeTab()
+    if (!tab) return
+    const history = tab.view.webContents.navigationHistory
+    const count = history.getAllEntries().length
+    if (!Number.isInteger(index) || index < 0 || index >= count) return
+    history.goToIndex(index)
+  }
+
+  clearHistory(): void {
+    this.activeTab()?.view.webContents.navigationHistory.clear()
+    this.syncState()
+  }
+
+  /** Right-click (or long-press) jump list for the back/forward buttons. */
+  showHistoryMenu(direction: 'back' | 'forward'): void {
+    const tab = this.activeTab()
+    if (!tab) return
+    const history = tab.view.webContents.navigationHistory
+    const entries = history.getAllEntries()
+    const activeIndex = history.getActiveIndex()
+    const candidates =
+      direction === 'back'
+        ? entries.map((entry, index) => ({ entry, index })).filter((item) => item.index < activeIndex).reverse()
+        : entries.map((entry, index) => ({ entry, index })).filter((item) => item.index > activeIndex)
+
+    if (candidates.length === 0) return
+    Menu.buildFromTemplate(
+      candidates.map(({ entry, index }) => ({
+        label: historyLabel(entry.title, entry.url),
+        click: () => history.goToIndex(index)
+      }))
+    ).popup({ window: this.window })
+  }
+
+  showTabMenu(id: string): void {
+    const tab = this.tabs.find((entry) => entry.id === id)
+    if (!tab) return
+    const index = this.tabs.indexOf(tab)
+    const contents = tab.view.webContents
+
+    Menu.buildFromTemplate([
+      { label: 'Reload', click: () => contents.reload() },
+      { label: 'Duplicate', click: () => void this.duplicateTab(tab.id) },
+      {
+        label: tab.muted ? 'Unmute tab' : 'Mute tab',
+        click: () => this.toggleMute(tab.id)
+      },
+      { type: 'separator' },
+      {
+        label: 'Copy address',
+        enabled: Boolean(tab.displayUrl),
+        click: () => clipboard.writeText(tab.displayUrl)
+      },
+      { type: 'separator' },
+      { label: 'Close tab', click: () => this.closeTab(tab.id) },
+      {
+        label: 'Close other tabs',
+        enabled: this.tabs.length > 1,
+        click: () => this.closeOtherTabs(tab.id)
+      },
+      {
+        label: 'Close tabs to the right',
+        enabled: index < this.tabs.length - 1,
+        click: () => this.closeTabsToRight(tab.id)
+      }
+    ]).popup({ window: this.window })
+  }
+
+  getBookmarks(): Bookmark[] {
+    return this.deps.bookmarks.list()
+  }
+
+  toggleBookmark(): Bookmark[] {
+    const page = this.getActivePage()
+    if (!page) return this.getBookmarks()
+    const list = this.deps.bookmarks.toggle(page.url, page.title)
+    this.sendChrome('ncc:bookmarks', list)
+    return list
+  }
+
+  removeBookmark(url: string): Bookmark[] {
+    const list = this.deps.bookmarks.remove(url)
+    this.sendChrome('ncc:bookmarks', list)
+    return list
+  }
+
+  getActivePage(): { url: string; title: string } | null {
+    const tab = this.activeTab()
+    if (!tab || tab.mode === 'blank' || !tab.displayUrl) return null
+    return { url: tab.displayUrl, title: tabTitle(tab) }
+  }
+
+  /** Flush tabs and geometry immediately (quit path). */
+  saveSessionNow(): void {
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer)
+      this.saveTimer = null
+    }
+    if (this.window.isDestroyed()) return
+
+    const bounds = this.window.getNormalBounds()
+    const activeIndex = Math.max(
+      0,
+      this.tabs.findIndex((tab) => tab.id === this.activeId)
+    )
+    this.deps.sessionStore.save({
+      tabs: this.tabs.map((tab) => ({
+        url: tab.mode === 'blank' ? '' : tab.displayUrl
+      })),
+      activeIndex,
+      window: {
+        width: bounds.width,
+        height: bounds.height,
+        x: bounds.x,
+        y: bounds.y,
+        maximized: this.window.isMaximized()
+      }
+    })
   }
 
   /** Called by the protocol handler for document-level activity only. */
@@ -428,7 +679,10 @@ export class BrowserShell {
       service: null,
       security: null,
       failure: null,
-      loading: false
+      loading: false,
+      favicon: null,
+      audible: false,
+      muted: false
     }
 
     this.window.contentView.addChildView(view)
@@ -437,6 +691,7 @@ export class BrowserShell {
     this.tabs.push(tab)
     this.wireTab(tab)
     this.deps.onContentWebContents?.(view.webContents)
+    this.scheduleSessionSave()
     return tab
   }
 
@@ -444,6 +699,7 @@ export class BrowserShell {
     if (!this.tabs.some((tab) => tab.id === id)) return
     this.activeId = id
     this.showOnly(id)
+    this.scheduleSessionSave()
     this.syncState()
   }
 
@@ -471,6 +727,7 @@ export class BrowserShell {
 
     contents.on('did-stop-loading', () => {
       tab.loading = false
+      this.scheduleSessionSave()
       this.syncState()
     })
 
@@ -486,16 +743,44 @@ export class BrowserShell {
     contents.on('did-navigate', (_event, url) => {
       tab.displayUrl = formatDisplayUrl(url)
       this.applyUrlToTab(tab, url)
+      this.scheduleSessionSave()
       this.syncState()
     })
 
     contents.on('did-navigate-in-page', (_event, url, isMainFrame) => {
       if (!isMainFrame) return
       tab.displayUrl = formatDisplayUrl(url)
+      this.scheduleSessionSave()
       this.syncState()
     })
 
     contents.on('page-title-updated', () => this.syncState())
+
+    contents.on('page-favicon-updated', (_event, favicons) => {
+      const candidate = favicons.find((favicon) => /^(https?|ncc|data:image\/)/i.test(favicon))
+      if (!candidate) return
+      if (candidate.startsWith('data:image/')) {
+        if (candidate.length <= 350_000) {
+          tab.favicon = candidate
+          this.syncState()
+        }
+        return
+      }
+      const referer = contents.getURL()
+      void fetchFavicon(contents.session, candidate, referer).then((dataUrl) => {
+        if (!dataUrl || tab.favicon === dataUrl || !this.tabs.includes(tab)) return
+        tab.favicon = dataUrl
+        this.syncState()
+      })
+    })
+
+    tab.audible = contents.isCurrentlyAudible()
+    tab.muted = contents.isAudioMuted()
+    contents.on('audio-state-changed', (event) => {
+      tab.audible = event.audible
+      tab.muted = contents.isAudioMuted()
+      this.syncState()
+    })
 
     contents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
       if (!isMainFrame || errorCode === -3) return
@@ -657,11 +942,23 @@ export class BrowserShell {
       if (active) active.view.setBounds(this.contentBounds())
     }
 
-    this.window.on('resize', layout)
+    this.window.on('resize', () => {
+      layout()
+      this.scheduleSessionSave()
+    })
+    this.window.on('move', () => this.scheduleSessionSave())
     this.window.on('enter-full-screen', layout)
     this.window.on('leave-full-screen', layout)
+    this.window.on('maximize', () => this.syncState())
+    this.window.on('unmaximize', () => this.syncState())
+    // The quit path enters `before-quit` after the window is gone, so flush on close.
+    this.window.on('close', () => this.saveSessionNow())
 
     this.window.on('closed', () => {
+      if (this.saveTimer) {
+        clearTimeout(this.saveTimer)
+        this.saveTimer = null
+      }
       for (const tab of this.tabs) {
         try {
           tab.view.webContents.close()
@@ -672,6 +969,27 @@ export class BrowserShell {
       this.tabs.length = 0
       this.activeId = null
     })
+  }
+
+  private restoreTabs(session?: SavedSession | null): void {
+    const saved = session?.tabs?.length ? session.tabs : [{ url: '' }]
+    const tabs = saved.map((entry) => {
+      const tab = this.createTab()
+      if (entry.url) void this.navigateInTab(tab, entry.url)
+      return tab
+    })
+
+    const activeIndex = Math.min(
+      Math.max(session?.activeIndex ?? 0, 0),
+      Math.max(0, tabs.length - 1)
+    )
+    const active = tabs[activeIndex]
+    if (active) this.activateTab(active.id)
+  }
+
+  private scheduleSessionSave(): void {
+    if (this.saveTimer) clearTimeout(this.saveTimer)
+    this.saveTimer = setTimeout(() => this.saveSessionNow(), 600)
   }
 
   private contentBounds(): { x: number; y: number; width: number; height: number } {
@@ -709,4 +1027,38 @@ function safeProtocol(url: string): string | null {
 
 function formatDisplayUrl(url: string): string {
   return url.startsWith('ncc://') ? toDisplayUrl(url) : url
+}
+
+function historyLabel(title: string, url: string): string {
+  const label = title?.trim() || url
+  return label.length > 100 ? `${label.slice(0, 100)}…` : label
+}
+
+/**
+ * Restore the saved window size, but only restore the position when a meaningful part
+ * of the window still lands on a connected display (monitors get unplugged).
+ */
+function restoreWindowBounds(
+  saved?: SavedWindow
+): { width: number; height: number; x?: number; y?: number } {
+  const width = saved?.width ?? 1280
+  const height = saved?.height ?? 860
+  if (!saved || saved.x === undefined || saved.y === undefined) return { width, height }
+
+  const bounds = { x: saved.x, y: saved.y, width, height }
+  const visible = screen.getAllDisplays().some((display) => {
+    const overlapX = Math.max(
+      0,
+      Math.min(bounds.x + bounds.width, display.workArea.x + display.workArea.width) -
+        Math.max(bounds.x, display.workArea.x)
+    )
+    const overlapY = Math.max(
+      0,
+      Math.min(bounds.y + bounds.height, display.workArea.y + display.workArea.height) -
+        Math.max(bounds.y, display.workArea.y)
+    )
+    return overlapX * overlapY >= 100 * 100
+  })
+
+  return visible ? bounds : { width, height }
 }

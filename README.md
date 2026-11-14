@@ -11,15 +11,19 @@ implementation on top of `nostr-tools`, not a wrapper around `ncc-05-js` (see
 [Why not `ncc-05-js`](#why-not-ncc-05-js)).
 
 **Status:** M0–M3 of [PLAN.md](./PLAN.md) are implemented, plus an inbuilt NIP-07 signer
-with local keys and NIP-46 remote signing: resolution, proxy protocol, pinning, browser
-chrome, tabs, NIP-65 gossip, endpoint cooldowns, a persistent locator cache, downloads,
-relay/gossip settings, and identity.
+with local keys and NIP-46 remote signing, and the M5 chrome work: a custom title bar,
+tab favicons/audio/mute, drag reordering, tab overflow, tab context menus, a downloads
+manager, per-tab history, bookmarks, session restore, and a full settings page.
 
 ![Start screen](./docs/welcome.png)
 
-| Tabs | Failure page | Settings & identity |
+| Tabs | Failure page | Settings page |
 | --- | --- | --- |
-| ![Two tabs with a resolved service](./docs/tabs.png) | ![No locator published](./docs/error-page.png) | ![Settings with relays and identity](./docs/settings.png) |
+| ![Two tabs with a resolved service](./docs/tabs.png) | ![No locator published](./docs/error-page.png) | ![Settings page with identity and remote signer](./docs/settings.png) |
+
+| Downloads | Tab history | Browser menu |
+| --- | --- | --- |
+| ![Downloads panel with progress and reveal](./docs/downloads.png) | ![Per-tab history panel](./docs/history.png) | ![Hamburger menu with grouped commands](./docs/menu.png) |
 
 ---
 
@@ -49,23 +53,38 @@ npx electron . 'ncc://npub1…/web'
 
 ## Browser chrome
 
-No native menu bar: every command lives in the toolbar's hamburger menu, and shortcuts
-are routed by the main process so they keep working while the remote page has focus.
+The window is frameless: the tab strip doubles as the title bar, with a drag region and
+in-app minimize/maximize/close controls. No native menu bar; every command lives in the
+toolbar's hamburger menu, and shortcuts are routed by the main process so they keep
+working while the remote page has focus.
 
-![Hamburger menu](./docs/menu.png)
-
-- **Tabs** — new/close/switch, middle-click close, per-tab title and loading state.
-  A blank tab shows the welcome screen.
-- **Toolbar** — back/forward, reload/stop, address bar, security badge, identity key,
-  hamburger menu.
+- **Tabs** — new/close/switch, middle-click close, drag to reorder, per-tab favicon,
+  title and loading spinner. Playing audio shows a speaker icon (click to mute), and an
+  overflow button appears when the strip cannot fit every tab, with a searchable list.
+  Right-click a tab for reload, duplicate, mute, copy address, close, close others and
+  close to the right. A blank tab shows the welcome screen.
+- **Toolbar** — back/forward (right-click or hold for a jump list), reload/stop,
+  history, address bar with bookmark star, security badge, downloads with progress,
+  identity key, hamburger menu.
+- **Settings** is a page, not a modal: `General`, `Identity & signer`, `Trusted services`
+  and `About`, with a back-to-browsing button. `Esc` also leaves it.
 - **Shortcuts** (also shown in the menu): `Ctrl+T`, `Ctrl+W`, `Ctrl+Tab` /
-  `Ctrl+Shift+Tab`, `Ctrl+L`, `Ctrl+R`, `Ctrl+Shift+R`, `Ctrl+.`, `Alt+←/→`,
-  `Ctrl++/-/0`, `Ctrl+Shift+I/J`, `Ctrl+Q`. On macOS `Cmd` replaces `Ctrl`.
-- **Right-click** — links (open in new tab, copy address), images (open, copy address,
-  save), editable fields (cut/copy/paste/select all), plus back/forward/reload and
-  inspect element.
+  `Ctrl+Shift+Tab`, `Ctrl+L`, `Ctrl+R`, `Ctrl+Shift+R`, `Ctrl+.`, `Ctrl+D` (bookmark),
+  `Ctrl+H` (history), `Ctrl+J` (downloads), `Alt+←/→`, `Ctrl++/-/0`, `Ctrl+Shift+I/J`,
+  `Ctrl+Q`. On macOS `Cmd` replaces `Ctrl`.
+- **Right-click content** — links (open in new tab, copy address), images (open, copy
+  address, save), editable fields (cut/copy/paste/select all), plus back/forward/reload
+  and inspect element.
+- **Downloads** — a session list that survives chrome reloads, with byte progress,
+  cancel, reveal in folder, and clear-finished. Files are saved under `~/Downloads`
+  unless `NCC_DOWNLOAD_DIR` is set.
+- **History** — the toolbar and `Ctrl+H` list every entry in the active tab; selecting
+  one jumps straight to it. History is per tab and can be cleared from the panel.
+- **Bookmarks** — the star in the address bar toggles the current page; the hamburger
+  menu lists bookmarks with remove buttons. They are local to this browser.
+- **Session restore** — open tabs, the active tab and window geometry are saved to
+  `userData/session.json` and restored on the next launch. Only addresses are stored.
 - **Window title** follows the active page.
-- **Downloads** surface as chips in the tab strip with saved/failed state.
 
 ---
 
@@ -140,7 +159,8 @@ The toolbar always shows which mode is in effect: `pinned`, `tls`, or `plaintext
 placeholder fingerprints are treated as "no pin", not as a match.
 
 Locator content is decrypted only when an encrypted record is addressed to you. The
-identity from Settings is used for that automatically; there is no separate locator key.
+identity from the settings page is used for that automatically; there is no separate
+locator key.
 
 ---
 
@@ -163,8 +183,8 @@ tell the difference.
 - **Approval is per service.** The first request opens an in-app sheet over the page,
   showing the exact event being signed; "Always allow" is remembered per
   `ncc://<npub>/<service>` for NCC pages, and per origin for clearnet. While the sheet is
-  open the remote page is hidden, so it cannot fake or cover the prompt. Settings lists
-  trusted services with a revoke button.
+  open the remote page is hidden, so it cannot fake or cover the prompt. Settings →
+  Trusted services lists remembered origins with a revoke button.
 - **Validation** rejects malformed kinds, non-string tags, events more than 15 minutes in
   the future, and content over 1 MB before anything reaches the signer.
 - **Development overrides:** `NCC_IDENTITY_NSEC` loads a local key from the environment,
@@ -172,17 +192,17 @@ tell the difference.
   changes the remote-signer timeout (default 60 s). All three are for development/e2e.
 
 The toolbar has a key icon for the current identity (accent when configured, with a
-pending dot when a request is waiting). Clicking it opens Settings → Identity.
+pending dot when a request is waiting). Clicking it opens the **Identity & signer** page.
 
-Settings → Identity imports an `nsec` (or 64-char hex), generates a new identity, shows
-the npub, and removes it.
+Settings → Identity & signer imports an `nsec` (or 64-char hex), generates a new
+identity, shows the npub, and removes it.
 
 ![In-app signer approval](./docs/approval.png)
 
 ### Remote signing (NIP-46)
 
-Settings → Identity → **Remote signer** accepts a `bunker://` URL (Amber, Nostr Connect,
-nsec.app, …). The flow is:
+Settings → Identity & signer → **Remote signer** accepts a `bunker://` URL (Amber,
+Nostr Connect, nsec.app, …). The flow is:
 
 1. The browser generates a **client key** used only to encrypt the NIP-46 channel and
    signs the connect request.
@@ -231,8 +251,11 @@ src/main
   pins.ts            SPKI pin store + setCertificateVerifyProc
   config.ts          relay list, gossip toggle, persisted to userData
   cache-store.ts     on-disk locator cache (public records only)
-  downloads.ts       sanitised filenames, dedupe, save paths
-  ipc.ts             navigate / tabs / history / relays / identity / commands
+  bookmarks.ts       local bookmarks, persisted to userData
+  session-store.ts   saved tabs + window geometry for session restore
+  downloads.ts       download manager: sanitised names, progress, cancel, reveal
+  favicon.ts         fetch page icons, convert to bounded data URLs
+  ipc.ts             navigate / tabs / history / bookmarks / downloads / window / commands
   error-page.ts      self-contained failure screens
   shortcuts.ts       pure: key event → command
   context-menu-model.ts  pure: context menu contents
@@ -250,12 +273,14 @@ src/main
   signer/manager.ts  one active identity: local key or remote signer
   signer/service.ts  approvals queue, delegates to the active provider
   signer/ipc.ts      NIP-07 IPC, caller origin derived from the main frame
-  approval.ts        in-app approval broker (chrome modal, content hidden)
+  approval.ts        in-app approval broker (chrome sheet, content hidden)
 src/preload
   index.ts           contextBridge → window.ncc (chrome only)
   content.ts         contextBridge → window.nostr (top-level page frames only)
-src/renderer         React tabs, toolbar, hamburger menu, signer sheet, settings, welcome
-src/shared           ncc:// parser, types, relay validation, commands (no Node imports)
+src/renderer         React chrome: tabs, toolbar, menu, downloads, history, settings page,
+                     signer sheet, welcome
+src/shared           ncc:// parser, types, relay validation, commands, tab order,
+                     download formatting (no Node imports)
 ```
 
 Remote content runs with `sandbox: true`, `contextIsolation: true`, no Node, and its own
@@ -267,22 +292,26 @@ general IPC bridge.
 ## Testing
 
 ```bash
-npm test       # 166 unit tests: URL parser, locator rules, resolver, routing, pins,
+npm test       # 187 unit tests: URL parser, locator rules, resolver, routing, pins,
                # signer crypto, identity storage, NIP-46, approvals, permissions,
-               # shortcuts, context menus, relays, downloads
+               # shortcuts, context menus, relays, downloads, tab order, bookmarks,
+               # favicons, session storage
 npm run e2e    # real Electron window against a mock relay and local HTTP services
 ```
 
 The end-to-end test starts a WebSocket relay, signs real `30058` events, serves an HTTP
-page with an external stylesheet and two self-signed HTTPS services, then drives the
-running app over the Chrome DevTools Protocol. It asserts rendering, subresource
-proxying, relative-link resolution, the synthetic origin, the address bar, plaintext vs
-`pinned` transport state, refusal of a certificate that does not match `k`, `ncc://`
-link-driven service switching, NIP-65 gossip to a second relay, tab open/close, the
-persistent cache on disk, the full NIP-07 path (in-app approval sheet, public key,
-verifiable signature, NIP-04/44 round-trips, no provider in subframes), the hamburger
-menu, **real global shortcuts sent through X** (Ctrl+T/W/L while the page is focused),
-and a **real NIP-46 round-trip against a mock bunker** — connect, remote signing, remote
+page with an external stylesheet, a favicon, a downloadable file, and two self-signed
+HTTPS services, then drives the running app over the Chrome DevTools Protocol. It
+asserts rendering, subresource proxying, relative-link resolution, the synthetic origin,
+the address bar, plaintext vs `pinned` transport state, refusal of a certificate that
+does not match `k`, `ncc://` link-driven service switching, NIP-65 gossip to a second
+relay, tab open/close, drag reordering, mute state, tab overflow, the persistent cache
+and session file on disk, **session restore across a real app restart**, the full NIP-07
+path (in-app approval sheet, focus containment, public key, verifiable signature,
+NIP-04/44 round-trips, no provider in subframes), the settings page, the downloads panel
+(a real file written to disk), the per-tab history panel, bookmarks, the hamburger menu,
+**real global shortcuts sent through X** (Ctrl+T/W/L while the page is focused), and a
+**real NIP-46 round-trip against a mock bunker** — connect, remote signing, remote
 decryption of a targeted locator, and disconnect. Screenshots land in
 `/tmp/opencode/ncc-browser-e2e/`.
 
@@ -346,6 +375,11 @@ material out of this browser entirely. See [soapbox.pub/mkstack](https://soapbox
 - **No extension support.** Chrome extensions cannot inject into `ncc://` pages (content
   script match patterns exclude custom schemes) and Electron cannot install Web Store
   extensions. The inbuilt provider is the supported path.
+- **Session restore stores addresses only** — no scroll position, form state or POST
+  results. Bookmarks and sessions are local to this profile and are not synced over
+  Nostr.
+- **The title bar is app-drawn.** The window is frameless on every platform, so window
+  controls and dragging are part of the chrome rather than the OS theme.
 - **Clearnet pages** load directly, with normal Chromium error handling.
 
 ---

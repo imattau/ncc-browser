@@ -2,15 +2,17 @@ import { app, Menu, safeStorage, session, type Session } from 'electron'
 import { join } from 'node:path'
 import { nip19 } from 'nostr-tools'
 import { ApprovalBroker } from './approval'
+import { BookmarkStore } from './bookmarks'
 import { LocatorCacheStore } from './cache-store'
 import { ConfigStore } from './config'
-import { installDownloadHandler } from './downloads'
+import { DownloadManager } from './downloads'
 import { registerIpc } from './ipc'
 import { EndpointHealth } from './ncc/health'
 import { closeSharedPool, NccResolver, signerFromSecret, type LocatorSigner } from './ncc/resolver'
 import { installCertificatePinning, PinStore } from './pins'
 import { installNccProtocol, registerNccScheme } from './protocol'
 import { BrowserShell } from './shell'
+import { SessionStore } from './session-store'
 import { IdentityStore } from './signer/identity'
 import { registerNip07 } from './signer/ipc'
 import { IdentityManager } from './signer/manager'
@@ -94,6 +96,13 @@ app.whenReady().then(async () => {
   contentSession.setSpellCheckerEnabled(false)
   installCertificatePinning(contentSession, pins)
 
+  const downloadDirectory = process.env.NCC_DOWNLOAD_DIR?.trim()
+  const downloads = new DownloadManager({
+    ...(downloadDirectory ? { directory: downloadDirectory } : {}),
+    notify: (notice) => shell?.notifyDownload(notice)
+  })
+  downloads.install(contentSession)
+
   installNccProtocol({
     session: contentSession,
     resolver,
@@ -104,9 +113,9 @@ app.whenReady().then(async () => {
     onActivity: (activity) => shell?.reportActivity(activity)
   })
 
-  installDownloadHandler(contentSession, {
-    notify: (notice) => shell?.notifyDownload(notice)
-  })
+  const bookmarks = new BookmarkStore(join(app.getPath('userData'), 'bookmarks.json'))
+  const sessionStore = new SessionStore(join(app.getPath('userData'), 'session.json'))
+  const initialSession = sessionStore.load()
 
   shell = new BrowserShell({
     preloadPath: join(__dirname, '../preload/index.js'),
@@ -114,6 +123,9 @@ app.whenReady().then(async () => {
     rendererUrl: process.env.ELECTRON_RENDERER_URL,
     rendererFile: join(__dirname, '../renderer/index.html'),
     activeService,
+    bookmarks,
+    sessionStore,
+    initialSession,
     onContentWebContents: (contents) => {
       // Remote content must never be able to keep the window from closing.
       contents.on('will-prevent-unload', (event) => event.preventDefault())
@@ -153,13 +165,16 @@ app.whenReady().then(async () => {
     Menu.setApplicationMenu(null)
   }
 
-  registerIpc({ shell, config, resolver, pins, cacheStore, health, identity, permissions, approvals })
+  registerIpc({ shell, config, resolver, pins, cacheStore, health, identity, permissions, approvals, downloads })
 
-  // Optional launch address: `ncc-browser ncc://npub1…/service`
+  // Optional launch address: `ncc-browser ncc://npub1…/service`. A fresh launch uses
+  // the restored blank tab; a real restored session gets the address in a new tab.
   const startupAddress = findStartupAddress()
   if (startupAddress) {
+    const hasRestoredPages = initialSession?.tabs.some((tab) => tab.url) ?? false
     shell.window.webContents.once('did-finish-load', () => {
-      void shell?.navigate(startupAddress)
+      if (hasRestoredPages) shell?.newTab(startupAddress)
+      else void shell?.navigate(startupAddress)
     })
   }
 
@@ -185,6 +200,7 @@ app.on('activate', () => {
 })
 
 app.on('before-quit', () => {
+  shell?.saveSessionNow()
   closeSharedPool()
 })
 

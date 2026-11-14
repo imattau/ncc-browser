@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Check, KeyRound, ShieldAlert, Smartphone, X } from 'lucide-react'
 import type { SignerRequest } from '@shared/types'
 import { cn } from '../lib/cn'
+import { useFocusTrap } from '../lib/useFocusTrap'
 
 interface SignerPromptProps {
   request: SignerRequest
@@ -16,6 +17,8 @@ const MODE_LABEL: Record<SignerRequest['mode'], string> = {
 
 export function SignerPrompt({ request, onRespond }: SignerPromptProps) {
   const [remember, setRemember] = useState(false)
+  const cardRef = useRef<HTMLDivElement>(null)
+  useFocusTrap(true, cardRef)
 
   useEffect(() => {
     setRemember(false)
@@ -46,7 +49,10 @@ export function SignerPrompt({ request, onRespond }: SignerPromptProps) {
       aria-label="Signer request"
       className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto bg-black/72 px-4 py-[9vh] backdrop-blur-sm"
     >
-      <div className="ncc-fade-in w-full max-w-[560px] rounded-2xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] shadow-[0_40px_120px_rgba(0,0,0,0.65)]">
+      <div
+        ref={cardRef}
+        className="ncc-fade-in w-full max-w-[560px] rounded-2xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] shadow-[0_40px_120px_rgba(0,0,0,0.65)]"
+      >
         <div className="flex items-start justify-between gap-3 border-b border-[color:var(--color-line)] px-5 py-4">
           <div className="flex min-w-0 items-start gap-3">
             <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-[color:var(--color-accent)]/25 bg-[color:var(--color-accent)]/10 text-[color:var(--color-accent)]">
@@ -128,6 +134,7 @@ export function SignerPrompt({ request, onRespond }: SignerPromptProps) {
             <button
               type="button"
               data-signer-deny
+              data-autofocus
               onClick={() => onRespond(false, false)}
               className="rounded-lg border border-[color:var(--color-line)] px-3 py-1.5 text-xs font-medium text-[color:var(--color-muted)] hover:bg-white/5 hover:text-white"
             >

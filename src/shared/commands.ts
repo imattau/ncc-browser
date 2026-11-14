@@ -18,6 +18,9 @@ export type CommandId =
   | 'zoom-reset'
   | 'toggle-page-devtools'
   | 'toggle-browser-devtools'
+  | 'toggle-bookmark'
+  | 'open-history'
+  | 'open-downloads'
   | 'open-settings'
   | 'open-identity'
   | 'open-spec'
@@ -51,6 +54,8 @@ export const COMMANDS: CommandDefinition[] = [
   { id: 'reload', label: 'Reload', shortcut: 'Ctrl+R', group: 'Navigation' },
   { id: 'force-reload', label: 'Force reload', shortcut: 'Ctrl+Shift+R', group: 'Navigation' },
   { id: 'stop', label: 'Stop loading', shortcut: 'Ctrl+.', group: 'Navigation' },
+  { id: 'toggle-bookmark', label: 'Bookmark this page', shortcut: 'Ctrl+D', group: 'Navigation' },
+  { id: 'open-history', label: 'History of this tab', shortcut: 'Ctrl+H', group: 'Navigation' },
   { id: 'zoom-in', label: 'Zoom in', shortcut: 'Ctrl++', group: 'View' },
   { id: 'zoom-out', label: 'Zoom out', shortcut: 'Ctrl+-', group: 'View' },
   { id: 'zoom-reset', label: 'Actual size', shortcut: 'Ctrl+0', group: 'View' },
@@ -68,6 +73,7 @@ export const COMMANDS: CommandDefinition[] = [
   },
   { id: 'open-settings', label: 'Settings', group: 'Application' },
   { id: 'open-identity', label: 'Identity & signer', group: 'Application' },
+  { id: 'open-downloads', label: 'Downloads', shortcut: 'Ctrl+J', group: 'Application' },
   { id: 'open-spec', label: 'NCC-05 specification', group: 'Application' },
   { id: 'quit', label: 'Quit', shortcut: 'Ctrl+Q', group: 'Application' }
 ]

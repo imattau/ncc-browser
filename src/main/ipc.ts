@@ -1,7 +1,9 @@
-import { ipcMain } from 'electron'
+import { ipcMain, shell } from 'electron'
 import { COMMANDS, type CommandId } from '@shared/commands'
+import { OVERLAY_REASONS } from '@shared/types'
 import type { LocatorCacheStore } from './cache-store'
 import type { ConfigStore } from './config'
+import type { DownloadManager } from './downloads'
 import type { EndpointHealth } from './ncc/health'
 import type { NccResolver } from './ncc/resolver'
 import type { PinStore } from './pins'
@@ -20,10 +22,14 @@ export interface IpcDeps {
   identity: IdentityManager
   permissions: PermissionStore
   approvals: ApprovalBroker
+  downloads: DownloadManager
 }
 
 export function registerIpc(deps: IpcDeps): void {
   const commandIds = new Set<string>(COMMANDS.map((command) => command.id))
+  const overlayReasons = new Set<string>(OVERLAY_REASONS)
+  const fromChrome = (event: Electron.IpcMainInvokeEvent): boolean =>
+    event.sender === deps.shell.window.webContents
 
   ipcMain.handle('ncc:navigate', (_event, input: unknown) => deps.shell.navigate(String(input ?? '')))
 
@@ -40,6 +46,53 @@ export function registerIpc(deps: IpcDeps): void {
   )
   ipcMain.handle('ncc:select-tab', (_event, id: unknown) => {
     if (typeof id === 'string') deps.shell.selectTab(id)
+  })
+  ipcMain.handle('ncc:move-tab', (_event, payload: unknown) => {
+    if (!payload || typeof payload !== 'object') return
+    const { id, toIndex } = payload as { id?: unknown; toIndex?: unknown }
+    if (typeof id !== 'string' || typeof toIndex !== 'number') return
+    deps.shell.moveTab(id, toIndex)
+  })
+  ipcMain.handle('ncc:duplicate-tab', (event, id: unknown) => {
+    if (!fromChrome(event)) return
+    deps.shell.duplicateTab(typeof id === 'string' ? id : undefined)
+  })
+  ipcMain.handle('ncc:reload-tab', (event, id: unknown) => {
+    if (!fromChrome(event)) return
+    deps.shell.reloadTab(typeof id === 'string' ? id : undefined)
+  })
+  ipcMain.handle('ncc:toggle-mute', (event, id: unknown) => {
+    if (!fromChrome(event)) return
+    deps.shell.toggleMute(typeof id === 'string' ? id : undefined)
+  })
+  ipcMain.handle('ncc:close-other-tabs', (event, id: unknown) => {
+    if (!fromChrome(event)) return
+    deps.shell.closeOtherTabs(typeof id === 'string' ? id : undefined)
+  })
+  ipcMain.handle('ncc:close-tabs-right', (event, id: unknown) => {
+    if (!fromChrome(event)) return
+    deps.shell.closeTabsToRight(typeof id === 'string' ? id : undefined)
+  })
+  ipcMain.handle('ncc:tab-menu', (event, id: unknown) => {
+    if (!fromChrome(event) || typeof id !== 'string') return
+    deps.shell.showTabMenu(id)
+  })
+
+  ipcMain.handle('ncc:tab-history', (_event, id: unknown) =>
+    deps.shell.getTabHistory(typeof id === 'string' ? id : undefined)
+  )
+  ipcMain.handle('ncc:go-history-index', (event, index: unknown) => {
+    if (!fromChrome(event) || typeof index !== 'number') return
+    deps.shell.goToHistoryIndex(index)
+  })
+  ipcMain.handle('ncc:clear-history', (event) => {
+    if (!fromChrome(event)) return
+    deps.shell.clearHistory()
+  })
+  ipcMain.handle('ncc:history-menu', (event, direction: unknown) => {
+    if (!fromChrome(event)) return
+    if (direction !== 'back' && direction !== 'forward') return
+    deps.shell.showHistoryMenu(direction)
   })
 
   ipcMain.handle('ncc:get-state', () => deps.shell.getState())
@@ -106,7 +159,7 @@ export function registerIpc(deps: IpcDeps): void {
 
   ipcMain.handle('ncc:signer-response', (event, payload: unknown) => {
     // Only the trusted chrome renderer may answer a signer request.
-    if (event.sender !== deps.shell.window.webContents) return
+    if (!fromChrome(event)) return
     if (!payload || typeof payload !== 'object') return
     const { id, allow, remember } = payload as {
       id?: unknown
@@ -118,17 +171,58 @@ export function registerIpc(deps: IpcDeps): void {
   })
 
   ipcMain.handle('ncc:command', (event, command: unknown) => {
-    if (event.sender !== deps.shell.window.webContents) return
+    if (!fromChrome(event)) return
     if (typeof command !== 'string' || !commandIds.has(command)) return
     deps.shell.runCommand(command as CommandId)
   })
 
   ipcMain.handle('ncc:set-overlay', (event, payload: unknown) => {
-    if (event.sender !== deps.shell.window.webContents) return
+    if (!fromChrome(event)) return
     if (!payload || typeof payload !== 'object') return
     const { reason, active } = payload as { reason?: unknown; active?: unknown }
-    if (reason !== 'menu') return
-    deps.shell.setOverlay('menu', active === true)
+    if (typeof reason !== 'string' || !overlayReasons.has(reason)) return
+    deps.shell.setOverlay(reason, active === true)
+  })
+
+  ipcMain.handle('ncc:bookmarks', () => deps.shell.getBookmarks())
+
+  ipcMain.handle('ncc:toggle-bookmark', (event) => {
+    if (!fromChrome(event)) return []
+    return deps.shell.toggleBookmark()
+  })
+
+  ipcMain.handle('ncc:remove-bookmark', (event, url: unknown) => {
+    if (!fromChrome(event) || typeof url !== 'string') return deps.shell.getBookmarks()
+    return deps.shell.removeBookmark(url)
+  })
+
+  ipcMain.handle('ncc:get-downloads', () => deps.downloads.list())
+
+  ipcMain.handle('ncc:cancel-download', (event, id: unknown) => {
+    if (!fromChrome(event) || typeof id !== 'string') return deps.downloads.list()
+    deps.downloads.cancel(id)
+    return deps.downloads.list()
+  })
+
+  ipcMain.handle('ncc:reveal-download', (event, id: unknown) => {
+    if (!fromChrome(event) || typeof id !== 'string') return
+    const path = deps.downloads.pathFor(id)
+    if (path) shell.showItemInFolder(path)
+  })
+
+  ipcMain.handle('ncc:clear-downloads', (event) => {
+    if (!fromChrome(event)) return deps.downloads.list()
+    return deps.downloads.clearFinished()
+  })
+
+  ipcMain.handle('ncc:window-minimize', (event) => {
+    if (fromChrome(event)) deps.shell.minimizeWindow()
+  })
+  ipcMain.handle('ncc:window-toggle-maximize', (event) => {
+    if (fromChrome(event)) deps.shell.toggleMaximizeWindow()
+  })
+  ipcMain.handle('ncc:window-close', (event) => {
+    if (fromChrome(event)) deps.shell.closeWindow()
   })
 }
 

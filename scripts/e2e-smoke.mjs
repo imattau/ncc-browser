@@ -116,16 +116,33 @@ async function startRelay() {
 
 async function startService(npub) {
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>NCC E2E</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="stylesheet" href="/style.css"></head>
 <body><h1 id="headline">NCC E2E OK</h1>
 <p id="proxied">resolved-and-proxied</p>
 <a id="next" href="second">second</a>
+<a id="download" href="/sample.txt" download="sample.txt">download</a>
 <a id="cross" href="ncc://${npub}/_/secure/">secure service</a></body></html>`
 
   const server = createServer((request, response) => {
     if (request.url === '/style.css') {
       response.writeHead(200, { 'content-type': 'text/css' })
       response.end('body { background-color: rgb(12, 34, 56); }')
+      return
+    }
+    if (request.url === '/favicon.svg') {
+      response.writeHead(200, { 'content-type': 'image/svg+xml' })
+      response.end(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="#8ab4ff"/></svg>'
+      )
+      return
+    }
+    if (request.url === '/sample.txt') {
+      response.writeHead(200, {
+        'content-type': 'text/plain',
+        'content-disposition': 'attachment; filename="sample.txt"'
+      })
+      response.end('ncc download e2e\n')
       return
     }
     if (request.url === '/second') {
@@ -370,9 +387,9 @@ class Cdp {
   }
 }
 
-async function waitForTarget(predicate, attempts = 80) {
+async function waitForTarget(predicate, attempts = 80, port = 9333) {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const targets = await fetchJson('http://127.0.0.1:9333/json/list')
+    const targets = await fetchJson(`http://127.0.0.1:${port}/json/list`)
     const match = targets.find(predicate)
     if (match) return match
     await new Promise((resolve) => setTimeout(resolve, 250))
@@ -387,7 +404,11 @@ async function evaluate(cdp, expression) {
     awaitPromise: true
   })
   if (result.exceptionDetails) {
-    throw new Error(result.exceptionDetails.text ?? 'evaluation failed')
+    throw new Error(
+      result.exceptionDetails.exception?.description ??
+        result.exceptionDetails.text ??
+        'evaluation failed'
+    )
   }
   return result.result.value
 }
@@ -529,7 +550,8 @@ async function main() {
         XDG_CONFIG_HOME: configHome,
         ELECTRON_DISABLE_SECURITY_WARNINGS: '1',
         NCC_IDENTITY_NSEC: nip19.nsecEncode(signerSk),
-        NCC_NIP46_TIMEOUT_MS: '15000'
+        NCC_NIP46_TIMEOUT_MS: '15000',
+        NCC_DOWNLOAD_DIR: join(configHome, 'downloads')
       },
       stdio: ['ignore', 'pipe', 'pipe']
     }
@@ -544,10 +566,12 @@ async function main() {
   })
 
   let bunker = null
+  let restarted = null
 
   const cleanup = () => {
     bunker?.close()
     electron.kill('SIGTERM')
+    restarted?.kill('SIGTERM')
     xvfb.proc.kill('SIGTERM')
     server.close()
     secure.server.close()
@@ -606,6 +630,80 @@ async function main() {
     const chromeText = await evaluate(chrome, 'document.body.innerText')
     check('toolbar reports plaintext transport', String(chromeText).includes('plaintext'), String(chromeText))
 
+    // Favicons are fetched in main and handed to the chrome as data URLs.
+    const favicon = await waitForValue(
+      chrome,
+      'document.querySelector(\'[role="tab"] img\')?.getAttribute("src") ?? ""',
+      80
+    )
+    check(
+      'shows the page favicon in the tab strip',
+      String(favicon).startsWith('data:image/svg+xml'),
+      String(favicon).slice(0, 40)
+    )
+
+    // Settings is a page in the chrome, not a modal dialog.
+    await evaluate(chrome, 'document.querySelector(\'button[data-signer-button]\').click()')
+    await waitForText(chrome, 'Remote signer', 60)
+    const settingsShot = await chrome.send('Page.captureScreenshot', { format: 'png' })
+    writeFileSync(join(ARTIFACTS, 'settings.png'), Buffer.from(settingsShot.data, 'base64'))
+    check(
+      'opens settings as a full page',
+      (await evaluate(chrome, 'Boolean(document.querySelector("[data-settings-page]"))')) === true
+    )
+    check(
+      'settings page keeps the tab strip available',
+      (await evaluate(chrome, 'document.querySelectorAll(\'[role="tab"]\').length')) === 1
+    )
+    await evaluate(chrome, 'document.querySelector(\'[data-settings-section="general"]\').click()')
+    await waitForText(chrome, 'Relays & resolution', 40)
+    check(
+      'settings page switches sections',
+      (await evaluate(chrome, 'Boolean(document.querySelector("#relays"))')) === true
+    )
+    await evaluate(chrome, 'document.querySelector(\'[data-settings-page] header button\').click()')
+    await sleep(350)
+    check(
+      'closes settings back to the page',
+      (await evaluate(chrome, 'document.querySelector("[data-settings-page]") === null')) === true
+    )
+
+    // Downloads: the content page triggers a real session download.
+    await evaluate(cdp, 'document.querySelector("#download").click()')
+    await waitForValue(
+      chrome,
+      'document.querySelector("[data-downloads-button]") ? "shown" : ""',
+      80
+    )
+    const downloadedFile = join(configHome, 'downloads', 'sample.txt')
+    let downloaded = false
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      if (existsSync(downloadedFile)) {
+        downloaded = true
+        break
+      }
+      await sleep(150)
+    }
+    check('downloads a file through the content session', downloaded)
+
+    await evaluate(chrome, 'document.querySelector("[data-downloads-button]").click()')
+    await waitForText(chrome, 'sample.txt', 40)
+    check(
+      'opens the downloads panel',
+      (await evaluate(chrome, 'Boolean(document.querySelector("[data-popover=downloads]"))')) === true
+    )
+    check(
+      'download list offers reveal in folder',
+      (await evaluate(
+        chrome,
+        'Boolean(document.querySelector(\'button[aria-label="Show sample.txt in folder"]\'))'
+      )) === true
+    )
+    const downloadsShot = await chrome.send('Page.captureScreenshot', { format: 'png' })
+    writeFileSync(join(ARTIFACTS, 'downloads.png'), Buffer.from(downloadsShot.data, 'base64'))
+    await evaluate(chrome, 'document.querySelector(\'[aria-label="Close Downloads"]\').click()')
+    await sleep(250)
+
     // NIP-07: the identity lives in the main process and is exposed to page content only.
     const identityStatus = await evaluate(chrome, 'window.ncc.identity()')
     check(
@@ -630,6 +728,13 @@ async function main() {
     check(
       'shows an in-app signer prompt',
       (await evaluate(chrome, 'Boolean(document.querySelector("[data-signer-prompt]"))')) === true
+    )
+    check(
+      'focus stays inside the signer prompt',
+      (await evaluate(
+        chrome,
+        'document.activeElement?.hasAttribute("data-signer-deny") === true'
+      )) === true
     )
 
     const approvalShot = await chrome.send('Page.captureScreenshot', { format: 'png' })
@@ -760,6 +865,103 @@ async function main() {
     const tabCount = await evaluate(chrome, 'document.querySelectorAll(\'[role="tab"]\').length')
     check('opens a second tab', tabCount === 2, `(got ${tabCount})`)
 
+    // Reordering is the same path a drag-and-drop drop uses (id + destination index).
+    const tabIds = await evaluate(
+      chrome,
+      'window.ncc.getState().then((state) => state.tabs.map((tab) => tab.id))'
+    )
+    check(
+      'tab ids are available for reordering',
+      Array.isArray(tabIds) && tabIds.length === 2,
+      JSON.stringify(tabIds)
+    )
+    await evaluate(chrome, `window.ncc.moveTab(${JSON.stringify(tabIds[1])}, 0)`)
+    await sleep(300)
+    const reordered = await evaluate(
+      chrome,
+      'Array.from(document.querySelectorAll(\'[role="tab"]\')).map((element) => element.getAttribute("data-tab-id"))'
+    )
+    check(
+      'reorders tabs to a drop position',
+      Array.isArray(reordered) && reordered[0] === tabIds[1],
+      JSON.stringify(reordered)
+    )
+    await evaluate(chrome, `window.ncc.moveTab(${JSON.stringify(tabIds[1])}, 2)`)
+    await sleep(250)
+
+    // The real drag path: dragstart on one tab, dragover the left half of the first,
+    // then drop. State updates between events, exactly like a human drag.
+    await evaluate(
+      chrome,
+      `(() => {
+        window.__nccDrag = new DataTransfer()
+        const from = document.querySelectorAll('[role="tab"]')[1]
+        from.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: window.__nccDrag }))
+        return true
+      })()`
+    )
+    await sleep(150)
+    await evaluate(
+      chrome,
+      `(() => {
+        const to = document.querySelectorAll('[role="tab"]')[0]
+        const rect = to.getBoundingClientRect()
+        to.dispatchEvent(new DragEvent('dragover', {
+          bubbles: true,
+          cancelable: true,
+          clientX: rect.left + 4,
+          dataTransfer: window.__nccDrag
+        }))
+        return true
+      })()`
+    )
+    await sleep(150)
+    await evaluate(
+      chrome,
+      `(() => {
+        const to = document.querySelectorAll('[role="tab"]')[0]
+        const rect = to.getBoundingClientRect()
+        to.dispatchEvent(new DragEvent('drop', {
+          bubbles: true,
+          cancelable: true,
+          clientX: rect.left + 4,
+          dataTransfer: window.__nccDrag
+        }))
+        return true
+      })()`
+    )
+    await sleep(350)
+    const draggedOrder = await evaluate(
+      chrome,
+      'Array.from(document.querySelectorAll(\'[role="tab"]\')).map((element) => element.getAttribute("data-tab-id"))'
+    )
+    check(
+      'drag and drop reorders tabs',
+      Array.isArray(draggedOrder) && draggedOrder[0] === tabIds[1],
+      JSON.stringify(draggedOrder)
+    )
+
+    // The tab strip mirrors mute state, which is the same indicator shown for audio.
+    await evaluate(chrome, `window.ncc.toggleMute(${JSON.stringify(tabIds[1])})`)
+    await sleep(250)
+    const mutedState = await evaluate(
+      chrome,
+      `window.ncc.getState().then((state) => state.tabs.find((tab) => tab.id === ${JSON.stringify(
+        tabIds[1]
+      )})?.muted)`
+    )
+    check(
+      'mute state reaches the tab strip',
+      mutedState === true &&
+        (await evaluate(
+          chrome,
+          `Boolean(document.querySelector('[data-tab-id="${tabIds[1]}"] button[aria-label^="Unmute"]'))`
+        )) === true,
+      String(mutedState)
+    )
+    await evaluate(chrome, `window.ncc.toggleMute(${JSON.stringify(tabIds[1])})`)
+    await sleep(200)
+
     const tabsShot = await chrome.send('Page.captureScreenshot', { format: 'png' })
     writeFileSync(join(ARTIFACTS, 'tabs.png'), Buffer.from(tabsShot.data, 'base64'))
 
@@ -844,6 +1046,49 @@ async function main() {
     const mismatchChrome = await evaluate(chrome, 'document.body.innerText')
     check('toolbar reports k-mismatch', String(mismatchChrome).includes('k-mismatch'), String(mismatchChrome))
 
+    // Per-tab history: the panel lists real navigation entries and can jump between them.
+    const tabHistory = await evaluate(chrome, 'window.ncc.tabHistory()')
+    check(
+      'exposes the active tab history',
+      tabHistory?.entries?.length >= 2 && tabHistory.activeIndex === tabHistory.entries.length - 1,
+      JSON.stringify(tabHistory?.entries?.length)
+    )
+    await evaluate(chrome, 'document.querySelector(\'button[aria-label="History (Ctrl+H)"]\').click()')
+    await waitForText(chrome, 'History of this tab', 50)
+    check(
+      'opens the history panel',
+      (await evaluate(chrome, 'Boolean(document.querySelector("[data-popover=history]"))')) === true
+    )
+    check(
+      'history panel lists entries',
+      (await evaluate(
+        chrome,
+        'document.querySelectorAll("[data-history-index]").length'
+      )) >= 2
+    )
+    const historyShot = await chrome.send('Page.captureScreenshot', { format: 'png' })
+    writeFileSync(join(ARTIFACTS, 'history.png'), Buffer.from(historyShot.data, 'base64'))
+    await evaluate(
+      chrome,
+      'document.querySelector(\'[aria-label="Close History of this tab"]\').click()'
+    )
+    await sleep(250)
+
+    // Bookmarks: the star, the menu list and removal.
+    const bookmarked = await evaluate(chrome, 'window.ncc.toggleBookmark()')
+    check(
+      'bookmarks the current page',
+      bookmarked?.length === 1 && String(bookmarked[0].url).includes('/bogus/'),
+      JSON.stringify(bookmarked)
+    )
+    check(
+      'address bar shows a filled bookmark star',
+      (await evaluate(
+        chrome,
+        'Boolean(document.querySelector(\'button[aria-label="Remove bookmark"]\'))'
+      )) === true
+    )
+
     await sleep(400)
     const chromeShot = await chrome.send('Page.captureScreenshot', { format: 'png' })
     writeFileSync(join(ARTIFACTS, 'chrome.png'), Buffer.from(chromeShot.data, 'base64'))
@@ -854,6 +1099,13 @@ async function main() {
     check(
       'opens the in-app menu',
       (await evaluate(chrome, 'Boolean(document.querySelector("[data-chrome-menu]"))')) === true
+    )
+    check(
+      'menu lists the bookmark',
+      (await evaluate(
+        chrome,
+        'Boolean(document.querySelector("[data-bookmark-url]"))'
+      )) === true
     )
 
     const menuShot = await chrome.send('Page.captureScreenshot', { format: 'png' })
@@ -877,6 +1129,12 @@ async function main() {
     await evaluate(chrome, 'window.ncc.closeTab()')
     await sleep(300)
 
+    const unbookmarked = await evaluate(
+      chrome,
+      `window.ncc.removeBookmark(${JSON.stringify(bookmarked[0].url)})`
+    )
+    check('removes a bookmark', unbookmarked?.length === 0, JSON.stringify(unbookmarked))
+
     // Failure case: a different pubkey with no locator at all.
     await cdp.send('Page.navigate', { url: `ncc://${missingNpub}/web/` })
     const errorText = await waitForText(cdp, 'No locator published', 80)
@@ -899,8 +1157,131 @@ async function main() {
       check('cache never contains encrypted records', !/\"encrypted\":\s*true/.test(readFileSync(cachePath, 'utf8')))
     }
 
+    // Session persistence: tabs are written after a debounce, without page content.
+    await sleep(1000)
+    const sessionPath = join(userData, 'session.json')
+    check('persists the browsing session', existsSync(sessionPath))
+    if (existsSync(sessionPath)) {
+      const savedSession = JSON.parse(readFileSync(sessionPath, 'utf8'))
+      check(
+        'session saves open tabs',
+        Array.isArray(savedSession.tabs) &&
+          savedSession.tabs.length >= 1 &&
+          savedSession.tabs.some((tab) => String(tab.url).startsWith('ncc://')),
+        JSON.stringify(savedSession.tabs)
+      )
+      check(
+        'session stores no page content',
+        !/cookie|password|content/i.test(readFileSync(sessionPath, 'utf8'))
+      )
+    }
+
+    // Overflow: with more tabs than fit, the strip offers a list of every tab.
+    const keepTab = await evaluate(
+      chrome,
+      'window.ncc.getState().then((state) => state.activeTabId)'
+    )
+    for (let index = 0; index < 14; index += 1) {
+      await evaluate(chrome, 'window.ncc.newTab()')
+    }
+    await sleep(700)
+    check(
+      'shows the tab overflow button',
+      (await evaluate(
+        chrome,
+        'Boolean(document.querySelector(\'button[aria-label="All tabs"]\'))'
+      )) === true
+    )
+    await evaluate(chrome, 'document.querySelector(\'button[aria-label="All tabs"]\').click()')
+    await waitForText(chrome, 'All tabs', 40)
+    check(
+      'overflow menu lists open tabs',
+      (await evaluate(
+        chrome,
+        'document.querySelectorAll("[data-overflow-tab]").length'
+      )) >= 14
+    )
+    await evaluate(chrome, 'document.querySelector(\'[aria-label="Close All tabs"]\').click()')
+    await evaluate(chrome, `window.ncc.closeOtherTabs(${JSON.stringify(keepTab)})`)
+    await sleep(400)
+    check(
+      'closes the extra tabs',
+      (await evaluate(
+        chrome,
+        'document.querySelectorAll(\'[role="tab"]\').length'
+      )) === 1
+    )
+
+    // Restart with the same profile and no command-line address: the session file
+    // must bring the tab back without any extra flags.
+    await sleep(1100)
     cdp.close()
     chrome.close()
+    electron.kill('SIGTERM')
+    await new Promise((resolve) => electron.once('exit', resolve))
+
+    const restorePort = 9334
+    restarted = spawn(
+      join(ROOT, 'node_modules/.bin/electron'),
+      [
+        '.',
+        '--no-sandbox',
+        '--disable-gpu',
+        '--ozone-platform=x11',
+        `--remote-debugging-port=${restorePort}`,
+        '--remote-allow-origins=*'
+      ],
+      {
+        cwd: ROOT,
+        env: {
+          ...process.env,
+          DISPLAY: xvfb.display,
+          XDG_CONFIG_HOME: configHome,
+          ELECTRON_DISABLE_SECURITY_WARNINGS: '1',
+          NCC_IDENTITY_NSEC: nip19.nsecEncode(signerSk),
+          NCC_NIP46_TIMEOUT_MS: '15000',
+          NCC_DOWNLOAD_DIR: join(configHome, 'downloads')
+        },
+        stdio: ['ignore', 'pipe', 'pipe']
+      }
+    )
+    restarted.stdout.on('data', (chunk) => {
+      logs += chunk.toString()
+    })
+    restarted.stderr.on('data', (chunk) => {
+      logs += chunk.toString()
+    })
+
+    const restoredChromeTarget = await waitForTarget(
+      (entry) => entry.url?.includes('/renderer/index.html'),
+      100,
+      restorePort
+    )
+    const restoredChrome = new Cdp(restoredChromeTarget.webSocketDebuggerUrl)
+    await restoredChrome.connect()
+    const restoredState = await evaluate(restoredChrome, 'window.ncc.getState()')
+    check(
+      'restores the session on the next launch',
+      restoredState?.tabs?.length === 1,
+      JSON.stringify(restoredState?.tabs?.length)
+    )
+    check(
+      'restores the saved address',
+      String(restoredState?.tabs?.[0]?.url).includes(missingNpub),
+      String(restoredState?.tabs?.[0]?.url)
+    )
+
+    const restoredContent = await waitForTarget(
+      (entry) => String(entry.url).startsWith('ncc://'),
+      100,
+      restorePort
+    )
+    const restoredCdp = new Cdp(restoredContent.webSocketDebuggerUrl)
+    await restoredCdp.connect()
+    const restoredText = await waitForText(restoredCdp, 'No locator published', 80)
+    check('restores the page itself', restoredText.includes('No locator published'))
+    restoredCdp.close()
+    restoredChrome.close()
   } finally {
     cleanup()
   }

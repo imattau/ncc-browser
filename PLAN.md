@@ -219,7 +219,11 @@ is CJS and the package is ESM-only.
   follows the active tab; blank tabs show the welcome page.
 - **M4 — Publisher:** separate MKStack app (`stacks mkstack`) that publishes a `30058`
   for a local port via NIP-07, plus NCC-02 anchoring/`k` trust UI in the browser.
-- **M5 — Polish:** tabs, bookmarks, session restore, custom titlebar.
+- **M5 — Polish:** ✅ custom frameless title bar; tab favicons, audio/mute indicator,
+  drag reordering, overflow menu and tab context menu; downloads manager with progress,
+  cancel and reveal; per-tab history panel and back/forward jump lists; local bookmarks;
+  session restore (tabs + window geometry); settings moved from a modal to a full page;
+  focus trapping for dialogs and popovers.
 
 ---
 

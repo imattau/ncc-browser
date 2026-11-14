@@ -1,5 +1,17 @@
-import { AlertTriangle, ArrowLeft, ArrowRight, KeyRound, Menu, RotateCw, X } from 'lucide-react'
-import type { IdentityStatus, NavState } from '@shared/types'
+import { useRef } from 'react'
+import {
+  AlertTriangle,
+  ArrowLeft,
+  ArrowRight,
+  Download,
+  History,
+  KeyRound,
+  Menu,
+  RotateCw,
+  X
+} from 'lucide-react'
+import type { DownloadNotice, IdentityStatus, NavState } from '@shared/types'
+import { isActiveDownload } from '@shared/downloads'
 import { AddressBar } from './AddressBar'
 import { SecurityBadge } from './SecurityBadge'
 import { cn } from '../lib/cn'
@@ -9,11 +21,17 @@ interface ToolbarProps {
   hint: string | null
   identity: IdentityStatus | null
   signerPending: boolean
+  bookmarked: boolean
+  downloads: DownloadNotice[]
   onNavigate: (input: string) => void
   onBack: () => void
   onForward: () => void
   onReload: () => void
   onStop: () => void
+  onToggleBookmark: () => void
+  onOpenDownloads: () => void
+  onOpenHistory: () => void
+  onHistoryMenu: (direction: 'back' | 'forward') => void
   onOpenSettings: () => void
   onOpenMenu: () => void
 }
@@ -23,22 +41,41 @@ export function Toolbar({
   hint,
   identity,
   signerPending,
+  bookmarked,
+  downloads,
   onNavigate,
   onBack,
   onForward,
   onReload,
   onStop,
+  onToggleBookmark,
+  onOpenDownloads,
+  onOpenHistory,
+  onHistoryMenu,
   onOpenSettings,
   onOpenMenu
 }: ToolbarProps) {
   const showFailure = state.failure && state.failure.code !== 'invalid-address'
+  const activeDownloads = downloads.filter((notice) => isActiveDownload(notice.state)).length
 
   return (
     <header className="relative z-10 flex h-[60px] shrink-0 items-center gap-2 border-b border-[color:var(--color-line)] bg-[color:var(--color-panel)] px-3">
-      <NavButton label="Back (Alt+←)" disabled={!state.canGoBack} onClick={onBack}>
+      <NavButton
+        label="Back (Alt+←) — right-click or hold for history"
+        disabled={!state.canGoBack}
+        onClick={onBack}
+        onContextMenu={() => onHistoryMenu('back')}
+        onLongPress={() => onHistoryMenu('back')}
+      >
         <ArrowLeft className="h-4 w-4" />
       </NavButton>
-      <NavButton label="Forward (Alt+→)" disabled={!state.canGoForward} onClick={onForward}>
+      <NavButton
+        label="Forward (Alt+→) — right-click or hold for history"
+        disabled={!state.canGoForward}
+        onClick={onForward}
+        onContextMenu={() => onHistoryMenu('forward')}
+        onLongPress={() => onHistoryMenu('forward')}
+      >
         <ArrowRight className="h-4 w-4" />
       </NavButton>
       <NavButton
@@ -48,11 +85,20 @@ export function Toolbar({
       >
         {state.loading ? <X className="h-4 w-4" /> : <RotateCw className="h-3.5 w-3.5" />}
       </NavButton>
+      <NavButton
+        label="History (Ctrl+H)"
+        onClick={onOpenHistory}
+        disabled={state.mode === 'blank'}
+      >
+        <History className="h-4 w-4" />
+      </NavButton>
 
       <AddressBar
         value={state.displayUrl}
         loading={state.loading}
         hint={hint}
+        bookmarked={bookmarked}
+        onToggleBookmark={onToggleBookmark}
         onNavigate={onNavigate}
       />
 
@@ -69,6 +115,29 @@ export function Toolbar({
       ) : null}
 
       <SecurityBadge state={state} />
+
+      {downloads.length > 0 ? (
+        <button
+          type="button"
+          aria-label="Downloads"
+          data-downloads-button
+          title="Downloads (Ctrl+J)"
+          onClick={onOpenDownloads}
+          className="relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[color:var(--color-muted)] transition-colors hover:bg-white/5 hover:text-white"
+        >
+          <Download className="h-4 w-4" />
+          <span
+            className={cn(
+              'absolute -right-0.5 -top-0.5 inline-flex h-3.5 min-w-3.5 items-center justify-center rounded-full px-1 text-[9px] font-semibold',
+              activeDownloads > 0
+                ? 'animate-pulse bg-[color:var(--color-accent)] text-[#0b0c10]'
+                : 'bg-[#2a2f3c] text-[#c9d1e0]'
+            )}
+          >
+            {activeDownloads || downloads.length}
+          </span>
+        </button>
+      ) : null}
 
       <button
         type="button"
@@ -107,17 +176,62 @@ interface NavButtonProps {
   label: string
   disabled?: boolean
   onClick: () => void
+  onContextMenu?: () => void
+  onLongPress?: () => void
   children: React.ReactNode
 }
 
-function NavButton({ label, disabled, onClick, children }: NavButtonProps) {
+function NavButton({
+  label,
+  disabled,
+  onClick,
+  onContextMenu,
+  onLongPress,
+  children
+}: NavButtonProps) {
+  const timer = useRef<number | null>(null)
+  const longPressed = useRef(false)
+
+  const cancelLongPress = (): void => {
+    if (timer.current !== null) {
+      window.clearTimeout(timer.current)
+      timer.current = null
+    }
+  }
+
   return (
     <button
       type="button"
       aria-label={label}
       title={label}
       disabled={disabled}
-      onClick={onClick}
+      onClick={() => {
+        // A long press opens the history menu; do not also navigate back/forward.
+        if (longPressed.current) {
+          longPressed.current = false
+          return
+        }
+        onClick()
+      }}
+      onContextMenu={(event) => {
+        if (!onContextMenu) return
+        event.preventDefault()
+        cancelLongPress()
+        onContextMenu()
+      }}
+      onPointerDown={() => {
+        if (disabled || !onLongPress) return
+        cancelLongPress()
+        longPressed.current = false
+        timer.current = window.setTimeout(() => {
+          timer.current = null
+          longPressed.current = true
+          onLongPress()
+        }, 550)
+      }}
+      onPointerUp={cancelLongPress}
+      onPointerLeave={cancelLongPress}
+      onPointerCancel={cancelLongPress}
       className={cn(
         'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[color:var(--color-muted)] transition-colors',
         disabled

@@ -45,6 +45,9 @@ describe('commandForInput', () => {
       'toggle-browser-devtools'
     )
     expect(commandForInput(input({ key: 'q', control: true }))).toBe('quit')
+    expect(commandForInput(input({ key: 'd', control: true }))).toBe('toggle-bookmark')
+    expect(commandForInput(input({ key: 'h', control: true }))).toBe('open-history')
+    expect(commandForInput(input({ key: 'j', control: true }))).toBe('open-downloads')
   })
 
   it('supports Command on macOS', () => {

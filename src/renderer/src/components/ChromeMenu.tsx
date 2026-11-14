@@ -1,17 +1,32 @@
-import { useEffect } from 'react'
-import { Smartphone } from 'lucide-react'
+import { useEffect, useRef } from 'react'
+import { Bookmark as BookmarkIcon, Smartphone, X } from 'lucide-react'
 import { COMMANDS, COMMAND_ORDER, type CommandId } from '@shared/commands'
-import type { IdentityStatus, NavState } from '@shared/types'
+import type { Bookmark, IdentityStatus, NavState } from '@shared/types'
 import { cn } from '../lib/cn'
+import { useFocusTrap } from '../lib/useFocusTrap'
 
 interface ChromeMenuProps {
   state: NavState
   identity: IdentityStatus | null
+  bookmarks: Bookmark[]
   onCommand: (command: CommandId) => void
+  onOpenBookmark: (url: string) => void
+  onRemoveBookmark: (url: string) => void
   onClose: () => void
 }
 
-export function ChromeMenu({ state, identity, onCommand, onClose }: ChromeMenuProps) {
+export function ChromeMenu({
+  state,
+  identity,
+  bookmarks,
+  onCommand,
+  onOpenBookmark,
+  onRemoveBookmark,
+  onClose
+}: ChromeMenuProps) {
+  const ref = useRef<HTMLDivElement>(null)
+  useFocusTrap(true, ref)
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') {
@@ -31,8 +46,10 @@ export function ChromeMenu({ state, identity, onCommand, onClose }: ChromeMenuPr
       onMouseDown={onClose}
     >
       <div
+        ref={ref}
         role="menu"
         data-chrome-menu
+        aria-label="Browser menu"
         className="ncc-fade-in absolute right-3 top-[104px] max-h-[72vh] w-[312px] overflow-y-auto rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] py-1.5 shadow-[0_30px_90px_rgba(0,0,0,0.6)]"
         onMouseDown={(event) => event.stopPropagation()}
       >
@@ -104,6 +121,42 @@ export function ChromeMenu({ state, identity, onCommand, onClose }: ChromeMenuPr
             </div>
           )
         })}
+
+        {bookmarks.length > 0 ? (
+          <div className="mt-1 border-t border-[color:var(--color-line)] px-1.5 pb-1 pt-1.5">
+            <p className="px-2 py-1 text-[9.5px] font-semibold uppercase tracking-[0.08em] text-[#5d6575]">
+              Bookmarks
+            </p>
+            {bookmarks.slice(0, 12).map((bookmark) => (
+              <div key={bookmark.url} className="group flex items-center gap-1">
+                <button
+                  type="button"
+                  role="menuitem"
+                  data-bookmark-url={bookmark.url}
+                  onClick={() => onOpenBookmark(bookmark.url)}
+                  className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px] text-[#e7e9ef] hover:bg-white/[0.06]"
+                >
+                  <BookmarkIcon className="h-3 w-3 shrink-0 text-[color:var(--color-warn)]" />
+                  <span className="truncate">{bookmark.title}</span>
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Remove bookmark ${bookmark.title}`}
+                  title="Remove bookmark"
+                  onClick={() => onRemoveBookmark(bookmark.url)}
+                  className="shrink-0 rounded p-1 text-[#5d6575] opacity-0 hover:bg-white/5 hover:text-[color:var(--color-danger)] group-hover:opacity-100 focus:opacity-100"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            ))}
+            {bookmarks.length > 12 ? (
+              <p className="px-2 py-1 text-[10.5px] text-[#5d6575]">
+                +{bookmarks.length - 12} more…
+              </p>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </div>
   )
@@ -125,6 +178,9 @@ function isEnabled(id: CommandId, state: NavState): boolean {
       return state.canGoForward
     case 'stop':
       return state.loading
+    case 'toggle-bookmark':
+    case 'open-history':
+      return state.mode !== 'blank'
     default:
       return true
   }

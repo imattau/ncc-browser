@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { NccApi } from '@shared/api'
-import type { DownloadNotice, NavState, SignerRequest } from '@shared/types'
+import type { Bookmark, DownloadNotice, NavState, SignerRequest } from '@shared/types'
 
 const api: NccApi = {
   navigate: (input) => ipcRenderer.invoke('ncc:navigate', input),
@@ -11,8 +11,29 @@ const api: NccApi = {
   newTab: (input) => ipcRenderer.invoke('ncc:new-tab', input),
   closeTab: (id) => ipcRenderer.invoke('ncc:close-tab', id),
   selectTab: (id) => ipcRenderer.invoke('ncc:select-tab', id),
+  moveTab: (id, toIndex) => ipcRenderer.invoke('ncc:move-tab', { id, toIndex }),
+  duplicateTab: (id) => ipcRenderer.invoke('ncc:duplicate-tab', id),
+  reloadTab: (id) => ipcRenderer.invoke('ncc:reload-tab', id),
+  toggleMute: (id) => ipcRenderer.invoke('ncc:toggle-mute', id),
+  closeOtherTabs: (id) => ipcRenderer.invoke('ncc:close-other-tabs', id),
+  closeTabsToRight: (id) => ipcRenderer.invoke('ncc:close-tabs-right', id),
+  showTabMenu: (id) => ipcRenderer.invoke('ncc:tab-menu', id),
+  tabHistory: (id) => ipcRenderer.invoke('ncc:tab-history', id),
+  goToHistoryIndex: (index) => ipcRenderer.invoke('ncc:go-history-index', index),
+  clearHistory: () => ipcRenderer.invoke('ncc:clear-history'),
+  showHistoryMenu: (direction) => ipcRenderer.invoke('ncc:history-menu', direction),
   getState: () => ipcRenderer.invoke('ncc:get-state'),
   getConfig: () => ipcRenderer.invoke('ncc:get-config'),
+  bookmarks: () => ipcRenderer.invoke('ncc:bookmarks'),
+  toggleBookmark: () => ipcRenderer.invoke('ncc:toggle-bookmark'),
+  removeBookmark: (url) => ipcRenderer.invoke('ncc:remove-bookmark', url),
+  downloads: () => ipcRenderer.invoke('ncc:get-downloads'),
+  cancelDownload: (id) => ipcRenderer.invoke('ncc:cancel-download', id),
+  revealDownload: (id) => ipcRenderer.invoke('ncc:reveal-download', id),
+  clearDownloads: () => ipcRenderer.invoke('ncc:clear-downloads'),
+  minimizeWindow: () => ipcRenderer.invoke('ncc:window-minimize'),
+  toggleMaximizeWindow: () => ipcRenderer.invoke('ncc:window-toggle-maximize'),
+  closeWindow: () => ipcRenderer.invoke('ncc:window-close'),
   setRelays: (relays) => ipcRenderer.invoke('ncc:set-relays', relays),
   setGossip: (value) => ipcRenderer.invoke('ncc:set-gossip', value),
   identity: () => ipcRenderer.invoke('ncc:identity-status'),
@@ -40,6 +61,28 @@ const api: NccApi = {
     ipcRenderer.on('ncc:close-menu', handler)
     return () => {
       ipcRenderer.removeListener('ncc:close-menu', handler)
+    }
+  },
+  onOpenHistory: (listener) => {
+    const handler = (): void => listener()
+    ipcRenderer.on('ncc:open-history', handler)
+    return () => {
+      ipcRenderer.removeListener('ncc:open-history', handler)
+    }
+  },
+  onOpenDownloads: (listener) => {
+    const handler = (): void => listener()
+    ipcRenderer.on('ncc:open-downloads', handler)
+    return () => {
+      ipcRenderer.removeListener('ncc:open-downloads', handler)
+    }
+  },
+  onBookmarks: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, bookmarks: Bookmark[]): void =>
+      listener(bookmarks)
+    ipcRenderer.on('ncc:bookmarks', handler)
+    return () => {
+      ipcRenderer.removeListener('ncc:bookmarks', handler)
     }
   },
   onSignerRequest: (listener) => {

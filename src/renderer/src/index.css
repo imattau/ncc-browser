@@ -41,6 +41,15 @@ textarea {
   user-select: text;
 }
 
+/* Frameless window: the tab strip is the title bar drag region. */
+.ncc-drag {
+  -webkit-app-region: drag;
+}
+
+.ncc-no-drag {
+  -webkit-app-region: no-drag;
+}
+
 ::selection {
   background: rgba(138, 180, 255, 0.32);
 }

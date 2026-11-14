@@ -74,6 +74,10 @@ export interface TabSummary {
   title: string
   url: string
   loading: boolean
+  /** Data URL for the page icon, fetched in main and never linked to the remote origin. */
+  favicon: string | null
+  audible: boolean
+  muted: boolean
 }
 
 export type DownloadState = 'started' | 'completed' | 'failed' | 'cancelled'
@@ -83,7 +87,36 @@ export interface DownloadNotice {
   filename: string
   state: DownloadState
   path?: string
+  /** Bytes written so far. Both byte counts are 0 when the server sends no length. */
+  receivedBytes: number
+  totalBytes: number
+  /** Epoch milliseconds. */
+  startedAt: number
 }
+
+export interface HistoryEntry {
+  index: number
+  title: string
+  url: string
+}
+
+export interface TabHistory {
+  entries: HistoryEntry[]
+  activeIndex: number
+}
+
+export interface Bookmark {
+  /** The URL doubles as the identity of a bookmark. */
+  url: string
+  title: string
+  /** Epoch milliseconds. */
+  createdAt: number
+}
+
+/** Reasons the chrome needs the whole window surface, hiding content views. */
+export const OVERLAY_REASONS = ['menu', 'settings', 'downloads', 'history', 'tabs'] as const
+
+export type OverlayReason = (typeof OVERLAY_REASONS)[number]
 
 export interface NavState {
   mode: PageMode
@@ -98,6 +131,7 @@ export interface NavState {
   failure: { code: string; message: string } | null
   tabs: TabSummary[]
   activeTabId: string | null
+  windowMaximized: boolean
 }
 
 export interface AppConfig {
