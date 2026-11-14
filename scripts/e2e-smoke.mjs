@@ -493,6 +493,21 @@ async function waitForValue(cdp, expression, attempts = 80) {
   throw new Error(`timed out waiting for ${expression}`)
 }
 
+async function readSecurity(cdp) {
+  return evaluate(
+    cdp,
+    `(() => {
+      const button = document.querySelector('[data-security-button]')
+      if (!button) return null
+      return {
+        tone: button.getAttribute('data-security-tone'),
+        label: button.getAttribute('data-security-label'),
+        anchor: button.getAttribute('data-anchor-state')
+      }
+    })()`
+  )
+}
+
 const failures = []
 
 function check(name, condition, detail = '') {
@@ -687,22 +702,30 @@ async function main() {
     )
     check('address bar hides the internal service prefix', !String(address).includes('/_/'), String(address))
 
-    const chromeText = await evaluate(chrome, 'document.body.innerText')
-    check('toolbar reports plaintext transport', String(chromeText).includes('plaintext'), String(chromeText))
-    check('reports an unanchored service', String(chromeText).includes('unanchored'), String(chromeText))
-
-    // The trust panel explains what anchoring would add for an unanchored service.
-    await evaluate(chrome, 'document.querySelector("[data-anchor-badge]").click()')
-    await waitForText(chrome, 'Service trust', 40)
+    const initialSecurity = await readSecurity(chrome)
     check(
-      'opens the service trust panel',
-      (await evaluate(chrome, 'Boolean(document.querySelector("[data-popover=trust]"))')) === true
+      'security lock reports plaintext',
+      initialSecurity?.label === 'plaintext' && initialSecurity?.tone === 'warn',
+      JSON.stringify(initialSecurity)
     )
     check(
-      'trust panel explains the missing anchor',
+      'security lock shows an unanchored dot',
+      initialSecurity?.anchor === 'unanchored',
+      JSON.stringify(initialSecurity)
+    )
+
+    // The site information panel explains what anchoring would add.
+    await evaluate(chrome, 'document.querySelector("[data-security-button]").click()')
+    await waitForText(chrome, 'Site information', 40)
+    check(
+      'opens the site information panel',
+      (await evaluate(chrome, 'Boolean(document.querySelector("[data-popover=site-info]"))')) === true
+    )
+    check(
+      'site info explains the missing anchor',
       (await evaluate(chrome, 'document.body.innerText')).includes('No NCC-02 service record')
     )
-    await evaluate(chrome, 'document.querySelector(\'[aria-label="Close Service trust"]\').click()')
+    await evaluate(chrome, 'document.querySelector(\'[aria-label="Close Site information"]\').click()')
     await sleep(250)
 
     // Favicons are fetched in main and handed to the chrome as data URLs.
@@ -930,26 +953,30 @@ async function main() {
     const secureText = await waitForText(cdp, 'SECURE OK', 80)
     check('ncc:// link switches service', secureText.includes('SECURE OK'))
     await sleep(250)
-    const pinnedText = await evaluate(chrome, 'document.body.innerText')
-    check('toolbar reports pinned transport', String(pinnedText).includes('pinned'), String(pinnedText))
+    const secureSecurity = await readSecurity(chrome)
     check(
-      'toolbar reports NCC-02 anchoring',
-      String(pinnedText).includes('anchored'),
-      String(pinnedText)
+      'security lock reports pinned transport',
+      secureSecurity?.label === 'pinned-tls' && secureSecurity?.tone === 'ok',
+      JSON.stringify(secureSecurity)
+    )
+    check(
+      'security lock shows an anchored dot',
+      secureSecurity?.anchor === 'anchored',
+      JSON.stringify(secureSecurity)
     )
 
-    await evaluate(chrome, 'document.querySelector("[data-anchor-badge]").click()')
-    await waitForText(chrome, 'Service trust', 40)
+    await evaluate(chrome, 'document.querySelector("[data-security-button]").click()')
+    await waitForText(chrome, 'Site information', 40)
     const trustText = await evaluate(chrome, 'document.body.innerText')
     check(
-      'trust panel shows the matching transport keys',
+      'site info shows the matching transport keys',
       String(trustText).includes('same transport key'),
       String(trustText)
     )
-    check('trust panel shows the anchor service id', String(trustText).includes('secure'))
+    check('site info shows the anchor service id', String(trustText).includes('secure'))
     const trustShot = await chrome.send('Page.captureScreenshot', { format: 'png' })
     writeFileSync(join(ARTIFACTS, 'trust.png'), Buffer.from(trustShot.data, 'base64'))
-    await evaluate(chrome, 'document.querySelector(\'[aria-label="Close Service trust"]\').click()')
+    await evaluate(chrome, 'document.querySelector(\'[aria-label="Close Site information"]\').click()')
     await sleep(250)
 
     // A service with only an NCC-02 record uses its `u` endpoint as the fallback.
@@ -962,21 +989,21 @@ async function main() {
     const fallbackText = await waitForText(fallbackCdp, 'NCC E2E OK', 80)
     check('serves the NCC-02 u fallback', fallbackText.includes('NCC E2E OK'))
     await sleep(300)
-    const fallbackChrome = await evaluate(chrome, 'document.body.innerText')
+    const fallbackSecurity = await readSecurity(chrome)
     check(
-      'toolbar marks the NCC-02 fallback',
-      String(fallbackChrome).includes('ncc-02'),
-      String(fallbackChrome)
+      'security lock marks the NCC-02 fallback',
+      fallbackSecurity?.anchor === 'anchored' && fallbackSecurity?.label === 'plaintext',
+      JSON.stringify(fallbackSecurity)
     )
-    await evaluate(chrome, 'document.querySelector("[data-anchor-badge]").click()')
-    await waitForText(chrome, 'Service trust', 40)
+    await evaluate(chrome, 'document.querySelector("[data-security-button]").click()')
+    await waitForText(chrome, 'Site information', 40)
     check(
-      'trust panel explains the fallback',
+      'site info explains the fallback',
       (await evaluate(chrome, 'document.body.innerText')).includes(
         'served from the NCC-02 `u` endpoint'
       )
     )
-    await evaluate(chrome, 'document.querySelector(\'[aria-label="Close Service trust"]\').click()')
+    await evaluate(chrome, 'document.querySelector(\'[aria-label="Close Site information"]\').click()')
     await evaluate(chrome, 'window.ncc.closeTab()')
     fallbackCdp.close()
     await sleep(400)
@@ -1172,8 +1199,23 @@ async function main() {
       mismatchText.includes('Transport identity mismatch')
     )
     await sleep(250)
-    const mismatchChrome = await evaluate(chrome, 'document.body.innerText')
-    check('toolbar reports k-mismatch', String(mismatchChrome).includes('k-mismatch'), String(mismatchChrome))
+    const mismatchSecurity = await readSecurity(chrome)
+    check(
+      'security lock turns red for k-mismatch',
+      mismatchSecurity?.label === 'failure' && mismatchSecurity?.tone === 'danger',
+      JSON.stringify(mismatchSecurity)
+    )
+    await evaluate(chrome, 'document.querySelector("[data-security-button]").click()')
+    await waitForText(chrome, 'Site information', 40)
+    const mismatchDetails = await evaluate(chrome, 'document.body.innerText')
+    check(
+      'site info reports k-mismatch',
+      String(mismatchDetails).includes('k-mismatch') &&
+        String(mismatchDetails).includes('Transport identity mismatch'),
+      String(mismatchDetails)
+    )
+    await evaluate(chrome, 'document.querySelector(\'[aria-label="Close Site information"]\').click()')
+    await sleep(200)
 
     // Per-tab history: the panel lists real navigation entries and can jump between them.
     const tabHistory = await evaluate(chrome, 'window.ncc.tabHistory()')
@@ -1380,7 +1422,7 @@ async function main() {
     await sleep(300)
     check(
       'published service shows its NCC-02 anchor',
-      (await evaluate(chrome, 'document.body.innerText')).includes('anchored')
+      (await readSecurity(chrome))?.anchor === 'anchored'
     )
     await evaluate(chrome, 'window.ncc.closeTab()')
     publishedCdp.close()
@@ -1401,10 +1443,19 @@ async function main() {
     const requiredText = await waitForText(requiredCdp, 'No NCC-02 service record', 80)
     check('anchored mode refuses an unanchored service', requiredText.includes('No NCC-02 service record'))
     await sleep(300)
+    const requiredSecurity = await readSecurity(chrome)
     check(
-      'toolbar reports no-anchor',
-      (await evaluate(chrome, 'document.body.innerText')).includes('no-anchor')
+      'security lock turns red for no-anchor',
+      requiredSecurity?.label === 'failure' && requiredSecurity?.tone === 'danger',
+      JSON.stringify(requiredSecurity)
     )
+    await evaluate(chrome, 'document.querySelector("[data-security-button]").click()')
+    await waitForText(chrome, 'Site information', 40)
+    check(
+      'site info reports no-anchor',
+      (await evaluate(chrome, 'document.body.innerText')).includes('No NCC-02 service record')
+    )
+    await evaluate(chrome, 'document.querySelector(\'[aria-label="Close Site information"]\').click()')
     await evaluate(chrome, 'window.ncc.closeTab()')
     requiredCdp.close()
     const disabled = await evaluate(chrome, 'window.ncc.setAnchorRequired(false)')
@@ -1418,8 +1469,23 @@ async function main() {
     check('error page names the code', errorText.includes('no-record'))
 
     await sleep(400)
-    const chromeErrorText = await evaluate(chrome, 'document.body.innerText')
-    check('toolbar surfaces the failure code', String(chromeErrorText).includes('no-record'), String(chromeErrorText))
+    const errorSecurity = await readSecurity(chrome)
+    check(
+      'security lock turns red for no-record',
+      errorSecurity?.label === 'failure' && errorSecurity?.tone === 'danger',
+      JSON.stringify(errorSecurity)
+    )
+    await evaluate(chrome, 'document.querySelector("[data-security-button]").click()')
+    await waitForText(chrome, 'Site information', 40)
+    const errorDetails = await evaluate(chrome, 'document.body.innerText')
+    check(
+      'site info reports the failure code',
+      String(errorDetails).includes('no-record') &&
+        String(errorDetails).includes('No locator published'),
+      String(errorDetails)
+    )
+    await evaluate(chrome, 'document.querySelector(\'[aria-label="Close Site information"]\').click()')
+    await sleep(200)
 
     const errorShot = await cdp.send('Page.captureScreenshot', { format: 'png' })
     writeFileSync(join(ARTIFACTS, 'no-record.png'), Buffer.from(errorShot.data, 'base64'))

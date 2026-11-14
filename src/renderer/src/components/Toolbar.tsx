@@ -1,6 +1,5 @@
 import { useRef } from 'react'
 import {
-  AlertTriangle,
   ArrowLeft,
   ArrowRight,
   Download,
@@ -13,7 +12,7 @@ import {
 import type { DownloadNotice, IdentityStatus, NavState } from '@shared/types'
 import { isActiveDownload } from '@shared/downloads'
 import { AddressBar } from './AddressBar'
-import { SecurityBadge } from './SecurityBadge'
+import { SecurityButton } from './SecurityButton'
 import { cn } from '../lib/cn'
 
 interface ToolbarProps {
@@ -32,7 +31,7 @@ interface ToolbarProps {
   onOpenDownloads: () => void
   onOpenHistory: () => void
   onHistoryMenu: (direction: 'back' | 'forward') => void
-  onOpenTrust: () => void
+  onOpenSiteInfo: () => void
   onOpenSettings: () => void
   onOpenMenu: () => void
 }
@@ -53,11 +52,10 @@ export function Toolbar({
   onOpenDownloads,
   onOpenHistory,
   onHistoryMenu,
-  onOpenTrust,
+  onOpenSiteInfo,
   onOpenSettings,
   onOpenMenu
 }: ToolbarProps) {
-  const showFailure = state.failure && state.failure.code !== 'invalid-address'
   const activeDownloads = downloads.filter((notice) => isActiveDownload(notice.state)).length
 
   return (
@@ -104,19 +102,7 @@ export function Toolbar({
         onNavigate={onNavigate}
       />
 
-      {showFailure ? (
-        <button
-          type="button"
-          onClick={onReload}
-          title={`${state.failure?.code}: ${state.failure?.message}`}
-          className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg border border-[color:var(--color-danger)]/30 bg-[color:var(--color-danger)]/10 px-2 text-[11px] font-medium text-[color:var(--color-danger)]"
-        >
-          <AlertTriangle className="h-3.5 w-3.5" />
-          {state.failure?.code}
-        </button>
-      ) : null}
-
-      <SecurityBadge state={state} onOpenTrust={onOpenTrust} />
+      <SecurityButton state={state} onOpen={onOpenSiteInfo} />
 
       {downloads.length > 0 ? (
         <button

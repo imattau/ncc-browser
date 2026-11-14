@@ -15,10 +15,10 @@ import { DownloadsPanel } from './components/DownloadsPanel'
 import { HistoryPanel } from './components/HistoryPanel'
 import { SettingsPage, type SettingsSection } from './components/SettingsPage'
 import { SignerPrompt } from './components/SignerPrompt'
+import { SiteInfoPanel } from './components/SiteInfoPanel'
 import { TabOverflowMenu } from './components/TabOverflowMenu'
 import { TabStrip } from './components/TabStrip'
 import { Toolbar } from './components/Toolbar'
-import { TrustPanel } from './components/TrustPanel'
 import { Welcome } from './components/Welcome'
 
 const EMPTY_STATE: NavState = {
@@ -329,7 +329,7 @@ export function App() {
         onOpenDownloads={() => showOverlay('downloads')}
         onOpenHistory={openHistory}
         onHistoryMenu={(direction) => void window.ncc.showHistoryMenu(direction)}
-        onOpenTrust={() => showOverlay('trust')}
+        onOpenSiteInfo={() => showOverlay('site-info')}
         onOpenSettings={() => openSettings('identity')}
         onOpenMenu={() => showOverlay('menu')}
       />
@@ -378,12 +378,15 @@ export function App() {
         />
       ) : null}
 
-      {overlay === 'trust' ? (
-        <TrustPanel
-          security={state.security}
-          address={state.displayUrl}
+      {overlay === 'site-info' ? (
+        <SiteInfoPanel
+          state={state}
           onClose={closeOverlay}
           onOpenSettings={() => openSettings('general')}
+          onReload={() => {
+            closeOverlay()
+            reload()
+          }}
         />
       ) : null}
 

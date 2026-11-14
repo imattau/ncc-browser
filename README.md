@@ -21,9 +21,9 @@ locators and NCC-02 service records for a local port.
 | --- | --- | --- |
 | ![Two tabs with a resolved service](./docs/tabs.png) | ![No locator published](./docs/error-page.png) | ![Settings page with identity and remote signer](./docs/settings.png) |
 
-| Downloads | Tab history | NCC-02 trust |
+| Downloads | Tab history | Site information |
 | --- | --- | --- |
-| ![Downloads panel with progress and reveal](./docs/downloads.png) | ![Per-tab history panel](./docs/history.png) | ![Service trust panel with anchor details](./docs/trust.png) |
+| ![Downloads panel with progress and reveal](./docs/downloads.png) | ![Per-tab history panel](./docs/history.png) | ![Site information panel with anchor details](./docs/trust.png) |
 
 | Browser menu | Settings: relays & anchoring | Publisher |
 | --- | --- | --- |
@@ -99,8 +99,8 @@ working while the remote page has focus.
   Right-click a tab for reload, duplicate, mute, copy address, close, close others and
   close to the right. A blank tab shows the welcome screen.
 - **Toolbar** — back/forward (right-click or hold for a jump list), reload/stop,
-  history, address bar with bookmark star, security badge, downloads with progress,
-  identity key, hamburger menu.
+  history, address bar with bookmark star, a single colour-coded security lock,
+  downloads with progress, identity key, hamburger menu.
 - **Settings** is a page, not a modal: `General`, `Identity & signer`, `Trusted services`
   and `About`, with a back-to-browsing button. `Esc` also leaves it.
 - **Shortcuts** (also shown in the menu): `Ctrl+T`, `Ctrl+W`, `Ctrl+Tab` /
@@ -189,9 +189,19 @@ Chromium reports every refused certificate as a generic `net::ERR_FAILED`, so th
 proc records *why* it refused and the protocol handler consumes that record to show
 `k-mismatch` or `certificate-expired` instead of a vague "unreachable".
 
-The toolbar always shows which mode is in effect: `pinned`, `tls`, or `plaintext`
-(amber — the locator is signed, the content is not authenticated). `TESTKEY:`-style
-placeholder fingerprints are treated as "no pin", not as a match.
+The toolbar has one lock instead of separate transport and trust chips:
+
+- **green** — pinned TLS (the endpoint certificate matches the signed `k`), with a green
+  dot when NCC-02 anchoring is present;
+- **blue** — TLS through normal CA validation;
+- **amber** — plaintext HTTP (the locator is signed, the content is not authenticated);
+- **red** — the page failed security or resolution (`k-mismatch`, `no-anchor`,
+  `no-record`, …).
+
+Clicking the lock opens **Site information**: transport, host, NCC-02 anchor, `u`/`k`,
+expiry and the failure explanation. The small dot is the anchor state (green anchored,
+amber expired/invalid, grey unanchored). `TESTKEY:`-style placeholder fingerprints are
+treated as “no pin”, not as a match.
 
 Locator content is decrypted only when an encrypted record is addressed to you. The
 identity from the settings page is used for that automatically; there is no separate
@@ -207,8 +217,9 @@ default: it uses a fresh NCC-02 record when one exists and flags the service as
 `unanchored` when it does not. Settings → General → **Require NCC-02 service records**
 turns that into a hard requirement.
 
-- **Trust panel** — click the anchor badge in the toolbar for the service id, anchor
-  event, `u` endpoint, `k`, key relation, expiry and transport.
+- **Site information** — click the security lock for the service id, anchor event, `u`
+  endpoint, `k`, key relation, expiry and transport. A red lock means the page failed;
+  its panel carries the error code and explanation.
 - **Fallback** — when NCC-05 has no usable endpoint, a valid NCC-02 `u` endpoint can
   serve the page (marked as an NCC-02 fallback). This is how a private service with no
   public locator still works.
@@ -366,8 +377,8 @@ The end-to-end test starts a WebSocket relay, signs real `30058` and `30059` eve
 serves an HTTP page with an external stylesheet, a favicon, a downloadable file, and two
 self-signed HTTPS services, builds and serves the publisher app, then drives the running
 browser over the Chrome DevTools Protocol. It asserts rendering, subresource proxying,
-relative-link resolution, the synthetic origin, the address bar, plaintext vs `pinned`
-transport state, refusal of a certificate that does not match `k`, `ncc://` link-driven
+relative-link resolution, the synthetic origin, the address bar, the colour-coded
+security lock and its site information panel, refusal of a certificate that does not match `k`, `ncc://` link-driven
 service switching, NIP-65 gossip to a second relay, tab open/close, drag reordering, mute
 state, tab overflow, the persistent cache and session file on disk, **session restore
 across a real app restart**, the full NIP-07 path (in-app approval sheet, focus

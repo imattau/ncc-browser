@@ -168,7 +168,7 @@ export const OVERLAY_REASONS = [
   'downloads',
   'history',
   'tabs',
-  'trust'
+  'site-info'
 ] as const
 
 export type OverlayReason = (typeof OVERLAY_REASONS)[number]
