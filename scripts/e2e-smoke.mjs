@@ -402,6 +402,23 @@ async function waitForText(cdp, needle, attempts = 60) {
   throw new Error(`never found ${JSON.stringify(needle)} in: ${text}`)
 }
 
+async function evaluateNoAwait(cdp, expression) {
+  return cdp.send('Runtime.evaluate', {
+    expression,
+    returnByValue: true,
+    awaitPromise: false
+  })
+}
+
+async function waitForValue(cdp, expression, attempts = 80) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const value = await evaluate(cdp, expression)
+    if (value !== undefined && value !== null && value !== '') return value
+    await new Promise((resolve) => setTimeout(resolve, 150))
+  }
+  throw new Error(`timed out waiting for ${expression}`)
+}
+
 const failures = []
 
 function check(name, condition, detail = '') {
@@ -498,7 +515,6 @@ async function main() {
         XDG_CONFIG_HOME: configHome,
         ELECTRON_DISABLE_SECURITY_WARNINGS: '1',
         NCC_IDENTITY_NSEC: nip19.nsecEncode(signerSk),
-        NCC_SIGNER_AUTO_APPROVE: '1',
         NCC_NIP46_TIMEOUT_MS: '15000'
       },
       stdio: ['ignore', 'pipe', 'pipe']
@@ -586,6 +602,41 @@ async function main() {
     check(
       'chrome renderer has no nostr provider',
       (await evaluate(chrome, 'typeof window.nostr')) === 'undefined'
+    )
+
+    // First NIP-07 call must show the in-app approval sheet.
+    await evaluateNoAwait(
+      cdp,
+      `window.nostr.getPublicKey()
+        .then((value) => { window.__nip07Pub = value })
+        .catch((error) => { window.__nip07Error = String(error) })`
+    )
+
+    await waitForText(chrome, 'Signer request', 80)
+    check(
+      'shows an in-app signer prompt',
+      (await evaluate(chrome, 'Boolean(document.querySelector("[data-signer-prompt]"))')) === true
+    )
+
+    const approvalShot = await chrome.send('Page.captureScreenshot', { format: 'png' })
+    writeFileSync(join(ARTIFACTS, 'approval.png'), Buffer.from(approvalShot.data, 'base64'))
+
+    await evaluate(
+      chrome,
+      `(() => {
+        const remember = document.querySelector('[data-signer-remember]')
+        if (remember && !remember.checked) remember.click()
+        document.querySelector('[data-signer-allow]').click()
+        return true
+      })()`
+    )
+
+    const approvedPub = await waitForValue(cdp, 'window.__nip07Pub')
+    check('approval unblocks the NIP-07 call', approvedPub === signerPk, String(approvedPub))
+    await sleep(300)
+    check(
+      'signer prompt closes after approval',
+      (await evaluate(chrome, 'document.querySelector("[data-signer-prompt]") === null')) === true
     )
 
     const nip07 = await evaluate(

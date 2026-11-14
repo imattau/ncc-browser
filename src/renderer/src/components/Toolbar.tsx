@@ -1,5 +1,5 @@
-import { AlertTriangle, ArrowLeft, ArrowRight, RotateCw, Settings, X } from 'lucide-react'
-import type { NavState } from '@shared/types'
+import { AlertTriangle, ArrowLeft, ArrowRight, KeyRound, RotateCw, Settings, X } from 'lucide-react'
+import type { IdentityStatus, NavState } from '@shared/types'
 import { AddressBar } from './AddressBar'
 import { SecurityBadge } from './SecurityBadge'
 import { cn } from '../lib/cn'
@@ -7,6 +7,8 @@ import { cn } from '../lib/cn'
 interface ToolbarProps {
   state: NavState
   hint: string | null
+  identity: IdentityStatus | null
+  signerPending: boolean
   onNavigate: (input: string) => void
   onBack: () => void
   onForward: () => void
@@ -18,6 +20,8 @@ interface ToolbarProps {
 export function Toolbar({
   state,
   hint,
+  identity,
+  signerPending,
   onNavigate,
   onBack,
   onForward,
@@ -64,11 +68,37 @@ export function Toolbar({
 
       <SecurityBadge state={state} />
 
+      <button
+        type="button"
+        aria-label="Nostr identity"
+        data-signer-button
+        title={signerTitle(identity)}
+        onClick={onOpenSettings}
+        className="relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[color:var(--color-muted)] transition-colors hover:bg-white/5 hover:text-white"
+      >
+        <KeyRound
+          className={cn(
+            'h-4 w-4',
+            identity?.configured ? 'text-[color:var(--color-accent)]' : 'text-[color:var(--color-muted)]'
+          )}
+        />
+        {signerPending ? (
+          <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 animate-pulse rounded-full bg-[color:var(--color-warn)]" />
+        ) : null}
+      </button>
+
       <NavButton label="Relays & settings" onClick={onOpenSettings}>
         <Settings className="h-4 w-4" />
       </NavButton>
     </header>
   )
+}
+
+function signerTitle(identity: IdentityStatus | null): string {
+  if (!identity?.configured) return 'No Nostr identity — open settings'
+  const mode = identity.mode === 'nip46' ? 'Remote signer' : 'Local key'
+  const npub = identity.npub ?? ''
+  return `${mode} · ${npub.length > 20 ? `${npub.slice(0, 14)}…` : npub}`
 }
 
 interface NavButtonProps {

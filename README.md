@@ -138,14 +138,24 @@ tell the difference.
   signs locally or forwards it to the remote signer, and returns only the result.
 - **Local keys at rest** are encrypted with Electron `safeStorage` (OS keychain). If no
   keychain is available, the key stays in memory for the session and the UI says so.
-- **Approval is per service.** The first request shows a native dialog with the event
-  being signed; "Always allow" is remembered per `ncc://<npub>/<service>` for NCC pages,
-  and per origin for clearnet. Settings lists trusted services with a revoke button.
+- **Approval is per service.** The first request opens an in-app sheet over the page,
+  showing the exact event being signed; "Always allow" is remembered per
+  `ncc://<npub>/<service>` for NCC pages, and per origin for clearnet. While the sheet is
+  open the remote page is hidden, so it cannot fake or cover the prompt. Settings lists
+  trusted services with a revoke button.
 - **Validation** rejects malformed kinds, non-string tags, events more than 15 minutes in
   the future, and content over 1 MB before anything reaches the signer.
 - **Development overrides:** `NCC_IDENTITY_NSEC` loads a local key from the environment,
-  `NCC_SIGNER_AUTO_APPROVE=1` skips the approval dialog, and `NCC_NIP46_TIMEOUT_MS`
+  `NCC_SIGNER_AUTO_APPROVE=1` skips the approval sheet, and `NCC_NIP46_TIMEOUT_MS`
   changes the remote-signer timeout (default 60 s). All three are for development/e2e.
+
+The toolbar has a key icon for the current identity (accent when configured, with a
+pending dot when a request is waiting). Clicking it opens Settings → Identity.
+
+Settings → Identity imports an `nsec` (or 64-char hex), generates a new identity, shows
+the npub, and removes it.
+
+![In-app signer approval](./docs/approval.png)
 
 ### Remote signing (NIP-46)
 
@@ -213,12 +223,13 @@ src/main
   signer/nip46.ts    NIP-46 provider (Nostrify BunkerURI/NConnectSigner/NPool)
   signer/session.ts  persisted NIP-46 session (encrypted client key)
   signer/manager.ts  one active identity: local key or remote signer
-  signer/service.ts  approvals queue + native dialog
+  signer/service.ts  approvals queue, delegates to the active provider
   signer/ipc.ts      NIP-07 IPC, caller origin derived from the main frame
+  approval.ts        in-app approval broker (chrome modal, content hidden)
 src/preload
   index.ts           contextBridge → window.ncc (chrome only)
   content.ts         contextBridge → window.nostr (top-level page frames only)
-src/renderer         React tabs, toolbar, security badge, settings, welcome
+src/renderer         React tabs, toolbar, signer sheet, security badge, settings, welcome
 src/shared           ncc:// parser, types, relay validation (no Node imports)
 ```
 
@@ -231,8 +242,9 @@ general IPC bridge.
 ## Testing
 
 ```bash
-npm test       # 145 unit tests: URL parser, locator rules, resolver, routing, pins,
-               # signer crypto, identity storage, NIP-46, permissions, relays, downloads
+npm test       # 150 unit tests: URL parser, locator rules, resolver, routing, pins,
+               # signer crypto, identity storage, NIP-46, approvals, permissions,
+               # relays, downloads
 npm run e2e    # real Electron window against a mock relay and local HTTP services
 ```
 
@@ -242,10 +254,11 @@ running app over the Chrome DevTools Protocol. It asserts rendering, subresource
 proxying, relative-link resolution, the synthetic origin, the address bar, plaintext vs
 `pinned` transport state, refusal of a certificate that does not match `k`, `ncc://`
 link-driven service switching, NIP-65 gossip to a second relay, tab open/close, the
-persistent cache on disk, the full NIP-07 path (public key, verifiable signature,
-NIP-04/44 round-trips, no provider in subframes), and a **real NIP-46 round-trip against
-a mock bunker** — connect, remote signing, remote decryption of a targeted locator, and
-disconnect. Screenshots land in `/tmp/opencode/ncc-browser-e2e/`.
+persistent cache on disk, the full NIP-07 path (in-app approval sheet, public key,
+verifiable signature, NIP-04/44 round-trips, no provider in subframes), and a **real
+NIP-46 round-trip against a mock bunker** — connect, remote signing, remote decryption of
+a targeted locator, and disconnect. Screenshots land in
+`/tmp/opencode/ncc-browser-e2e/`.
 
 To try it against a real publisher, run [`ncc-sidecar`](../nostr-community-conventions/ncc-06/ncc-sidecar/)
 or [`ncc_publish.py`](../nostr-community-conventions/ncc_publish.py), point both sides at
@@ -297,7 +310,7 @@ material out of this browser entirely. See [soapbox.pub/mkstack](https://soapbox
   give each its own address for now.
 - **No Tor.** `.onion` and `ws`/`wss`-only endpoints are recognised but not fetchable as
   pages.
-- **NIP-07 approvals use a native dialog.** "Always allow" is per
+- **NIP-07 approvals use an in-app sheet.** "Always allow" is per
   `ncc://<npub>/<service>` (or per web origin). A compromised service on a trusted origin
   can sign anything, so revoke trust when a service changes hands. With a NIP-46 signer
   the device also confirms each signature.

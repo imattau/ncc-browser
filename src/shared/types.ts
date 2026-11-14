@@ -136,6 +136,33 @@ export interface SignerPermission {
   lastUsedAt: number
 }
 
+export interface SignerRequest {
+  id: string
+  method: string
+  /** Short imperative phrase, e.g. "sign a kind 1 event". */
+  action: string
+  /** `ncc://<npub>/<service>` or a web origin. */
+  service: string
+  origin: string
+  identity: string | null
+  mode: IdentityMode
+  /** Present for `signEvent`. */
+  event?: {
+    kind: number
+    created_at: number
+    tags: string[][]
+    content: string
+  }
+  /** Extra context for encryption/decryption requests. */
+  note?: string
+  rememberable: boolean
+}
+
+export interface SignerDecision {
+  allow: boolean
+  remember: boolean
+}
+
 export const DEFAULT_RELAYS = [
   'wss://relay.damus.io',
   'wss://nos.lol',

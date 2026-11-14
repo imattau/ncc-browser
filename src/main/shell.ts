@@ -55,6 +55,7 @@ export class BrowserShell {
   private readonly tabs: Tab[] = []
   private activeId: string | null = null
   private nextTabId = 1
+  private approvalMode = false
 
   constructor(deps: ShellDeps) {
     this.deps = deps
@@ -149,6 +150,35 @@ export class BrowserShell {
   selectTab(id: string): void {
     if (!this.tabs.some((tab) => tab.id === id)) return
     this.activateTab(id)
+  }
+
+  /**
+   * Hide all content views while an approval popup is open. The chrome renderer then
+   * owns the whole window surface, so the modal is real UI instead of a native dialog.
+   */
+  setApprovalMode(active: boolean): void {
+    if (this.approvalMode === active) return
+    this.approvalMode = active
+
+    if (active) {
+      for (const tab of this.tabs) {
+        try {
+          tab.view.setVisible(false)
+        } catch {
+          // View.setVisible fallback: bounds are collapsed on creation.
+        }
+      }
+      return
+    }
+
+    const activeTab = this.activeTab()
+    if (!activeTab) return
+    activeTab.view.setBounds(this.contentBounds())
+    try {
+      activeTab.view.setVisible(true)
+    } catch {
+      // Fallback handled by showOnly on the next activation.
+    }
   }
 
   async navigate(input: string): Promise<void> {
@@ -300,10 +330,11 @@ export class BrowserShell {
     for (const tab of this.tabs) {
       const isActive = tab.id === id
       if (isActive) tab.view.setBounds(bounds)
+      const visible = isActive && !this.approvalMode
       try {
-        tab.view.setVisible(isActive)
+        tab.view.setVisible(visible)
       } catch {
-        tab.view.setBounds(isActive ? bounds : { x: 0, y: CHROME_HEIGHT, width: 0, height: 0 })
+        tab.view.setBounds(visible ? bounds : { x: 0, y: CHROME_HEIGHT, width: 0, height: 0 })
       }
     }
   }

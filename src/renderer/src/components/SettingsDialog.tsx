@@ -6,6 +6,7 @@ import type { IdentityStatus, SignerPermission } from '@shared/types'
 interface SettingsDialogProps {
   open: boolean
   onClose: () => void
+  onIdentityChange?: (status: IdentityStatus) => void
 }
 
 function errorMessage(error: unknown): string {
@@ -14,7 +15,7 @@ function errorMessage(error: unknown): string {
   return marker === -1 ? raw : raw.slice(marker + 7)
 }
 
-export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
+export function SettingsDialog({ open, onClose, onIdentityChange }: SettingsDialogProps) {
   const [draft, setDraft] = useState('')
   const [gossip, setGossip] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -100,7 +101,9 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     setIdentityBusy(true)
     setIdentityError(null)
     try {
-      setIdentity(await action())
+      const status = await action()
+      setIdentity(status)
+      onIdentityChange?.(status)
       setSecret('')
       setPermissions(await window.ncc.signerPermissions())
     } catch (actionError) {
@@ -125,7 +128,9 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     setConnectBusy(true)
     setRemoteError(null)
     try {
-      setIdentity(await window.ncc.identityConnectBunker(bunker))
+      const status = await window.ncc.identityConnectBunker(bunker)
+      setIdentity(status)
+      onIdentityChange?.(status)
       setBunker('')
       setPermissions(await window.ncc.signerPermissions())
     } catch (connectError) {
@@ -139,7 +144,9 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     setIdentityBusy(true)
     setRemoteError(null)
     try {
-      setIdentity(await window.ncc.identityDisconnect())
+      const status = await window.ncc.identityDisconnect()
+      setIdentity(status)
+      onIdentityChange?.(status)
     } catch (disconnectError) {
       setRemoteError(errorMessage(disconnectError))
     } finally {

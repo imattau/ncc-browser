@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { NccApi } from '@shared/api'
-import type { DownloadNotice, NavState } from '@shared/types'
+import type { DownloadNotice, NavState, SignerRequest } from '@shared/types'
 
 const api: NccApi = {
   navigate: (input) => ipcRenderer.invoke('ncc:navigate', input),
@@ -23,6 +23,24 @@ const api: NccApi = {
   identityDisconnect: () => ipcRenderer.invoke('ncc:identity-disconnect'),
   signerPermissions: () => ipcRenderer.invoke('ncc:signer-permissions'),
   revokePermission: (origin) => ipcRenderer.invoke('ncc:revoke-permission', origin),
+  respondToSigner: (id, allow, remember) =>
+    ipcRenderer.invoke('ncc:signer-response', { id, allow, remember }),
+  onSignerRequest: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, request: SignerRequest): void =>
+      listener(request)
+    ipcRenderer.on('ncc:signer-request', handler)
+    return () => {
+      ipcRenderer.removeListener('ncc:signer-request', handler)
+    }
+  },
+  onSignerResolved: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: { id: string }): void =>
+      listener(payload.id)
+    ipcRenderer.on('ncc:signer-resolved', handler)
+    return () => {
+      ipcRenderer.removeListener('ncc:signer-resolved', handler)
+    }
+  },
   onState: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, state: NavState): void => listener(state)
     ipcRenderer.on('ncc:state', handler)

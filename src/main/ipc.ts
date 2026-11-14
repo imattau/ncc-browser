@@ -4,6 +4,7 @@ import type { ConfigStore } from './config'
 import type { EndpointHealth } from './ncc/health'
 import type { NccResolver } from './ncc/resolver'
 import type { PinStore } from './pins'
+import type { ApprovalBroker } from './approval'
 import type { IdentityManager } from './signer/manager'
 import type { PermissionStore } from './signer/permissions'
 import type { BrowserShell } from './shell'
@@ -17,6 +18,7 @@ export interface IpcDeps {
   health: EndpointHealth
   identity: IdentityManager
   permissions: PermissionStore
+  approvals: ApprovalBroker
 }
 
 export function registerIpc(deps: IpcDeps): void {
@@ -97,6 +99,19 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle('ncc:revoke-permission', (_event, origin: unknown) => {
     if (typeof origin === 'string') deps.permissions.revoke(origin)
     return deps.permissions.list()
+  })
+
+  ipcMain.handle('ncc:signer-response', (event, payload: unknown) => {
+    // Only the trusted chrome renderer may answer a signer request.
+    if (event.sender !== deps.shell.window.webContents) return
+    if (!payload || typeof payload !== 'object') return
+    const { id, allow, remember } = payload as {
+      id?: unknown
+      allow?: unknown
+      remember?: unknown
+    }
+    if (typeof id !== 'string') return
+    deps.approvals.respond(id, { allow: allow === true, remember: remember === true })
   })
 }
 

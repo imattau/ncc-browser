@@ -166,6 +166,9 @@ endpoint without invalidating the record (NCC-05 §7).
   into subframes or the trusted chrome. The IPC handler derives the caller's origin from
   the main frame, so a page cannot claim another identity. Events are validated and
   bounded (kind, tag shape, 15-minute clock skew, 1 MB content) before signing.
+  Approvals are an in-app sheet rendered by the chrome renderer: all content views are
+  hidden while it is open, so the page cannot cover or spoof the prompt. A toolbar key
+  icon shows the active identity and pending requests.
 - **Renderer isolation:** content view uses `sandbox: true`, `contextIsolation: true`,
   no Node, its own `persist:ncc-content` partition. The chrome UI never shares a
   session or origin with remote content.

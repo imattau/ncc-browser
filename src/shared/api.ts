@@ -3,7 +3,8 @@ import type {
   DownloadNotice,
   IdentityStatus,
   NavState,
-  SignerPermission
+  SignerPermission,
+  SignerRequest
 } from './types'
 
 export interface SetRelaysResult {
@@ -37,6 +38,9 @@ export interface NccApi {
   identityDisconnect(): Promise<IdentityStatus>
   signerPermissions(): Promise<SignerPermission[]>
   revokePermission(origin: string): Promise<SignerPermission[]>
+  respondToSigner(id: string, allow: boolean, remember: boolean): Promise<void>
+  onSignerRequest(listener: (request: SignerRequest) => void): () => void
+  onSignerResolved(listener: (id: string) => void): () => void
   onState(listener: (state: NavState) => void): () => void
   onDownload(listener: (notice: DownloadNotice) => void): () => void
 }

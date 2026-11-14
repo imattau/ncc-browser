@@ -1,6 +1,7 @@
 import { app, safeStorage, session, type Session } from 'electron'
 import { join } from 'node:path'
 import { nip19 } from 'nostr-tools'
+import { ApprovalBroker } from './approval'
 import { LocatorCacheStore } from './cache-store'
 import { ConfigStore } from './config'
 import { installDownloadHandler } from './downloads'
@@ -107,15 +108,6 @@ app.whenReady().then(async () => {
     notify: (notice) => shell?.notifyDownload(notice)
   })
 
-  const nip07 = new Nip07Service({
-    identity,
-    permissions,
-    getWindow: () => shell?.window ?? null,
-    getRelays: () => config.getRelays(),
-    autoApprove: process.env.NCC_SIGNER_AUTO_APPROVE === '1'
-  })
-  registerNip07(nip07, contentSession)
-
   shell = new BrowserShell({
     preloadPath: join(__dirname, '../preload/index.js'),
     contentPreloadPath: join(__dirname, '../preload/content.js'),
@@ -128,7 +120,28 @@ app.whenReady().then(async () => {
     }
   })
 
-  registerIpc({ shell, config, resolver, pins, cacheStore, health, identity, permissions })
+  const approvals = new ApprovalBroker({
+    send: (channel, payload) => {
+      if (!shell || shell.window.isDestroyed()) return false
+      shell.window.webContents.send(channel, payload)
+      return true
+    },
+    setOverlay: (visible) => shell?.setApprovalMode(visible),
+    timeoutMs: 120_000
+  })
+
+  const nip07 = new Nip07Service({
+    identity,
+    permissions,
+    approvals,
+    getRelays: () => config.getRelays(),
+    autoApprove: process.env.NCC_SIGNER_AUTO_APPROVE === '1'
+  })
+  registerNip07(nip07, contentSession)
+
+  shell.window.on('closed', () => approvals.cancelAll())
+
+  registerIpc({ shell, config, resolver, pins, cacheStore, health, identity, permissions, approvals })
 
   // Optional launch address: `ncc-browser ncc://npub1…/service`
   const startupAddress = findStartupAddress()

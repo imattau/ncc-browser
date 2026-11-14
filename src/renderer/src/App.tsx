@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { DownloadNotice, NavState } from '@shared/types'
+import type { DownloadNotice, IdentityStatus, NavState, SignerRequest } from '@shared/types'
 import { SettingsDialog } from './components/SettingsDialog'
+import { SignerPrompt } from './components/SignerPrompt'
 import { TabStrip } from './components/TabStrip'
 import { Toolbar } from './components/Toolbar'
 import { Welcome } from './components/Welcome'
@@ -24,6 +25,8 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [hint, setHint] = useState<string | null>(null)
   const [downloads, setDownloads] = useState<DownloadNotice[]>([])
+  const [identity, setIdentity] = useState<IdentityStatus | null>(null)
+  const [signerRequest, setSignerRequest] = useState<SignerRequest | null>(null)
   const downloadTimers = useRef(new Map<string, number>())
 
   useEffect(() => {
@@ -35,6 +38,27 @@ export function App() {
     return () => {
       alive = false
       unsubscribe()
+    }
+  }, [])
+
+  useEffect(() => {
+    let alive = true
+    void window.ncc.identity().then((status) => {
+      if (alive) setIdentity(status)
+    })
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  useEffect(() => {
+    const offRequest = window.ncc.onSignerRequest((request) => setSignerRequest(request))
+    const offResolved = window.ncc.onSignerResolved((id) =>
+      setSignerRequest((current) => (current?.id === id ? null : current))
+    )
+    return () => {
+      offRequest()
+      offResolved()
     }
   }, [])
 
@@ -89,6 +113,16 @@ export function App() {
   const selectTab = useCallback((id: string) => {
     void window.ncc.selectTab(id)
   }, [])
+
+  const respondToSigner = useCallback(
+    (allow: boolean, remember: boolean) => {
+      const request = signerRequest
+      if (!request) return
+      setSignerRequest(null)
+      void window.ncc.respondToSigner(request.id, allow, remember)
+    },
+    [signerRequest]
+  )
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -165,6 +199,8 @@ export function App() {
       <Toolbar
         state={state}
         hint={hint}
+        identity={identity}
+        signerPending={signerRequest !== null}
         onNavigate={navigate}
         onBack={back}
         onForward={forward}
@@ -177,7 +213,15 @@ export function App() {
         {state.mode === 'blank' ? <Welcome onOpenSettings={() => setSettingsOpen(true)} /> : null}
       </main>
 
-      <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <SettingsDialog
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        onIdentityChange={setIdentity}
+      />
+
+      {signerRequest ? (
+        <SignerPrompt request={signerRequest} onRespond={respondToSigner} />
+      ) : null}
     </div>
   )
 }
