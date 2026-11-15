@@ -598,8 +598,8 @@ The release job also uploads `SHA256SUMS.txt`. Pushing a tag is the whole releas
 
 ```bash
 npm version patch --no-git-tag-version   # or edit package.json
-git commit -am "Release v0.1.4"
-git tag -a v0.1.4 -m "Nostr Navigator v0.1.4"
+git commit -am "Release v0.2.1"
+git tag -a v0.2.1 -m "Nostr Navigator v0.2.1"
 git push origin main --follow-tags
 ```
 
@@ -626,7 +626,7 @@ or SmartScreen prompts. The Flatpak bundle declares the flathub
 
 ---
 
-## Known limitations (v0.1)
+## Known limitations (v0.2)
 
 - **Absolute-path subresources** (`/style.css`) are attributed to the page's service via
   the `Referer` header, falling back to the active service for that npub. A page-authored
