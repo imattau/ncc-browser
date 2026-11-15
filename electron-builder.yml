@@ -41,8 +41,8 @@ mac:
     - from: resources/tor/mac-${arch}
       to: tor
   binaries:
-    - Resources/tor/tor/tor
-    - Resources/tor/tor/libevent-2.1.7.dylib
+    - Contents/Resources/tor/tor/tor
+    - Contents/Resources/tor/tor/libevent-2.1.7.dylib
 
 dmg:
   artifactName: ${name}-${version}-mac-${arch}.${ext}
