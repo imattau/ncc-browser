@@ -183,8 +183,7 @@ describe('RelayLocatorService', () => {
     return new RelayLocatorService({
       resolver: relayResolver(events),
       entries: () => [{ url: 'wss://bootstrap.test' }],
-      torReady: () => torReady,
-      now: () => NOW
+      torReady: () => torReady
     })
   }
 
@@ -193,7 +192,7 @@ describe('RelayLocatorService', () => {
     expect(outcome.ok).toBe(true)
     if (!outcome.ok) return
 
-    expect(outcome.entry.url).toBe('wss://relay.example/')
+    expect(outcome.entry.url).toBe('wss://relay.example')
     expect(outcome.entry.locator).toMatchObject({
       identity: NPUB,
       pubkey: AUTHOR_PK,

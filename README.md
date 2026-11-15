@@ -10,12 +10,13 @@ Built with Electron 45, React 19, and Vite. The resolver is a spec-correct
 implementation on top of `nostr-tools`, not a wrapper around `ncc-05-js` (see
 [Why not `ncc-05-js`](#why-not-ncc-05-js)).
 
-**Status:** M0–M10 are implemented. That includes the resolver, proxy and pinning, the
+**Status:** M0–M11 are implemented. That includes the resolver, proxy and pinning, the
 browser chrome and signer, NCC-02 anchoring with a trust panel, the separate publisher
 app in [`publisher/`](./publisher/) (a NIP-07 flow for NCC-05 locators and NCC-02 service
 records), bundled Tor with the onion preference/toggle and full Tor tabs, private tabs,
 HTTPS policy and HTTP warnings, an address bar with local suggestions, scheme inference
-and search engines, and packaged Linux, macOS and Windows releases.
+and search engines, identity-resolved relay entries with enforced `k` pins, and packaged
+Linux, macOS and Windows releases.
 
 ![Start screen](./docs/welcome.png)
 

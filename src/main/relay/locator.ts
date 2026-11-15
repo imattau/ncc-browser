@@ -27,15 +27,10 @@ export interface RelayLocatorDeps {
   entries: () => RelayEntry[]
   /** Whether onion endpoints can actually be reached. */
   torReady: () => boolean
-  now?: () => number
 }
 
 export class RelayLocatorService {
-  private readonly now: () => number
-
-  constructor(private readonly deps: RelayLocatorDeps) {
-    this.now = deps.now ?? (() => Math.floor(Date.now() / 1000))
-  }
+  constructor(private readonly deps: RelayLocatorDeps) {}
 
   /** Relays to query when resolving a locator, avoiding the circular case. */
   lookupRelays(): string[] {
@@ -126,7 +121,7 @@ export class RelayLocatorService {
     return {
       ok: true,
       entry: {
-        url: selection.endpoint.url,
+        url: selection.endpoint.url.replace(/\/$/, ''),
         locator
       }
     }

@@ -101,16 +101,19 @@ export class IdentityManager {
       if (!this.deps.resolveRelayLocator) {
         throw new Error('NCC relay resolution is not available')
       }
-      const entries: RelayEntry[] = []
+      const plain = [...target.relays]
+      const resolved: RelayEntry[] = []
       for (const locator of target.locators) {
         const entry = await this.deps.resolveRelayLocator(locator)
         if (!entry) {
           throw new Error(`Could not resolve the bunker relay ${locator}`)
         }
-        entries.push(entry)
-        if (!target.relays.includes(entry.url)) target.relays.push(entry.url)
+        resolved.push(entry)
       }
-      target.entries = entries
+      // Keep the plain relays in the entry list: rotation and the session file both
+      // persist this list, and dropping them would silently lose half the bunker.
+      target.entries = [...resolved, ...plain.map((url) => ({ url }))]
+      target.relays = [...new Set([...resolved.map((entry) => entry.url), ...plain])]
       target.locators = []
     }
 

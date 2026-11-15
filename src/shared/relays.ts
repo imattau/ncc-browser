@@ -2,35 +2,11 @@ import { nip19 } from 'nostr-tools'
 import { DEFAULT_RELAYS, type RelayEntry, type RelayLocatorRef } from './types'
 
 /**
- * Validate and normalise a user-supplied relay list.
+ * Validate and normalise a user-supplied relay list to plain URLs.
  * Only ws/wss relay URLs are accepted; the list must not be empty.
  */
 export function normalizeRelays(input: unknown): string[] {
-  if (!Array.isArray(input)) throw new Error('Relay list must be an array')
-
-  const relays: string[] = []
-  for (const raw of input) {
-    if (typeof raw !== 'string') continue
-    const value = raw.trim()
-    if (!value) continue
-
-    let url: URL
-    try {
-      url = new URL(value)
-    } catch {
-      throw new Error(`Not a valid relay URL: ${value}`)
-    }
-    if (url.protocol !== 'wss:' && url.protocol !== 'ws:') {
-      throw new Error(`Relays must use ws:// or wss://: ${value}`)
-    }
-    if (url.hash) throw new Error(`Relay URLs cannot contain a fragment: ${value}`)
-
-    const normalized = url.toString().replace(/\/$/, '')
-    if (!relays.includes(normalized)) relays.push(normalized)
-  }
-
-  if (relays.length === 0) throw new Error('At least one relay is required')
-  return relays
+  return normalizeRelayEntries(input).map((entry) => entry.url)
 }
 
 export function defaultRelays(): string[] {
@@ -177,14 +153,4 @@ export function isOnionRelayUrl(url: string): boolean {
   } catch {
     return false
   }
-}
-
-/** True when the entry needs to be re-resolved before its locator expires. */
-export function locatorNeedsRefresh(
-  entry: RelayEntry,
-  now: number,
-  jitterSeconds: number
-): boolean {
-  if (!entry.locator) return false
-  return now >= entry.locator.expiresAt - jitterSeconds
 }
