@@ -84,7 +84,7 @@ export function TabStrip({
     <nav
       aria-label="Tabs"
       data-titlebar
-      className="ncc-drag relative z-10 flex h-[38px] shrink-0 items-end gap-1 border-b border-[color:var(--color-line)] bg-[#0e1016] px-1.5"
+      className="ncc-drag relative z-10 flex h-[38px] shrink-0 items-end gap-1 border-b border-[color:var(--color-line)] bg-[color:var(--color-field)] px-1.5"
       onDoubleClick={onTitlebarDoubleClick}
       onDragOver={(event) => event.preventDefault()}
       onDrop={(event) => {
@@ -143,18 +143,18 @@ export function TabStrip({
                 }
               }}
               className={cn(
-                'ncc-no-drag group relative flex h-[32px] min-w-[120px] max-w-[230px] cursor-default items-center gap-2 rounded-t-lg border border-b-0 px-3 text-[12px] transition-colors',
+                'ncc-no-drag group relative flex h-[32px] min-w-[120px] max-w-[230px] cursor-default items-center gap-2 rounded-t-lg border border-b-0 px-3 text-ui-12 transition-colors',
                 active
-                  ? 'border-[color:var(--color-line)] bg-[color:var(--color-panel)] text-[#e7e9ef]'
-                  : 'border-transparent text-[color:var(--color-muted)] hover:bg-white/5',
+                  ? 'border-[color:var(--color-line)] bg-[color:var(--color-panel)] text-[color:var(--color-text-strong)]'
+                  : 'border-transparent text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)]',
                 tab.kind === 'private' &&
                   (active
-                    ? 'border-[#7c6ad6]/40 bg-[#171328]'
-                    : 'text-[#b9a9e8] hover:bg-[#7c6ad6]/10'),
+                    ? 'border-[color:var(--color-violet)]/40 bg-[color:var(--color-violet-soft-alt)]'
+                    : 'text-[color:var(--color-violet-muted)] hover:bg-[color:var(--color-violet)]/10'),
                 tab.kind === 'tor' &&
                   (active
-                    ? 'border-[#7c6ad6]/50 bg-[#18142b]'
-                    : 'text-[#c4b5fd] hover:bg-[#7c6ad6]/10'),
+                    ? 'border-[color:var(--color-violet)]/50 bg-[color:var(--color-violet-soft)]'
+                    : 'text-[color:var(--color-violet-text)] hover:bg-[color:var(--color-violet)]/10'),
                 dragId === tab.id && 'opacity-50'
               )}
             >
@@ -179,11 +179,11 @@ export function TabStrip({
 
               {tab.kind === 'private' ? (
                 <EyeOff
-                  className="h-3 w-3 shrink-0 text-[#a78bfa]"
+                  className="h-3 w-3 shrink-0 text-[color:var(--color-violet-strong)]"
                   aria-label="Private tab"
                 />
               ) : tab.kind === 'tor' ? (
-                <OnionIcon className="h-3 w-3 shrink-0 text-[#c4b5fd]" />
+                <OnionIcon className="h-3 w-3 shrink-0 text-[color:var(--color-violet-text)]" />
               ) : null}
 
               {tab.audible || tab.muted ? (
@@ -196,8 +196,8 @@ export function TabStrip({
                     onToggleMute(tab.id)
                   }}
                   className={cn(
-                    'shrink-0 rounded p-0.5 hover:bg-white/10',
-                    tab.muted ? 'text-[#5d6575]' : 'text-[color:var(--color-accent)]'
+                    'shrink-0 rounded p-0.5 hover:bg-[color:var(--color-hover-strong)]',
+                    tab.muted ? 'text-[color:var(--color-faint)]' : 'text-[color:var(--color-accent)]'
                   )}
                 >
                   {tab.muted ? (
@@ -215,7 +215,7 @@ export function TabStrip({
                   event.stopPropagation()
                   onClose(tab.id)
                 }}
-                className="shrink-0 rounded p-0.5 text-[color:var(--color-muted)] opacity-0 transition-opacity hover:bg-white/10 hover:text-white group-hover:opacity-100 focus:opacity-100"
+                className="shrink-0 rounded p-0.5 text-[color:var(--color-muted)] opacity-0 transition-opacity hover:bg-[color:var(--color-hover-strong)] hover:text-[color:var(--color-text-strong)] group-hover:opacity-100 focus:opacity-100"
               >
                 <X className="h-3 w-3" />
               </button>
@@ -233,7 +233,7 @@ export function TabStrip({
           aria-label="New tab (Ctrl+T)"
           title="New tab (Ctrl+T)"
           onClick={onNew}
-          className="ncc-no-drag mb-[3px] ml-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[color:var(--color-muted)] hover:bg-white/5 hover:text-white"
+          className="ncc-no-drag mb-[3px] ml-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)] hover:text-[color:var(--color-text-strong)]"
         >
           <Plus className="h-4 w-4" />
         </button>
@@ -246,7 +246,7 @@ export function TabStrip({
           aria-label="All tabs"
           title="All tabs"
           onClick={onOverflow}
-          className="ncc-no-drag mb-[4px] inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[color:var(--color-muted)] hover:bg-white/5 hover:text-white"
+          className="ncc-no-drag mb-[4px] inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)] hover:text-[color:var(--color-text-strong)]"
         >
           <ChevronsDown className="h-4 w-4" />
         </button>
@@ -290,8 +290,8 @@ function WindowButton({ label, danger, onClick, children }: WindowButtonProps) {
       className={cn(
         'inline-flex h-6 w-7 items-center justify-center rounded text-[color:var(--color-muted)] transition-colors',
         danger
-          ? 'hover:bg-[#c42b1c] hover:text-white'
-          : 'hover:bg-white/[0.08] hover:text-white'
+          ? 'hover:bg-[color:var(--color-danger-solid)] hover:text-[color:var(--color-on-danger)]'
+          : 'hover:bg-[color:var(--color-hover-strong)] hover:text-[color:var(--color-text-strong)]'
       )}
     >
       {children}

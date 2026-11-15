@@ -258,6 +258,12 @@ is CJS and the package is ESM-only.
   `host:port`; automatic re-resolution with jitter before expiry; persisted locator
   metadata for bunker sessions. Editing a connected bunker's relay list remains
   outstanding.
+- **M12 — Appearance:** ✅ Settings → Appearance with System/Light/Dark driven by
+  `nativeTheme`; text-only sizing (Small–Extra large); compact density via the Tailwind
+  spacing scale; Blue/Violet/Green/Amber accents with `light-dark()` contrast pairs; and
+  reduced motion. All chrome colours moved to semantic tokens, and the error/HTTP-warning
+  pages plus the native window background follow the theme. Changes apply immediately and
+  persist in `config.json`.
 
 ---
 

@@ -2433,6 +2433,116 @@ async function main() {
       JSON.stringify(clearedHistory.entries.length)
     )
 
+    // Appearance: theme, text size, density, accent and motion apply immediately.
+    await evaluate(chrome, 'window.ncc.runCommand("open-settings")')
+    await waitForValue(
+      chrome,
+      'document.querySelector(\'[data-settings-section="appearance"]\') ? "ready" : ""',
+      60
+    )
+    await evaluate(chrome, 'document.querySelector(\'[data-settings-section="appearance"]\').click()')
+    await waitForText(chrome, 'Text size', 40)
+    check(
+      'settings exposes an appearance section',
+      (await evaluate(chrome, 'Boolean(document.querySelector("[data-theme-option=dark]"))')) === true
+    )
+    check(
+      'appearance defaults to dark',
+      (await evaluate(chrome, 'document.documentElement.dataset.theme')) === 'dark' &&
+        (await evaluate(chrome, 'matchMedia("(prefers-color-scheme: dark)").matches')) === true
+    )
+    await chrome.send('Emulation.setDeviceMetricsOverride', {
+      width: 1280,
+      height: 1500,
+      deviceScaleFactor: 1,
+      mobile: false
+    })
+    await sleep(250)
+    const darkAppearanceShot = await chrome.send('Page.captureScreenshot', { format: 'png' })
+    writeFileSync(
+      join(ARTIFACTS, 'settings-appearance-dark.png'),
+      Buffer.from(darkAppearanceShot.data, 'base64')
+    )
+
+    await evaluate(chrome, 'document.querySelector(\'[data-theme-option="light"]\').click()')
+    await sleep(250)
+    check(
+      'switches the chrome to light',
+      (await evaluate(chrome, 'document.documentElement.dataset.theme')) === 'light' &&
+        (await evaluate(chrome, 'getComputedStyle(document.body).backgroundColor')) ===
+          'rgb(242, 244, 248)'
+    )
+    const lightShot = await chrome.send('Page.captureScreenshot', { format: 'png' })
+    writeFileSync(
+      join(ARTIFACTS, 'settings-appearance-light.png'),
+      Buffer.from(lightShot.data, 'base64')
+    )
+
+    const sampleBefore = await evaluate(
+      chrome,
+      'getComputedStyle(document.querySelector("[data-text-size-sample]")).fontSize'
+    )
+    await evaluate(chrome, 'document.querySelector(\'[data-text-size-option="xlarge"]\').click()')
+    await sleep(250)
+    const sampleAfter = await evaluate(
+      chrome,
+      'getComputedStyle(document.querySelector("[data-text-size-sample]")).fontSize'
+    )
+    const samplePadding = await evaluate(
+      chrome,
+      'getComputedStyle(document.querySelector("[data-text-size-sample]")).paddingTop'
+    )
+    check(
+      'text size scales only the glyphs',
+      Number.parseFloat(sampleBefore) === 12 &&
+        Math.abs(Number.parseFloat(sampleAfter) - 14.4) < 0.1,
+      `${sampleBefore} → ${sampleAfter}`
+    )
+    check('text size leaves spacing fixed', Number.parseFloat(samplePadding) === 8, samplePadding)
+
+    await evaluate(chrome, 'document.querySelector(\'[data-density-option="compact"]\').click()')
+    await sleep(200)
+    const spacing = await evaluate(
+      chrome,
+      'getComputedStyle(document.documentElement).getPropertyValue("--spacing").trim()'
+    )
+    check(
+      'compact density tightens the spacing scale',
+      Number.parseFloat(spacing) < 0.25,
+      spacing
+    )
+
+    await evaluate(chrome, 'document.querySelector(\'[data-accent-option="green"]\').click()')
+    await evaluate(chrome, 'document.querySelector("[data-reduce-motion-toggle]").click()')
+    await sleep(250)
+    check(
+      'accent changes apply immediately',
+      (await evaluate(chrome, 'document.documentElement.dataset.accent')) === 'green'
+    )
+    check(
+      'reduce motion applies immediately',
+      (await evaluate(chrome, 'document.documentElement.dataset.reduceMotion')) === 'true' &&
+        (await evaluate(
+          chrome,
+          'parseFloat(getComputedStyle(document.querySelector(\'[data-theme-option="dark"]\')).transitionDuration)'
+        )) < 0.01
+    )
+    check(
+      'appearance is persisted to config',
+      String(
+        await evaluate(
+          chrome,
+          'window.ncc.getConfig().then((config) => JSON.stringify(config.appearance))'
+        )
+      ).includes('"textSize":"xlarge"')
+    )
+    const appearanceShot = await chrome.send('Page.captureScreenshot', { format: 'png' })
+    writeFileSync(
+      join(ARTIFACTS, 'settings-appearance.png'),
+      Buffer.from(appearanceShot.data, 'base64')
+    )
+    await chrome.send('Emulation.clearDeviceMetricsOverride')
+
     // Restart with the same profile and no command-line address: the session file
     // must bring the tab back without any extra flags.
     await sleep(1100)
@@ -2499,6 +2609,28 @@ async function main() {
       JSON.stringify(restoredState?.tabs)
     )
 
+    const restoredAppearance = await evaluate(
+      restoredChrome,
+      'JSON.stringify({ ...document.documentElement.dataset })'
+    )
+    const restoredAppearanceValue = JSON.parse(String(restoredAppearance))
+    check(
+      'restores appearance settings on the next launch',
+      restoredAppearanceValue.theme === 'light' &&
+        restoredAppearanceValue.textSize === 'xlarge' &&
+        restoredAppearanceValue.accent === 'green' &&
+        restoredAppearanceValue.density === 'compact' &&
+        restoredAppearanceValue.reduceMotion === 'true',
+      String(restoredAppearance)
+    )
+    check(
+      'applies the saved theme to prefers-color-scheme',
+      (await evaluate(
+        restoredChrome,
+        'matchMedia("(prefers-color-scheme: light)").matches'
+      )) === true
+    )
+
     const restoredContent = await waitForTarget(
       (entry) => String(entry.url).startsWith('ncc://'),
       100,
@@ -2508,6 +2640,15 @@ async function main() {
     await restoredCdp.connect()
     const restoredText = await waitForText(restoredCdp, 'No locator published', 80)
     check('restores the page itself', restoredText.includes('No locator published'))
+    const restoredBackground = await evaluate(
+      restoredCdp,
+      'getComputedStyle(document.body).backgroundColor'
+    )
+    check(
+      'the error page follows the saved theme',
+      restoredBackground === 'rgb(242, 244, 248)',
+      String(restoredBackground)
+    )
     restoredCdp.close()
     restoredChrome.close()
   } catch (error) {

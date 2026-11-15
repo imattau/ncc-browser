@@ -42,7 +42,7 @@ export function TabOverflowMenu({
         <button
           type="button"
           onClick={onNewTab}
-          className="inline-flex items-center gap-1.5 text-[11px] text-[color:var(--color-muted)] hover:text-white"
+          className="inline-flex items-center gap-1.5 text-ui-11 text-[color:var(--color-muted)] hover:text-[color:var(--color-text-strong)]"
         >
           <Plus className="h-3 w-3" />
           New tab
@@ -50,7 +50,7 @@ export function TabOverflowMenu({
       }
     >
       <div className="relative mx-1 mb-1.5">
-        <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#4d5462]" />
+        <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[color:var(--color-faint-dim)]" />
         <input
           data-autofocus
           value={query}
@@ -58,12 +58,12 @@ export function TabOverflowMenu({
           placeholder="Search tabs"
           spellCheck={false}
           aria-label="Search tabs"
-          className="h-8 w-full rounded-lg border border-[color:var(--color-line)] bg-[#0e1016] pl-7 pr-2 text-[12px] text-[#dfe3ea] outline-none placeholder:text-[#5d6575] focus:border-[color:var(--color-accent)]/60"
+          className="h-8 w-full rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-field)] pl-7 pr-2 text-ui-12 text-[color:var(--color-text)] outline-none placeholder:text-[color:var(--color-faint)] focus:border-[color:var(--color-accent)]/60"
         />
       </div>
 
       {visible.length === 0 ? (
-        <p className="px-3 py-6 text-center text-[11.5px] text-[color:var(--color-muted)]">
+        <p className="px-3 py-6 text-center text-ui-115 text-[color:var(--color-muted)]">
           No tab matches “{query.trim()}”.
         </p>
       ) : (
@@ -77,14 +77,14 @@ export function TabOverflowMenu({
                 className={cn(
                   'flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left',
                   tab.id === activeTabId
-                    ? 'bg-[color:var(--color-accent)]/10 text-[#e7e9ef]'
-                    : 'text-[#c9d1e0] hover:bg-white/[0.05]'
+                    ? 'bg-[color:var(--color-accent)]/10 text-[color:var(--color-text-strong)]'
+                    : 'text-[color:var(--color-text-soft)] hover:bg-[color:var(--color-hover)]'
                 )}
               >
                 <TabIcon tab={tab} />
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[11.5px]">{tab.title}</span>
-                  <span className="mt-0.5 block truncate font-mono text-[9.5px] text-[#5d6575]">
+                  <span className="block truncate text-ui-115">{tab.title}</span>
+                  <span className="mt-0.5 block truncate font-mono text-ui-95 text-[color:var(--color-faint)]">
                     {tab.url || 'New tab'}
                   </span>
                 </span>
@@ -93,7 +93,7 @@ export function TabOverflowMenu({
                 type="button"
                 aria-label={`Close ${tab.title}`}
                 onClick={() => onCloseTab(tab.id)}
-                className="shrink-0 rounded p-1 text-[color:var(--color-muted)] hover:bg-white/5 hover:text-white"
+                className="shrink-0 rounded p-1 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)] hover:text-[color:var(--color-text-strong)]"
               >
                 <X className="h-3 w-3" />
               </button>

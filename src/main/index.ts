@@ -1,9 +1,10 @@
-import { app, Menu, safeStorage } from 'electron'
+import { app, Menu, nativeTheme, safeStorage } from 'electron'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { nip19 } from 'nostr-tools'
 import type { TabKind } from '@shared/types'
 import { ApprovalBroker } from './approval'
+import { applyThemeSource } from './appearance'
 import { BookmarkStore } from './bookmarks'
 import { HistoryStore } from './history'
 import { OmniboxService } from './omnibox'
@@ -61,6 +62,8 @@ let relaySync: RelaySync | null = null
 
 app.whenReady().then(async () => {
   const config = new ConfigStore()
+  // Resolve light/dark before any window exists so the first paint is correct.
+  applyThemeSource(config.get().appearance.theme)
   const pins = new PinStore()
   const relayPins = new RelayPinStore()
   const health = new EndpointHealth()
@@ -274,6 +277,7 @@ app.whenReady().then(async () => {
     torGuard,
     health,
     preferTor: () => config.get().preferTor,
+    appearance: () => config.get().appearance,
     onContentWebContents: (contents) => {
       // Remote content must never be able to keep the window from closing.
       contents.on('will-prevent-unload', (event) => event.preventDefault())
@@ -304,6 +308,10 @@ app.whenReady().then(async () => {
   ])
 
   shell.window.on('closed', () => approvals.cancelAll())
+
+  // Theme source changes (and OS theme changes in "system" mode) update the native
+  // window background; the chrome follows through `prefers-color-scheme`.
+  nativeTheme.on('updated', () => shell?.applyAppearance())
 
   // Re-resolve identity-backed relays before their locators expire. A rotation
   // updates the config, moves the TLS pin and drops the old pool connection.

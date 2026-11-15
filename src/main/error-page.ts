@@ -34,24 +34,30 @@ export function renderErrorPage(options: ErrorPageOptions): string {
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<meta name="color-scheme" content="dark" />
+<meta name="color-scheme" content="light dark" />
 <title>${escapeHtml(copy.title)} — NCC</title>
 <style>
   :root {
-    --bg: #0b0c10;
-    --panel: #14161d;
-    --border: #262a36;
-    --text: #e7e9ef;
-    --muted: #9aa3b2;
-    --danger: #ff7a7a;
-    --accent: #8ab4ff;
+    color-scheme: light dark;
+    --bg: light-dark(#f2f4f8, #0b0c10);
+    --panel: light-dark(#ffffff, #14161d);
+    --border: light-dark(#d7dce7, #262a36);
+    --text: light-dark(#0d1119, #e7e9ef);
+    --muted: light-dark(#5a6475, #9aa3b2);
+    --faint: light-dark(#6b7485, #6d7585);
+    --danger: light-dark(#c02b1c, #ff7a7a);
+    --accent: light-dark(#2563eb, #8ab4ff);
+    --accent-contrast: light-dark(#ffffff, #0b0c10);
+    --code: light-dark(#f7f8fb, #0d0f15);
+    --code-text: light-dark(#2c3446, #c8cfdb);
+    --shadow: light-dark(rgba(15, 23, 42, 0.12), rgba(0, 0, 0, 0.45));
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
   body {
     margin: 0;
     background:
-      radial-gradient(1100px 500px at 50% -10%, rgba(138, 180, 255, 0.16), transparent 60%),
+      radial-gradient(1100px 500px at 50% -10%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 60%),
       var(--bg);
     color: var(--text);
     font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -61,11 +67,11 @@ export function renderErrorPage(options: ErrorPageOptions): string {
   }
   .card {
     width: min(640px, 100%);
-    background: color-mix(in srgb, var(--panel) 88%, transparent);
+    background: color-mix(in srgb, var(--panel) 92%, transparent);
     border: 1px solid var(--border);
     border-radius: 18px;
     padding: 32px;
-    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+    box-shadow: 0 24px 80px var(--shadow);
   }
   .badge {
     display: inline-flex;
@@ -75,8 +81,8 @@ export function renderErrorPage(options: ErrorPageOptions): string {
     font-size: 12px;
     letter-spacing: 0.02em;
     color: var(--danger);
-    background: rgba(255, 122, 122, 0.1);
-    border: 1px solid rgba(255, 122, 122, 0.25);
+    background: color-mix(in srgb, var(--danger) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--danger) 28%, transparent);
     border-radius: 999px;
     padding: 6px 12px;
   }
@@ -92,8 +98,8 @@ export function renderErrorPage(options: ErrorPageOptions): string {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 12.5px;
     color: var(--accent);
-    background: rgba(138, 180, 255, 0.08);
-    border: 1px solid rgba(138, 180, 255, 0.18);
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
     border-radius: 10px;
     padding: 10px 12px;
     overflow-wrap: anywhere;
@@ -105,7 +111,7 @@ export function renderErrorPage(options: ErrorPageOptions): string {
     text-decoration: none;
     font-size: 14px;
     font-weight: 600;
-    color: #0b0c10;
+    color: var(--accent-contrast);
     background: var(--accent);
     border-radius: 10px;
     padding: 10px 16px;
@@ -126,20 +132,20 @@ export function renderErrorPage(options: ErrorPageOptions): string {
   pre {
     margin: 12px 0 0;
     padding: 12px;
-    background: #0d0f15;
+    background: var(--code);
     border: 1px solid var(--border);
     border-radius: 10px;
     overflow-x: auto;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 12px;
-    color: #c8cfdb;
+    color: var(--code-text);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
   footer {
     margin-top: 26px;
     font-size: 12px;
-    color: #6d7585;
+    color: var(--faint);
   }
 </style>
 </head>
@@ -181,22 +187,22 @@ export function renderHttpWarningPage(options: HttpWarningOptions): string {
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<meta name="color-scheme" content="dark" />
+<meta name="color-scheme" content="light dark" />
 <title>${only ? 'HTTPS required' : 'Not secure'} — NCC</title>
 <style>
-  :root { --bg:#0b0c10; --panel:#14161d; --line:#262a36; --text:#e7e9ef; --muted:#9aa3b2; --warn:#ffcc66; --accent:#8ab4ff; }
+  :root { color-scheme:light dark; --bg:light-dark(#f2f4f8,#0b0c10); --panel:light-dark(#ffffff,#14161d); --line:light-dark(#d7dce7,#262a36); --text:light-dark(#0d1119,#e7e9ef); --muted:light-dark(#5a6475,#9aa3b2); --warn:light-dark(#9a6400,#ffcc66); --accent:light-dark(#2563eb,#8ab4ff); --accent-contrast:light-dark(#ffffff,#0b0c10); --code:light-dark(#f7f8fb,#0d0f15); --code-text:light-dark(#2c3446,#c8cfdb); --faint:light-dark(#6b7485,#6d7585); --shadow:light-dark(rgba(15,23,42,.12),rgba(0,0,0,.45)); }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
-  body { margin:0; background:radial-gradient(1000px 460px at 50% -10%, rgba(255,204,102,0.13), transparent 60%), var(--bg); color:var(--text); font-family:ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; display:grid; place-items:center; padding:32px; }
-  .card { width:min(620px,100%); background:color-mix(in srgb, var(--panel) 90%, transparent); border:1px solid var(--line); border-radius:18px; padding:32px; box-shadow:0 24px 80px rgba(0,0,0,.45); }
-  .badge { display:inline-flex; gap:8px; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px; color:var(--warn); background:rgba(255,204,102,.1); border:1px solid rgba(255,204,102,.28); border-radius:999px; padding:6px 12px; }
+  body { margin:0; background:radial-gradient(1000px 460px at 50% -10%, color-mix(in srgb, var(--warn) 13%, transparent), transparent 60%), var(--bg); color:var(--text); font-family:ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; display:grid; place-items:center; padding:32px; }
+  .card { width:min(620px,100%); background:color-mix(in srgb, var(--panel) 92%, transparent); border:1px solid var(--line); border-radius:18px; padding:32px; box-shadow:0 24px 80px var(--shadow); }
+  .badge { display:inline-flex; gap:8px; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px; color:var(--warn); background:color-mix(in srgb, var(--warn) 10%, transparent); border:1px solid color-mix(in srgb, var(--warn) 28%, transparent); border-radius:999px; padding:6px 12px; }
   h1 { margin:18px 0 10px; font-size:27px; letter-spacing:-.02em; }
   p { margin:10px 0; color:var(--muted); font-size:14px; line-height:1.55; }
-  .address { margin-top:16px; padding:12px; background:#0d0f15; border:1px solid var(--line); border-radius:10px; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px; color:#c8cfdb; overflow-wrap:anywhere; }
+  .address { margin-top:16px; padding:12px; background:var(--code); border:1px solid var(--line); border-radius:10px; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px; color:var(--code-text); overflow-wrap:anywhere; }
   .actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:24px; }
-  a.button { display:inline-flex; align-items:center; padding:10px 16px; border-radius:9px; background:var(--accent); color:#0b0c10; font-weight:650; font-size:13px; text-decoration:none; }
+  a.button { display:inline-flex; align-items:center; padding:10px 16px; border-radius:9px; background:var(--accent); color:var(--accent-contrast); font-weight:650; font-size:13px; text-decoration:none; }
   a.button.secondary { background:transparent; border:1px solid var(--line); color:var(--text); font-weight:500; }
-  footer { margin-top:24px; color:#6d7585; font-size:12px; }
+  footer { margin-top:24px; color:var(--faint); font-size:12px; }
 </style>
 </head>
 <body>

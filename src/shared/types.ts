@@ -25,6 +25,71 @@ export const DEFAULT_HTTPS_MODE: HttpsMode = 'prefer'
 
 export const DEFAULT_TOR_SOCKS = 'socks5://127.0.0.1:9050'
 
+/** How the chrome resolves light and dark: follow the OS, or pin one. */
+export type ThemePreference = 'system' | 'light' | 'dark'
+
+export type TextSizePreference = 'small' | 'default' | 'large' | 'xlarge'
+
+export type AccentPreference = 'blue' | 'violet' | 'green' | 'amber'
+
+export type DensityPreference = 'comfortable' | 'compact'
+
+export interface AppearanceConfig {
+  theme: ThemePreference
+  textSize: TextSizePreference
+  accent: AccentPreference
+  density: DensityPreference
+  reduceMotion: boolean
+}
+
+/** Dark by default, keeping the look earlier versions shipped with. */
+export const DEFAULT_APPEARANCE: AppearanceConfig = {
+  theme: 'dark',
+  textSize: 'default',
+  accent: 'blue',
+  density: 'comfortable',
+  reduceMotion: false
+}
+
+/** Multiplier applied to every `text-ui-*` utility. */
+export const TEXT_SIZE_SCALES: Record<TextSizePreference, number> = {
+  small: 0.9,
+  default: 1,
+  large: 1.1,
+  xlarge: 1.2
+}
+
+export const THEME_PREFERENCES: ThemePreference[] = ['system', 'light', 'dark']
+export const TEXT_SIZE_PREFERENCES: TextSizePreference[] = ['small', 'default', 'large', 'xlarge']
+export const ACCENT_PREFERENCES: AccentPreference[] = ['blue', 'violet', 'green', 'amber']
+export const DENSITY_PREFERENCES: DensityPreference[] = ['comfortable', 'compact']
+
+/**
+ * Tolerant normalisation for anything that may have come from an older config
+ * file or from the renderer. Unknown values fall back to the defaults.
+ */
+export function normalizeAppearance(input: unknown): AppearanceConfig {
+  const value = input && typeof input === 'object' ? (input as Partial<AppearanceConfig>) : {}
+  return {
+    theme: THEME_PREFERENCES.includes(value.theme as ThemePreference)
+      ? (value.theme as ThemePreference)
+      : DEFAULT_APPEARANCE.theme,
+    textSize: TEXT_SIZE_PREFERENCES.includes(value.textSize as TextSizePreference)
+      ? (value.textSize as TextSizePreference)
+      : DEFAULT_APPEARANCE.textSize,
+    accent: ACCENT_PREFERENCES.includes(value.accent as AccentPreference)
+      ? (value.accent as AccentPreference)
+      : DEFAULT_APPEARANCE.accent,
+    density: DENSITY_PREFERENCES.includes(value.density as DensityPreference)
+      ? (value.density as DensityPreference)
+      : DEFAULT_APPEARANCE.density,
+    reduceMotion:
+      typeof value.reduceMotion === 'boolean'
+        ? value.reduceMotion
+        : DEFAULT_APPEARANCE.reduceMotion
+  }
+}
+
 export interface TorState {
   /** Global preference: use onion endpoints automatically when a locator has one. */
   preferTor: boolean
@@ -324,6 +389,8 @@ export interface AppConfig {
   searchEngineCustom: string
   /** Use an engine's onion endpoint inside full Tor tabs. */
   useOnionSearch: boolean
+  /** Theme, text size, density, accent and motion preferences. */
+  appearance: AppearanceConfig
 }
 
 export type OmniboxSuggestionKind = 'action' | 'bookmark' | 'history' | 'tab' | 'service'

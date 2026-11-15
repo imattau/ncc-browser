@@ -32,6 +32,10 @@ Linux, macOS and Windows releases.
 | --- | --- | --- |
 | ![Hamburger menu with grouped commands](./docs/menu.png) | ![Relays and NCC-02 anchoring settings](./docs/settings-general.png) | ![NCC Publisher with signer and result](./docs/publisher.png) |
 
+| Appearance: dark | Appearance: light |
+| --- | --- |
+| ![Appearance settings with dark theme](./docs/settings-appearance.png) | ![Appearance settings with light theme](./docs/settings-appearance-light.png) |
+
 ![Address bar with a local search action, highlighted match and a history suggestion](./docs/omnibox.png)
 
 ---
@@ -118,9 +122,11 @@ working while the remote page has focus.
   publishes an onion endpoint gets an onion button in the address bar; clicking it
   reloads that service over Tor, clicking again returns to direct. Direct `.onion` URLs
   work too.
-- **Settings** is a page, not a modal: `General`, `Security`, `Identity & signer`,
-  `Trusted services` and `About`, with a back-to-browsing button. `Esc` also leaves it.
+- **Settings** is a page, not a modal: `General`, `Appearance`, `Security`,
+  `Identity & signer`, `Trusted services` and `About`, with a back-to-browsing button.
+  `Esc` also leaves it.
   **General** also picks the search engine and the Tor onion search preference.
+  **Appearance** covers light/dark, text size, density, accent colour and reduced motion.
   **Security** controls Off / Prefer HTTPS / HTTPS only, the optional HTTP interstitial,
   the list of persisted HTTP exceptions, and clearing browsing history.
 - **Shortcuts** (also shown in the menu): `Ctrl+T`, `Ctrl+W`, `Ctrl+Tab` /
@@ -143,6 +149,27 @@ working while the remote page has focus.
   `userData/session.json` and restored on the next launch. Private and Tor tabs are never
   restored; only addresses are stored.
 - **Window title** follows the active page.
+
+---
+
+## Appearance
+
+Settings → **Appearance** changes the browser chrome immediately; there is no Save
+button, and the choice is stored in `config.json`.
+
+| Setting | Options | Notes |
+| --- | --- | --- |
+| Theme | System, Light, Dark | Dark is the default. The chosen scheme is also passed to pages through `prefers-color-scheme`, so sites with their own dark mode follow it. |
+| Text size | Small, Default, Large, Extra large | Scales text only. Padding, gaps and the 38 px tab strip / 60 px toolbar stay fixed. |
+| Density | Comfortable, Compact | Compact tightens spacing in menus, panels and settings without moving the shared chrome heights. |
+| Accent colour | Blue, Violet, Green, Amber | Drives links, focus rings and primary buttons. Each preset has a light and a dark variant for contrast. |
+| Reduce motion | On/off | Collapses transitions and animations. `prefers-reduced-motion` is honoured even when this is off. |
+
+The theme is driven by Electron's `nativeTheme`: setting Light or Dark also overrides
+`prefers-color-scheme` for page content, while System follows the operating system.
+Error and HTTP-warning pages, the window background, native form controls and
+scrollbars follow the same choice. **Reset appearance** returns every field to its
+default. Native context menus are drawn by the OS and still follow the system theme.
 
 ---
 
@@ -781,7 +808,12 @@ or SmartScreen prompts. The Flatpak bundle declares the flathub
   results. Bookmarks and sessions are local to this profile and are not synced over
   Nostr.
 - **The title bar is app-drawn.** The window is frameless on every platform, so window
-  controls and dragging are part of the chrome rather than the OS theme.
+  controls and dragging are part of the chrome rather than the OS theme. Native context
+  menus and OS dialogs still follow the system theme even when Light or Dark is pinned.
+- **Appearance is per profile.** Theme, text size, density, accent and reduced motion are
+  stored in `config.json` and are not synced over Nostr. At Extra large text a few fixed
+  chrome labels truncate rather than resize the tab strip or toolbar, because the native
+  content view is positioned from those fixed heights.
 - **Installers are unsigned.** macOS builds are ad-hoc signed only, Windows builds have
   no Authenticode certificate, and there is no auto-update channel yet. Signed builds and
   updates need maintainer certificates and a publishing key.

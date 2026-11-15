@@ -22,6 +22,7 @@ import { TabOverflowMenu } from './components/TabOverflowMenu'
 import { TabStrip } from './components/TabStrip'
 import { Toolbar } from './components/Toolbar'
 import { Welcome } from './components/Welcome'
+import { applyAppearance } from './lib/appearance'
 
 const EMPTY_STATE: NavState = {
   mode: 'blank',
@@ -100,6 +101,16 @@ export function App() {
     }
   }, [])
 
+  // Appearance can change from Settings or from a main-process push; both arrive
+  // as a config update.
+  useEffect(
+    () =>
+      window.ncc.onConfig((config) => {
+        applyAppearance(config.appearance)
+      }),
+    []
+  )
+
   useEffect(() => {
     let alive = true
     void window.ncc.bookmarks().then((next) => {
@@ -144,7 +155,15 @@ export function App() {
 
   useEffect(() => {
     const offOpen = window.ncc.onOpenSettings((payload) =>
-      openSettings(payload.section === 'identity' ? 'identity' : 'general')
+      openSettings(
+        payload.section === 'identity' ||
+          payload.section === 'appearance' ||
+          payload.section === 'security' ||
+          payload.section === 'trusted' ||
+          payload.section === 'about'
+          ? payload.section
+          : 'general'
+      )
     )
     const offClose = window.ncc.onCloseMenu(() => {
       // Window blur closes menus and popovers, but not a page the user is editing.

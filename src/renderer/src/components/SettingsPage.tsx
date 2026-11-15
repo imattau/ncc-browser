@@ -5,6 +5,7 @@ import {
   Copy,
   Globe,
   KeyRound,
+  Palette,
   RotateCcw,
   Search,
   Shield,
@@ -13,9 +14,10 @@ import {
   Smartphone,
   Trash2
 } from 'lucide-react'
-import { DEFAULT_RELAYS, DEFAULT_TOR_SOCKS } from '@shared/types'
+import { DEFAULT_APPEARANCE, DEFAULT_RELAYS, DEFAULT_TOR_SOCKS } from '@shared/types'
 import { SEARCH_ENGINES, type SearchEngineId } from '@shared/search'
 import type {
+  AppearanceConfig,
   HttpsMode,
   IdentityStatus,
   RelayEntry,
@@ -24,8 +26,16 @@ import type {
   TorStatus
 } from '@shared/types'
 import { cn } from '../lib/cn'
+import { applyAppearance } from '../lib/appearance'
+import { AppearanceSettings } from './AppearanceSettings'
 
-export type SettingsSection = 'general' | 'security' | 'identity' | 'trusted' | 'about'
+export type SettingsSection =
+  | 'general'
+  | 'appearance'
+  | 'security'
+  | 'identity'
+  | 'trusted'
+  | 'about'
 
 interface SettingsPageProps {
   open: boolean
@@ -36,6 +46,7 @@ interface SettingsPageProps {
 
 const SECTIONS: Array<{ id: SettingsSection; label: string; icon: typeof KeyRound }> = [
   { id: 'general', label: 'General', icon: SlidersHorizontal },
+  { id: 'appearance', label: 'Appearance', icon: Palette },
   { id: 'security', label: 'Security', icon: Shield },
   { id: 'identity', label: 'Identity & signer', icon: KeyRound },
   { id: 'trusted', label: 'Trusted services', icon: ShieldCheck },
@@ -69,7 +80,7 @@ function RelayRow({
 }) {
   const locator = entry.locator
   return (
-    <li className="rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] px-3 py-2.5">
+    <li className="rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-field)] px-3 py-2.5">
       <div className="flex items-start gap-2">
         <span
           className={cn(
@@ -79,10 +90,10 @@ function RelayRow({
         />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1.5">
-            <span className="break-all font-mono text-[12px] text-[#dfe3ea]">{entry.url}</span>
+            <span className="break-all font-mono text-ui-12 text-[color:var(--color-text)]">{entry.url}</span>
             <span
               className={cn(
-                'rounded border px-1.5 py-0.5 text-[10px] font-medium',
+                'rounded border px-1.5 py-0.5 text-ui-10 font-medium',
                 locator
                   ? 'border-[color:var(--color-accent)]/30 bg-[color:var(--color-accent)]/10 text-[color:var(--color-accent)]'
                   : 'border-[color:var(--color-line)] text-[color:var(--color-muted)]'
@@ -91,13 +102,13 @@ function RelayRow({
               {locator ? 'Identity' : 'Direct'}
             </span>
             {entry.stale ? (
-              <span className="rounded border border-[color:var(--color-danger)]/40 px-1.5 py-0.5 text-[10px] font-medium text-[color:var(--color-danger)]">
+              <span className="rounded border border-[color:var(--color-danger)]/40 px-1.5 py-0.5 text-ui-10 font-medium text-[color:var(--color-danger)]">
                 Stale locator
               </span>
             ) : null}
           </div>
           {locator ? (
-            <p className="mt-1 text-[11px] leading-relaxed text-[color:var(--color-muted)]">
+            <p className="mt-1 text-ui-11 leading-relaxed text-[color:var(--color-muted)]">
               {shortenIdentity(locator.identity)} · {locator.service} · expires in{' '}
               {formatExpiry(locator.expiresAt)}
               {locator.k ? ` · pin ${locator.k.slice(0, 10)}…` : ' · no pin published'}
@@ -108,7 +119,7 @@ function RelayRow({
           type="button"
           aria-label={`Remove ${entry.url}`}
           onClick={() => onRemove(entry.url)}
-          className="rounded-lg p-1.5 text-[color:var(--color-muted)] hover:bg-white/5 hover:text-[color:var(--color-danger)]"
+          className="rounded-lg p-1.5 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)] hover:text-[color:var(--color-danger)]"
         >
           <Trash2 className="h-3.5 w-3.5" />
         </button>
@@ -147,6 +158,8 @@ export function SettingsPage({
   const [searchEngine, setSearchEngine] = useState<SearchEngineId>('duckduckgo')
   const [searchCustom, setSearchCustom] = useState('')
   const [useOnionSearch, setUseOnionSearch] = useState(true)
+  const [appearance, setAppearance] = useState<AppearanceConfig>(DEFAULT_APPEARANCE)
+  const [appearanceError, setAppearanceError] = useState<string | null>(null)
   const [historyCleared, setHistoryCleared] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
@@ -173,6 +186,7 @@ export function SettingsPage({
     setRemoteError(null)
     setConnectBusy(false)
     setHistoryCleared(false)
+    setAppearanceError(null)
     void Promise.all([
       window.ncc.getConfig(),
       window.ncc.identity(),
@@ -192,6 +206,8 @@ export function SettingsPage({
       setSearchEngine(config.searchEngine)
       setSearchCustom(config.searchEngineCustom)
       setUseOnionSearch(config.useOnionSearch)
+      setAppearance(config.appearance)
+      applyAppearance(config.appearance)
       setIdentity(status)
       setPermissions(trusted)
     })
@@ -215,6 +231,10 @@ export function SettingsPage({
           return match ?? entry
         })
       )
+      if (config.appearance) {
+        setAppearance(config.appearance)
+        applyAppearance(config.appearance)
+      }
     })
   }, [open])
 
@@ -389,6 +409,28 @@ export function SettingsPage({
     setSaved(true)
   }
 
+  const changeAppearance = (patch: Partial<AppearanceConfig>): void => {
+    // Apply optimistically so theme, size and density change in this frame.
+    const next = { ...appearance, ...patch }
+    setAppearance(next)
+    applyAppearance(next)
+    setAppearanceError(null)
+    void window.ncc.setAppearance(patch).then((result) => {
+      if (!result.ok) {
+        setAppearanceError(result.error ?? 'Could not save appearance settings')
+        return
+      }
+      if (result.config?.appearance) {
+        setAppearance(result.config.appearance)
+        applyAppearance(result.config.appearance)
+      }
+    })
+  }
+
+  const resetAppearance = (): void => {
+    changeAppearance(DEFAULT_APPEARANCE)
+  }
+
   const removeHttpException = async (key: string): Promise<void> => {
     const config = await window.ncc.removeHttpException(key)
     setHttpExceptions(config.httpExceptions ?? [])
@@ -482,18 +524,18 @@ export function SettingsPage({
           ref={backRef}
           type="button"
           onClick={onClose}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-[color:var(--color-line)] px-2.5 py-1.5 text-[11.5px] text-[color:var(--color-muted)] hover:bg-white/5 hover:text-white"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-[color:var(--color-line)] px-2.5 py-1.5 text-ui-115 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)] hover:text-[color:var(--color-text-strong)]"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
           Back to browsing
         </button>
         <div className="min-w-0">
-          <h1 className="text-[13px] font-semibold text-[#e7e9ef]">Settings</h1>
-          <p className="truncate text-[10.5px] text-[color:var(--color-muted)]">
-            Relays, identity and signing permissions for this browser.
+          <h1 className="text-ui-13 font-semibold text-[color:var(--color-text-strong)]">Settings</h1>
+          <p className="truncate text-ui-105 text-[color:var(--color-muted)]">
+            Relays, appearance, identity and signing permissions for this browser.
           </p>
         </div>
-        <span className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-[color:var(--color-line)] px-2 py-1 text-[10.5px] text-[color:var(--color-muted)]">
+        <span className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-[color:var(--color-line)] px-2 py-1 text-ui-105 text-[color:var(--color-muted)]">
           <span
             className={cn(
               'h-1.5 w-1.5 rounded-full',
@@ -524,16 +566,16 @@ export function SettingsPage({
                   aria-current={active ? 'page' : undefined}
                   onClick={() => setSection(entry.id)}
                   className={cn(
-                    'inline-flex shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] transition-colors',
+                    'inline-flex shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-left text-ui-12 transition-colors',
                     active
-                      ? 'bg-[color:var(--color-accent)]/10 text-[#e7e9ef]'
-                      : 'text-[color:var(--color-muted)] hover:bg-white/[0.05] hover:text-white'
+                      ? 'bg-[color:var(--color-accent)]/10 text-[color:var(--color-text-strong)]'
+                      : 'text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)] hover:text-[color:var(--color-text-strong)]'
                   )}
                 >
                   <Icon
                     className={cn(
                       'h-3.5 w-3.5',
-                      active ? 'text-[color:var(--color-accent)]' : 'text-[#5d6575]'
+                      active ? 'text-[color:var(--color-accent)]' : 'text-[color:var(--color-faint)]'
                     )}
                   />
                   {entry.label}
@@ -552,7 +594,7 @@ export function SettingsPage({
               />
 
               <div className="rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-4">
-                <label className="mb-2 block text-[10.5px] font-semibold uppercase tracking-wide text-[color:var(--color-muted)]">
+                <label className="mb-2 block text-ui-105 font-semibold uppercase tracking-wide text-[color:var(--color-muted)]">
                   Resolution relays
                 </label>
 
@@ -587,19 +629,19 @@ export function SettingsPage({
                     placeholder="wss://relay.example or ncc://npub1…/relay"
                     spellCheck={false}
                     autoComplete="off"
-                    className="min-w-0 flex-1 rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] px-3 py-2 font-mono text-[12px] text-[#dfe3ea] outline-none focus:border-[color:var(--color-accent)]/60"
+                    className="min-w-0 flex-1 rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-field)] px-3 py-2 font-mono text-ui-12 text-[color:var(--color-text)] outline-none focus:border-[color:var(--color-accent)]/60"
                   />
                   <button
                     type="button"
                     disabled={relayBusy || newRelay.trim().length === 0}
                     onClick={() => void addRelay()}
-                    className="rounded-lg border border-[color:var(--color-accent)]/30 bg-[color:var(--color-accent)]/10 px-3 py-1.5 text-[11px] font-semibold text-[color:var(--color-accent)] disabled:opacity-40"
+                    className="rounded-lg border border-[color:var(--color-accent)]/30 bg-[color:var(--color-accent)]/10 px-3 py-1.5 text-ui-11 font-semibold text-[color:var(--color-accent)] disabled:opacity-40"
                   >
                     {relayBusy ? 'Resolving…' : 'Add'}
                   </button>
                 </div>
 
-                <p className="mt-2 text-[11px] leading-relaxed text-[color:var(--color-muted)]">
+                <p className="mt-2 text-ui-11 leading-relaxed text-[color:var(--color-muted)]">
                   An <span className="font-mono">ncc://</span> relay is resolved from the
                   identity&apos;s NCC-05 locator and re-resolved before it expires. The
                   locator&apos;s <span className="font-mono">k</span> fingerprint is enforced
@@ -607,18 +649,18 @@ export function SettingsPage({
                 </p>
 
                 {error ? (
-                  <p className="mt-2 text-xs text-[color:var(--color-danger)]">{error}</p>
+                  <p className="mt-2 text-ui-12 text-[color:var(--color-danger)]">{error}</p>
                 ) : saved ? (
-                  <p className="mt-2 text-xs text-[color:var(--color-ok)]">
+                  <p className="mt-2 text-ui-12 text-[color:var(--color-ok)]">
                     Saved. The resolver and locator cache were cleared.
                   </p>
                 ) : (
-                  <p className="mt-2 text-xs text-[color:var(--color-muted)]">
+                  <p className="mt-2 text-ui-12 text-[color:var(--color-muted)]">
                     Defaults: {DEFAULT_RELAYS.join(', ')}
                   </p>
                 )}
 
-                <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] p-3.5">
+                <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-field)] p-3.5">
                   <input
                     type="checkbox"
                     checked={gossip}
@@ -629,10 +671,10 @@ export function SettingsPage({
                     className="mt-0.5 h-4 w-4 accent-[color:var(--color-accent)]"
                   />
                   <span>
-                    <span className="block text-[12px] font-medium text-[#e7e9ef]">
+                    <span className="block text-ui-12 font-medium text-[color:var(--color-text-strong)]">
                       Follow NIP-65 relay hints
                     </span>
-                    <span className="mt-0.5 block text-[11.5px] leading-relaxed text-[color:var(--color-muted)]">
+                    <span className="mt-0.5 block text-ui-115 leading-relaxed text-[color:var(--color-muted)]">
                       Ask the target identity&apos;s relay list where it actually publishes.
                       More reliable, at the cost of one extra metadata lookup on the
                       configured relays.
@@ -640,7 +682,7 @@ export function SettingsPage({
                   </span>
                 </label>
 
-                <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] p-3.5">
+                <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-field)] p-3.5">
                   <input
                     type="checkbox"
                     id="anchor-required"
@@ -652,10 +694,10 @@ export function SettingsPage({
                     className="mt-0.5 h-4 w-4 accent-[color:var(--color-accent)]"
                   />
                   <span>
-                    <span className="block text-[12px] font-medium text-[#e7e9ef]">
+                    <span className="block text-ui-12 font-medium text-[color:var(--color-text-strong)]">
                       Require NCC-02 service records
                     </span>
-                    <span className="mt-0.5 block text-[11.5px] leading-relaxed text-[color:var(--color-muted)]">
+                    <span className="mt-0.5 block text-ui-115 leading-relaxed text-[color:var(--color-muted)]">
                       Fail closed unless the identity publishes a fresh kind 30059 service
                       record with the same service id. When off, NCC-02 is shown as an
                       optional trust anchor.
@@ -665,11 +707,11 @@ export function SettingsPage({
 
                 <div className="mt-4 border-t border-[color:var(--color-line)] pt-4">
                   <div className="flex items-center gap-2">
-                    <Globe className="h-3.5 w-3.5 text-[#a78bfa]" />
-                    <h3 className="text-[12px] font-semibold text-[#e7e9ef]">Tor</h3>
+                    <Globe className="h-3.5 w-3.5 text-[color:var(--color-violet-strong)]" />
+                    <h3 className="text-ui-12 font-semibold text-[color:var(--color-text-strong)]">Tor</h3>
                   </div>
 
-                  <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] p-3.5">
+                  <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-field)] p-3.5">
                     <input
                       type="checkbox"
                       id="prefer-tor"
@@ -681,10 +723,10 @@ export function SettingsPage({
                       className="mt-0.5 h-4 w-4 accent-[color:var(--color-accent)]"
                     />
                     <span>
-                      <span className="block text-[12px] font-medium text-[#e7e9ef]">
+                      <span className="block text-ui-12 font-medium text-[color:var(--color-text-strong)]">
                         Prefer Tor connections
                       </span>
-                      <span className="mt-0.5 block text-[11.5px] leading-relaxed text-[color:var(--color-muted)]">
+                      <span className="mt-0.5 block text-ui-115 leading-relaxed text-[color:var(--color-muted)]">
                         When a locator publishes an onion endpoint, load the service over Tor
                         instead of its direct endpoints. Records without an onion endpoint
                         load normally.
@@ -692,10 +734,10 @@ export function SettingsPage({
                     </span>
                   </label>
 
-                  <div className="mt-3 rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] p-3.5">
+                  <div className="mt-3 rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-field)] p-3.5">
                     <label
                       htmlFor="tor-mode"
-                      className="mb-1.5 block text-[10.5px] font-semibold uppercase tracking-wide text-[color:var(--color-muted)]"
+                      className="mb-1.5 block text-ui-105 font-semibold uppercase tracking-wide text-[color:var(--color-muted)]"
                     >
                       Tor proxy
                     </label>
@@ -706,7 +748,7 @@ export function SettingsPage({
                         setTorMode(event.target.value === 'local' ? 'local' : 'auto')
                         setSaved(false)
                       }}
-                      className="w-full rounded-xl border border-[color:var(--color-line)] bg-[#14161d] px-3 py-2 text-[12px] text-[#dfe3ea] outline-none focus:border-[color:var(--color-accent)]/60"
+                      className="w-full rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-field-alt)] px-3 py-2 text-ui-12 text-[color:var(--color-text)] outline-none focus:border-[color:var(--color-accent)]/60"
                     >
                       <option value="auto">Automatic (bundled Tor, then local)</option>
                       <option value="local">Local SOCKS proxy</option>
@@ -723,10 +765,10 @@ export function SettingsPage({
                         spellCheck={false}
                         autoComplete="off"
                         aria-label="Tor SOCKS proxy"
-                        className="mt-2 w-full rounded-xl border border-[color:var(--color-line)] bg-[#14161d] px-3 py-2 font-mono text-[12px] text-[#dfe3ea] outline-none focus:border-[color:var(--color-accent)]/60"
+                        className="mt-2 w-full rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-field-alt)] px-3 py-2 font-mono text-ui-12 text-[color:var(--color-text)] outline-none focus:border-[color:var(--color-accent)]/60"
                       />
                     ) : (
-                      <p className="mt-2 text-[11px] leading-relaxed text-[color:var(--color-muted)]">
+                      <p className="mt-2 text-ui-11 leading-relaxed text-[color:var(--color-muted)]">
                         Starts the bundled Tor. If it cannot start, the browser tries a local
                         proxy on 127.0.0.1:9050 or 9150.
                       </p>
@@ -736,7 +778,7 @@ export function SettingsPage({
                       <p
                         data-tor-status
                         className={cn(
-                          'text-[11px] leading-relaxed',
+                          'text-ui-11 leading-relaxed',
                           torStatus?.error
                             ? 'text-[color:var(--color-warn)]'
                             : 'text-[color:var(--color-muted)]'
@@ -748,14 +790,14 @@ export function SettingsPage({
                         type="button"
                         disabled={torBusy || loading}
                         onClick={() => void testTor()}
-                        className="rounded-lg border border-[color:var(--color-line)] px-2.5 py-1 text-[11px] text-[#dfe3ea] hover:bg-white/5 disabled:opacity-40"
+                        className="rounded-lg border border-[color:var(--color-line)] px-2.5 py-1 text-ui-11 text-[color:var(--color-text)] hover:bg-[color:var(--color-hover)] disabled:opacity-40"
                       >
                         {torBusy ? 'Checking…' : 'Test saved connection'}
                       </button>
                     </div>
 
                     {torStatus?.error ? (
-                      <p className="mt-2 text-[10.5px] leading-relaxed text-[color:var(--color-warn)]">
+                      <p className="mt-2 text-ui-105 leading-relaxed text-[color:var(--color-warn)]">
                         {torStatus.error}
                       </p>
                     ) : null}
@@ -765,12 +807,12 @@ export function SettingsPage({
                 <div className="mt-4 border-t border-[color:var(--color-line)] pt-4">
                   <div className="flex items-center gap-2">
                     <Search className="h-3.5 w-3.5 text-[color:var(--color-accent)]" />
-                    <h3 className="text-[12px] font-semibold text-[#e7e9ef]">Search</h3>
+                    <h3 className="text-ui-12 font-semibold text-[color:var(--color-text-strong)]">Search</h3>
                   </div>
 
                   <label
                     htmlFor="search-engine"
-                    className="mb-1.5 mt-3 block text-[10.5px] font-semibold uppercase tracking-wide text-[color:var(--color-muted)]"
+                    className="mb-1.5 mt-3 block text-ui-105 font-semibold uppercase tracking-wide text-[color:var(--color-muted)]"
                   >
                     Search engine
                   </label>
@@ -781,7 +823,7 @@ export function SettingsPage({
                       setSearchEngine(event.target.value as SearchEngineId)
                       setSaved(false)
                     }}
-                    className="w-full rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] px-3 py-2 text-[12px] text-[#dfe3ea] outline-none focus:border-[color:var(--color-accent)]/60"
+                    className="w-full rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-field)] px-3 py-2 text-ui-12 text-[color:var(--color-text)] outline-none focus:border-[color:var(--color-accent)]/60"
                   >
                     {SEARCH_ENGINES.map((engine) => (
                       <option key={engine.id} value={engine.id}>
@@ -802,7 +844,7 @@ export function SettingsPage({
                       spellCheck={false}
                       autoComplete="off"
                       aria-label="SearXNG instance URL"
-                      className="mt-2 w-full rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] px-3 py-2 font-mono text-[12px] text-[#dfe3ea] outline-none focus:border-[color:var(--color-accent)]/60"
+                      className="mt-2 w-full rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-field)] px-3 py-2 font-mono text-ui-12 text-[color:var(--color-text)] outline-none focus:border-[color:var(--color-accent)]/60"
                     />
                   ) : null}
 
@@ -818,11 +860,11 @@ export function SettingsPage({
                       spellCheck={false}
                       autoComplete="off"
                       aria-label="Custom search URL"
-                      className="mt-2 w-full rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] px-3 py-2 font-mono text-[12px] text-[#dfe3ea] outline-none focus:border-[color:var(--color-accent)]/60"
+                      className="mt-2 w-full rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-field)] px-3 py-2 font-mono text-ui-12 text-[color:var(--color-text)] outline-none focus:border-[color:var(--color-accent)]/60"
                     />
                   ) : null}
 
-                  <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] p-3.5">
+                  <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-field)] p-3.5">
                     <input
                       type="checkbox"
                       id="search-onion"
@@ -834,10 +876,10 @@ export function SettingsPage({
                       className="mt-0.5 h-4 w-4 accent-[color:var(--color-accent)]"
                     />
                     <span>
-                      <span className="block text-[12px] font-medium text-[#e7e9ef]">
+                      <span className="block text-ui-12 font-medium text-[color:var(--color-text-strong)]">
                         Use onion search in Tor tabs
                       </span>
-                      <span className="mt-0.5 block text-[11.5px] leading-relaxed text-[color:var(--color-muted)]">
+                      <span className="mt-0.5 block text-ui-115 leading-relaxed text-[color:var(--color-muted)]">
                         DuckDuckGo publishes an onion endpoint; full Tor tabs use it so the
                         search query never leaves the Tor network. Other engines use their
                         normal URL over Tor.
@@ -845,7 +887,7 @@ export function SettingsPage({
                     </span>
                   </label>
 
-                  <p className="mt-3 text-[11px] leading-relaxed text-[color:var(--color-muted)]">
+                  <p className="mt-3 text-ui-11 leading-relaxed text-[color:var(--color-muted)]">
                     Suggestions come from bookmarks, open tabs and normal-tab history. The
                     browser never asks the engine for suggestions as you type: the query is
                     sent only when you press Enter. Plaintext HTTP search URLs are allowed
@@ -867,7 +909,7 @@ export function SettingsPage({
                       setUseOnionSearch(true)
                       setSaved(false)
                     }}
-                    className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[11.5px] text-[color:var(--color-muted)] hover:bg-white/5 hover:text-white"
+                    className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-ui-115 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)] hover:text-[color:var(--color-text-strong)]"
                   >
                     <RotateCcw className="h-3.5 w-3.5" />
                     Reset to defaults
@@ -876,13 +918,22 @@ export function SettingsPage({
                     type="button"
                     onClick={() => void save()}
                     disabled={loading}
-                    className="rounded-lg bg-[color:var(--color-accent)] px-3.5 py-1.5 text-[11.5px] font-semibold text-[#0b0c10] disabled:opacity-60"
+                    className="rounded-lg bg-[color:var(--color-accent)] px-3.5 py-1.5 text-ui-115 font-semibold text-[color:var(--color-on-accent)] disabled:opacity-60"
                   >
                     {loading ? 'Saving…' : 'Save settings'}
                   </button>
                 </div>
               </div>
             </>
+          ) : null}
+
+          {section === 'appearance' ? (
+            <AppearanceSettings
+              appearance={appearance}
+              onChange={changeAppearance}
+              onReset={resetAppearance}
+              error={appearanceError}
+            />
           ) : null}
 
           {section === 'security' ? (
@@ -895,7 +946,7 @@ export function SettingsPage({
               <div className="rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-4">
                 <label
                   htmlFor="https-mode"
-                  className="mb-1.5 block text-[10.5px] font-semibold uppercase tracking-wide text-[color:var(--color-muted)]"
+                  className="mb-1.5 block text-ui-105 font-semibold uppercase tracking-wide text-[color:var(--color-muted)]"
                 >
                   HTTPS policy
                 </label>
@@ -912,14 +963,14 @@ export function SettingsPage({
                     )
                     setSaved(false)
                   }}
-                  className="w-full rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] px-3 py-2 text-[12px] text-[#dfe3ea] outline-none focus:border-[color:var(--color-accent)]/60"
+                  className="w-full rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-field)] px-3 py-2 text-ui-12 text-[color:var(--color-text)] outline-none focus:border-[color:var(--color-accent)]/60"
                 >
                   <option value="off">Off — load HTTP normally</option>
                   <option value="prefer">Prefer HTTPS — try HTTPS, then fall back with a warning</option>
                   <option value="only">HTTPS only — never load HTTP without confirmation</option>
                 </select>
 
-                <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] p-3.5">
+                <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-field)] p-3.5">
                   <input
                     type="checkbox"
                     id="warn-insecure"
@@ -931,26 +982,26 @@ export function SettingsPage({
                     className="mt-0.5 h-4 w-4 accent-[color:var(--color-accent)]"
                   />
                   <span>
-                    <span className="block text-[12px] font-medium text-[#e7e9ef]">
+                    <span className="block text-ui-12 font-medium text-[color:var(--color-text-strong)]">
                       Ask before loading HTTP pages
                     </span>
-                    <span className="mt-0.5 block text-[11.5px] leading-relaxed text-[color:var(--color-muted)]">
+                    <span className="mt-0.5 block text-ui-115 leading-relaxed text-[color:var(--color-muted)]">
                       Show a blocking interstitial before a clearnet HTTP page or an NCC HTTP
                       endpoint. The amber warning bar appears on HTTP pages either way.
                     </span>
                   </span>
                 </label>
 
-                <p className="mt-3 text-[11px] leading-relaxed text-[color:var(--color-muted)]">
+                <p className="mt-3 text-ui-11 leading-relaxed text-[color:var(--color-muted)]">
                   Loopback addresses and <span className="font-mono">.onion</span> services are
                   exempt from automatic HTTPS upgrades. NCC endpoints only use HTTPS when the
                   publisher actually published an HTTPS endpoint.
                 </p>
 
                 {error ? (
-                  <p className="mt-2 text-xs text-[color:var(--color-danger)]">{error}</p>
+                  <p className="mt-2 text-ui-12 text-[color:var(--color-danger)]">{error}</p>
                 ) : saved ? (
-                  <p className="mt-2 text-xs text-[color:var(--color-ok)]">Saved.</p>
+                  <p className="mt-2 text-ui-12 text-[color:var(--color-ok)]">Saved.</p>
                 ) : null}
 
                 <div className="mt-3 flex justify-end">
@@ -958,7 +1009,7 @@ export function SettingsPage({
                     type="button"
                     onClick={() => void saveSecurity()}
                     disabled={loading}
-                    className="rounded-lg bg-[color:var(--color-accent)] px-3.5 py-1.5 text-[11.5px] font-semibold text-[#0b0c10] disabled:opacity-60"
+                    className="rounded-lg bg-[color:var(--color-accent)] px-3.5 py-1.5 text-ui-115 font-semibold text-[color:var(--color-on-accent)] disabled:opacity-60"
                   >
                     {loading ? 'Saving…' : 'Save security settings'}
                   </button>
@@ -966,8 +1017,8 @@ export function SettingsPage({
               </div>
 
               <div className="rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-4">
-                <h3 className="text-[12px] font-semibold text-[#e7e9ef]">HTTP exceptions</h3>
-                <p className="mt-1 text-[11.5px] leading-relaxed text-[color:var(--color-muted)]">
+                <h3 className="text-ui-12 font-semibold text-[color:var(--color-text-strong)]">HTTP exceptions</h3>
+                <p className="mt-1 text-ui-115 leading-relaxed text-[color:var(--color-muted)]">
                   Origins you have explicitly allowed over HTTP. Private and Tor tab exceptions
                   live only for that session and are not listed here.
                 </p>
@@ -977,15 +1028,15 @@ export function SettingsPage({
                       <li
                         key={entry}
                         data-http-exception={entry}
-                        className="flex items-center justify-between gap-2 rounded-lg border border-[color:var(--color-line)] bg-[#0e1016] px-2.5 py-2"
+                        className="flex items-center justify-between gap-2 rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-field)] px-2.5 py-2"
                       >
-                        <span className="min-w-0 truncate font-mono text-[11px] text-[#c9d1e0]">
+                        <span className="min-w-0 truncate font-mono text-ui-11 text-[color:var(--color-text-soft)]">
                           {entry}
                         </span>
                         <button
                           type="button"
                           onClick={() => void removeHttpException(entry)}
-                          className="shrink-0 rounded px-1.5 py-0.5 text-[10.5px] text-[color:var(--color-danger)] hover:bg-[color:var(--color-danger)]/10"
+                          className="shrink-0 rounded px-1.5 py-0.5 text-ui-105 text-[color:var(--color-danger)] hover:bg-[color:var(--color-danger)]/10"
                         >
                           remove
                         </button>
@@ -993,7 +1044,7 @@ export function SettingsPage({
                     ))}
                   </ul>
                 ) : (
-                  <p className="mt-3 text-[11px] text-[color:var(--color-muted)]">
+                  <p className="mt-3 text-ui-11 text-[color:var(--color-muted)]">
                     No HTTP exceptions.
                   </p>
                 )}
@@ -1001,7 +1052,7 @@ export function SettingsPage({
                   <button
                     type="button"
                     onClick={() => void clearHttpExceptions()}
-                    className="mt-3 rounded-lg border border-[color:var(--color-danger)]/30 px-2.5 py-1 text-[11px] text-[color:var(--color-danger)] hover:bg-[color:var(--color-danger)]/10"
+                    className="mt-3 rounded-lg border border-[color:var(--color-danger)]/30 px-2.5 py-1 text-ui-11 text-[color:var(--color-danger)] hover:bg-[color:var(--color-danger)]/10"
                   >
                     Clear all exceptions
                   </button>
@@ -1009,8 +1060,8 @@ export function SettingsPage({
               </div>
 
               <div className="rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-4">
-                <h3 className="text-[12px] font-semibold text-[#e7e9ef]">Browsing history</h3>
-                <p className="mt-1 text-[11.5px] leading-relaxed text-[color:var(--color-muted)]">
+                <h3 className="text-ui-12 font-semibold text-[color:var(--color-text-strong)]">Browsing history</h3>
+                <p className="mt-1 text-ui-115 leading-relaxed text-[color:var(--color-muted)]">
                   Address-bar suggestions use local bookmarks and normal-tab history. Private
                   and Tor tabs are never recorded. Clearing removes the history file now.
                 </p>
@@ -1019,13 +1070,13 @@ export function SettingsPage({
                     type="button"
                     data-clear-history
                     onClick={() => void clearBrowsingHistory()}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-[color:var(--color-danger)]/30 px-2.5 py-1 text-[11px] text-[color:var(--color-danger)] hover:bg-[color:var(--color-danger)]/10"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-[color:var(--color-danger)]/30 px-2.5 py-1 text-ui-11 text-[color:var(--color-danger)] hover:bg-[color:var(--color-danger)]/10"
                   >
                     <Trash2 className="h-3 w-3" />
                     Clear browsing history
                   </button>
                   {historyCleared ? (
-                    <span className="text-[11px] text-[color:var(--color-ok)]">Cleared.</span>
+                    <span className="text-ui-11 text-[color:var(--color-ok)]">Cleared.</span>
                   ) : null}
                 </div>
               </div>
@@ -1043,7 +1094,7 @@ export function SettingsPage({
                 {identity?.mode === 'nip46' ? (
                   <div>
                     <div className="flex items-start justify-between gap-3">
-                      <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-[color:var(--color-accent)]">
+                      <span className="inline-flex items-center gap-1.5 text-ui-11 font-medium text-[color:var(--color-accent)]">
                         <Smartphone className="h-3.5 w-3.5" />
                         Remote signer (NIP-46)
                       </span>
@@ -1051,31 +1102,31 @@ export function SettingsPage({
                         type="button"
                         disabled={identityBusy}
                         onClick={() => void disconnectRemote()}
-                        className="rounded-lg border border-[color:var(--color-line)] px-2.5 py-1 text-[11px] text-[color:var(--color-muted)] hover:bg-white/5 hover:text-white disabled:opacity-40"
+                        className="rounded-lg border border-[color:var(--color-line)] px-2.5 py-1 text-ui-11 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)] hover:text-[color:var(--color-text-strong)] disabled:opacity-40"
                       >
                         Disconnect
                       </button>
                     </div>
                     <IdentityKey npub={identity.npub} copied={copied} onCopy={() => void copyNpub()} />
-                    <p className="mt-2 inline-flex flex-wrap items-center gap-1.5 text-[11px] text-[color:var(--color-muted)]">
+                    <p className="mt-2 inline-flex flex-wrap items-center gap-1.5 text-ui-11 text-[color:var(--color-muted)]">
                       <ShieldCheck className="h-3.5 w-3.5 text-[color:var(--color-ok)]" />
                       {identity.connected ? 'Connected' : 'Connects on first request'}
                       {identity.persisted ? ' · session encrypted at rest' : ' · session not persisted'}
                     </p>
                     {identity.relays?.length ? (
-                      <p className="mt-1 truncate font-mono text-[10.5px] text-[#5d6575]">
+                      <p className="mt-1 truncate font-mono text-ui-105 text-[color:var(--color-faint)]">
                         {identity.relays.join(' · ')}
                       </p>
                     ) : null}
                   </div>
                 ) : identity?.configured ? (
                   <div>
-                    <div className="text-[11px] font-medium text-[color:var(--color-muted)]">
+                    <div className="text-ui-11 font-medium text-[color:var(--color-muted)]">
                       Local key
                     </div>
                     <IdentityKey npub={identity.npub} copied={copied} onCopy={() => void copyNpub()} />
                     <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                      <span className="inline-flex items-center gap-1.5 text-[11px] text-[color:var(--color-muted)]">
+                      <span className="inline-flex items-center gap-1.5 text-ui-11 text-[color:var(--color-muted)]">
                         <ShieldCheck className="h-3.5 w-3.5 text-[color:var(--color-ok)]" />
                         {identity.source === 'file'
                           ? 'Encrypted with the OS keychain'
@@ -1087,7 +1138,7 @@ export function SettingsPage({
                         type="button"
                         disabled={identityBusy}
                         onClick={() => void runIdentity(() => window.ncc.removeIdentity())}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-[color:var(--color-danger)]/30 px-2.5 py-1 text-[11px] text-[color:var(--color-danger)] hover:bg-[color:var(--color-danger)]/10 disabled:opacity-40"
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-[color:var(--color-danger)]/30 px-2.5 py-1 text-ui-11 text-[color:var(--color-danger)] hover:bg-[color:var(--color-danger)]/10 disabled:opacity-40"
                       >
                         <Trash2 className="h-3 w-3" />
                         Remove key
@@ -1097,7 +1148,7 @@ export function SettingsPage({
                 ) : (
                   <div>
                     {identity && !identity.encryptionAvailable ? (
-                      <p className="mb-3 rounded-lg border border-[color:var(--color-warn)]/25 bg-[color:var(--color-warn)]/10 px-2.5 py-2 text-[11px] leading-relaxed text-[color:var(--color-warn)]">
+                      <p className="mb-3 rounded-lg border border-[color:var(--color-warn)]/25 bg-[color:var(--color-warn)]/10 px-2.5 py-2 text-ui-11 leading-relaxed text-[color:var(--color-warn)]">
                         No OS keychain is available, so an imported key will only live in
                         memory for this session.
                       </p>
@@ -1111,13 +1162,13 @@ export function SettingsPage({
                         placeholder="nsec1… or 64-char hex"
                         spellCheck={false}
                         autoComplete="off"
-                        className="min-w-0 flex-1 rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] px-3 py-2 font-mono text-[12px] text-[#dfe3ea] outline-none focus:border-[color:var(--color-accent)]/60"
+                        className="min-w-0 flex-1 rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-field)] px-3 py-2 font-mono text-ui-12 text-[color:var(--color-text)] outline-none focus:border-[color:var(--color-accent)]/60"
                       />
                       <button
                         type="button"
                         disabled={identityBusy || secret.trim().length === 0}
                         onClick={() => void runIdentity(() => window.ncc.importIdentity(secret))}
-                        className="rounded-lg bg-[color:var(--color-accent)] px-3 py-1.5 text-[11px] font-semibold text-[#0b0c10] disabled:opacity-40"
+                        className="rounded-lg bg-[color:var(--color-accent)] px-3 py-1.5 text-ui-11 font-semibold text-[color:var(--color-on-accent)] disabled:opacity-40"
                       >
                         Import
                       </button>
@@ -1127,7 +1178,7 @@ export function SettingsPage({
                       type="button"
                       disabled={identityBusy}
                       onClick={() => void runIdentity(() => window.ncc.generateIdentity())}
-                      className="mt-2 text-[11px] text-[color:var(--color-muted)] underline-offset-2 hover:text-white hover:underline disabled:opacity-40"
+                      className="mt-2 text-ui-11 text-[color:var(--color-muted)] underline-offset-2 hover:text-[color:var(--color-text-strong)] hover:underline disabled:opacity-40"
                     >
                       Or generate a new identity
                     </button>
@@ -1135,16 +1186,16 @@ export function SettingsPage({
                 )}
 
                 {identityError ? (
-                  <p className="mt-2 text-xs text-[color:var(--color-danger)]">{identityError}</p>
+                  <p className="mt-2 text-ui-12 text-[color:var(--color-danger)]">{identityError}</p>
                 ) : null}
               </div>
 
               <div className="rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-4">
                 <div className="flex items-center gap-2">
                   <Smartphone className="h-3.5 w-3.5 text-[color:var(--color-accent)]" />
-                  <h3 className="text-[12px] font-semibold text-[#e7e9ef]">Remote signer</h3>
+                  <h3 className="text-ui-12 font-semibold text-[color:var(--color-text-strong)]">Remote signer</h3>
                 </div>
-                <p className="mt-1 text-[11.5px] leading-relaxed text-[color:var(--color-muted)]">
+                <p className="mt-1 text-ui-115 leading-relaxed text-[color:var(--color-muted)]">
                   Connect a bunker such as Amber or Nostr Connect. Signing and private
                   locator decryption then happen on the remote device.
                 </p>
@@ -1156,34 +1207,34 @@ export function SettingsPage({
                     placeholder="bunker://…"
                     spellCheck={false}
                     autoComplete="off"
-                    className="min-w-0 flex-1 rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] px-3 py-2 font-mono text-[12px] text-[#dfe3ea] outline-none focus:border-[color:var(--color-accent)]/60"
+                    className="min-w-0 flex-1 rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-field)] px-3 py-2 font-mono text-ui-12 text-[color:var(--color-text)] outline-none focus:border-[color:var(--color-accent)]/60"
                   />
                   <button
                     type="button"
                     disabled={connectBusy || bunker.trim().length === 0}
                     onClick={() => void connectBunker()}
-                    className="rounded-lg border border-[color:var(--color-accent)]/30 bg-[color:var(--color-accent)]/10 px-3 py-1.5 text-[11px] font-semibold text-[color:var(--color-accent)] disabled:opacity-40"
+                    className="rounded-lg border border-[color:var(--color-accent)]/30 bg-[color:var(--color-accent)]/10 px-3 py-1.5 text-ui-11 font-semibold text-[color:var(--color-accent)] disabled:opacity-40"
                   >
                     {connectBusy ? 'Connecting…' : 'Connect'}
                   </button>
                 </div>
                 {remoteError ? (
-                  <p className="mt-2 text-xs text-[color:var(--color-danger)]">{remoteError}</p>
+                  <p className="mt-2 text-ui-12 text-[color:var(--color-danger)]">{remoteError}</p>
                 ) : null}
 
                 {identity?.mode === 'nip46' && identity.relays?.length ? (
-                  <div className="mt-3 rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] p-3">
-                    <p className="text-[10.5px] font-semibold uppercase tracking-wide text-[color:var(--color-muted)]">
+                  <div className="mt-3 rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-field)] p-3">
+                    <p className="text-ui-105 font-semibold uppercase tracking-wide text-[color:var(--color-muted)]">
                       Bunker relays
                     </p>
-                    <ul className="mt-1.5 space-y-1 font-mono text-[11px] text-[#c9d1e0]">
+                    <ul className="mt-1.5 space-y-1 font-mono text-ui-11 text-[color:var(--color-text-soft)]">
                       {identity.relays.map((url) => (
                         <li key={url} className="break-all">
                           {url}
                         </li>
                       ))}
                     </ul>
-                    <p className="mt-1.5 text-[10.5px] leading-relaxed text-[color:var(--color-muted)]">
+                    <p className="mt-1.5 text-ui-105 leading-relaxed text-[color:var(--color-muted)]">
                       A relay listed as <span className="font-mono">ncc://</span> in the bunker
                       URL is resolved here, pinned to its locator, and re-resolved before it
                       expires.
@@ -1202,7 +1253,7 @@ export function SettingsPage({
               />
               <div className="rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-2">
                 {permissions.length === 0 ? (
-                  <p className="px-3 py-8 text-center text-[11.5px] text-[color:var(--color-muted)]">
+                  <p className="px-3 py-8 text-center text-ui-115 text-[color:var(--color-muted)]">
                     No service has been remembered yet.
                   </p>
                 ) : (
@@ -1210,13 +1261,13 @@ export function SettingsPage({
                     {permissions.map((permission) => (
                       <li
                         key={permission.origin}
-                        className="flex items-center justify-between gap-2 rounded-lg border border-transparent px-2.5 py-2 hover:border-[color:var(--color-line)] hover:bg-white/[0.03]"
+                        className="flex items-center justify-between gap-2 rounded-lg border border-transparent px-2.5 py-2 hover:border-[color:var(--color-line)] hover:bg-[color:var(--color-hover-soft)]"
                       >
                         <span className="min-w-0">
-                          <span className="block truncate font-mono text-[11px] text-[#c9d1e0]">
+                          <span className="block truncate font-mono text-ui-11 text-[color:var(--color-text-soft)]">
                             {permission.label}
                           </span>
-                          <span className="mt-0.5 block truncate font-mono text-[9.5px] text-[#5d6575]">
+                          <span className="mt-0.5 block truncate font-mono text-ui-95 text-[color:var(--color-faint)]">
                             {permission.origin}
                           </span>
                         </span>
@@ -1228,7 +1279,7 @@ export function SettingsPage({
                               .revokePermission(permission.origin)
                               .then(setPermissions)
                           }
-                          className="shrink-0 rounded p-1.5 text-[color:var(--color-muted)] hover:bg-white/5 hover:text-[color:var(--color-danger)]"
+                          className="shrink-0 rounded p-1.5 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)] hover:text-[color:var(--color-danger)]"
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </button>
@@ -1246,9 +1297,9 @@ export function SettingsPage({
                 title="About Nostr Navigator"
                 hint="A browser that resolves services through signed Nostr locators instead of DNS."
               />
-              <div className="space-y-3 rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-4 text-[11.5px] leading-relaxed text-[color:var(--color-muted)]">
+              <div className="space-y-3 rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-4 text-ui-115 leading-relaxed text-[color:var(--color-muted)]">
                 <p>
-                  An <span className="font-mono text-[#dfe3ea]">ncc://npub…/service</span>{' '}
+                  An <span className="font-mono text-[color:var(--color-text)]">ncc://npub…/service</span>{' '}
                   address is resolved through NCC-05: the npub signs a locator that lists
                   endpoints and, optionally, a TLS SPKI fingerprint. No DNS and no
                   certificate authority are involved.
@@ -1264,7 +1315,7 @@ export function SettingsPage({
                 <button
                   type="button"
                   onClick={() => void window.ncc.runCommand('open-spec')}
-                  className="rounded-lg border border-[color:var(--color-line)] px-3 py-1.5 text-[11.5px] text-[#dfe3ea] hover:bg-white/5"
+                  className="rounded-lg border border-[color:var(--color-line)] px-3 py-1.5 text-ui-115 text-[color:var(--color-text)] hover:bg-[color:var(--color-hover)]"
                 >
                   Read the NCC-05 specification
                 </button>
@@ -1290,8 +1341,8 @@ function torStatusText(status: TorStatus | null): string {
 function SectionHeading({ title, hint }: { title: string; hint: string }) {
   return (
     <div>
-      <h2 className="text-[15px] font-semibold text-[#e7e9ef]">{title}</h2>
-      <p className="mt-1 text-[11.5px] leading-relaxed text-[color:var(--color-muted)]">
+      <h2 className="text-ui-15 font-semibold text-[color:var(--color-text-strong)]">{title}</h2>
+      <p className="mt-1 text-ui-115 leading-relaxed text-[color:var(--color-muted)]">
         {hint}
       </p>
     </div>
@@ -1308,8 +1359,8 @@ function IdentityKey({
   onCopy: () => void
 }) {
   return (
-    <div className="mt-2 flex items-start justify-between gap-2 rounded-lg bg-[#0e1016] px-2.5 py-2">
-      <code className="min-w-0 break-all font-mono text-[11.5px] leading-relaxed text-[#c9d1e0]">
+    <div className="mt-2 flex items-start justify-between gap-2 rounded-lg bg-[color:var(--color-field)] px-2.5 py-2">
+      <code className="min-w-0 break-all font-mono text-ui-115 leading-relaxed text-[color:var(--color-text-soft)]">
         {npub}
       </code>
       <button
@@ -1317,7 +1368,7 @@ function IdentityKey({
         onClick={onCopy}
         title="Copy npub"
         aria-label="Copy npub"
-        className="shrink-0 rounded p-1 text-[color:var(--color-muted)] hover:bg-white/5 hover:text-white"
+        className="shrink-0 rounded p-1 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)] hover:text-[color:var(--color-text-strong)]"
       >
         {copied ? (
           <ShieldCheck className="h-3.5 w-3.5 text-[color:var(--color-ok)]" />

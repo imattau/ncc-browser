@@ -5,7 +5,7 @@ export function SecurityBanner({ banner }: { banner: SecurityBanner }) {
   return (
     <div
       data-insecure-banner
-      className="flex h-[30px] shrink-0 items-center gap-2 border-b border-[color:var(--color-warn)]/20 bg-[color:var(--color-warn)]/[0.08] px-3 text-[11px] text-[color:var(--color-warn)]"
+      className="flex h-[30px] shrink-0 items-center gap-2 border-b border-[color:var(--color-warn)]/20 bg-[color:var(--color-warn)]/[0.08] px-3 text-ui-11 text-[color:var(--color-warn)]"
     >
       <ShieldAlert className="h-3.5 w-3.5 shrink-0" />
       <span className="font-medium">{banner.title}</span>
@@ -35,24 +35,24 @@ export function InsecureWarning({ prompt, onChoice }: InsecureWarningProps) {
       className="absolute inset-0 z-20 flex items-center justify-center overflow-y-auto bg-[color:var(--color-ink)] px-6 py-10"
     >
       <div className="w-full max-w-[560px] rounded-2xl border border-[color:var(--color-warn)]/30 bg-[color:var(--color-panel-raised)] p-6 shadow-[0_30px_100px_rgba(0,0,0,0.5)]">
-        <span className="inline-flex items-center gap-2 rounded-full border border-[color:var(--color-warn)]/30 bg-[color:var(--color-warn)]/10 px-2.5 py-1 text-[10.5px] font-medium text-[color:var(--color-warn)]">
+        <span className="inline-flex items-center gap-2 rounded-full border border-[color:var(--color-warn)]/30 bg-[color:var(--color-warn)]/10 px-2.5 py-1 text-ui-105 font-medium text-[color:var(--color-warn)]">
           <AlertTriangle className="h-3.5 w-3.5" />
           {httpsOnly ? 'HTTPS required' : 'HTTP'}
         </span>
-        <h2 className="mt-4 text-[19px] font-semibold text-[#e7e9ef]">{title}</h2>
-        <p className="mt-2 text-[12.5px] leading-relaxed text-[color:var(--color-muted)]">
+        <h2 className="mt-4 text-ui-19 font-semibold text-[color:var(--color-text-strong)]">{title}</h2>
+        <p className="mt-2 text-ui-125 leading-relaxed text-[color:var(--color-muted)]">
           {detail}
         </p>
-        <div className="mt-4 rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] px-3 py-2.5">
-          <p className="truncate font-mono text-[11px] text-[#c9d1e0]">{prompt.url}</p>
-          <p className="mt-1 text-[10.5px] text-[color:var(--color-muted)]">{prompt.host}</p>
+        <div className="mt-4 rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-field)] px-3 py-2.5">
+          <p className="truncate font-mono text-ui-11 text-[color:var(--color-text-soft)]">{prompt.url}</p>
+          <p className="mt-1 text-ui-105 text-[color:var(--color-muted)]">{prompt.host}</p>
         </div>
         <div className="mt-5 flex flex-wrap items-center justify-between gap-2">
           <button
             type="button"
             data-insecure-go-back
             onClick={() => onChoice('cancel')}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-[color:var(--color-line)] px-3 py-1.5 text-[11.5px] text-[color:var(--color-muted)] hover:bg-white/5 hover:text-white"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-[color:var(--color-line)] px-3 py-1.5 text-ui-115 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)] hover:text-[color:var(--color-text-strong)]"
           >
             <ChevronLeft className="h-3.5 w-3.5" />
             Go back
@@ -62,7 +62,7 @@ export function InsecureWarning({ prompt, onChoice }: InsecureWarningProps) {
               type="button"
               data-insecure-always
               onClick={() => onChoice('always')}
-              className="rounded-lg border border-[color:var(--color-warn)]/30 px-3 py-1.5 text-[11.5px] text-[color:var(--color-warn)] hover:bg-[color:var(--color-warn)]/10"
+              className="rounded-lg border border-[color:var(--color-warn)]/30 px-3 py-1.5 text-ui-115 text-[color:var(--color-warn)] hover:bg-[color:var(--color-warn)]/10"
             >
               {prompt.ephemeral ? 'Always for this session' : 'Always allow this site'}
             </button>
@@ -70,13 +70,13 @@ export function InsecureWarning({ prompt, onChoice }: InsecureWarningProps) {
               type="button"
               data-insecure-continue
               onClick={() => onChoice('continue')}
-              className="rounded-lg bg-[color:var(--color-warn)] px-3.5 py-1.5 text-[11.5px] font-semibold text-[#0b0c10]"
+              className="rounded-lg bg-[color:var(--color-warn)] px-3.5 py-1.5 text-ui-115 font-semibold text-[color:var(--color-on-warn)]"
             >
               Continue once
             </button>
           </div>
         </div>
-        <p className="mt-3 text-[10.5px] leading-relaxed text-[#5d6575]">
+        <p className="mt-3 text-ui-105 leading-relaxed text-[color:var(--color-faint)]">
           {prompt.mode === 'prefer'
             ? 'Prefer HTTPS is on. This prompt appears because the HTTPS attempt failed or the destination is HTTP.'
             : prompt.mode === 'off'

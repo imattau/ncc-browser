@@ -47,14 +47,14 @@ export function SiteInfoPanel({
           <button
             type="button"
             onClick={onOpenSettings}
-            className="text-[11px] text-[color:var(--color-muted)] underline-offset-2 hover:text-white hover:underline"
+            className="text-ui-11 text-[color:var(--color-muted)] underline-offset-2 hover:text-[color:var(--color-text-strong)] hover:underline"
           >
             Resolution settings
           </button>
           <button
             type="button"
             onClick={onReload}
-            className="rounded-lg border border-[color:var(--color-line)] px-2.5 py-1.5 text-[11px] text-[#dfe3ea] hover:bg-white/5"
+            className="rounded-lg border border-[color:var(--color-line)] px-2.5 py-1.5 text-ui-11 text-[color:var(--color-text)] hover:bg-[color:var(--color-hover)]"
           >
             Reload
           </button>
@@ -86,11 +86,11 @@ export function SiteInfoPanel({
         {state.tabKind === 'private' ? <PrivateBlock /> : null}
 
         {!web && !security && !failure ? (
-          <div className="flex items-start gap-2 rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] p-3">
+          <div className="flex items-start gap-2 rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-field)] p-3">
             <Lock className="mt-0.5 h-4 w-4 shrink-0 text-[color:var(--color-muted)]" />
             <div>
-              <p className="text-[12px] font-medium text-[#e7e9ef]">NCC page</p>
-              <p className="mt-1 text-[11px] leading-relaxed text-[color:var(--color-muted)]">
+              <p className="text-ui-12 font-medium text-[color:var(--color-text-strong)]">NCC page</p>
+              <p className="mt-1 text-ui-11 leading-relaxed text-[color:var(--color-muted)]">
                 Resolving this address over Nostr. Transport and trust details appear
                 once the document loads.
               </p>
@@ -103,7 +103,7 @@ export function SiteInfoPanel({
         ) : null}
 
         {!web ? (
-          <p className="border-t border-[color:var(--color-line)] pt-2 text-[10.5px] leading-relaxed text-[#5d6575]">
+          <p className="border-t border-[color:var(--color-line)] pt-2 text-ui-105 leading-relaxed text-[color:var(--color-faint)]">
             The npub in the address is the trust anchor. NCC-02 adds service intent and a
             transport key; NCC-05 supplies the reachable endpoint. A conflicting transport
             key fails closed.
@@ -145,16 +145,16 @@ function ClearnetBlock({ url }: { url: string }) {
         : 'Loaded directly from the clearnet. NCC resolution and NCC-02 anchoring were not involved.'
 
   return (
-    <div className="rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] p-3">
-      <p className={cn('flex items-center gap-1.5 text-[11.5px] font-medium', tone)}>
+    <div className="rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-field)] p-3">
+      <p className={cn('flex items-center gap-1.5 text-ui-115 font-medium', tone)}>
         <Icon className="h-3.5 w-3.5" />
         {title}
       </p>
-      <p className="mt-1 text-[11px] leading-relaxed text-[color:var(--color-muted)]">
+      <p className="mt-1 text-ui-11 leading-relaxed text-[color:var(--color-muted)]">
         {hint}
       </p>
       {state.host ? (
-        <p className="mt-1 truncate font-mono text-[10px] text-[#5d6575]">{state.host}</p>
+        <p className="mt-1 truncate font-mono text-ui-10 text-[color:var(--color-faint)]">{state.host}</p>
       ) : null}
     </div>
   )
@@ -164,12 +164,12 @@ function FailureBlock({ code, message }: { code: string; message: string }) {
   const copy = ERROR_COPY[code]
   return (
     <div className="rounded-xl border border-[color:var(--color-danger)]/30 bg-[color:var(--color-danger)]/[0.07] p-3">
-      <p className="flex items-center gap-1.5 text-[11px] font-semibold text-[color:var(--color-danger)]">
+      <p className="flex items-center gap-1.5 text-ui-11 font-semibold text-[color:var(--color-danger)]">
         <AlertTriangle className="h-3.5 w-3.5" />
         {copy?.title ?? 'Page failed'}
       </p>
-      <p className="mt-1 font-mono text-[9.5px] text-[color:var(--color-danger)]/80">{code}</p>
-      <p className="mt-1 text-[11px] leading-relaxed text-[color:var(--color-muted)]">
+      <p className="mt-1 font-mono text-ui-95 text-[color:var(--color-danger)]/80">{code}</p>
+      <p className="mt-1 text-ui-11 leading-relaxed text-[color:var(--color-muted)]">
         {copy?.hint ?? message}
       </p>
     </div>
@@ -224,22 +224,22 @@ function TransportBlock({
 
   const Icon = copy.icon
   return (
-    <div className="rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] p-3">
+    <div className="rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-field)] p-3">
       <div className="flex items-center justify-between gap-2">
-        <span className={cn('inline-flex items-center gap-1.5 text-[11.5px] font-medium', copy.tone)}>
+        <span className={cn('inline-flex items-center gap-1.5 text-ui-115 font-medium', copy.tone)}>
           <Icon className="h-3.5 w-3.5" />
           {copy.title}
         </span>
         {pinned ? (
-          <span className="rounded border border-[color:var(--color-ok)]/25 px-1.5 py-0.5 text-[9.5px] text-[color:var(--color-ok)]">
+          <span className="rounded border border-[color:var(--color-ok)]/25 px-1.5 py-0.5 text-ui-95 text-[color:var(--color-ok)]">
             k verified
           </span>
         ) : null}
       </div>
-      <p className="mt-1 text-[11px] leading-relaxed text-[color:var(--color-muted)]">
+      <p className="mt-1 text-ui-11 leading-relaxed text-[color:var(--color-muted)]">
         {copy.hint}
       </p>
-      {host ? <p className="mt-1 truncate font-mono text-[10px] text-[#5d6575]">{host}</p> : null}
+      {host ? <p className="mt-1 truncate font-mono text-ui-10 text-[color:var(--color-faint)]">{host}</p> : null}
     </div>
   )
 }
@@ -259,20 +259,20 @@ function TorBlock({
       className={cn(
         'rounded-xl border p-3',
         active
-          ? 'border-[#7c6ad6]/35 bg-[#7c6ad6]/[0.08]'
-          : 'border-[color:var(--color-line)] bg-[#0e1016]'
+          ? 'border-[color:var(--color-violet)]/35 bg-[color:var(--color-violet)]/[0.08]'
+          : 'border-[color:var(--color-line)] bg-[color:var(--color-field)]'
       )}
     >
       <p
         className={cn(
-          'flex items-center gap-1.5 text-[11.5px] font-medium',
-          active ? 'text-[#c4b5fd]' : 'text-[color:var(--color-muted)]'
+          'flex items-center gap-1.5 text-ui-115 font-medium',
+          active ? 'text-[color:var(--color-violet-text)]' : 'text-[color:var(--color-muted)]'
         )}
       >
         <Globe className="h-3.5 w-3.5" />
         {tabTor ? 'Tor tab' : active ? 'Using Tor' : 'Onion endpoint available'}
       </p>
-      <p className="mt-1 text-[11px] leading-relaxed text-[color:var(--color-muted)]">
+      <p className="mt-1 text-ui-11 leading-relaxed text-[color:var(--color-muted)]">
         {tabTor
           ? 'All traffic from this tab is routed through Tor. HTTP pages still have no TLS layer.'
           : active
@@ -289,10 +289,10 @@ function PrivateBlock() {
   return (
     <div
       data-private-block
-      className="rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] p-3"
+      className="rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-field)] p-3"
     >
-      <p className="text-[11.5px] font-medium text-[#c4b5fd]">Private tab</p>
-      <p className="mt-1 text-[11px] leading-relaxed text-[color:var(--color-muted)]">
+      <p className="text-ui-115 font-medium text-[color:var(--color-violet-text)]">Private tab</p>
+      <p className="mt-1 text-ui-11 leading-relaxed text-[color:var(--color-muted)]">
         Cookies, cache and remembered signer permissions stay in memory and are cleared when
         the last private tab closes. History is not saved.
       </p>
@@ -318,12 +318,12 @@ function AnchorBlock({ anchor }: { anchor: AnchorInfo | null }) {
 
   if (!record) {
     return (
-      <div className="rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] p-3">
-        <p className={cn('flex items-center gap-1.5 text-[11.5px] font-medium', tone)}>
+      <div className="rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-field)] p-3">
+        <p className={cn('flex items-center gap-1.5 text-ui-115 font-medium', tone)}>
           <Icon className="h-3.5 w-3.5" />
           {labelFor(anchor)}
         </p>
-        <p className="mt-1 text-[11px] leading-relaxed text-[color:var(--color-muted)]">
+        <p className="mt-1 text-ui-11 leading-relaxed text-[color:var(--color-muted)]">
           No NCC-02 service record (kind 30059) was found for this service. The NCC-05
           locator is still signed by the publisher, but there is no separate service
           identity anchor.
@@ -333,9 +333,9 @@ function AnchorBlock({ anchor }: { anchor: AnchorInfo | null }) {
   }
 
   return (
-    <div className="rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] p-3">
+    <div className="rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-field)] p-3">
       <div className="flex items-center justify-between gap-2">
-        <p className={cn('flex items-center gap-1.5 text-[11.5px] font-medium', tone)}>
+        <p className={cn('flex items-center gap-1.5 text-ui-115 font-medium', tone)}>
           {anchor?.fallback ? (
             <AnchorIcon className="h-3.5 w-3.5" />
           ) : (
@@ -343,13 +343,13 @@ function AnchorBlock({ anchor }: { anchor: AnchorInfo | null }) {
           )}
           {labelFor(anchor)}
         </p>
-        <span className="text-[9.5px] text-[#5d6575]">
+        <span className="text-ui-95 text-[color:var(--color-faint)]">
           {anchor?.required ? 'required' : 'optional'}
         </span>
       </div>
 
       {anchor?.fallback ? (
-        <p className="mt-2 rounded-lg border border-[color:var(--color-accent)]/25 bg-[color:var(--color-accent)]/10 px-2 py-1.5 text-[10.5px] leading-relaxed text-[color:var(--color-accent)]">
+        <p className="mt-2 rounded-lg border border-[color:var(--color-accent)]/25 bg-[color:var(--color-accent)]/10 px-2 py-1.5 text-ui-105 leading-relaxed text-[color:var(--color-accent)]">
           NCC-05 had no usable endpoint, so this page is served from the NCC-02 `u`
           endpoint instead.
         </p>
@@ -426,12 +426,12 @@ function Row({
 }) {
   return (
     <div className="flex items-start justify-between gap-3">
-      <dt className="shrink-0 text-[10px] uppercase tracking-wide text-[#5d6575]">{label}</dt>
+      <dt className="shrink-0 text-ui-10 uppercase tracking-wide text-[color:var(--color-faint)]">{label}</dt>
       <dd
         title={title}
         className={cn(
-          'min-w-0 truncate text-right text-[10.5px] text-[#dfe3ea]',
-          mono && 'font-mono text-[10px]'
+          'min-w-0 truncate text-right text-ui-105 text-[color:var(--color-text)]',
+          mono && 'font-mono text-ui-10'
         )}
       >
         {value}

@@ -1,8 +1,17 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { NccApi } from '@shared/api'
-import type { AppConfig, Bookmark, DownloadNotice, NavState, SignerRequest } from '@shared/types'
+import { readAppearanceBootArgument } from '@shared/appearance'
+import {
+  DEFAULT_APPEARANCE,
+  type AppConfig,
+  type Bookmark,
+  type DownloadNotice,
+  type NavState,
+  type SignerRequest
+} from '@shared/types'
 
 const api: NccApi = {
+  initialAppearance: readAppearanceBootArgument(process.argv) ?? DEFAULT_APPEARANCE,
   navigate: (input) => ipcRenderer.invoke('ncc:navigate', input),
   back: () => ipcRenderer.invoke('ncc:back'),
   forward: () => ipcRenderer.invoke('ncc:forward'),
@@ -53,6 +62,7 @@ const api: NccApi = {
   omniboxSuggest: (input) => ipcRenderer.invoke('ncc:omnibox-suggest', input),
   clearBrowsingHistory: () => ipcRenderer.invoke('ncc:clear-browsing-history'),
   setSearchConfig: (config) => ipcRenderer.invoke('ncc:set-search-config', config),
+  setAppearance: (appearance) => ipcRenderer.invoke('ncc:set-appearance', appearance),
   torStatus: () => ipcRenderer.invoke('ncc:tor-status'),
   torTest: () => ipcRenderer.invoke('ncc:tor-test'),
   torRestart: () => ipcRenderer.invoke('ncc:tor-restart'),

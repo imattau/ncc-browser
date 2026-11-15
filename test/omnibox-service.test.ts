@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { BookmarkStore } from '../src/main/bookmarks'
 import { HistoryStore } from '../src/main/history'
 import { OmniboxService, type OmniboxTab } from '../src/main/omnibox'
-import type { AppConfig } from '../src/shared/types'
+import { DEFAULT_APPEARANCE, type AppConfig } from '../src/shared/types'
 
 const NPUB = 'npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqhs2n3v'
 const NOW = 1_700_000_000_000
@@ -24,6 +24,7 @@ function config(overrides: Partial<AppConfig> = {}): AppConfig {
     searchEngine: 'duckduckgo',
     searchEngineCustom: '',
     useOnionSearch: true,
+    appearance: { ...DEFAULT_APPEARANCE },
     ...overrides
   }
 }

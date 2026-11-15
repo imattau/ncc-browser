@@ -15,6 +15,7 @@ import type { RelayLocatorService } from './relay/locator'
 import type { RelayPool } from './relay/pool'
 import type { RelayPinStore } from './relay/socket'
 import type { ApprovalBroker } from './approval'
+import { applyThemeSource } from './appearance'
 import type { IdentityManager } from './signer/manager'
 import type { PermissionStore } from './signer/permissions'
 import type { BrowserShell } from './shell'
@@ -160,6 +161,27 @@ export function registerIpc(deps: IpcDeps): void {
         if (!result.ok) return { ok: false, error: result.error }
       }
       const config = deps.config.setSearchConfig({ engine, custom: template, useOnionSearch })
+      return { ok: true, config }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
+  ipcMain.handle('ncc:set-appearance', (event, payload: unknown) => {
+    if (!fromChrome(event)) {
+      return { ok: false, error: 'Appearance can only change from the browser chrome' }
+    }
+    try {
+      if (!payload || typeof payload !== 'object') {
+        return { ok: false, error: 'Invalid appearance settings' }
+      }
+      const before = deps.config.get().appearance
+      const config = deps.config.setAppearance(payload)
+      if (config.appearance.theme !== before.theme) {
+        applyThemeSource(config.appearance.theme)
+      }
+      deps.shell.applyAppearance()
+      deps.shell.sendConfig(config)
       return { ok: true, config }
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }

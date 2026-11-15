@@ -118,15 +118,15 @@ export function Toolbar({
           data-downloads-button
           title="Downloads (Ctrl+J)"
           onClick={onOpenDownloads}
-          className="relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[color:var(--color-muted)] transition-colors hover:bg-white/5 hover:text-white"
+          className="relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[color:var(--color-muted)] transition-colors hover:bg-[color:var(--color-hover)] hover:text-[color:var(--color-text-strong)]"
         >
           <Download className="h-4 w-4" />
           <span
             className={cn(
-              'absolute -right-0.5 -top-0.5 inline-flex h-3.5 min-w-3.5 items-center justify-center rounded-full px-1 text-[9px] font-semibold',
+              'absolute -right-0.5 -top-0.5 inline-flex h-3.5 min-w-3.5 items-center justify-center rounded-full px-1 text-ui-9 font-semibold',
               activeDownloads > 0
-                ? 'animate-pulse bg-[color:var(--color-accent)] text-[#0b0c10]'
-                : 'bg-[#2a2f3c] text-[#c9d1e0]'
+                ? 'animate-pulse bg-[color:var(--color-accent)] text-[color:var(--color-on-accent)]'
+                : 'bg-[color:var(--color-track)] text-[color:var(--color-text-soft)]'
             )}
           >
             {activeDownloads || downloads.length}
@@ -140,7 +140,7 @@ export function Toolbar({
         data-signer-button
         title={signerTitle(identity)}
         onClick={onOpenSettings}
-        className="relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[color:var(--color-muted)] transition-colors hover:bg-white/5 hover:text-white"
+        className="relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[color:var(--color-muted)] transition-colors hover:bg-[color:var(--color-hover)] hover:text-[color:var(--color-text-strong)]"
       >
         <KeyRound
           className={cn(
@@ -231,7 +231,7 @@ function NavButton({
         'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[color:var(--color-muted)] transition-colors',
         disabled
           ? 'cursor-default opacity-35'
-          : 'hover:bg-white/5 hover:text-[#e7e9ef] active:bg-white/10'
+          : 'hover:bg-[color:var(--color-hover)] hover:text-[color:var(--color-text-strong)] active:bg-[color:var(--color-hover-strong)]'
       )}
     >
       {children}

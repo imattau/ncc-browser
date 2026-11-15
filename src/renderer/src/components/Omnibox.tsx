@@ -58,33 +58,33 @@ export function Omnibox({
             onClick={() => onPick(suggestion)}
             className={cn(
               'flex w-full items-center gap-2.5 px-3 py-1.5 text-left',
-              active ? 'bg-[color:var(--color-accent)]/10' : 'hover:bg-white/[0.05]'
+              active ? 'bg-[color:var(--color-accent)]/10' : 'hover:bg-[color:var(--color-hover)]'
             )}
           >
             <span
               className={cn(
-                'flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-[color:var(--color-line)] bg-[#0e1016]',
+                'flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-[color:var(--color-line)] bg-[color:var(--color-field)]',
                 iconTone(suggestion.kind)
               )}
             >
               <Icon className="h-3 w-3" />
             </span>
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-[12px] text-[#e7e9ef]">
+              <span className="block truncate text-ui-12 text-[color:var(--color-text-strong)]">
                 {highlight(suggestion.title, query)}
               </span>
-              <span className="mt-0.5 flex min-w-0 items-center gap-1 text-[10px] text-[color:var(--color-muted)]">
+              <span className="mt-0.5 flex min-w-0 items-center gap-1 text-ui-10 text-[color:var(--color-muted)]">
                 <span className="shrink-0">{suggestion.detail}</span>
                 {suggestion.url ? (
                   <>
-                    <span className="text-[#3f4553]">·</span>
+                    <span className="text-[color:var(--color-line-strong)]">·</span>
                     <span className="truncate font-mono">{highlight(suggestion.url, query)}</span>
                   </>
                 ) : null}
               </span>
             </span>
             {active ? (
-              <span className="shrink-0 text-[9.5px] text-[#5d6575]">Enter</span>
+              <span className="shrink-0 text-ui-95 text-[color:var(--color-faint)]">Enter</span>
             ) : null}
           </button>
         )
@@ -93,7 +93,7 @@ export function Omnibox({
       {hint ? (
         <p
           data-omnibox-hint
-          className="border-t border-[color:var(--color-line)] px-3 py-2 text-[11px] text-[color:var(--color-danger)]"
+          className="border-t border-[color:var(--color-line)] px-3 py-2 text-ui-11 text-[color:var(--color-danger)]"
         >
           {hint}
         </p>
@@ -109,9 +109,9 @@ function iconTone(kind: OmniboxSuggestion['kind']): string {
     case 'bookmark':
       return 'text-[color:var(--color-warn)]'
     case 'tab':
-      return 'text-[#a78bfa]'
+      return 'text-[color:var(--color-violet-strong)]'
     case 'service':
-      return 'text-[#c4b5fd]'
+      return 'text-[color:var(--color-violet-text)]'
     default:
       return 'text-[color:var(--color-muted)]'
   }

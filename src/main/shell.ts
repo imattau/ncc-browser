@@ -13,16 +13,16 @@ import { parseNccAddress, toDisplayUrl, toInternalUrl, type NccAddress } from '@
 import { BANNER_HEIGHT, CHROME_HEIGHT } from '@shared/layout'
 import type { CommandId } from '@shared/commands'
 import { reorderTabs } from '@shared/tabs'
-import {
-  installChromeContextMenu,
-  installContentContextMenu
-} from './context-menu'
+import { appearanceBootArgument } from '@shared/appearance'
+import { installChromeContextMenu, installContentContextMenu } from './context-menu'
 import { commandForInput } from './shortcuts'
 import { fetchFavicon } from './favicon'
 import { renderErrorPage } from './error-page'
+import { windowBackground } from './appearance'
 import type { BookmarkStore } from './bookmarks'
 import type { SavedSession, SavedWindow, SessionStore } from './session-store'
 import type {
+  AppearanceConfig,
   AppConfig,
   Bookmark,
   DownloadNotice,
@@ -66,6 +66,7 @@ export interface ShellDeps {
   torGuard: TorGuard
   health: EndpointHealth
   preferTor: () => boolean
+  appearance: () => AppearanceConfig
   onContentWebContents?: (contents: WebContents) => void
 }
 
@@ -135,7 +136,7 @@ export class BrowserShell {
       minHeight: 480,
       // The tab strip is the title bar: custom drag region and window controls.
       frame: false,
-      backgroundColor: '#0b0c10',
+      backgroundColor: windowBackground(),
       show: false,
       title: 'Nostr Navigator',
       webPreferences: {
@@ -143,7 +144,9 @@ export class BrowserShell {
         sandbox: true,
         contextIsolation: true,
         nodeIntegration: false,
-        spellcheck: false
+        spellcheck: false,
+        // Lets the preload hand the renderer the appearance before React mounts.
+        additionalArguments: [appearanceBootArgument(deps.appearance())]
       }
     })
 
@@ -171,6 +174,11 @@ export class BrowserShell {
   /** Push an updated config to the chrome renderer, e.g. after a relay rotated. */
   sendConfig(config: AppConfig): void {
     this.sendChrome('ncc:config', config)
+  }
+
+  /** Match the native window background to the resolved theme. */
+  applyAppearance(): void {
+    if (!this.window.isDestroyed()) this.window.setBackgroundColor(windowBackground())
   }
 
   getState(): NavState {

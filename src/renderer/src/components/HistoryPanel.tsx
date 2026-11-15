@@ -24,7 +24,7 @@ export function HistoryPanel({ history, onClose, onSelect, onClear }: HistoryPan
           type="button"
           disabled={entries.length === 0}
           onClick={onClear}
-          className="inline-flex items-center gap-1.5 text-[11px] text-[color:var(--color-muted)] hover:text-[color:var(--color-danger)] disabled:cursor-default disabled:opacity-40"
+          className="inline-flex items-center gap-1.5 text-ui-11 text-[color:var(--color-muted)] hover:text-[color:var(--color-danger)] disabled:cursor-default disabled:opacity-40"
         >
           <Trash2 className="h-3 w-3" />
           Clear history for this tab
@@ -33,8 +33,8 @@ export function HistoryPanel({ history, onClose, onSelect, onClear }: HistoryPan
     >
       {entries.length === 0 ? (
         <div className="px-3 py-8 text-center">
-          <History className="mx-auto h-5 w-5 text-[#4d5462]" />
-          <p className="mt-2 text-[11.5px] text-[color:var(--color-muted)]">
+          <History className="mx-auto h-5 w-5 text-[color:var(--color-faint-dim)]" />
+          <p className="mt-2 text-ui-115 text-[color:var(--color-muted)]">
             Navigation in this tab will be listed here.
           </p>
         </div>
@@ -51,19 +51,19 @@ export function HistoryPanel({ history, onClose, onSelect, onClear }: HistoryPan
                   className={cn(
                     'flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left',
                     active
-                      ? 'bg-[color:var(--color-accent)]/10 text-[#e7e9ef]'
-                      : 'text-[#c9d1e0] hover:bg-white/[0.05]'
+                      ? 'bg-[color:var(--color-accent)]/10 text-[color:var(--color-text-strong)]'
+                      : 'text-[color:var(--color-text-soft)] hover:bg-[color:var(--color-hover)]'
                   )}
                 >
                   <span
                     className={cn(
                       'mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full',
-                      active ? 'bg-[color:var(--color-accent)]' : 'bg-[#3f4553]'
+                      active ? 'bg-[color:var(--color-accent)]' : 'bg-[color:var(--color-line-strong)]'
                     )}
                   />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[11.5px]">{entry.title}</span>
-                    <span className="mt-0.5 block truncate font-mono text-[9.5px] text-[#5d6575]">
+                    <span className="block truncate text-ui-115">{entry.title}</span>
+                    <span className="mt-0.5 block truncate font-mono text-ui-95 text-[color:var(--color-faint)]">
                       {entry.url}
                     </span>
                   </span>

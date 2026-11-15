@@ -146,7 +146,7 @@ export function AddressBar({
     <div className="relative flex-1">
       <div
         className={cn(
-          'flex h-9 items-center gap-2 rounded-xl border bg-[#0e1016] px-3 transition-colors',
+          'flex h-9 items-center gap-2 rounded-xl border bg-[color:var(--color-field)] px-3 transition-colors',
           hint
             ? 'border-[color:var(--color-danger)]/60'
             : 'border-[color:var(--color-line)] focus-within:border-[color:var(--color-accent)]/60',
@@ -167,7 +167,7 @@ export function AddressBar({
             onOpenSiteInfo({ top: rect.bottom, left: rect.left })
           }}
           className={cn(
-            'relative inline-flex h-5 w-5 shrink-0 items-center justify-center rounded transition-colors hover:bg-white/10 disabled:cursor-default disabled:hover:bg-transparent',
+            'relative inline-flex h-5 w-5 shrink-0 items-center justify-center rounded transition-colors hover:bg-[color:var(--color-hover-strong)] disabled:cursor-default disabled:hover:bg-transparent',
             lockTone(security.tone)
           )}
         >
@@ -185,7 +185,7 @@ export function AddressBar({
         {tabKind === 'tor' ? (
           <span
             data-tab-kind-badge="tor"
-            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[#7c6ad6]/35 bg-[#7c6ad6]/10 px-1.5 py-0.5 text-[9.5px] font-medium text-[#c4b5fd]"
+            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[color:var(--color-violet)]/35 bg-[color:var(--color-violet)]/10 px-1.5 py-0.5 text-ui-95 font-medium text-[color:var(--color-violet-text)]"
             title="Tor tab — all traffic is routed through Tor"
           >
             <OnionIcon className="h-3 w-3" />
@@ -194,7 +194,7 @@ export function AddressBar({
         ) : tabKind === 'private' ? (
           <span
             data-tab-kind-badge="private"
-            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[color:var(--color-line)] bg-white/[0.04] px-1.5 py-0.5 text-[9.5px] font-medium text-[color:var(--color-muted)]"
+            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[color:var(--color-line)] bg-[color:var(--color-raised-soft)] px-1.5 py-0.5 text-ui-95 font-medium text-[color:var(--color-muted)]"
             title="Private tab — cookies and history are not saved"
           >
             <EyeOff className="h-3 w-3" />
@@ -267,7 +267,7 @@ export function AddressBar({
           autoCapitalize="off"
           placeholder="Search or enter an address"
           aria-label="Address"
-          className="h-full flex-1 bg-transparent font-mono text-[13px] text-[#e7e9ef] placeholder:text-[#5d6575] focus:outline-none"
+          className="h-full flex-1 bg-transparent font-mono text-ui-13 text-[color:var(--color-text-strong)] placeholder:text-[color:var(--color-faint)] focus:outline-none"
         />
         {!tor.tabTor && tor.onionAvailable && !tor.preferTor ? (
           <button
@@ -287,10 +287,10 @@ export function AddressBar({
             }
             onClick={onToggleTor}
             className={cn(
-              'shrink-0 rounded p-0.5 transition-colors hover:bg-white/5',
+              'shrink-0 rounded p-0.5 transition-colors hover:bg-[color:var(--color-hover)]',
               tor.active
-                ? 'text-[#c4b5fd]'
-                : 'text-[#7c6ad6]/70 hover:text-[#a78bfa]'
+                ? 'text-[color:var(--color-violet-text)]'
+                : 'text-[color:var(--color-violet)]/70 hover:text-[color:var(--color-violet-strong)]'
             )}
           >
             <OnionIcon className="h-3.5 w-3.5" />
@@ -307,8 +307,8 @@ export function AddressBar({
             disabled={value.trim().length === 0}
             onClick={onToggleBookmark}
             className={cn(
-              'shrink-0 rounded p-0.5 transition-colors hover:bg-white/5 disabled:cursor-default disabled:opacity-30',
-              bookmarked ? 'text-[color:var(--color-warn)]' : 'text-[#3f4553] hover:text-[#c9d1e0]'
+              'shrink-0 rounded p-0.5 transition-colors hover:bg-[color:var(--color-hover)] disabled:cursor-default disabled:opacity-30',
+              bookmarked ? 'text-[color:var(--color-warn)]' : 'text-[color:var(--color-line-strong)] hover:text-[color:var(--color-text-soft)]'
             )}
           >
             <Star className="h-3.5 w-3.5" fill={bookmarked ? 'currentColor' : 'none'} />
@@ -327,7 +327,7 @@ export function AddressBar({
       />
 
       {hint && suggestions.length === 0 ? (
-        <p className="absolute left-3 top-full mt-1.5 text-[11.5px] text-[color:var(--color-danger)]">
+        <p className="absolute left-3 top-full mt-1.5 text-ui-115 text-[color:var(--color-danger)]">
           {hint}
         </p>
       ) : null}
@@ -353,5 +353,5 @@ function anchorDot(state: string): string {
   if (state === 'expired' || state === 'invalid' || state === 'required-missing') {
     return 'bg-[color:var(--color-warn)]'
   }
-  return 'bg-[#5d6575]'
+  return 'bg-[color:var(--color-faint)]'
 }

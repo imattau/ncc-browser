@@ -1,16 +1,182 @@
 @import 'tailwindcss';
 
+/*
+ * Every colour is a semantic token with a light and a dark value. `light-dark()`
+ * follows the used colour scheme, which Electron drives through
+ * `nativeTheme.themeSource`; setting it to "light" or "dark" also overrides
+ * `prefers-color-scheme` for the pages the browser loads.
+ */
 @theme {
-  --color-ink: #0b0c10;
-  --color-panel: #12141a;
-  --color-panel-raised: #171a21;
-  --color-line: #262a35;
-  --color-muted: #9aa3b2;
-  --color-accent: #8ab4ff;
-  --color-accent-strong: #5b8cff;
-  --color-danger: #ff7a7a;
-  --color-warn: #ffc46b;
-  --color-ok: #7ee2a8;
+  --color-ink: light-dark(#f2f4f8, #0b0c10);
+  --color-panel: light-dark(#ffffff, #12141a);
+  --color-panel-raised: light-dark(#ffffff, #171a21);
+  --color-field: light-dark(#f7f8fb, #0e1016);
+  --color-field-alt: light-dark(#eef1f6, #14161d);
+  --color-line: light-dark(#d7dce7, #262a35);
+  --color-line-strong: light-dark(#b9c1d1, #3f4553);
+
+  --color-text-strong: light-dark(#0d1119, #e7e9ef);
+  --color-text: light-dark(#1b2130, #dfe3ea);
+  --color-text-soft: light-dark(#2c3446, #c9d1e0);
+  --color-muted: light-dark(#5a6475, #9aa3b2);
+  --color-faint: light-dark(#667080, #788294);
+  --color-faint-dim: light-dark(#7f8899, #4d5462);
+
+  --color-accent: light-dark(#2563eb, #8ab4ff);
+  --color-accent-strong: light-dark(#1d4ed8, #5b8cff);
+  --color-on-accent: light-dark(#ffffff, #0b0c10);
+  --color-danger: light-dark(#c02b1c, #ff7a7a);
+  --color-danger-solid: light-dark(#c42b1c, #c42b1c);
+  --color-on-danger: light-dark(#ffffff, #ffffff);
+  --color-warn: light-dark(#9a6400, #ffc46b);
+  --color-on-warn: light-dark(#ffffff, #0b0c10);
+  --color-ok: light-dark(#16794a, #7ee2a8);
+
+  /* Tor and private-tab tones stay violet regardless of the chosen accent. */
+  --color-violet: light-dark(#6d4ad6, #7c6ad6);
+  --color-violet-text: light-dark(#5b3bbd, #c4b5fd);
+  --color-violet-strong: light-dark(#7c5ce0, #a78bfa);
+  --color-violet-muted: light-dark(#8b7bd8, #b9a9e8);
+  --color-violet-soft: light-dark(#f1edff, #18142b);
+  --color-violet-soft-alt: light-dark(#ece6ff, #171328);
+
+  --color-hover: light-dark(rgba(15, 23, 42, 0.06), rgba(255, 255, 255, 0.06));
+  --color-hover-soft: light-dark(rgba(15, 23, 42, 0.035), rgba(255, 255, 255, 0.03));
+  --color-hover-strong: light-dark(rgba(15, 23, 42, 0.1), rgba(255, 255, 255, 0.1));
+  --color-raised-soft: light-dark(rgba(15, 23, 42, 0.04), rgba(255, 255, 255, 0.04));
+  --color-track: light-dark(#c2c9d6, #2a2f3c);
+  --color-scrollbar: light-dark(#c2c9d6, #2a2f3c);
+  --color-scrim: light-dark(rgba(15, 23, 42, 0.38), rgba(0, 0, 0, 0.45));
+  --color-scrim-soft: light-dark(rgba(15, 23, 42, 0.28), rgba(0, 0, 0, 0.35));
+  --color-scrim-strong: light-dark(rgba(15, 23, 42, 0.55), rgba(0, 0, 0, 0.72));
+
+  --color-selection: light-dark(rgba(37, 99, 235, 0.22), rgba(138, 180, 255, 0.32));
+}
+
+/*
+ * Accent presets. Each preset supplies a light and a dark variant so contrast
+ * holds in both themes; `--color-on-accent` flips with the accent's luminance.
+ */
+:root[data-accent='violet'] {
+  --color-accent: light-dark(#7c3aed, #c4b5fd);
+  --color-accent-strong: light-dark(#6d28d9, #a78bfa);
+  --color-selection: light-dark(rgba(124, 58, 237, 0.22), rgba(196, 181, 253, 0.3));
+}
+
+:root[data-accent='green'] {
+  --color-accent: light-dark(#15803d, #7ee2a8);
+  --color-accent-strong: light-dark(#166534, #4ade80);
+  --color-selection: light-dark(rgba(21, 128, 61, 0.2), rgba(126, 226, 168, 0.28));
+}
+
+:root[data-accent='amber'] {
+  --color-accent: light-dark(#b45309, #ffc46b);
+  --color-accent-strong: light-dark(#92400e, #fbbf24);
+  --color-selection: light-dark(rgba(180, 83, 9, 0.2), rgba(255, 196, 107, 0.28));
+}
+
+/* Swatches in Settings show every preset, not only the selected accent. */
+[data-swatch='blue'] {
+  --swatch: light-dark(#2563eb, #8ab4ff);
+}
+[data-swatch='violet'] {
+  --swatch: light-dark(#7c3aed, #c4b5fd);
+}
+[data-swatch='green'] {
+  --swatch: light-dark(#15803d, #7ee2a8);
+}
+[data-swatch='amber'] {
+  --swatch: light-dark(#b45309, #ffc46b);
+}
+
+/*
+ * Text sizing scales only glyphs: `--ui-font-scale` multiplies the size inside
+ * each `text-ui-*` utility, so padding, gaps and fixed chrome heights stay put.
+ */
+:root {
+  --ui-font-scale: 1;
+}
+
+:root[data-text-size='small'] {
+  --ui-font-scale: 0.9;
+}
+
+:root[data-text-size='large'] {
+  --ui-font-scale: 1.1;
+}
+
+:root[data-text-size='xlarge'] {
+  --ui-font-scale: 1.2;
+}
+
+@utility text-ui-9 {
+  font-size: calc(9px * var(--ui-font-scale));
+}
+@utility text-ui-95 {
+  font-size: calc(9.5px * var(--ui-font-scale));
+}
+@utility text-ui-10 {
+  font-size: calc(10px * var(--ui-font-scale));
+}
+@utility text-ui-105 {
+  font-size: calc(10.5px * var(--ui-font-scale));
+}
+@utility text-ui-11 {
+  font-size: calc(11px * var(--ui-font-scale));
+}
+@utility text-ui-115 {
+  font-size: calc(11.5px * var(--ui-font-scale));
+}
+@utility text-ui-12 {
+  font-size: calc(12px * var(--ui-font-scale));
+}
+@utility text-ui-125 {
+  font-size: calc(12.5px * var(--ui-font-scale));
+}
+@utility text-ui-13 {
+  font-size: calc(13px * var(--ui-font-scale));
+}
+@utility text-ui-135 {
+  font-size: calc(13.5px * var(--ui-font-scale));
+}
+@utility text-ui-15 {
+  font-size: calc(15px * var(--ui-font-scale));
+}
+@utility text-ui-19 {
+  font-size: calc(19px * var(--ui-font-scale));
+}
+@utility text-ui-42 {
+  font-size: calc(42px * var(--ui-font-scale));
+}
+
+/*
+ * Compact density shrinks Tailwind's spacing scale. The shared chrome heights
+ * (38 px tab strip, 60 px toolbar) are literal values and do not move, so the
+ * native content-view bounds stay correct.
+ */
+:root[data-density='compact'] {
+  --spacing: 0.215rem;
+}
+
+html {
+  color-scheme: light dark;
+}
+
+/*
+ * The renderer sets `data-theme` too, so a light/dark switch repaints in the same
+ * frame instead of waiting for the nativeTheme round-trip. "system" keeps
+ * following `prefers-color-scheme`.
+ */
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+}
+
+:root[data-theme='system'] {
+  color-scheme: light dark;
 }
 
 html,
@@ -22,7 +188,7 @@ body,
 body {
   margin: 0;
   background: var(--color-ink);
-  color: #e7e9ef;
+  color: var(--color-text-strong);
   font-family:
     ui-sans-serif,
     system-ui,
@@ -51,7 +217,7 @@ textarea {
 }
 
 ::selection {
-  background: rgba(138, 180, 255, 0.32);
+  background: var(--color-selection);
 }
 
 /* Thin, unobtrusive scrollbars in the chrome only. */
@@ -60,7 +226,7 @@ textarea {
   height: 10px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #2a2f3c;
+  background: var(--color-scrollbar);
   border-radius: 999px;
   border: 3px solid transparent;
   background-clip: content-box;
@@ -82,4 +248,28 @@ textarea {
 
 .ncc-fade-in {
   animation: ncc-fade-in 220ms ease-out both;
+}
+
+/*
+ * Reduced motion: honour the explicit setting and the OS preference. Durations
+ * are collapsed rather than removing the animation so `animationend` still fires.
+ */
+:root[data-reduce-motion='true'] *,
+:root[data-reduce-motion='true'] *::before,
+:root[data-reduce-motion='true'] *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+  scroll-behavior: auto !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }

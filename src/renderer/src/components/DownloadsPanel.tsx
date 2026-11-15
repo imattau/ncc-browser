@@ -37,7 +37,7 @@ export function DownloadsPanel({
           type="button"
           disabled={finished === 0}
           onClick={onClear}
-          className="text-[11px] text-[color:var(--color-muted)] underline-offset-2 hover:text-white hover:underline disabled:cursor-default disabled:opacity-40"
+          className="text-ui-11 text-[color:var(--color-muted)] underline-offset-2 hover:text-[color:var(--color-text-strong)] hover:underline disabled:cursor-default disabled:opacity-40"
         >
           Clear finished downloads
         </button>
@@ -45,8 +45,8 @@ export function DownloadsPanel({
     >
       {downloads.length === 0 ? (
         <div className="px-3 py-8 text-center">
-          <Download className="mx-auto h-5 w-5 text-[#4d5462]" />
-          <p className="mt-2 text-[11.5px] text-[color:var(--color-muted)]">
+          <Download className="mx-auto h-5 w-5 text-[color:var(--color-faint-dim)]" />
+          <p className="mt-2 text-ui-115 text-[color:var(--color-muted)]">
             Files you download from a service appear here.
           </p>
         </div>
@@ -63,7 +63,7 @@ export function DownloadsPanel({
                   'rounded-lg border px-2.5 py-2',
                   notice.state === 'failed'
                     ? 'border-[color:var(--color-danger)]/25 bg-[color:var(--color-danger)]/[0.06]'
-                    : 'border-transparent hover:border-[color:var(--color-line)] hover:bg-white/[0.03]'
+                    : 'border-transparent hover:border-[color:var(--color-line)] hover:bg-[color:var(--color-hover-soft)]'
                 )}
               >
                 <div className="flex items-center gap-2">
@@ -76,14 +76,14 @@ export function DownloadsPanel({
                     )}
                   />
                   <span
-                    className="min-w-0 flex-1 truncate text-[11.5px] text-[#dfe3ea]"
+                    className="min-w-0 flex-1 truncate text-ui-115 text-[color:var(--color-text)]"
                     title={notice.path ?? notice.filename}
                   >
                     {notice.filename}
                   </span>
 
                   {notice.private ? (
-                    <span className="shrink-0 rounded border border-[#7c6ad6]/30 bg-[#7c6ad6]/10 px-1 py-0.5 text-[9px] text-[#c4b5fd]">
+                    <span className="shrink-0 rounded border border-[color:var(--color-violet)]/30 bg-[color:var(--color-violet)]/10 px-1 py-0.5 text-ui-9 text-[color:var(--color-violet-text)]">
                       private
                     </span>
                   ) : null}
@@ -94,7 +94,7 @@ export function DownloadsPanel({
                       aria-label={`Show ${notice.filename} in folder`}
                       title="Show in folder"
                       onClick={() => onReveal(notice.id)}
-                      className="shrink-0 rounded p-1 text-[color:var(--color-muted)] hover:bg-white/5 hover:text-white"
+                      className="shrink-0 rounded p-1 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)] hover:text-[color:var(--color-text-strong)]"
                     >
                       <FolderOpen className="h-3.5 w-3.5" />
                     </button>
@@ -106,26 +106,26 @@ export function DownloadsPanel({
                       aria-label={`Cancel ${notice.filename}`}
                       title="Cancel download"
                       onClick={() => onCancel(notice.id)}
-                      className="shrink-0 rounded p-1 text-[color:var(--color-muted)] hover:bg-white/5 hover:text-[color:var(--color-danger)]"
+                      className="shrink-0 rounded p-1 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)] hover:text-[color:var(--color-danger)]"
                     >
                       <X className="h-3.5 w-3.5" />
                     </button>
                   ) : null}
                 </div>
 
-                <div className="mt-1 flex items-center justify-between gap-2 pl-5 text-[10px] text-[color:var(--color-muted)]">
+                <div className="mt-1 flex items-center justify-between gap-2 pl-5 text-ui-10 text-[color:var(--color-muted)]">
                   <span
                     className={cn(notice.state === 'failed' && 'text-[color:var(--color-danger)]')}
                   >
                     {describeDownload(notice)}
                   </span>
-                  <span className="truncate font-mono text-[9.5px] text-[#5d6575]">
+                  <span className="truncate font-mono text-ui-95 text-[color:var(--color-faint)]">
                     {folderOf(notice.path)}
                   </span>
                 </div>
 
                 {activeDownload ? (
-                  <div className="mt-1.5 ml-5 h-1 overflow-hidden rounded-full bg-white/[0.07]">
+                  <div className="mt-1.5 ml-5 h-1 overflow-hidden rounded-full bg-[color:var(--color-track)]">
                     <div
                       className={cn(
                         'h-full rounded-full bg-[color:var(--color-accent)] transition-[width] duration-200',

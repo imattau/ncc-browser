@@ -60,7 +60,7 @@ export function Popover({
 
   return (
     <div
-      className="fixed inset-0 z-[90] bg-black/35 backdrop-blur-[1px]"
+      className="fixed inset-0 z-[90] bg-[color:var(--color-scrim-soft)] backdrop-blur-[1px]"
       onMouseDown={onClose}
     >
       <div
@@ -77,9 +77,9 @@ export function Popover({
       >
         <div className="flex items-start justify-between gap-3 border-b border-[color:var(--color-line)] px-3.5 py-2.5">
           <div className="min-w-0">
-            <h2 className="text-[12px] font-semibold text-[#e7e9ef]">{title}</h2>
+            <h2 className="text-ui-12 font-semibold text-[color:var(--color-text-strong)]">{title}</h2>
             {subtitle ? (
-              <p className="mt-0.5 truncate text-[10.5px] text-[color:var(--color-muted)]">
+              <p className="mt-0.5 truncate text-ui-105 text-[color:var(--color-muted)]">
                 {subtitle}
               </p>
             ) : null}
@@ -88,7 +88,7 @@ export function Popover({
             type="button"
             aria-label={`Close ${title}`}
             onClick={onClose}
-            className="shrink-0 rounded-md p-1 text-[color:var(--color-muted)] hover:bg-white/5 hover:text-white"
+            className="shrink-0 rounded-md p-1 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)] hover:text-[color:var(--color-text-strong)]"
           >
             <X className="h-3.5 w-3.5" />
           </button>

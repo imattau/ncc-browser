@@ -42,7 +42,7 @@ export function ChromeMenu({
 
   return (
     <div
-      className="fixed inset-0 z-[95] bg-black/45 backdrop-blur-[2px]"
+      className="fixed inset-0 z-[95] bg-[color:var(--color-scrim)] backdrop-blur-[2px]"
       onMouseDown={onClose}
     >
       <div
@@ -55,12 +55,12 @@ export function ChromeMenu({
       >
         <div className="border-b border-[color:var(--color-line)] px-3 pb-2.5 pt-1">
           <div className="flex items-center justify-between gap-2">
-            <span className="text-[11px] font-semibold uppercase tracking-wide text-[color:var(--color-muted)]">
+            <span className="text-ui-11 font-semibold uppercase tracking-wide text-[color:var(--color-muted)]">
               Nostr Navigator
             </span>
             <span
               className={cn(
-                'rounded-md border px-1.5 py-0.5 text-[10px]',
+                'rounded-md border px-1.5 py-0.5 text-ui-10',
                 identity?.mode === 'nip46'
                   ? 'border-[color:var(--color-accent)]/25 bg-[color:var(--color-accent)]/10 text-[color:var(--color-accent)]'
                   : 'border-[color:var(--color-line)] text-[color:var(--color-muted)]'
@@ -74,7 +74,7 @@ export function ChromeMenu({
             </span>
           </div>
           {identity?.npub ? (
-            <p className="mt-1 flex items-center gap-1.5 truncate font-mono text-[10px] text-[#5d6575]">
+            <p className="mt-1 flex items-center gap-1.5 truncate font-mono text-ui-10 text-[color:var(--color-faint)]">
               {identity.mode === 'nip46' ? <Smartphone className="h-3 w-3 shrink-0" /> : null}
               {identity.npub.slice(0, 18)}…{identity.npub.slice(-6)}
             </p>
@@ -87,7 +87,7 @@ export function ChromeMenu({
 
           return (
             <div key={group} className="px-1.5 pt-1.5">
-              <p className="px-2 py-1 text-[9.5px] font-semibold uppercase tracking-[0.08em] text-[#5d6575]">
+              <p className="px-2 py-1 text-ui-95 font-semibold uppercase tracking-[0.08em] text-[color:var(--color-faint)]">
                 {group}
               </p>
               {items.map((command) => {
@@ -101,15 +101,15 @@ export function ChromeMenu({
                     disabled={!enabled}
                     onClick={() => onCommand(command.id)}
                     className={cn(
-                      'flex w-full items-center justify-between gap-3 rounded-lg px-2 py-1.5 text-left text-[12px] transition-colors',
+                      'flex w-full items-center justify-between gap-3 rounded-lg px-2 py-1.5 text-left text-ui-12 transition-colors',
                       enabled
-                        ? 'text-[#e7e9ef] hover:bg-white/[0.06]'
-                        : 'cursor-default text-[#4d5462]'
+                        ? 'text-[color:var(--color-text-strong)] hover:bg-[color:var(--color-hover)]'
+                        : 'cursor-default text-[color:var(--color-faint-dim)]'
                     )}
                   >
                     <span className="truncate">{command.label}</span>
                     {command.shortcut ? (
-                      <span className="shrink-0 font-mono text-[10px] text-[#6d7585]">
+                      <span className="shrink-0 font-mono text-ui-10 text-[color:var(--color-muted)]">
                         {isMac
                           ? command.shortcut.replace('Ctrl', '⌘').replace('Alt', '⌥')
                           : command.shortcut}
@@ -124,7 +124,7 @@ export function ChromeMenu({
 
         {bookmarks.length > 0 ? (
           <div className="mt-1 border-t border-[color:var(--color-line)] px-1.5 pb-1 pt-1.5">
-            <p className="px-2 py-1 text-[9.5px] font-semibold uppercase tracking-[0.08em] text-[#5d6575]">
+            <p className="px-2 py-1 text-ui-95 font-semibold uppercase tracking-[0.08em] text-[color:var(--color-faint)]">
               Bookmarks
             </p>
             {bookmarks.slice(0, 12).map((bookmark) => (
@@ -134,7 +134,7 @@ export function ChromeMenu({
                   role="menuitem"
                   data-bookmark-url={bookmark.url}
                   onClick={() => onOpenBookmark(bookmark.url)}
-                  className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px] text-[#e7e9ef] hover:bg-white/[0.06]"
+                  className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-ui-12 text-[color:var(--color-text-strong)] hover:bg-[color:var(--color-hover)]"
                 >
                   <BookmarkIcon className="h-3 w-3 shrink-0 text-[color:var(--color-warn)]" />
                   <span className="truncate">{bookmark.title}</span>
@@ -144,14 +144,14 @@ export function ChromeMenu({
                   aria-label={`Remove bookmark ${bookmark.title}`}
                   title="Remove bookmark"
                   onClick={() => onRemoveBookmark(bookmark.url)}
-                  className="shrink-0 rounded p-1 text-[#5d6575] opacity-0 hover:bg-white/5 hover:text-[color:var(--color-danger)] group-hover:opacity-100 focus:opacity-100"
+                  className="shrink-0 rounded p-1 text-[color:var(--color-faint)] opacity-0 hover:bg-[color:var(--color-hover)] hover:text-[color:var(--color-danger)] group-hover:opacity-100 focus:opacity-100"
                 >
                   <X className="h-3 w-3" />
                 </button>
               </div>
             ))}
             {bookmarks.length > 12 ? (
-              <p className="px-2 py-1 text-[10.5px] text-[#5d6575]">
+              <p className="px-2 py-1 text-ui-105 text-[color:var(--color-faint)]">
                 +{bookmarks.length - 12} more…
               </p>
             ) : null}

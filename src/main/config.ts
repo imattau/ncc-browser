@@ -8,8 +8,11 @@ import {
   type SearchEngineId
 } from '@shared/search'
 import {
+  DEFAULT_APPEARANCE,
   DEFAULT_HTTPS_MODE,
   DEFAULT_TOR_SOCKS,
+  normalizeAppearance,
+  type AppearanceConfig,
   type AppConfig,
   type HttpsMode,
   type RelayEntry,
@@ -163,6 +166,16 @@ export class ConfigStore {
     return this.get()
   }
 
+  /** Merge a partial appearance update, normalising every field against the defaults. */
+  setAppearance(input: unknown): AppConfig {
+    const current = this.get()
+    const patch = input && typeof input === 'object' ? input : {}
+    const appearance: AppearanceConfig = normalizeAppearance({ ...current.appearance, ...patch })
+    this.config = { ...current, appearance }
+    this.write()
+    return this.get()
+  }
+
   private read(): AppConfig {
     try {
       if (existsSync(this.path)) {
@@ -194,7 +207,8 @@ export class ConfigStore {
             typeof parsed.searchEngineCustom === 'string'
               ? parsed.searchEngineCustom.trim().slice(0, 2048)
               : '',
-          useOnionSearch: parsed.useOnionSearch !== false
+          useOnionSearch: parsed.useOnionSearch !== false,
+          appearance: normalizeAppearance(parsed.appearance)
         }
       }
     } catch (error) {
@@ -212,7 +226,8 @@ export class ConfigStore {
       httpExceptions: [],
       searchEngine: DEFAULT_SEARCH_ENGINE,
       searchEngineCustom: '',
-      useOnionSearch: true
+      useOnionSearch: true,
+      appearance: { ...DEFAULT_APPEARANCE }
     }
   }
 

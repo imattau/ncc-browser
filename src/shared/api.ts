@@ -1,6 +1,7 @@
 import type { CommandId } from './commands'
 import type { SearchEngineId } from './search'
 import type {
+  AppearanceConfig,
   AppConfig,
   Bookmark,
   DownloadNotice,
@@ -24,11 +25,15 @@ export interface SetRelaysResult {
   error?: string
 }
 
+export type SetAppearanceResult = SetRelaysResult
+
 /**
  * The only surface the chrome renderer gets. Remote content never sees any of it:
  * each content view is a separate, sandboxed WebContents with no preload.
  */
 export interface NccApi {
+  /** Appearance resolved before the first paint; safe to read synchronously. */
+  readonly initialAppearance: AppearanceConfig
   navigate(input: string): Promise<void>
   back(): Promise<void>
   forward(): Promise<void>
@@ -90,6 +95,7 @@ export interface NccApi {
     custom: string
     useOnionSearch: boolean
   }): Promise<SetRelaysResult>
+  setAppearance(appearance: Partial<AppearanceConfig>): Promise<SetAppearanceResult>
   torStatus(): Promise<TorStatus>
   torTest(): Promise<TorStatus>
   torRestart(): Promise<TorStatus>
