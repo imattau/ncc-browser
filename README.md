@@ -85,9 +85,10 @@ hash, servers and update time.
 
 Limits worth knowing:
 
-- The first path segment is a named site when it looks like a NIP-5A d tag
-  (`[a-z0-9-]{1,13}`), otherwise it is a root-site path. Root-site pages should link to
-  files with extensions (`/about.html`), not extensionless directories.
+- Addresses are shown as `nsite://<npub>/<d>/` but loaded as `nsite://<npub>.<d>/`, so
+  every named site is its own origin and its assets cannot be attributed to another
+  site. A root-site *directory* whose first segment looks like a d tag (`/blog/`) is
+  still read as the named site; root pages should link to files with extensions.
 - 25 MB per file, no `Range` support yet: video plays only after the whole blob is
   downloaded and verified.
 - Manifests are cached for 60 s and refreshed in the background; a forced reload asks
@@ -413,7 +414,9 @@ session handles **every** request under the origin, not just top-level documents
 
 - relative and absolute-path subresources work without CORS;
 - the page never learns the real `ip:port`;
-- one `npub` is one origin, so cookies and storage isolate owners naturally;
+- one **service** is one origin (`ncc://<npub>.<service>`), so cookies, local storage and
+  service workers isolate services as well as owners. The address bar still shows
+  `ncc://<npub>/<service>`, which is input only and redirects to the origin form;
 - redirects are rewritten back into `ncc://…` (redirects to other hosts are treated as
   "leave NCC" and passed through);
 - pages get a genuine secure context: `crypto.subtle`, CacheStorage, service workers and
@@ -806,7 +809,7 @@ general IPC bridge.
 ## Testing
 
 ```bash
-npm test       # 456 unit tests: URL parser, locator rules, resolver, routing, pins,
+npm test       # 444 unit tests: URL parser, locator rules, resolver, routing, pins,
                # signer crypto, identity storage, NIP-46, approvals, permissions,
                # ephemeral signer permissions, shortcuts, context menus, relays,
                # downloads, tab order, bookmarks, favicons, session storage, NCC-02
@@ -904,8 +907,8 @@ The release job also uploads `SHA256SUMS.txt`. Pushing a tag is the whole releas
 
 ```bash
 npm version minor --no-git-tag-version   # or edit package.json
-git commit -am "Release v0.10.1"
-git tag -a v0.10.1 -m "Nostr Navigator v0.10.1"
+git commit -am "Release v0.11.0"
+git tag -a v0.11.0 -m "Nostr Navigator v0.11.0"
 git push origin main --follow-tags
 ```
 

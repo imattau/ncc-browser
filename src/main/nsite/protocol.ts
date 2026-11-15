@@ -2,12 +2,19 @@
  * `nsite://` protocol handler: NIP-5A manifests over relays, files over Blossom.
  *
  * Every byte is checked against the sha256 in a signed manifest before it reaches the
- * renderer, so there is no server identity to trust and nothing to pin.
+ * renderer, so there is no server identity to trust and nothing to pin. The site id is
+ * part of the host, which makes that origin the site's storage and its subresource
+ * namespace.
  */
 
 import type { Session } from 'electron'
 import { renderErrorPage } from '../error-page'
-import { buildNsiteUrl, parseNsiteAddress } from '@shared/nsite-url'
+import {
+  buildNsiteUrl,
+  isValidSiteId,
+  parseNsiteHost,
+  toInternalNsiteUrl
+} from '@shared/nsite-url'
 import type { NsiteInfo } from '@shared/types'
 import type { NsiteBlobs } from './blob'
 import { matchPath, type NsiteManifest } from './manifest'
@@ -30,20 +37,10 @@ export interface NsiteDeps {
 }
 
 export function installNsiteProtocol(deps: NsiteDeps): void {
-  // Absolute-path subresources carry no site id (`/assets/app.js`), exactly like NCC's
-  // service routing. The last document request for a pubkey decides which site those
-  // paths belong to. Per session, so a private or Tor tab cannot leak into another.
-  const activeSites = new Map<string, string | null>()
-  deps.session.protocol.handle(NSITE_SCHEME, (request) =>
-    handle(request, deps, activeSites)
-  )
+  deps.session.protocol.handle(NSITE_SCHEME, (request) => handle(request, deps))
 }
 
-async function handle(
-  request: Request,
-  deps: NsiteDeps,
-  activeSites: Map<string, string | null>
-): Promise<Response> {
+async function handle(request: Request, deps: NsiteDeps): Promise<Response> {
   const isDocument = isDocumentRequest(request)
 
   if (request.method !== 'GET' && request.method !== 'HEAD') {
@@ -53,55 +50,63 @@ async function handle(
     })
   }
 
-  let address
+  let requestUrl: URL
   try {
-    address = parseNsiteAddress(request.url)
-  } catch (error) {
+    requestUrl = new URL(request.url)
+  } catch {
+    return failure(request, 'invalid-address', 'Not a valid nsite:// URL')
+  }
+
+  const host = parseNsiteHost(requestUrl.hostname)
+  if (!host) {
     return failure(
       request,
       'invalid-address',
-      error instanceof Error ? error.message : 'Not a valid nsite address'
+      'The host of an nsite:// URL must be an npub, optionally followed by a site id'
     )
   }
 
-  // A document decides the active site; its subresources inherit it. Without this,
-  // `/assets/theme.js` would be read as a root-site path (or as a named site called
-  // "assets") and 404 the moment a named site uses absolute URLs.
-  let site = address.site
-  let requestPath = address.path
-  if (isDocument) {
-    activeSites.set(address.pubkey, address.site)
-  } else if (activeSites.has(address.pubkey)) {
-    // The URL's first segment was consumed as a site id while parsing, but for an
-    // absolute-path subresource it is really part of the site's own path.
-    site = activeSites.get(address.pubkey) ?? null
-    try {
-      requestPath = new URL(request.url).pathname || '/'
-    } catch {
-      // Keep the parsed path if the URL is somehow unparseable.
+  const requestPath = requestUrl.pathname || '/'
+
+  // The clean form (`nsite://<npub>/<d>/…`) is input only: a document navigation in
+  // that form is redirected to the origin-scoped host. Subresources on the bare npub
+  // host always belong to the root site, which is why this redirect is documents only.
+  if (!host.canonical && isDocument) {
+    const first = requestPath.replace(/^\/+/, '').split('/')[0]
+    if (first && isValidSiteId(first)) {
+      const rest = requestPath.replace(/^\/+/, '').slice(first.length)
+      return new Response(null, {
+        status: 302,
+        headers: {
+          location: toInternalNsiteUrl({
+            pubkey: host.pubkey,
+            site: first,
+            path: rest || '/',
+            search: requestUrl.search
+          }),
+          'cache-control': 'no-store'
+        }
+      })
     }
   }
 
-  const outcome = await deps.resolver.resolve(address.pubkey, site)
+  const site = host.site
+  const outcome = await deps.resolver.resolve(host.pubkey, site)
   if (!outcome.ok) {
     if (isDocument) {
-      deps.onActivity({
-        pubkey: address.pubkey,
-        site,
-        failureCode: outcome.code
-      })
+      deps.onActivity({ pubkey: host.pubkey, site, failureCode: outcome.code })
     }
     return failure(request, outcome.code, outcome.message, outcome.detail)
   }
 
   const manifest = outcome.manifest
-  const match = matchPath(manifest.paths, requestPath, address.search)
+  const match = matchPath(manifest.paths, requestPath, requestUrl.search)
 
   if (match.kind === 'redirect') {
     return new Response(null, {
       status: 302,
       headers: {
-        location: buildNsiteUrl({
+        location: toInternalNsiteUrl({
           pubkey: manifest.pubkey,
           site: manifest.site,
           path: match.location
@@ -121,7 +126,7 @@ async function handle(
     const notFound = manifest.paths.get('/404.html')
     if (!notFound) {
       if (isDocument) {
-        deps.onActivity({ pubkey: address.pubkey, site, failureCode: 'no-file' })
+        deps.onActivity({ pubkey: host.pubkey, site, failureCode: 'no-file' })
       }
       return failure(request, 'no-file', `The site does not publish ${requestPath}`)
     }
@@ -133,21 +138,13 @@ async function handle(
   const blob = await deps.blobs.get(hash, manifest.servers, servedPath)
   if (!blob.ok) {
     if (isDocument) {
-      deps.onActivity({
-        pubkey: address.pubkey,
-        site,
-        failureCode: blob.code
-      })
+      deps.onActivity({ pubkey: host.pubkey, site, failureCode: blob.code })
     }
     return failure(request, blob.code, blob.message)
   }
 
   if (isDocument) {
-    deps.onActivity({
-      pubkey: address.pubkey,
-      site,
-      manifest: describe(manifest)
-    })
+    deps.onActivity({ pubkey: host.pubkey, site, manifest: describe(manifest) })
   }
 
   const headers: Record<string, string> = {
@@ -178,12 +175,7 @@ function describe(manifest: NsiteManifest): NsiteInfo {
   }
 }
 
-function failure(
-  request: Request,
-  code: string,
-  message: string,
-  detail?: string
-): Response {
+function failure(request: Request, code: string, message: string, detail?: string): Response {
   const address = request.url
   if (!isDocumentRequest(request)) {
     return new Response(`${code}: ${message}`, {

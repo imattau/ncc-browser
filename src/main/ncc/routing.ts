@@ -4,42 +4,7 @@
  * Electron.
  */
 
-import { buildInternalUrl } from '@shared/ncc-url'
-
-/**
- * Whether a failed service resolution for a subresource (e.g. a stylesheet
- * or script, never the document itself) should be retried against the
- * active-service map's own answer instead of surfacing the failure.
- *
- * An absolute-path subresource request (e.g. "/assets/app.js") carries no
- * service of its own in its path. routeNccPath (ncc-url.ts) only reaches
- * its own last resort -- guessing the path's first segment as a service
- * name -- when neither the Referer header nor the active-service map had
- * an answer *at the moment routing ran*. That guess is right for a
- * deliberate cross-service reference (routeNccPath's own `/web/docs`
- * case), but wrong whenever the segment is really just this page's own
- * subresource folder ("assets" guessed as a service): a guaranteed
- * 'no-record' failure for what should have been an ordinary stylesheet or
- * script load. If the active-service map has an answer *now* -- it may
- * have been set a moment after routing ran, e.g. by the very document
- * navigation this subresource belongs to, still resolving concurrently --
- * and it names a different service than the one just tried, that answer
- * is worth one retry before giving up.
- */
-export function shouldRetryWithActiveService(
-  isDocumentRequest: boolean,
-  refererService: string | null,
-  triedService: string,
-  activeService: string | null
-): boolean {
-  if (isDocumentRequest) return false
-  // An explicit referer-named service is a deliberate cross-service
-  // reference, same as routeNccPath itself treats it -- never overridden
-  // by a guess at what the *current* tab happens to be showing.
-  if (refererService) return false
-  if (!activeService) return false
-  return activeService !== triedService
-}
+import { buildInternalUrl, parseNccAddress } from '@shared/ncc-url'
 
 export interface RewriteContext {
   pubkey: string
@@ -79,7 +44,8 @@ export function upstreamRequestInit(
   headers.delete('content-length')
 
   const origin = headers.get('origin')
-  if (origin === `ncc://${pubkey}`) headers.set('origin', target.origin)
+  // Content origins are `ncc://<npub>.<service>`; upstreams must see a normal origin.
+  if (origin?.toLowerCase().startsWith('ncc://')) headers.set('origin', target.origin)
 
   const referer = headers.get('referer')
   if (referer?.startsWith('ncc://')) {
@@ -113,15 +79,19 @@ export function rewriteLocation(location: string, context: RewriteContext): stri
   }
 
   if (resolved.protocol === 'ncc:') {
-    const host = resolved.hostname.toLowerCase()
-    if (host !== context.pubkey) return resolved.toString()
-    return withService(
-      context.pubkey,
-      context.service,
-      resolved.pathname,
-      resolved.search,
-      resolved.hash
-    )
+    try {
+      const address = parseNccAddress(resolved.toString())
+      if (address.pubkey !== context.pubkey) return resolved.toString()
+      return buildInternalUrl({
+        pubkey: address.pubkey,
+        service: address.service,
+        path: address.path || '/',
+        search: address.search,
+        hash: address.hash
+      })
+    } catch {
+      return resolved.toString()
+    }
   }
 
   if (resolved.protocol !== 'http:' && resolved.protocol !== 'https:') return location
@@ -148,26 +118,6 @@ export function rewriteLocation(location: string, context: RewriteContext): stri
   }
 
   return location
-}
-
-/** Ensure a path inside a service namespace stays inside that service. */
-export function withService(
-  pubkey: string,
-  service: string,
-  pathname: string,
-  search = '',
-  hash = ''
-): string {
-  const prefix = `/${service}`
-  const path =
-    pathname === prefix || pathname.startsWith(`${prefix}/`) ? pathname.slice(prefix.length) : pathname
-  return buildInternalUrl({
-    pubkey,
-    service,
-    path: path || '/',
-    search,
-    hash
-  })
 }
 
 /** Join an endpoint's base path with the requested path, preserving slashes. */

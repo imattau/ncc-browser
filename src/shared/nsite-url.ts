@@ -1,12 +1,13 @@
 /**
  * Parser and builders for the `nsite://` address scheme (NIP-5A static sites).
  *
- * Canonical form:  nsite://<npub>/<d>/<path…>?<query>
+ *   display / input   nsite://<npub>/<d>/<path…>     root site, or a named site
+ *   internal          nsite://<npub>.<d>/<path…>     a named site, origin-scoped
+ *                     nsite://<npub>/<path…>         the root site
  *
- * A named site is the first path segment when it matches the NIP-5A `d` tag grammar
- * (`^[a-z0-9-]{1,13}$`, no trailing `-`). Anything else is a file in the author's root
- * site. That rule is the only way `nsite://npub/logo` and `nsite://npub/index.html`
- * can both be meaningful without guessing.
+ * Putting the site id in the host makes it part of the origin, so `/assets/app.js` is
+ * always the asset of the site that requested it — no Referer, no active-site map, and
+ * no chance of reading "assets" as a site called `assets`.
  */
 
 import { isNostrId } from './ncc-url'
@@ -30,6 +31,8 @@ export interface NsiteAddress {
   path: string
   search: string
   hash: string
+  /** True when the URL already used the host-based internal form. */
+  internal: boolean
 }
 
 export function isValidSiteId(value: string): boolean {
@@ -43,6 +46,27 @@ export function looksLikeNsiteInput(input: string): boolean {
 /** `nsite://<npub>` or `nsite://<npub>/<d>`, used as the storage and signer origin. */
 export function nsiteOrigin(pubkey: string, site: string | null): string {
   return site ? `nsite://${pubkey}/${site}` : `nsite://${pubkey}`
+}
+
+export interface NsiteHost {
+  pubkey: string
+  /** Null for the bare-npub host, which is the root site. */
+  site: string | null
+  /** True when the host carried a site suffix (`<npub>.<d>`). */
+  canonical: boolean
+}
+
+export function parseNsiteHost(hostname: string): NsiteHost | null {
+  const host = hostname.toLowerCase()
+  const dot = host.indexOf('.')
+  if (dot === -1) {
+    return isNostrId(host) ? { pubkey: host, site: null, canonical: false } : null
+  }
+  const pubkey = host.slice(0, dot)
+  if (!isNostrId(pubkey)) return null
+  const site = host.slice(dot + 1)
+  if (!isValidSiteId(site)) return null
+  return { pubkey, site, canonical: true }
 }
 
 export function parseNsiteAddress(raw: string): NsiteAddress {
@@ -65,13 +89,26 @@ export function parseNsiteAddress(raw: string): NsiteAddress {
     throw new NsiteUrlError('Only nsite:// addresses are supported here')
   }
 
-  const pubkey = url.hostname.toLowerCase()
-  if (!pubkey) throw new NsiteUrlError('Missing npub: use nsite://<npub>/')
-  if (!isNostrId(pubkey)) {
-    throw new NsiteUrlError('The host must be an npub (npub1…) or a 64-character hex pubkey')
+  const host = parseNsiteHost(url.hostname)
+  if (!host) {
+    throw new NsiteUrlError(
+      'The host must be an npub (npub1…) or a 64-character hex pubkey, optionally followed by a site id'
+    )
   }
 
-  const rawPath = url.pathname.replace(/^\/+/, '')
+  const pathname = url.pathname || '/'
+  if (host.canonical) {
+    return {
+      pubkey: host.pubkey,
+      site: host.site,
+      path: pathname,
+      search: url.search,
+      hash: url.hash,
+      internal: true
+    }
+  }
+
+  const rawPath = pathname.replace(/^\/+/, '')
   const slash = rawPath.indexOf('/')
   const first = slash === -1 ? rawPath : rawPath.slice(0, slash)
   const rest = slash === -1 ? '' : rawPath.slice(slash)
@@ -91,7 +128,7 @@ export function parseNsiteAddress(raw: string): NsiteAddress {
     throw new NsiteUrlError('That path is not allowed')
   }
 
-  return { pubkey, site, path, search: url.search, hash: url.hash }
+  return { pubkey: host.pubkey, site, path, search: url.search, hash: url.hash, internal: false }
 }
 
 export interface BuildNsiteAddress {
@@ -104,6 +141,7 @@ export interface BuildNsiteAddress {
   trailingSlash?: boolean
 }
 
+/** Clean, user-facing form. */
 export function buildNsiteUrl(address: BuildNsiteAddress): string {
   const { pubkey, site = null } = address
   const origin = nsiteOrigin(pubkey, site)
@@ -115,7 +153,21 @@ export function buildNsiteUrl(address: BuildNsiteAddress): string {
   return `${origin}${path}${address.search ?? ''}${address.hash ?? ''}`
 }
 
-/** Human-facing form: never shows a bare site root without its slash. */
+/** Origin-scoped form used for everything the WebContents loads. */
+export function toInternalNsiteUrl(address: BuildNsiteAddress): string {
+  const { pubkey, site = null } = address
+  const host = site ? `${pubkey}.${site}` : pubkey
+  let path = address.path ?? '/'
+  if (!path.startsWith('/')) path = `/${path}`
+  return `nsite://${host}${path}${address.search ?? ''}${address.hash ?? ''}`
+}
+
+/** The storage origin for a site: `nsite://<npub>.<d>` (root: `nsite://<npub>`). */
+export function nsiteStorageOrigin(pubkey: string, site: string | null): string {
+  return site ? `nsite://${pubkey}.${site}` : `nsite://${pubkey}`
+}
+
+/** Turn an internal (host) URL into the clean form shown to the user. */
 export function toNsiteDisplayUrl(internal: string): string {
   try {
     return buildNsiteUrl(parseNsiteAddress(internal))

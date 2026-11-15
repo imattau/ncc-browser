@@ -63,12 +63,29 @@ From `nostr-community-conventions`:
 ## 3. URL model
 
 ```
-ncc://<npub>/<service>/<path…>?<query>
+display / input   ncc://<npub>/<service>/<path…>?<query>
+internal          ncc://<npub>.<service>/<path…>?<query>
 ```
 
 - `<npub>` — bech32 `npub1…` (hex accepted too). This is the trust anchor.
 - `<service>` — the `d` tag namespace. Omitted → `addr`.
 - `<path…>` — forwarded verbatim to the resolved endpoint.
+
+The two forms differ in where the service sits, and that difference is the whole
+routing model:
+
+- **Display** is what the address bar shows, what history and bookmarks store, and what
+  the NIP-07 trust list keys on. It is **input only** for the protocol handler.
+- **Internal** is what the content view loads. The service is part of the host, therefore
+  part of the **origin**, so every absolute-path subresource (`/assets/app.js`) belongs
+  to the service that requested it. There is no active-service map, no Referer
+  dependence, and no ambiguity between tabs.
+- Storage, cookies, IndexedDB and service workers are therefore **per service**, not per
+  npub. 0.11.0 changes this; data stored under the old `ncc://<npub>` origin is not
+  carried over (one-time reset).
+
+Any request in the display form is answered with a 302 to the internal form, so links,
+bookmarks and typed addresses keep working unchanged.
 
 Accepted input in the address bar:
 
@@ -80,26 +97,13 @@ Accepted input in the address bar:
 | `npub1…` | `ncc://npub1…/` → service `addr` |
 | `http(s)://…` | loaded directly in the content view (clearnet escape hatch) |
 
-### Routing rule inside the handler
+### Service labels in the host
 
-The handler must decide, for every request, which service the path belongs to:
-
-1. Path starts with `/_/` → explicit: `/_/<service>/<rest>`.
-2. Otherwise, if a service is active for that `npub` → `service = active`, `rest = path`.
-3. Otherwise → first segment *is* the service.
-
-`navigate()` always sets the active service before loading, so user-initiated addresses
-are unambiguous. Page-initiated absolute paths (`/style.css`) fall back to the active
-service, which is what a proxy should do. Service roots are 302'd to a trailing slash so
-relative URLs resolve inside the service namespace.
-
-**Known limitation (documented, not hidden):** with more than one tab on the same
-`npub`, the active-service map is ambiguous for root-relative subresources. The browser
-uses a shared content session and attributes those requests through the `Referer`; pages
-that need an unambiguous cross-service reference use the explicit `/_/<service>/…` form.
-When neither the `Referer` nor the active-service map can answer, the handler retries
-each service currently open for that pubkey, so a bare absolute-path subresource only
-404s when no open tab can serve it.
+Host-safe service ids (`^[a-z0-9][a-z0-9-]{0,40}$`, not starting `x-`) are used
+verbatim, so the origin stays readable: `ncc://<npub>.ditto`. Anything else — dots,
+tildes, uppercase — is base32-encoded under an `x-` prefix. The encoding is reversible
+and deterministic, which matters because the label is part of a storage origin and must
+survive restarts.
 
 ### Redirects
 
@@ -530,13 +534,15 @@ a single scheme cannot do.
 `nsite://npub1…/blog` and `nsite://npub1…/blog/` both mean the named site; the browser
 canonicalises to the trailing slash.
 
-Absolute-path subresources (`/assets/app.js`) carry no site id, so the protocol handler
-attributes them to the site of the last **document** request in that content session —
-the same rule NCC uses for services. Without it, `/assets/…` would be read as a root-site
-path, or as a named site called "assets", and every asset would 404. The consequence is
-the NCC consequence: a subresource that deliberately points at *another* named site by
-absolute path is attributed to the active one; cross-site references need the explicit
-`nsite://<npub>/<other>/…` form and a document navigation.
+The display form is input only. The content view loads the internal form, where the site
+id is part of the host — `nsite://<npub>.<d>/…` for a named site and `nsite://<npub>/…`
+for the root site — so `/assets/app.js` belongs to the site in the origin. A document
+navigation in the display form is 302'd to the internal form; subresources on the bare
+npub host always belong to the root site, which is why the redirect is documents only.
+
+One display-form ambiguity remains and is documented rather than guessed: a root-site
+*directory* whose first segment is a valid d tag (`nsite://npub/blog/`) is read as the
+named site `blog`. Root pages should link with extensions or address the file directly.
 
 ### Resolution
 
@@ -567,10 +573,12 @@ a full download.
 
 ### Origins and trust
 
-`nsite://<npub>` and `nsite://<npub>/<d>` are secure, standard, privileged origins
-registered in the single `registerPrivilegedSchemes()` call, so storage, service workers
-and NIP-07 behave as they do on `ncc://`. NIP-07 trust is a separate record from the same
-publisher's `ncc://` origin because the content model is different.
+`nsite://<npub>.<d>` (named) and `nsite://<npub>` (root) are secure, standard, privileged
+origins registered in the single `registerPrivilegedSchemes()` call, so storage, service
+workers and NIP-07 behave as they do on `ncc://`. Each named site gets its own storage
+origin, which is what the earlier draft claimed without the mechanism. NIP-07 trust is a
+separate record from the same publisher's `ncc://` origin because the content model is
+different.
 
 The security state reports `transport: 'nsite'` with the manifest (title, aggregate,
 servers, file count, event id, update time). The padlock reads "Nostr site" and the site

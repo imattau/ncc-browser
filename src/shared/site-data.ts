@@ -8,6 +8,8 @@
  */
 
 import type { TabKind } from './types'
+import { nccStorageOrigin } from './ncc-url'
+import { nsiteStorageOrigin } from './nsite-url'
 import { pageOriginFromUrl } from './passwords'
 
 export interface SiteDataInfo {
@@ -65,8 +67,10 @@ export interface CacheInfo {
 }
 
 export interface SiteIdentity {
-  /** Storage origin: `ncc://<npub>` or the web origin. */
+  /** Storage origin, e.g. `ncc://<npub>.<service>`, `nsite://<npub>.<d>`, or a web origin. */
   origin: string
+  /** `ncc`, `nsite` or `web`. */
+  scheme: 'ncc' | 'nsite' | 'web'
   /** Trust key: `ncc://<npub>/<service>` or the web origin. */
   trustKey: string
   /** Clean address for the panel, e.g. `ncc://npub1…/web`. */
@@ -95,16 +99,30 @@ export function siteIdentityForUrl(raw: string): SiteIdentity | null {
   const page = pageOriginFromUrl(raw)
   if (!page) return null
   if (page.scheme === 'ncc') {
+    const service = page.service ?? 'addr'
     return {
-      origin: `ncc://${page.host}`,
+      origin: nccStorageOrigin(page.host, service),
+      scheme: 'ncc',
       trustKey: page.origin,
       label: page.origin,
       host: page.host,
-      service: page.service ?? null
+      service
+    }
+  }
+  if (page.scheme === 'nsite') {
+    const site = page.service ?? null
+    return {
+      origin: nsiteStorageOrigin(page.host, site),
+      scheme: 'nsite',
+      trustKey: page.origin,
+      label: page.origin,
+      host: page.host,
+      service: site
     }
   }
   return {
     origin: page.origin,
+    scheme: 'web',
     trustKey: page.origin,
     label: page.origin,
     host: page.host,

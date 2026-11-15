@@ -631,7 +631,7 @@ function SiteDataBlock() {
         Cookies and site data
       </p>
       <p className="mt-1 truncate font-mono text-ui-10 text-[color:var(--color-faint)]" data-site-origin>
-        {info.origin}
+        {info.label || info.origin}
       </p>
       <p className="mt-1 text-ui-11 leading-relaxed text-[color:var(--color-muted)]" data-site-cookies>
         {info.cookies == null

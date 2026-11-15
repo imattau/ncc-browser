@@ -7,7 +7,7 @@
  * anything, and so both paths agree on exactly one derivation.
  */
 
-import { isNostrId } from '@shared/ncc-url'
+import { parseNccAddress } from '@shared/ncc-url'
 import { nsiteOrigin, parseNsiteAddress } from '@shared/nsite-url'
 
 export interface SignerOrigin {
@@ -24,12 +24,13 @@ export function signerOriginFromUrl(raw: string): SignerOrigin | null {
   }
 
   if (url.protocol === 'ncc:') {
-    const pubkey = url.hostname.toLowerCase()
-    if (!isNostrId(pubkey)) return null
-    const path = url.pathname.replace(/^\/+/, '')
-    const service = path.startsWith('_/') ? path.slice(2).split('/')[0] : path.split('/')[0]
-    const label = `ncc://${pubkey}/${service || 'addr'}`
-    return { origin: label, label }
+    try {
+      const parsed = parseNccAddress(raw)
+      const label = `ncc://${parsed.pubkey}/${parsed.service}`
+      return { origin: label, label }
+    } catch {
+      return null
+    }
   }
 
   if (url.protocol === 'nsite:') {

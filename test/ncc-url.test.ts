@@ -4,8 +4,6 @@ import {
   isValidServiceName,
   looksLikeNccInput,
   parseNccAddress,
-  routeNccPath,
-  serviceFromReferer,
   toDisplayUrl,
   toInternalUrl,
   toLoadUrl
@@ -91,76 +89,41 @@ describe('buildNccUrl', () => {
     expect(buildNccUrl(parseNccAddress(input))).toBe(input)
   })
 
-  it('toLoadUrl always ends a service root with a slash', () => {
-    expect(toLoadUrl(parseNccAddress(`ncc://${NPUB}/web`))).toBe(`ncc://${NPUB}/web/`)
-    expect(toLoadUrl(parseNccAddress(`ncc://${NPUB}/web/`))).toBe(`ncc://${NPUB}/web/`)
-    expect(toLoadUrl(parseNccAddress(`ncc://${NPUB}/web/x`))).toBe(`ncc://${NPUB}/web/x`)
-    expect(toLoadUrl(parseNccAddress(`ncc://${NPUB}`))).toBe(`ncc://${NPUB}/`)
+  it('uses the host form for loading, so the service is part of the origin', () => {
+    expect(toInternalUrl(parseNccAddress(`ncc://${NPUB}/web`))).toBe(`ncc://${NPUB}.web/`)
+    expect(toInternalUrl(parseNccAddress(`ncc://${NPUB}/web/x`))).toBe(`ncc://${NPUB}.web/x`)
+    expect(toInternalUrl(parseNccAddress(`ncc://${NPUB}`))).toBe(`ncc://${NPUB}.addr/`)
+    expect(toLoadUrl(parseNccAddress(`ncc://${NPUB}/web`))).toBe(`ncc://${NPUB}.web/`)
   })
 
-  it('builds an unambiguous internal URL and a clean display URL', () => {
-    const address = parseNccAddress(`ncc://${NPUB}/web/docs?x=1#top`)
-    const internal = toInternalUrl(address)
-    expect(internal).toBe(`ncc://${NPUB}/_/web/docs?x=1#top`)
-    expect(toDisplayUrl(internal)).toBe(`ncc://${NPUB}/web/docs?x=1#top`)
-
-    expect(toDisplayUrl(`ncc://${NPUB}/_/addr/`)).toBe(`ncc://${NPUB}/`)
-    expect(toInternalUrl(parseNccAddress(`ncc://${NPUB}`))).toBe(`ncc://${NPUB}/_/addr/`)
+  it('round-trips between the host and display forms', () => {
+    const display = `ncc://${NPUB}/web/docs?x=1#top`
+    const internal = toInternalUrl(parseNccAddress(display))
+    expect(internal).toBe(`ncc://${NPUB}.web/docs?x=1#top`)
+    expect(toDisplayUrl(internal)).toBe(display)
+    expect(toDisplayUrl(`ncc://${NPUB}.addr/`)).toBe(`ncc://${NPUB}/`)
     expect(toDisplayUrl('https://example.com')).toBe('https://example.com')
   })
-})
 
-describe('routeNccPath', () => {
-  it('treats the first segment as the service when nothing is active', () => {
-    expect(routeNccPath('/web/docs', null)).toEqual({ service: 'web', path: '/docs' })
-    expect(routeNccPath('/', null)).toEqual({ service: 'addr', path: '/' })
-  })
-
-  it('routes absolute subresource paths to the active service', () => {
-    expect(routeNccPath('/style.css', 'web')).toEqual({ service: 'web', path: '/style.css' })
-  })
-
-  it('supports the explicit /_/<service>/ form', () => {
-    expect(routeNccPath('/_/web/a/b', null)).toEqual({ service: 'web', path: '/a/b' })
-    expect(routeNccPath('/_/web', null)).toEqual({ service: 'web', path: '/' })
-  })
-
-  it('prefers the referrer service over the active service', () => {
-    expect(routeNccPath('/style.css', 'active', 'referring')).toEqual({
-      service: 'referring',
-      path: '/style.css'
-    })
-    expect(routeNccPath('/_/explicit/x', 'active', 'referring')).toEqual({
-      service: 'explicit',
-      path: '/x'
+  it('parses the host form as an internal address', () => {
+    const address = parseNccAddress(`ncc://${NPUB}.web/assets/app.js`)
+    expect(address).toMatchObject({
+      pubkey: NPUB,
+      service: 'web',
+      path: '/assets/app.js',
+      internal: true
     })
   })
 
-  it('routes a new document to its requested service, not the previous page service', () => {
-    expect(routeNccPath('/npanel/', 'ditto', 'ditto', true)).toEqual({
-      service: 'npanel',
-      path: '/'
-    })
-  })
-
-  it('rejects an empty or invalid explicit service', () => {
-    expect(routeNccPath('/_/', null)).toBeNull()
-    expect(routeNccPath('/_/bad%2Fname', null)).toBeNull()
-  })
-})
-
-describe('serviceFromReferer', () => {
-  it('extracts the service from a same-origin referer', () => {
-    expect(serviceFromReferer(`ncc://${NPUB}/web/docs`, NPUB)).toBe('web')
-    expect(serviceFromReferer(`ncc://${NPUB}/_/api/v1`, NPUB)).toBe('api')
-    expect(serviceFromReferer(`ncc://${NPUB.toUpperCase()}/web/`, NPUB)).toBe('web')
-  })
-
-  it('ignores referers from another identity or scheme', () => {
-    expect(serviceFromReferer(`ncc://${HEX}/web/`, NPUB)).toBeNull()
-    expect(serviceFromReferer('https://example.com/web', NPUB)).toBeNull()
-    expect(serviceFromReferer(null, NPUB)).toBeNull()
-    expect(serviceFromReferer(`ncc://${NPUB}/`, NPUB)).toBeNull()
+  it('encodes service ids that are not hostname-safe', () => {
+    for (const service of ['a.b', 'a~b', 'UPPER', 'x-abc']) {
+      const internal = toInternalUrl({ pubkey: NPUB, service, path: '/' })
+      const parsed = parseNccAddress(internal)
+      expect(parsed.service).toBe(service)
+      expect(parsed.path).toBe('/')
+      expect(internal).toMatch(/^ncc:\/\/[a-z0-9]+\.x-[a-z2-7]+\/$/)
+      expect(toDisplayUrl(internal)).toBe(`ncc://${NPUB}/${service}/`)
+    }
   })
 })
 

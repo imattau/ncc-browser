@@ -128,7 +128,7 @@ async function startService(npub, options = {}) {
 <a id="next" href="second">second</a>
 <a id="download" href="/sample.txt" download="sample.txt">download</a>
 <a id="login-link" href="/login">login</a>
-<a id="cross" href="ncc://${npub}/_/secure/">secure service</a>${extraBody}</body></html>`
+<a id="cross" href="ncc://${npub}.secure/">secure service</a>${extraBody}</body></html>`
 
   const server = createServer((request, response) => {
     if (request.url === '/leak.png') {
@@ -950,15 +950,22 @@ async function main() {
     const href = await evaluate(cdp, 'document.querySelector("#next")?.href ?? ""')
     check(
       'relative links resolve inside the service',
-      String(href) === `ncc://${serviceNpub}/_/web/second`,
+      String(href) === `ncc://${serviceNpub}.web/second`,
       String(href)
     )
 
     const location = await evaluate(cdp, 'location.href')
     check(
       'document URL keeps the service namespace',
-      String(location) === `ncc://${serviceNpub}/_/web/`,
+      String(location) === `ncc://${serviceNpub}.web/`,
       String(location)
+    )
+
+    const nccOrigin = await evaluate(cdp, 'location.origin')
+    check(
+      'each service is its own origin',
+      nccOrigin === `ncc://${serviceNpub}.web`,
+      String(nccOrigin)
     )
 
     const capabilities = await evaluate(
@@ -1078,7 +1085,7 @@ async function main() {
       String(address) === `ncc://${serviceNpub}/web/`,
       String(address)
     )
-    check('address bar hides the internal service prefix', !String(address).includes('/_/'), String(address))
+    check('address bar hides the internal service prefix', !String(address).includes('.web'), String(address))
 
     const initialSecurity = await readSecurity(chrome)
     check(
@@ -1311,18 +1318,18 @@ async function main() {
       chrome,
       'window.ncc.getState().then((state) => state.activeTabId)'
     )
-    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/web/cookie-set` })
+    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}.web/cookie-set` })
     await waitForText(cdp, 'COOKIE SET', 80)
-    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/web/cookie-read?normal=1` })
+    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}.web/cookie-read?normal=1` })
     const normalCookie = await waitForText(cdp, 'COOKIE normal', 80)
     check('normal tab stores its cookie', normalCookie.includes('COOKIE normal'))
 
     const privateOneId = await evaluate(
       chrome,
-      `window.ncc.newPrivateTab('ncc://${serviceNpub}/_/web/cookie-read?private=1')`
+      `window.ncc.newPrivateTab('ncc://${serviceNpub}.web/cookie-read?private=1')`
     )
     const privateOneTarget = await waitForTarget((entry) =>
-      String(entry.url).includes('/_/web/cookie-read?private=1')
+      String(entry.url).includes('.web/cookie-read?private=1')
     )
     const privateOne = new Cdp(privateOneTarget.webSocketDebuggerUrl)
     await privateOne.connect()
@@ -1351,21 +1358,21 @@ async function main() {
     )
 
     await privateOne.send('Page.navigate', {
-      url: `ncc://${serviceNpub}/_/web/cookie-set?private=1`
+      url: `ncc://${serviceNpub}.web/cookie-set?private=1`
     })
     await waitForText(privateOne, 'COOKIE SET', 80)
     await privateOne.send('Page.navigate', {
-      url: `ncc://${serviceNpub}/_/web/cookie-read?private=1b`
+      url: `ncc://${serviceNpub}.web/cookie-read?private=1b`
     })
     const privateCookie = await waitForText(privateOne, 'COOKIE normal', 80)
     check('private tab keeps its own cookie', privateCookie.includes('COOKIE normal'))
 
     const privateTwoId = await evaluate(
       chrome,
-      `window.ncc.newPrivateTab('ncc://${serviceNpub}/_/web/cookie-read?private=2')`
+      `window.ncc.newPrivateTab('ncc://${serviceNpub}.web/cookie-read?private=2')`
     )
     const privateTwoTarget = await waitForTarget((entry) =>
-      String(entry.url).includes('/_/web/cookie-read?private=2')
+      String(entry.url).includes('.web/cookie-read?private=2')
     )
     const privateTwo = new Cdp(privateTwoTarget.webSocketDebuggerUrl)
     await privateTwo.connect()
@@ -1383,10 +1390,10 @@ async function main() {
 
     const privateThreeId = await evaluate(
       chrome,
-      `window.ncc.newPrivateTab('ncc://${serviceNpub}/_/web/cookie-read?private=3')`
+      `window.ncc.newPrivateTab('ncc://${serviceNpub}.web/cookie-read?private=3')`
     )
     const privateThreeTarget = await waitForTarget((entry) =>
-      String(entry.url).includes('/_/web/cookie-read?private=3')
+      String(entry.url).includes('.web/cookie-read?private=3')
     )
     const privateThree = new Cdp(privateThreeTarget.webSocketDebuggerUrl)
     await privateThree.connect()
@@ -1399,20 +1406,20 @@ async function main() {
     privateThree.close()
 
     await evaluate(chrome, `window.ncc.selectTab(${JSON.stringify(normalTabId)})`)
-    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/web/cookie-read?normal=2` })
+    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}.web/cookie-read?normal=2` })
     const normalCookieAgain = await waitForText(cdp, 'COOKIE normal', 80)
     check(
       'normal session keeps its cookies across private tabs',
       normalCookieAgain.includes('COOKIE normal')
     )
-    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/web/` })
+    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}.web/` })
     await waitForText(cdp, 'NCC E2E OK', 80)
 
     // Cookies and site data can be cleared for the identity serving the tab.
-    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/web/cookie-set?clear=1` })
+    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}.web/cookie-set?clear=1` })
     await waitForText(cdp, 'COOKIE SET', 80)
     await evaluate(cdp, "localStorage.setItem('ncc-clear-me', '1')")
-    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/web/cookie-read?clear=1` })
+    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}.web/cookie-read?clear=1` })
     await waitForText(cdp, 'COOKIE normal', 80)
     check(
       'ncc pages share storage across services',
@@ -1432,7 +1439,7 @@ async function main() {
     check(
       'padlock names the ncc identity as the site',
       (await evaluate(chrome, 'document.querySelector("[data-site-origin]").textContent')) ===
-        `ncc://${serviceNpub}`
+        `ncc://${serviceNpub}/web`
     )
     const siteBeforeClear = await evaluate(chrome, 'window.ncc.siteData()')
     check(
@@ -1480,7 +1487,7 @@ async function main() {
       60
     )
     check('clears local storage for the site', storageCleared === 'cleared')
-    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/web/cookie-read?clear=2` })
+    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}.web/cookie-read?clear=2` })
     const clearedCookie = await waitForText(cdp, 'COOKIE none', 80)
     check('clears cookies for the site', clearedCookie.includes('COOKIE none'))
     await evaluate(
@@ -1488,7 +1495,7 @@ async function main() {
       'document.querySelector(\'[data-popover=site-info] button[aria-label^="Close"]\').click()'
     )
     await sleep(200)
-    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/web/` })
+    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}.web/` })
     await waitForText(cdp, 'NCC E2E OK', 80)
 
     // Private tabs never touch the suggestion history file.
@@ -1833,7 +1840,7 @@ async function main() {
     publishLocator(relayA, 'rotating', [
       { type: 'http', uri: `127.0.0.1:${rotateOld.port}`, priority: 1, family: 'ipv4' }
     ])
-    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/rotating/` })
+    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}.rotating/` })
     const rotatedFrom = await waitForText(cdp, 'ROTATE OLD', 80)
     check('resolves the rotating service', rotatedFrom.includes('ROTATE OLD'))
 
@@ -1847,7 +1854,7 @@ async function main() {
       [{ type: 'http', uri: `127.0.0.1:${rotateNew.port}`, priority: 1, family: 'ipv4' }],
       { at: Math.floor(Date.now() / 1000) + 5 }
     )
-    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/rotating/?r=1` })
+    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}.rotating/?r=1` })
     const rotatedTo = await waitForText(cdp, 'ROTATE NEW', 80)
     check('re-resolves a rotated endpoint without a restart', rotatedTo.includes('ROTATE NEW'))
 
@@ -1892,7 +1899,7 @@ async function main() {
     check('re-resolve refetches the locator', reResolved.includes('NCC E2E OK'))
     await sleep(250)
 
-    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/web/` })
+    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}.web/` })
     await waitForText(cdp, 'NCC E2E OK', 80)
 
     // NIP-46: a mock bunker over the same relay. First publish a locator encrypted to
@@ -1934,7 +1941,7 @@ async function main() {
     )
     check('the remote signer received the request', bunker.signRequests() >= 1)
 
-    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/private/` })
+    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}.private/` })
     const privateText = await waitForText(cdp, 'NCC E2E OK', 80)
     check('remote signer decrypts a targeted locator', privateText.includes('NCC E2E OK'))
     check('locator decryption went through NIP-46', bunker.decryptRequests() >= 1)
@@ -1980,9 +1987,9 @@ async function main() {
     await sleep(250)
 
     // A service with only an NCC-02 record uses its `u` endpoint as the fallback.
-    await evaluate(chrome, `window.ncc.newTab('ncc://${serviceNpub}/_/ncc02only/')`)
+    await evaluate(chrome, `window.ncc.newTab('ncc://${serviceNpub}.ncc02only/')`)
     const fallbackTarget = await waitForTarget((entry) =>
-      String(entry.url).includes('/ncc02only/')
+      String(entry.url).includes('.ncc02only/')
     )
     const fallbackCdp = new Cdp(fallbackTarget.webSocketDebuggerUrl)
     await fallbackCdp.connect()
@@ -2010,8 +2017,8 @@ async function main() {
 
     // Tabs + gossip: a new tab resolves a service that only exists on the hinted relay.
     await evaluate(chrome, 'window.ncc.newTab()')
-    await evaluate(chrome, `window.ncc.navigate('ncc://${serviceNpub}/_/hinted/hinted')`)
-    const hintedTarget = await waitForTarget((entry) => entry.url?.includes('/hinted/hinted'))
+    await evaluate(chrome, `window.ncc.navigate('ncc://${serviceNpub}.hinted/hinted')`)
+    const hintedTarget = await waitForTarget((entry) => entry.url?.includes('.hinted/hinted'))
     const hinted = new Cdp(hintedTarget.webSocketDebuggerUrl)
     await hinted.connect()
     const hintedText = await waitForText(hinted, 'HINTED OK', 80)
@@ -2192,7 +2199,7 @@ async function main() {
     }
 
     // Mismatch: same k, different certificate. Must fail closed.
-    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/bogus/` })
+    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}.bogus/` })
     const mismatchText = await waitForText(cdp, 'Transport identity mismatch', 80)
     check(
       'refuses a certificate that does not match k',
@@ -2430,7 +2437,7 @@ async function main() {
 
     await evaluate(chrome, `window.ncc.navigate('ncc://${signerNpub}/pubtest/')`)
     const publishedTarget = await waitForTarget((entry) =>
-      String(entry.url).includes('/pubtest/')
+      String(entry.url).includes('.pubtest/')
     )
     const publishedCdp = new Cdp(publishedTarget.webSocketDebuggerUrl)
     await publishedCdp.connect()
@@ -2453,8 +2460,8 @@ async function main() {
       required?.ok === true && required?.config?.anchorRequired === true,
       JSON.stringify(required)
     )
-    await evaluate(chrome, `window.ncc.newTab('ncc://${serviceNpub}/_/web/')`)
-    const requiredTarget = await waitForTarget((entry) => String(entry.url).includes('/_/web/'))
+    await evaluate(chrome, `window.ncc.newTab('ncc://${serviceNpub}.web/')`)
+    const requiredTarget = await waitForTarget((entry) => String(entry.url).includes('.web/'))
     const requiredCdp = new Cdp(requiredTarget.webSocketDebuggerUrl)
     await requiredCdp.connect()
     const requiredText = await waitForText(requiredCdp, 'No NCC-02 service record', 80)
@@ -2481,7 +2488,7 @@ async function main() {
 
     // The toolbar refresh must bypass the HTTP cache. The test service sets
     // max-age=3600 and increments a counter per actual document request.
-    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/web/counter` })
+    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}.web/counter` })
     const counterOne = await waitForText(cdp, '1', 80)
     check('loads the cache-counter page', counterOne.includes('1'))
     await evaluate(
@@ -2495,7 +2502,7 @@ async function main() {
     // The onion endpoint is reached through a local SOCKS5 server standing in for
     // Tor, and the onion service page embeds a clearnet image that strict mode
     // must block.
-    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/web/` })
+    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}.web/` })
     await waitForText(cdp, 'NCC E2E OK', 80)
     await sleep(400)
     const torInitial = await evaluate(chrome, 'window.ncc.getState().then((s) => s.tor)')
@@ -2605,7 +2612,7 @@ async function main() {
     )
 
     // An onion-only locator explains the failure and offers the toggle.
-    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/toronly/` })
+    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}.toronly/` })
     const onionOnlyText = await waitForText(cdp, 'Onion endpoint only', 80)
     check('explains an onion-only service', onionOnlyText.includes('onion-only'))
     const onionOnlyState = await evaluate(chrome, 'window.ncc.getState().then((s) => s.tor)')
@@ -2641,10 +2648,10 @@ async function main() {
     // queries through the fixed SOCKS proxy.
     const torTabId = await evaluate(
       chrome,
-      `window.ncc.newTorTab('ncc://${serviceNpub}/_/directonly/')`
+      `window.ncc.newTorTab('ncc://${serviceNpub}.directonly/')`
     )
     const torTabTarget = await waitForTarget((entry) =>
-      String(entry.url).includes('/_/directonly/')
+      String(entry.url).includes('.directonly/')
     )
     const torTabCdp = new Cdp(torTabTarget.webSocketDebuggerUrl)
     await torTabCdp.connect()
@@ -2724,7 +2731,7 @@ async function main() {
       "window.ncc.setSecurityConfig({ httpsMode: 'prefer', warnInsecure: false })"
     )
     await sleep(600)
-    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/mixed/` })
+    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}.mixed/` })
     const mixedHttps = await waitForText(cdp, 'SECURE OK', 100)
     check('prefers a published HTTPS endpoint', mixedHttps.includes('SECURE OK'))
     await sleep(400)
@@ -2752,7 +2759,7 @@ async function main() {
     check('HTTPS only uses the secure endpoint', mixedOnly.includes('SECURE OK'))
 
     // An HTTP-only NCC service gets a blocking warning in HTTPS-only mode.
-    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/insecure/` })
+    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}.insecure/` })
     const insecureWarning = await waitForText(cdp, 'This service does not offer HTTPS', 100)
     check(
       'warns before an HTTP-only NCC service',
@@ -2813,7 +2820,7 @@ async function main() {
       chrome,
       "window.ncc.setSecurityConfig({ httpsMode: 'prefer', warnInsecure: false })"
     )
-    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/toronly/` })
+    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}.toronly/` })
     await waitForText(cdp, 'Onion endpoint only', 80)
 
     // With the proxy gone, Tor must fail closed rather than fall back to direct.
@@ -2927,7 +2934,7 @@ async function main() {
     )
     await evaluate(
       chrome,
-      `window.ncc.newPrivateTab('ncc://${serviceNpub}/_/web/private-restore')`
+      `window.ncc.newPrivateTab('ncc://${serviceNpub}.web/private-restore')`
     )
     await evaluate(chrome, `window.ncc.selectTab(${JSON.stringify(keepNormalId)})`)
     await sleep(1200)
@@ -3405,6 +3412,12 @@ async function main() {
     await evaluate(chrome, `window.ncc.navigate(${JSON.stringify(`nsite://${serviceNpub}/`)})`)
     await waitForText(cdp, 'Hello from Nostr', 120)
     check('serves a NIP-5A site over nsite://', true)
+    const rootOrigin = await evaluate(cdp, 'location.origin')
+    check(
+      'the root site is its own origin',
+      rootOrigin === `nsite://${serviceNpub}`,
+      String(rootOrigin)
+    )
 
     const nsiteSecurity = await evaluate(chrome, 'window.ncc.getState().then((state) => state.security)')
     check(
@@ -3425,12 +3438,23 @@ async function main() {
     await evaluate(chrome, `window.ncc.navigate(${JSON.stringify(`nsite://${serviceNpub}/blog/`)})`)
     await waitForText(cdp, 'Blog home', 120)
     await waitForText(cdp, 'asset loaded', 120)
+    const blogOrigin = await evaluate(cdp, 'location.origin')
+    check(
+      'a named site is its own origin',
+      blogOrigin === `nsite://${serviceNpub}.blog`,
+      String(blogOrigin)
+    )
     check('serves an absolute-path asset inside a named site', true)
 
     await evaluate(chrome, `window.ncc.navigate(${JSON.stringify(`nsite://${serviceNpub}/blog/dir`)})`)
     await waitForText(cdp, 'Inside the directory', 120)
     const dirPath = await evaluate(cdp, 'location.pathname')
-    check('adds the trailing slash for a directory', dirPath === '/blog/dir/', String(dirPath))
+    const dirHost = await evaluate(cdp, 'location.hostname')
+    check(
+      'adds the trailing slash for a directory',
+      dirPath === '/dir/' && dirHost.endsWith('.blog'),
+      `${dirHost}${dirPath}`
+    )
 
     await evaluate(
       chrome,

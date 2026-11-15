@@ -174,7 +174,7 @@ export interface PasswordContext {
   origin: string | null
   title: string
   secure: boolean
-  scheme: 'https' | 'http' | 'ncc' | null
+  scheme: 'https' | 'http' | 'ncc' | 'nsite' | null
   tabKind: TabKind
   locked: boolean
   configured: boolean

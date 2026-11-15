@@ -208,7 +208,11 @@ export class SiteDataService {
     const page = this.deps.host.activePage()
     const identity = page ? siteIdentityForUrl(page.url) : null
     if (!page || !identity || page.mode === 'blank') return false
-    this.deps.locators.invalidate(page.kind, identity.host, identity.service)
+    // nsite manifests are invalidated by the shell's force reload; only NCC has a
+    // locator cache to drop here.
+    if (identity.scheme === 'ncc') {
+      this.deps.locators.invalidate(page.kind, identity.host, identity.service)
+    }
     this.deps.host.reloadTab(page.tabId)
     return true
   }

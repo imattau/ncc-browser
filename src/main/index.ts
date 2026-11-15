@@ -287,7 +287,6 @@ app.whenReady().then(async () => {
     isTorService: (pubkey: string, service: string) =>
       shell?.isTorService(pubkey, service) ?? false,
     activeService: activeServices[kind],
-    activeServicesFor: (pubkey: string) => shell?.servicesFor(pubkey) ?? [],
     endpointOwners: endpointOwners[kind],
     onActivity: (activity: ProtocolActivity) => shell?.reportActivity(activity)
   })

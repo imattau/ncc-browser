@@ -10,7 +10,12 @@ import {
   type WebContents
 } from 'electron'
 import { parseNccAddress, toDisplayUrl, toInternalUrl, type NccAddress } from '@shared/ncc-url'
-import { buildNsiteUrl, parseNsiteAddress, type NsiteAddress } from '@shared/nsite-url'
+import {
+  buildNsiteUrl,
+  parseNsiteAddress,
+  toInternalNsiteUrl,
+  type NsiteAddress
+} from '@shared/nsite-url'
 import type { NsiteActivity } from './nsite/protocol'
 import { BANNER_HEIGHT, CHROME_HEIGHT } from '@shared/layout'
 import type { CommandId } from '@shared/commands'
@@ -858,15 +863,6 @@ export class BrowserShell {
     this.syncState()
   }
 
-  /** Services currently open for a pubkey, used to attribute bare subresource paths. */
-  servicesFor(pubkey: string): string[] {
-    const services = new Set<string>()
-    for (const tab of this.tabs) {
-      if (tab.mode === 'ncc' && tab.pubkey === pubkey && tab.service) services.add(tab.service)
-    }
-    return [...services]
-  }
-
   /** True when at least one tab for this service is currently served over Tor. */
   isTorService(pubkey: string, service: string): boolean {
     return this.tabs.some(
@@ -968,7 +964,7 @@ export class BrowserShell {
       tab.tor = { onionAvailable: false, active: tab.kind === 'tor' }
       this.deps.torGuard.set(tab.view.webContents.id, tab.kind === 'tor')
       this.showOnly(tab.id)
-      await this.load(tab, buildNsiteUrl(nsite))
+      await this.load(tab, toInternalNsiteUrl(nsite))
       return
     }
 

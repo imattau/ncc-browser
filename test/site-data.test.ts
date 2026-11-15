@@ -15,7 +15,7 @@ describe('site identity', () => {
   it('keys ncc storage by identity and trust by service', () => {
     const identity = siteIdentityForUrl(`ncc://${npub}/_/web/panel?x=1`)
     expect(identity).toMatchObject({
-      origin: `ncc://${npub}`,
+      origin: `ncc://${npub}.web`,
       trustKey: `ncc://${npub}/web`,
       label: `ncc://${npub}/web`,
       host: npub,
@@ -43,14 +43,15 @@ describe('site identity', () => {
     expect(UNSUPPORTED_SITE.supported).toBe(false)
   })
 
-  it('ignores the service when comparing storage origins', () => {
-    expect(isSameSite(`ncc://${npub}/_/web/one`, `ncc://${npub}`)).toBe(true)
-    expect(isSameSite(`ncc://${npub}/_/other/two`, `ncc://${npub}`)).toBe(true)
-    expect(isSameSite(`ncc://${other}/_/web/one`, `ncc://${npub}`)).toBe(false)
-    expect(isSameSite('https://example.com/', `ncc://${npub}`)).toBe(false)
+  it('compares storage origins per service', () => {
+    expect(isSameSite(`ncc://${npub}.web/one`, `ncc://${npub}.web`)).toBe(true)
+    expect(isSameSite(`ncc://${npub}/_/web/one`, `ncc://${npub}.web`)).toBe(true)
+    expect(isSameSite(`ncc://${npub}/_/other/two`, `ncc://${npub}.web`)).toBe(false)
+    expect(isSameSite(`ncc://${other}.web/one`, `ncc://${npub}.web`)).toBe(false)
+    expect(isSameSite('https://example.com/', `ncc://${npub}.web`)).toBe(false)
     expect(isSameSite('https://example.com/a', 'https://example.com')).toBe(true)
     expect(isSameSite('https://a.example.com/', 'https://example.com')).toBe(false)
-    expect(isSameSite('about:blank', `ncc://${npub}`)).toBe(false)
+    expect(isSameSite('about:blank', `ncc://${npub}.web`)).toBe(false)
   })
 })
 

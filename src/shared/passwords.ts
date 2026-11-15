@@ -5,6 +5,8 @@
  * own identity. Nothing in this module touches Electron or the network.
  */
 
+import { parseNccAddress } from './ncc-url'
+import { parseNsiteAddress } from './nsite-url'
 import type { PasswordEntry, PasswordPage, PasswordSummary } from './types'
 
 export const PASSWORD_VAULT_KIND = 30078
@@ -31,7 +33,7 @@ export interface PasswordVault {
 export interface PageOrigin {
   /** Canonical value stored with entries. */
   origin: string
-  scheme: 'https' | 'http' | 'ncc'
+  scheme: 'https' | 'http' | 'ncc' | 'nsite'
   secure: boolean
   host: string
   service?: string
@@ -47,18 +49,33 @@ export function pageOriginFromUrl(raw: string): PageOrigin | null {
   }
 
   if (url.protocol === 'ncc:') {
-    const pubkey = url.hostname.toLowerCase()
-    if (!/^[0-9a-f]{64}$/i.test(pubkey) && !/^npub1[02-9ac-hj-np-z]+$/i.test(pubkey)) {
+    try {
+      const parsed = parseNccAddress(raw)
+      return {
+        origin: `ncc://${parsed.pubkey}/${parsed.service}`,
+        scheme: 'ncc',
+        secure: true,
+        host: parsed.pubkey,
+        service: parsed.service
+      }
+    } catch {
       return null
     }
-    const path = url.pathname.replace(/^\/+/, '')
-    const service = path.startsWith('_/') ? path.slice(2).split('/')[0] : path.split('/')[0]
-    return {
-      origin: `ncc://${pubkey}/${service || 'addr'}`,
-      scheme: 'ncc',
-      secure: true,
-      host: pubkey,
-      service: service || 'addr'
+  }
+
+  if (url.protocol === 'nsite:') {
+    try {
+      const parsed = parseNsiteAddress(raw)
+      const label = parsed.site ? `nsite://${parsed.pubkey}/${parsed.site}` : `nsite://${parsed.pubkey}`
+      return {
+        origin: label,
+        scheme: 'nsite',
+        secure: true,
+        host: parsed.pubkey,
+        ...(parsed.site ? { service: parsed.site } : {})
+      }
+    } catch {
+      return null
     }
   }
 
@@ -74,7 +91,7 @@ export function pageOriginFromUrl(raw: string): PageOrigin | null {
   return null
 }
 
-/** Password management requires HTTPS or the identity-anchored ncc:// scheme. */
+/** Password management requires HTTPS or an identity-anchored social address. */
 export function canUsePasswordOrigin(origin: PageOrigin | null): boolean {
   return origin != null && (origin.scheme === 'https' || origin.scheme === 'ncc')
 }

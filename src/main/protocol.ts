@@ -1,19 +1,9 @@
 import type { Session } from 'electron'
-import {
-  isNostrId,
-  parseNccAddress,
-  routeNccPath,
-  serviceFromReferer
-} from '@shared/ncc-url'
+import { parseNccAddress, toInternalUrl } from '@shared/ncc-url'
 import type { AnchorInfo, LocatorInfo, ResolvedService, TransportSecurity } from '@shared/types'
 import { renderErrorPage, renderHttpWarningPage, renderPlainFailure } from './error-page'
 import { orderByHealth, type EndpointHealth } from './ncc/health'
-import {
-  joinPaths,
-  rewriteLocation,
-  shouldRetryWithActiveService,
-  upstreamRequestInit
-} from './ncc/routing'
+import { joinPaths, rewriteLocation, upstreamRequestInit } from './ncc/routing'
 import { toHexPubkey, type NccResolver } from './ncc/resolver'
 import {
   hasOnionEndpoint,
@@ -94,13 +84,7 @@ export interface ProtocolDeps {
   httpPolicy: HttpPolicy
   /** True when this service currently has a document loaded through Tor. */
   isTorService: (pubkey: string, service: string) => boolean
-  activeService: Map<string, string>
-  /**
-   * Every service currently open for this pubkey across tabs. An absolute-path
-   * subresource carries no service name, so when the active-service map has no answer
-   * (or the wrong one) these are the only candidates worth trying.
-   */
-  activeServicesFor?: (pubkey: string) => string[]
+
   /** Endpoint origin → the NCC address it was resolved for, used to rewrite redirects. */
   endpointOwners: Map<string, { pubkey: string; service: string }>
   onActivity: (activity: ProtocolActivity) => void
@@ -113,8 +97,7 @@ export function installNccProtocol(deps: ProtocolDeps): void {
 async function handleNccRequest(
   request: Request,
   deps: ProtocolDeps,
-  allowRetry = true,
-  forcedService?: string
+  allowRetry = true
 ): Promise<Response> {
   let requestUrl: URL
   try {
@@ -129,30 +112,29 @@ async function handleNccRequest(
     ? `?${forwardedSearch.toString()}`
     : ''
 
-  const pubkey = requestUrl.hostname.toLowerCase()
-  if (!isNostrId(pubkey)) {
+  // The clean form (`ncc://<npub>/<service>/…`) is input only. Everything the content
+  // view loads uses the host form, where the service is part of the origin.
+  let address
+  try {
+    address = parseNccAddress(request.url)
+  } catch (error) {
     return failureResponse(
       request,
       'invalid-address',
-      'The host of an ncc:// URL must be an npub',
+      error instanceof Error ? error.message : 'Not a valid ncc:// URL',
       request.url
     )
   }
-
-  const refererService = serviceFromReferer(request.headers.get('referer'), pubkey)
-  const routed = forcedService
-    ? { service: forcedService, path: requestUrl.pathname || '/' }
-    : routeNccPath(
-        requestUrl.pathname,
-        deps.activeService.get(pubkey) ?? null,
-        refererService,
-        isDocumentRequest(request)
-      )
-  if (!routed) {
-    return failureResponse(request, 'invalid-address', 'Could not determine the service', request.url)
+  if (!address.internal) {
+    return new Response(null, {
+      status: 302,
+      headers: { location: toInternalUrl(address), 'cache-control': 'no-store' }
+    })
   }
 
-  const { service, path } = routed
+  const pubkey = address.pubkey
+  const service = address.service
+  const path = address.path || '/'
 
   // The warning page's continue link carries a one-time token. Consuming it stores
   // the user's HTTP exception for this service and redirects to the clean address.
@@ -196,39 +178,6 @@ async function handleNccRequest(
 
   const outcome = await deps.resolver.resolve(pubkey, service)
   if (!outcome.ok) {
-    // See shouldRetryWithActiveService's own comment (ncc/routing.ts) for
-    // why this retry exists: a subresource's service can be guessed wrong
-    // when routing ran before the active-service map had an answer.
-    if (
-      allowRetry &&
-      shouldRetryWithActiveService(
-        isDocumentRequest(request),
-        refererService,
-        service,
-        deps.activeService.get(pubkey) ?? null
-      )
-    ) {
-      return handleNccRequest(request, deps, false)
-    }
-
-    // If the active-service map is also wrong or empty, the only remaining truth is
-    // "some tab on this npub is showing this page". Try each of those services once;
-    // this is the multi-tab case the active map cannot express, and the reason an
-    // asset can 404 while the document that asked for it is fine.
-    if (
-      allowRetry &&
-      !isDocumentRequest(request) &&
-      !refererService &&
-      outcome.code === 'no-record'
-    ) {
-      const candidates = (deps.activeServicesFor?.(pubkey) ?? [])
-        .filter((candidate) => candidate !== service)
-        .slice(0, 4)
-      for (const candidate of candidates) {
-        const retried = await handleNccRequest(request, deps, false, candidate)
-        if (retried.status !== 404) return retried
-      }
-    }
     if (isDocumentRequest(request)) {
       deps.onActivity({
         pubkey,
