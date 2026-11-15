@@ -26,7 +26,8 @@ function fakeHost() {
     click: async (x, y) => void calls.push(`click ${x},${y}`),
     hover: async () => undefined,
     insertText: async (t) => void calls.push(`type ${t}`),
-    pressKey: async (k) => void calls.push(`key ${k}`)
+    pressKey: async (k) => void calls.push(`key ${k}`),
+    diagnostics: () => []
   }
   const host: AutomationHost = {
     listTabs: () => [{ tabId: 't1', url: 'https://example.com/', title: 'Example', active: true }],

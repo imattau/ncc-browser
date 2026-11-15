@@ -30,8 +30,13 @@ XDG_CONFIG_HOME=/tmp/ncc-scratch NCC_AUTOMATION=1 npm run dev
 ## Tools
 
 `tabs_list`, `tab_new`, `tab_close`, `navigate`, `read_page` (numbered interactive
-elements), `get_page_text`, `screenshot`, `click`, `hover`, `type`, `press_key`,
-`scroll`, `evaluate`.
+elements), `get_page_text`, `get_console_logs`, `screenshot`, `click`, `hover`, `type`,
+`press_key`, `scroll`, `evaluate`.
+
+`get_console_logs` returns recent renderer console messages and main-frame load errors
+captured in memory for the tab (up to 300 entries). It only returns entries from the
+site approved for that call. Collection begins when automation first sees a tab, so
+messages emitted earlier are not available.
 
 ## Approval
 
@@ -58,5 +63,7 @@ in Settings revokes every session grant at once; each site can also be revoked o
 
 - The first action on a site requires user approval; “Allow for this session” remembers
   the grant until the browser quits.
+- Console output can include sensitive page data; it is returned only after the site's
+  access approval and is not written to disk by the automation collector.
 - `evaluate` is unrestricted JavaScript in the page.
 - Main frame only; no iframe targeting, file upload, dialogs or downloads handling.

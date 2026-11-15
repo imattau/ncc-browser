@@ -15,6 +15,15 @@ export interface MouseOptions {
   clickCount?: number
 }
 
+export interface AutomationDiagnostic {
+  time: string
+  kind: 'console' | 'load-failure'
+  level: 'info' | 'warning' | 'error' | 'debug'
+  message: string
+  url: string
+  line?: number
+}
+
 export interface AutomationContents {
   /** Evaluate an expression in the page's main world and return its JSON value. */
   evaluate(code: string): Promise<unknown>
@@ -26,6 +35,8 @@ export interface AutomationContents {
   insertText(text: string): Promise<void>
   /** Press a key by its Electron accelerator name, e.g. `Enter`, `Tab`, `A`. */
   pressKey(key: string, modifiers: string[]): Promise<void>
+  /** Recent renderer console messages and page load failures captured in this tab. */
+  diagnostics(): AutomationDiagnostic[]
 }
 
 export interface AutomationHost {
