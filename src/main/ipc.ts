@@ -18,7 +18,7 @@ import type { BrowserShell } from './shell'
 export interface IpcDeps {
   shell: BrowserShell
   config: ConfigStore
-  resolver: NccResolver
+  resolvers: NccResolver[]
   pins: PinStore
   cacheStore: LocatorCacheStore
   health: EndpointHealth
@@ -47,10 +47,23 @@ export function registerIpc(deps: IpcDeps): void {
     if (!fromChrome(event)) return
     deps.shell.toggleTor()
   })
+  ipcMain.handle('ncc:insecure-choice', (event, choice: unknown) => {
+    if (!fromChrome(event)) return
+    if (choice !== 'cancel' && choice !== 'continue' && choice !== 'always') return
+    deps.shell.insecureChoice(choice)
+  })
 
   ipcMain.handle('ncc:new-tab', (_event, input: unknown) =>
     deps.shell.newTab(typeof input === 'string' ? input : undefined)
   )
+  ipcMain.handle('ncc:new-private-tab', (event, input: unknown) => {
+    if (!fromChrome(event)) return ''
+    return deps.shell.newPrivateTab(typeof input === 'string' ? input : undefined)
+  })
+  ipcMain.handle('ncc:new-tor-tab', (event, input: unknown) => {
+    if (!fromChrome(event)) return ''
+    return deps.shell.newTorTab(typeof input === 'string' ? input : undefined)
+  })
   ipcMain.handle('ncc:close-tab', (_event, id: unknown) =>
     deps.shell.closeTab(typeof id === 'string' ? id : undefined)
   )
@@ -133,7 +146,7 @@ export function registerIpc(deps: IpcDeps): void {
       const config = deps.config.setAnchorRequired(value)
       // Anchoring changes trust policy, not resolution inputs. Drop memoised outcomes
       // but keep public locator cache entries: unanchored ones are rechecked on use.
-      deps.resolver.clearCache()
+      for (const resolver of deps.resolvers) resolver.clearCache()
       return { ok: true, config }
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
@@ -209,6 +222,40 @@ export function registerIpc(deps: IpcDeps): void {
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
+  })
+
+  ipcMain.handle('ncc:set-security-config', (_event, payload: unknown) => {
+    try {
+      if (!payload || typeof payload !== 'object') {
+        return { ok: false, error: 'Invalid security settings' }
+      }
+      const { httpsMode, warnInsecure } = payload as {
+        httpsMode?: unknown
+        warnInsecure?: unknown
+      }
+      const before = deps.config.get()
+      deps.config.setHttpsMode(httpsMode)
+      const config = deps.config.setWarnInsecure(warnInsecure)
+      if (before.httpsMode !== config.httpsMode || before.warnInsecure !== config.warnInsecure) {
+        deps.shell.applySecuritySettings()
+      }
+      return { ok: true, config }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
+  ipcMain.handle('ncc:remove-http-exception', (_event, key: unknown) => {
+    if (typeof key !== 'string') return deps.config.get()
+    const config = deps.config.removeHttpException(key)
+    deps.shell.applySecuritySettings()
+    return config
+  })
+
+  ipcMain.handle('ncc:clear-http-exceptions', () => {
+    const config = deps.config.clearHttpExceptions()
+    deps.shell.applySecuritySettings()
+    return config
   })
 
   ipcMain.handle('ncc:tor-status', () => deps.tor.status())
@@ -329,7 +376,7 @@ export function registerIpc(deps: IpcDeps): void {
 }
 
 function resetCaches(deps: IpcDeps): void {
-  deps.resolver.clearCache()
+  for (const resolver of deps.resolvers) resolver.clearCache()
   deps.cacheStore.clear()
   deps.pins.clear()
   deps.health.clear()

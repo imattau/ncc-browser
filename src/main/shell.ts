@@ -10,7 +10,7 @@ import {
   type WebContents
 } from 'electron'
 import { parseNccAddress, toDisplayUrl, toInternalUrl, type NccAddress } from '@shared/ncc-url'
-import { CHROME_HEIGHT } from '@shared/layout'
+import { BANNER_HEIGHT, CHROME_HEIGHT } from '@shared/layout'
 import type { CommandId } from '@shared/commands'
 import { reorderTabs } from '@shared/tabs'
 import {
@@ -29,11 +29,19 @@ import type {
   PageMode,
   SecurityInfo,
   TabHistory,
+  TabKind,
   TabSummary
 } from '@shared/types'
 import type { ProtocolActivity } from './protocol'
 import type { EndpointHealth } from './ncc/health'
 import type { TransportPolicy } from './ncc/transport'
+import {
+  isHttpExemptUrl,
+  shouldUpgradeHttp,
+  upgradeToHttps,
+  webHttpKey,
+  type HttpPolicy
+} from './security'
 import { isAllowedTorUrl, isOnionHost, type TorGuard } from './tor/guard'
 import type { TorManager } from './tor/manager'
 
@@ -42,7 +50,10 @@ export interface ShellDeps {
   contentPreloadPath: string
   rendererUrl?: string
   rendererFile: string
-  activeService: Map<string, string>
+  activeServices: Record<TabKind, Map<string, string>>
+  httpPolicies: Record<TabKind, HttpPolicy>
+  partitionFor: (kind: TabKind) => string
+  releaseSession: (kind: TabKind) => void
   bookmarks: BookmarkStore
   sessionStore: SessionStore
   initialSession?: SavedSession | null
@@ -56,6 +67,7 @@ export interface ShellDeps {
 
 interface Tab {
   id: string
+  kind: TabKind
   view: WebContentsView
   mode: PageMode
   displayUrl: string
@@ -64,6 +76,8 @@ interface Tab {
   security: SecurityInfo | null
   failure: { code: string; message: string } | null
   tor: { onionAvailable: boolean; active: boolean }
+  pendingHttp: { original: string; key: string; httpsUrl: string } | null
+  programmatic: boolean
   loading: boolean
   favicon: string | null
   audible: boolean
@@ -71,7 +85,6 @@ interface Tab {
 }
 
 const CONTENT_WEB_PREFERENCES = {
-  partition: 'persist:ncc-content',
   sandbox: true,
   contextIsolation: true,
   nodeIntegration: false,
@@ -96,6 +109,12 @@ export class BrowserShell {
   private nextTabId = 1
   private readonly overlays = new Set<string>()
   private saveTimer: NodeJS.Timeout | null = null
+  private pendingInsecure: {
+    tabId: string
+    url: string
+    key: string
+    previous: string
+  } | null = null
 
   constructor(deps: ShellDeps) {
     this.deps = deps
@@ -152,6 +171,7 @@ export class BrowserShell {
 
     const tabs: TabSummary[] = this.tabs.map((tab) => ({
       id: tab.id,
+      kind: tab.kind,
       title: tabTitle(tab),
       url: tab.displayUrl,
       loading: tab.loading,
@@ -173,17 +193,36 @@ export class BrowserShell {
       tor: {
         preferTor: this.deps.preferTor(),
         onionAvailable: active?.tor.onionAvailable ?? false,
-        active: active?.tor.active ?? false
+        active: active?.tor.active ?? false,
+        tabTor: active?.kind === 'tor'
       },
+      tabKind: active?.kind ?? 'normal',
+      banner: this.bannerFor(active),
+      insecurePrompt: this.insecurePromptFor(active),
       tabs,
       activeTabId: this.activeId,
       windowMaximized: this.window.isMaximized()
     }
   }
 
-  newTab(input?: string): string {
-    const tab = this.createTab()
+  newTab(input?: string, kind: TabKind = 'normal'): string {
+    const tab = this.createTab(kind)
     this.activateTab(tab.id)
+    if (input) void this.navigateInTab(tab, input)
+    return tab.id
+  }
+
+  newPrivateTab(input?: string): string {
+    return this.newTab(input, 'private')
+  }
+
+  newTorTab(input?: string): string {
+    const tab = this.createTab('tor')
+    this.activateTab(tab.id)
+    void this.deps.tor
+      .ensureReady()
+      .then(() => this.syncState())
+      .catch(() => this.syncState())
     if (input) void this.navigateInTab(tab, input)
     return tab.id
   }
@@ -191,6 +230,7 @@ export class BrowserShell {
   closeTab(id?: string): void {
     const target = id ? this.tabs.find((tab) => tab.id === id) : this.activeTab()
     if (!target) return
+    if (this.pendingInsecure?.tabId === target.id) this.cancelInsecurePrompt()
 
     const index = this.tabs.indexOf(target)
     this.tabs.splice(index, 1)
@@ -210,6 +250,8 @@ export class BrowserShell {
       if (next) this.showOnly(next.id)
     }
 
+    this.releaseKindIfUnused(target.kind)
+
     this.scheduleSessionSave()
     this.syncState()
   }
@@ -226,7 +268,7 @@ export class BrowserShell {
   duplicateTab(id?: string): string | null {
     const source = id ? this.tabs.find((tab) => tab.id === id) : this.activeTab()
     if (!source) return null
-    const tab = this.createTab()
+    const tab = this.createTab(source.kind)
     this.activateTab(tab.id)
     if (source.mode !== 'blank' && source.displayUrl) {
       void this.navigateInTab(tab, source.displayUrl)
@@ -313,6 +355,14 @@ export class BrowserShell {
     switch (command) {
       case 'new-tab':
         this.newTab()
+        this.focusAddress()
+        break
+      case 'new-private-tab':
+        this.newPrivateTab()
+        this.focusAddress()
+        break
+      case 'new-tor-tab':
+        this.newTorTab()
         this.focusAddress()
         break
       case 'close-tab':
@@ -591,14 +641,18 @@ export class BrowserShell {
     if (this.window.isDestroyed()) return
 
     const bounds = this.window.getNormalBounds()
+    const normalTabs = this.tabs.filter((tab) => tab.kind === 'normal')
+    const savedTabs = normalTabs.length
+      ? normalTabs.map((tab) => ({
+          url: tab.mode === 'blank' ? '' : tab.displayUrl
+        }))
+      : [{ url: '' }]
     const activeIndex = Math.max(
       0,
-      this.tabs.findIndex((tab) => tab.id === this.activeId)
+      normalTabs.findIndex((tab) => tab.id === this.activeId)
     )
     this.deps.sessionStore.save({
-      tabs: this.tabs.map((tab) => ({
-        url: tab.mode === 'blank' ? '' : tab.displayUrl
-      })),
+      tabs: savedTabs,
       activeIndex,
       window: {
         width: bounds.width,
@@ -618,10 +672,11 @@ export class BrowserShell {
     if (tabs.length === 0) return
 
     const onionAvailable = activity.onionAvailable === true
-    const active = !activity.failureCode && activity.viaTor === true
     for (const tab of tabs) {
+      const active =
+        !activity.failureCode && (tab.kind === 'tor' || activity.viaTor === true)
       tab.tor = { onionAvailable, active }
-      this.deps.torGuard.set(tab.view.webContents.id, active)
+      if (tab.kind !== 'tor') this.deps.torGuard.set(tab.view.webContents.id, active)
       if (activity.failureCode) {
         tab.failure = { code: activity.failureCode, message: activity.failureCode }
         tab.security = null
@@ -631,7 +686,8 @@ export class BrowserShell {
           transport: activity.transport,
           host: activity.endpointHost ?? '',
           pinned: activity.pinned,
-          viaTor: activity.viaTor === true,
+          viaTor: tab.kind === 'tor' || activity.viaTor === true,
+          onion: activity.viaOnion === true,
           anchor: activity.anchor ?? null
         }
       }
@@ -642,7 +698,11 @@ export class BrowserShell {
   /** True when at least one tab for this service is currently served over Tor. */
   isTorService(pubkey: string, service: string): boolean {
     return this.tabs.some(
-      (tab) => tab.pubkey === pubkey && tab.service === service && tab.tor.active
+      (tab) =>
+        tab.kind !== 'tor' &&
+        tab.pubkey === pubkey &&
+        tab.service === service &&
+        tab.tor.active
     )
   }
 
@@ -654,6 +714,15 @@ export class BrowserShell {
     this.deps.transport.toggle(tab.pubkey, tab.service, true)
     this.deps.health.clear()
     void this.forceReload()
+  }
+
+  /** New HTTPS/warning policy applies to NCC tabs immediately; web tabs on next load. */
+  applySecuritySettings(): void {
+    for (const tab of this.tabs) {
+      if (tab.mode !== 'ncc') continue
+      tab.view.webContents.reloadIgnoringCache()
+    }
+    this.syncState()
   }
 
   /** Clear overrides and reload NCC tabs after the global Tor preference changes. */
@@ -678,36 +747,42 @@ export class BrowserShell {
 
     this.activateTab(tab.id)
 
-    if (/^https?:\/\//i.test(text)) {
-      tab.mode = 'web'
-      tab.pubkey = null
-      tab.service = null
-      tab.displayUrl = text
-      tab.security = null
-      tab.failure = null
-      tab.tor = { onionAvailable: false, active: false }
-      this.deps.torGuard.set(tab.view.webContents.id, false)
-      this.showOnly(tab.id)
+    if (tab.kind === 'tor') {
+      tab.loading = true
+      this.syncState()
+      try {
+        await this.deps.tor.ensureReady()
+      } catch (error) {
+        await this.loadWebError(
+          tab,
+          text,
+          'tor-unavailable',
+          error instanceof Error ? error.message : String(error)
+        )
+        return
+      }
+    }
 
-      if (isOnionPageUrl(text)) {
-        tab.loading = true
-        this.syncState()
-        try {
-          await this.deps.tor.ensureReady()
-        } catch (error) {
-          await this.loadWebError(
-            tab,
-            text,
-            'tor-unavailable',
-            error instanceof Error ? error.message : String(error)
-          )
+    if (/^https?:\/\//i.test(text)) {
+      const policy = this.deps.httpPolicies[tab.kind]
+      const key = webHttpKey(text)
+      const mode = policy.mode()
+      const http = /^http:\/\//i.test(text)
+      const exempt = isHttpExemptUrl(text)
+
+      if (http && key && !exempt && !policy.isAllowed(key)) {
+        if (shouldUpgradeHttp(text, mode)) {
+          const httpsUrl = upgradeToHttps(text)
+          await this.loadWebTarget(tab, httpsUrl, { original: text, key, httpsUrl })
           return
         }
-        tab.tor.active = true
-        this.deps.torGuard.set(tab.view.webContents.id, true)
+        if (policy.warn()) {
+          this.showInsecurePrompt(tab, text, key)
+          return
+        }
       }
 
-      await this.load(tab, text)
+      await this.loadWebTarget(tab, text)
       return
     }
 
@@ -723,7 +798,7 @@ export class BrowserShell {
       return
     }
 
-    this.deps.activeService.set(address.pubkey, address.service)
+    this.deps.activeServices[tab.kind].set(address.pubkey, address.service)
     tab.mode = 'ncc'
     tab.pubkey = address.pubkey
     tab.service = address.service
@@ -733,6 +808,88 @@ export class BrowserShell {
     tab.failure = null
     this.showOnly(tab.id)
     await this.load(tab, internal)
+  }
+
+  private async loadWebTarget(
+    tab: Tab,
+    text: string,
+    pending: Tab['pendingHttp'] = null
+  ): Promise<void> {
+    tab.mode = 'web'
+    tab.pubkey = null
+    tab.service = null
+    tab.displayUrl = text
+    tab.security = null
+    tab.failure = null
+    tab.pendingHttp = pending
+    tab.tor = { onionAvailable: false, active: false }
+    this.deps.torGuard.set(tab.view.webContents.id, false)
+    this.showOnly(tab.id)
+
+    if (isOnionPageUrl(text)) {
+      tab.loading = true
+      this.syncState()
+      try {
+        await this.deps.tor.ensureReady()
+      } catch (error) {
+        await this.loadWebError(
+          tab,
+          text,
+          'tor-unavailable',
+          error instanceof Error ? error.message : String(error)
+        )
+        return
+      }
+      tab.tor.active = true
+      this.deps.torGuard.set(tab.view.webContents.id, true)
+    }
+
+    tab.programmatic = true
+    try {
+      await this.load(tab, text)
+    } finally {
+      tab.programmatic = false
+    }
+  }
+
+  private showInsecurePrompt(tab: Tab, url: string, key: string): void {
+    const previous = tab.view.webContents.isDestroyed()
+      ? tab.displayUrl
+      : formatDisplayUrl(tab.view.webContents.getURL())
+    // Keep the current tab state intact. If the user cancels, the existing page is
+    // still loaded and only the address-bar draft needs restoring.
+    tab.displayUrl = url
+    tab.pendingHttp = null
+    this.pendingInsecure = { tabId: tab.id, url, key, previous }
+    this.setOverlay('insecure', true)
+    this.syncState()
+  }
+
+  /** Resolve the chrome HTTP interstitial. */
+  insecureChoice(choice: 'cancel' | 'continue' | 'always'): void {
+    const pending = this.pendingInsecure
+    if (!pending) return
+    const tab = this.tabs.find((entry) => entry.id === pending.tabId)
+    this.pendingInsecure = null
+    this.setOverlay('insecure', false)
+
+    if (choice === 'cancel' || !tab) {
+      if (tab) tab.displayUrl = pending.previous
+      this.syncState()
+      return
+    }
+    if (choice === 'always') this.deps.httpPolicies[tab.kind].allow(pending.key)
+    void this.loadWebTarget(tab, pending.url)
+  }
+
+  private cancelInsecurePrompt(): void {
+    const pending = this.pendingInsecure
+    if (!pending) return
+    this.pendingInsecure = null
+    this.setOverlay('insecure', false)
+    const tab = this.tabs.find((entry) => entry.id === pending.tabId)
+    if (tab) tab.displayUrl = pending.previous
+    this.syncState()
   }
 
   private async loadWebError(
@@ -768,15 +925,20 @@ export class BrowserShell {
     }
   }
 
-  private createTab(): Tab {
+  private createTab(kind: TabKind = 'normal'): Tab {
     const view = new WebContentsView({
       webPreferences: {
         ...CONTENT_WEB_PREFERENCES,
+        partition: this.deps.partitionFor(kind),
         preload: this.deps.contentPreloadPath
       }
     })
+    if (kind === 'tor') {
+      view.webContents.setWebRTCIPHandlingPolicy('disable_non_proxied_udp')
+    }
     const tab: Tab = {
       id: `t${this.nextTabId++}`,
+      kind,
       view,
       mode: 'blank',
       displayUrl: '',
@@ -785,6 +947,8 @@ export class BrowserShell {
       security: null,
       failure: null,
       tor: { onionAvailable: false, active: false },
+      pendingHttp: null,
+      programmatic: false,
       loading: false,
       favicon: null,
       audible: false,
@@ -801,8 +965,20 @@ export class BrowserShell {
     return tab
   }
 
+  /** Clear a private/Tor session only if no tab of that kind appeared meanwhile. */
+  private releaseKindIfUnused(kind: TabKind): void {
+    if (kind === 'normal') return
+    setTimeout(() => {
+      if (this.window.isDestroyed()) return
+      if (!this.tabs.some((tab) => tab.kind === kind)) this.deps.releaseSession(kind)
+    }, 0)
+  }
+
   private activateTab(id: string): void {
     if (!this.tabs.some((tab) => tab.id === id)) return
+    if (this.pendingInsecure && this.pendingInsecure.tabId !== id) {
+      this.cancelInsecurePrompt()
+    }
     this.activeId = id
     this.showOnly(id)
     this.scheduleSessionSave()
@@ -841,9 +1017,9 @@ export class BrowserShell {
       if (!isMainFrame) return
       tab.failure = null
       tab.security = null
-      const onion = isOnionPageUrl(url)
+      const onion = tab.kind === 'tor' || isOnionPageUrl(url)
       tab.tor = { onionAvailable: false, active: onion }
-      this.deps.torGuard.set(contents.id, onion)
+      if (tab.kind !== 'tor') this.deps.torGuard.set(contents.id, onion)
       tab.displayUrl = formatDisplayUrl(url)
       this.applyUrlToTab(tab, url)
       this.syncState()
@@ -897,6 +1073,19 @@ export class BrowserShell {
     contents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
       if (!isMainFrame || errorCode === -3) return
       if (/ERR_ABORTED/.test(errorDescription)) return
+
+      if (tab.pendingHttp) {
+        const pending = tab.pendingHttp
+        tab.pendingHttp = null
+        const policy = this.deps.httpPolicies[tab.kind]
+        if (policy.isAllowed(pending.key) || (policy.mode() !== 'only' && !policy.warn())) {
+          void this.loadWebTarget(tab, pending.original)
+        } else {
+          this.showInsecurePrompt(tab, pending.original, pending.key)
+        }
+        return
+      }
+
       tab.failure ??= {
         code: validatedURL.startsWith('ncc://') ? 'endpoint-unreachable' : 'load-failed',
         message: errorDescription
@@ -910,13 +1099,29 @@ export class BrowserShell {
     })
 
     contents.setWindowOpenHandler(({ url }) => {
-      void this.openInNewTab(url)
+      void this.openInNewTab(url, tab.kind)
       return { action: 'deny' }
     })
 
     contents.on('will-navigate', (event, url) => {
+      if (tab.programmatic) return
       const protocol = safeProtocol(url)
       if (!protocol) return
+      if (protocol === 'http:' || protocol === 'https:') {
+        const policy = this.deps.httpPolicies[tab.kind]
+        const key = webHttpKey(url)
+        if (
+          protocol === 'http:' &&
+          key &&
+          !isHttpExemptUrl(url) &&
+          !policy.isAllowed(key) &&
+          (shouldUpgradeHttp(url, policy.mode()) || policy.warn())
+        ) {
+          event.preventDefault()
+          void this.navigateInTab(tab, url)
+          return
+        }
+      }
       if (protocol === 'ncc:' || protocol === 'http:' || protocol === 'https:') {
         // Same-service links navigate natively. Service changes are expressed with the
         // explicit /_/<service>/ form, which the protocol handler routes unambiguously;
@@ -932,7 +1137,7 @@ export class BrowserShell {
     installContentContextMenu(contents, {
       getWindow: () => this.window,
       openInNewTab: (url) => {
-        void this.openInNewTab(url)
+        void this.openInNewTab(url, tab.kind)
       }
     })
 
@@ -940,8 +1145,8 @@ export class BrowserShell {
     contents.on('before-input-event', (event, input) => this.handleInput(event, input))
   }
 
-  private async openInNewTab(url: string): Promise<void> {
-    const tab = this.createTab()
+  private async openInNewTab(url: string, kind: TabKind = 'normal'): Promise<void> {
+    const tab = this.createTab(kind)
     this.activateTab(tab.id)
     if (/^https?:\/\//i.test(url) || /^ncc:\/\//i.test(url)) {
       await this.navigateInTab(tab, url)
@@ -1064,6 +1269,8 @@ export class BrowserShell {
       }
       this.tabs.length = 0
       this.activeId = null
+      this.deps.releaseSession('private')
+      this.deps.releaseSession('tor')
     })
   }
 
@@ -1090,17 +1297,73 @@ export class BrowserShell {
 
   private contentBounds(): { x: number; y: number; width: number; height: number } {
     const [width, height] = this.window.getContentSize()
+    const banner =
+      this.overlays.size === 0 && this.bannerFor(this.activeTab()) ? BANNER_HEIGHT : 0
     return {
       x: 0,
-      y: CHROME_HEIGHT,
+      y: CHROME_HEIGHT + banner,
       width,
-      height: Math.max(0, height - CHROME_HEIGHT)
+      height: Math.max(0, height - CHROME_HEIGHT - banner)
+    }
+  }
+
+  private bannerFor(tab: Tab | null): { tone: 'warn'; title: string; detail: string } | null {
+    if (!tab || tab.mode === 'blank' || tab.failure) return null
+    let insecure = false
+    let overTor = tab.kind === 'tor'
+    let url = ''
+    if (tab.mode === 'web') {
+      url = tab.view.webContents.isDestroyed() ? tab.displayUrl : tab.view.webContents.getURL()
+      try {
+        insecure = new URL(url).protocol === 'http:'
+      } catch {
+        insecure = /^http:\/\//i.test(url)
+      }
+      overTor = overTor || isOnionPageUrl(url)
+    } else if (tab.mode === 'ncc') {
+      insecure = tab.security?.transport === 'plaintext'
+      overTor = overTor || tab.security?.onion === true
+      url = tab.displayUrl
+    }
+    if (!insecure) return null
+    return overTor
+      ? {
+          tone: 'warn',
+          title: 'HTTP over Tor',
+          detail: 'Tor encrypts the path, but this page has no TLS layer.'
+        }
+      : {
+          tone: 'warn',
+          title: 'Not secure',
+          detail: 'This page uses HTTP. Anyone on the network can read or modify it.'
+        }
+  }
+
+  private insecurePromptFor(tab: Tab | null) {
+    const pending = this.pendingInsecure
+    if (!pending || !tab || pending.tabId !== tab.id) return null
+    let host = pending.url
+    try {
+      host = new URL(pending.url).host
+    } catch {
+      // Keep the raw URL when it is not parseable.
+    }
+    return {
+      url: pending.url,
+      host,
+      ephemeral: tab.kind !== 'normal',
+      tor: tab.kind === 'tor',
+      mode: this.deps.httpPolicies[tab.kind].mode()
     }
   }
 
   private syncState(): void {
     if (this.window.isDestroyed()) return
     this.updateWindowTitle()
+    const active = this.activeTab()
+    if (active && this.overlays.size === 0) {
+      active.view.setBounds(this.contentBounds())
+    }
     this.window.webContents.send('ncc:state', this.getState())
   }
 }

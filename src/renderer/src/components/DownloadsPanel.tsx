@@ -82,6 +82,12 @@ export function DownloadsPanel({
                     {notice.filename}
                   </span>
 
+                  {notice.private ? (
+                    <span className="shrink-0 rounded border border-[#7c6ad6]/30 bg-[#7c6ad6]/10 px-1 py-0.5 text-[9px] text-[#c4b5fd]">
+                      private
+                    </span>
+                  ) : null}
+
                   {notice.state === 'completed' ? (
                     <button
                       type="button"

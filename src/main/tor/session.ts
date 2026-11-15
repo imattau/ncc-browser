@@ -1,9 +1,12 @@
 /**
- * Serves a tiny Tor-only PAC over loopback and applies it to the content session.
+ * Serves a tiny Tor-only PAC over loopback and applies it to the content sessions.
  *
  * Chromium's PAC loader rejected file/data URLs in testing, so a loopback HTTP
  * endpoint with an unguessable path is the reliable option. The PAC itself contains
  * only the SOCKS proxy address.
+ *
+ * Normal and private sessions use the PAC (only *.onion goes through Tor). A full
+ * Tor tab session uses a fixed proxy for all traffic.
  */
 
 import { randomBytes } from 'node:crypto'
@@ -18,8 +21,12 @@ export class TorSessionProxy {
   private starting: Promise<void> | null = null
   private port = 0
   private pac = ''
+  private lastProxy: string | null = null
 
-  constructor(private readonly session: Session) {}
+  constructor(
+    private readonly onionSessions: Session[],
+    private readonly torSessions: Session[] = []
+  ) {}
 
   async start(): Promise<void> {
     if (this.server) return
@@ -60,15 +67,35 @@ export class TorSessionProxy {
 
   async apply(proxy: string | null): Promise<void> {
     if (!proxy) {
-      await this.session.setProxy({ mode: 'system' })
+      this.lastProxy = null
+      await Promise.all(
+        this.onionSessions.map((value) => value.setProxy({ mode: 'system' }))
+      )
+      // Do not switch a Tor tab session to direct. Its tabs wait for Tor before
+      // navigating, and an unreachable proxy fails closed.
       return
     }
+
     await this.start()
+    this.lastProxy = proxy
     this.pac = buildTorPac(proxy)
-    await this.session.setProxy({
-      mode: 'pac_script',
-      pacScript: `http://127.0.0.1:${this.port}/${this.token}.pac?v=${Date.now()}`
-    })
+    const pacUrl = `http://127.0.0.1:${this.port}/${this.token}.pac?v=${Date.now()}`
+    await Promise.all([
+      ...this.onionSessions.map((value) =>
+        value.setProxy({ mode: 'pac_script', pacScript: pacUrl })
+      ),
+      ...this.torSessions.map((value) =>
+        value.setProxy({
+          mode: 'fixed_servers',
+          proxyRules: proxy,
+          proxyBypassRules: '<-loopback>'
+        })
+      )
+    ])
+  }
+
+  currentProxy(): string | null {
+    return this.lastProxy
   }
 
   async stop(): Promise<void> {

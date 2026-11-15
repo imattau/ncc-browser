@@ -1,5 +1,5 @@
 import type { Event } from 'nostr-tools'
-import type { SignerDecision } from '@shared/types'
+import type { SignerDecision, TabKind } from '@shared/types'
 import type { ApprovalBroker } from '../approval'
 import type { IdentityManager } from './manager'
 import type { IdentityProvider } from './provider'
@@ -11,6 +11,12 @@ export interface Caller {
   origin: string
   /** Human-readable label used in the approval popup. */
   label: string
+  /** Which content session made the request. */
+  kind: TabKind
+  /** Private or Tor tabs never write persistent permissions. */
+  ephemeral: boolean
+  /** True for a full Tor tab. */
+  torTab: boolean
 }
 
 export interface Nip07Deps {
@@ -38,8 +44,14 @@ const DENIED = 'The user denied the NIP-07 request'
  */
 export class Nip07Service {
   private chain: Promise<unknown> = Promise.resolve()
+  private readonly ephemeralTrust = new Map<TabKind, Set<string>>()
 
   constructor(private readonly deps: Nip07Deps) {}
+
+  /** Drop permissions remembered by a private or Tor session. */
+  clearEphemeral(kind: TabKind): void {
+    this.ephemeralTrust.delete(kind)
+  }
 
   async getPublicKey(caller: Caller): Promise<string> {
     const provider = this.requireProvider()
@@ -132,14 +144,25 @@ export class Nip07Service {
     method: string
   ): Promise<SignerDecision> {
     if (this.deps.autoApprove) return { allow: true, remember: false }
-    if (this.deps.permissions.isTrusted(caller.origin)) {
+
+    if (caller.ephemeral) {
+      if (this.ephemeralTrust.get(caller.kind)?.has(caller.origin)) {
+        return { allow: true, remember: false }
+      }
+    } else if (this.deps.permissions.isTrusted(caller.origin)) {
       this.deps.permissions.touch(caller.origin)
       return { allow: true, remember: false }
     }
 
     const decision = await this.enqueue(() => this.prompt(caller, action, detail, method))
     if (decision.allow && decision.remember && this.deps.identity.status().mode !== 'none') {
-      this.deps.permissions.trust(caller.origin, caller.label)
+      if (caller.ephemeral) {
+        const trusted = this.ephemeralTrust.get(caller.kind) ?? new Set<string>()
+        trusted.add(caller.origin)
+        this.ephemeralTrust.set(caller.kind, trusted)
+      } else {
+        this.deps.permissions.trust(caller.origin, caller.label)
+      }
     }
     return decision
   }
@@ -166,7 +189,10 @@ export class Nip07Service {
       mode: status.mode,
       event: detail.event,
       note: detail.note,
-      rememberable: true
+      rememberable: true,
+      ephemeral: caller.ephemeral,
+      torTab: caller.torTab,
+      rememberLabel: caller.ephemeral ? 'Remember for this session' : 'Always allow'
     })
   }
 }

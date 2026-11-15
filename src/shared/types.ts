@@ -5,6 +5,9 @@
 
 export const DEFAULT_SERVICE = 'addr'
 
+/** Content isolation for a tab. */
+export type TabKind = 'normal' | 'private' | 'tor'
+
 export type EndpointFamily = 'onion' | 'ipv6' | 'ipv4' | 'unknown'
 
 /** How the transport to the resolved endpoint is protected. */
@@ -12,6 +15,11 @@ export type TransportSecurity = 'pinned-tls' | 'tls' | 'plaintext' | 'unknown'
 
 /** Automatic uses the bundled Tor, then a local SOCKS proxy. Local uses the configured one. */
 export type TorMode = 'auto' | 'local'
+
+/** HTTPS policy for clearnet navigation and published NCC endpoints. */
+export type HttpsMode = 'off' | 'prefer' | 'only'
+
+export const DEFAULT_HTTPS_MODE: HttpsMode = 'prefer'
 
 export const DEFAULT_TOR_SOCKS = 'socks5://127.0.0.1:9050'
 
@@ -22,6 +30,8 @@ export interface TorState {
   onionAvailable: boolean
   /** The current document was fetched from an onion endpoint. */
   active: boolean
+  /** The active tab is a full Tor tab (all traffic is proxied). */
+  tabTor: boolean
 }
 
 export type TorRuntimeKind = 'bundled' | 'local'
@@ -139,6 +149,8 @@ export interface SecurityInfo {
   pinned: boolean
   /** True when the document was fetched from an onion endpoint through Tor. */
   viaTor: boolean
+  /** True when the selected endpoint is an onion endpoint (regardless of transport). */
+  onion: boolean
   /** NCC-02 trust anchor attached to the locator that served this page. */
   anchor: AnchorInfo | null
 }
@@ -147,6 +159,7 @@ export type PageMode = 'blank' | 'ncc' | 'web' | 'error'
 
 export interface TabSummary {
   id: string
+  kind: TabKind
   title: string
   url: string
   loading: boolean
@@ -168,6 +181,8 @@ export interface DownloadNotice {
   totalBytes: number
   /** Epoch milliseconds. */
   startedAt: number
+  /** Download was started from a private or Tor tab. */
+  private?: boolean
 }
 
 export interface HistoryEntry {
@@ -196,10 +211,25 @@ export const OVERLAY_REASONS = [
   'downloads',
   'history',
   'tabs',
-  'site-info'
+  'site-info',
+  'insecure'
 ] as const
 
 export type OverlayReason = (typeof OVERLAY_REASONS)[number]
+
+export interface SecurityBanner {
+  tone: 'warn' | 'info'
+  title: string
+  detail: string
+}
+
+export interface InsecurePrompt {
+  url: string
+  host: string
+  ephemeral: boolean
+  tor: boolean
+  mode: HttpsMode
+}
 
 export interface NavState {
   mode: PageMode
@@ -213,6 +243,9 @@ export interface NavState {
   security: SecurityInfo | null
   failure: { code: string; message: string } | null
   tor: TorState
+  tabKind: TabKind
+  banner: SecurityBanner | null
+  insecurePrompt: InsecurePrompt | null
   tabs: TabSummary[]
   activeTabId: string | null
   windowMaximized: boolean
@@ -230,6 +263,12 @@ export interface AppConfig {
   torMode: TorMode
   /** Explicit SOCKS proxy used in local mode or when NCC_TOR_SOCKS is unset. */
   torSocks: string
+  /** How aggressively to upgrade or require HTTPS. */
+  httpsMode: HttpsMode
+  /** Show a blocking interstitial before loading HTTP pages. */
+  warnInsecure: boolean
+  /** Origins/keys the user has allowed over HTTP. */
+  httpExceptions: string[]
 }
 
 export type IdentitySource = 'none' | 'env' | 'file' | 'session'
@@ -282,6 +321,12 @@ export interface SignerRequest {
   /** Extra context for encryption/decryption requests. */
   note?: string
   rememberable: boolean
+  /** Private or Tor tab: permissions last for this session only. */
+  ephemeral?: boolean
+  /** Tor tab: remote-signer relay traffic is not routed through Tor. */
+  torTab?: boolean
+  /** Label for the remember control, e.g. "Always allow" or "Remember for this session". */
+  rememberLabel?: string
 }
 
 export interface SignerDecision {
@@ -336,6 +381,10 @@ export const ERROR_COPY: Record<string, { title: string; hint: string }> = {
   'tor-blocked-resource': {
     title: 'Tor blocked a clearnet resource',
     hint: 'A page loaded over Tor requested an NCC resource whose locator has no onion endpoint. The request was blocked so it could not reveal your IP.'
+  },
+  'insecure-blocked': {
+    title: 'Insecure connection blocked',
+    hint: 'HTTPS-only is enabled and this resource would use plaintext HTTP. Load the page and choose to allow HTTP if you trust the destination.'
   },
   'relay-error': {
     title: 'Relay query failed',

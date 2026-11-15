@@ -6,16 +6,23 @@ import {
   Globe,
   KeyRound,
   RotateCcw,
+  Shield,
   ShieldCheck,
   SlidersHorizontal,
   Smartphone,
   Trash2
 } from 'lucide-react'
 import { DEFAULT_RELAYS, DEFAULT_TOR_SOCKS } from '@shared/types'
-import type { IdentityStatus, SignerPermission, TorMode, TorStatus } from '@shared/types'
+import type {
+  HttpsMode,
+  IdentityStatus,
+  SignerPermission,
+  TorMode,
+  TorStatus
+} from '@shared/types'
 import { cn } from '../lib/cn'
 
-export type SettingsSection = 'general' | 'identity' | 'trusted' | 'about'
+export type SettingsSection = 'general' | 'security' | 'identity' | 'trusted' | 'about'
 
 interface SettingsPageProps {
   open: boolean
@@ -26,6 +33,7 @@ interface SettingsPageProps {
 
 const SECTIONS: Array<{ id: SettingsSection; label: string; icon: typeof KeyRound }> = [
   { id: 'general', label: 'General', icon: SlidersHorizontal },
+  { id: 'security', label: 'Security', icon: Shield },
   { id: 'identity', label: 'Identity & signer', icon: KeyRound },
   { id: 'trusted', label: 'Trusted services', icon: ShieldCheck },
   { id: 'about', label: 'About', icon: CircleHelp }
@@ -59,6 +67,9 @@ export function SettingsPage({
   const [torSocks, setTorSocks] = useState(DEFAULT_TOR_SOCKS)
   const [torStatus, setTorStatus] = useState<TorStatus | null>(null)
   const [torBusy, setTorBusy] = useState(false)
+  const [httpsMode, setHttpsMode] = useState<HttpsMode>('prefer')
+  const [warnInsecure, setWarnInsecure] = useState(false)
+  const [httpExceptions, setHttpExceptions] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -96,6 +107,9 @@ export function SettingsPage({
       setTorMode(config.torMode)
       setTorSocks(config.torSocks)
       setTorStatus(tor)
+      setHttpsMode(config.httpsMode)
+      setWarnInsecure(config.warnInsecure)
+      setHttpExceptions(config.httpExceptions ?? [])
       setIdentity(status)
       setPermissions(trusted)
     })
@@ -162,14 +176,25 @@ export function SettingsPage({
       mode: torMode,
       socks: torSocks
     })
-    setLoading(false)
     if (!torResult.ok) {
+      setLoading(false)
       setError(torResult.error ?? 'Could not save Tor settings')
       return
     }
 
+    const securityResult = await window.ncc.setSecurityConfig({ httpsMode, warnInsecure })
+    setLoading(false)
+    if (!securityResult.ok) {
+      setError(securityResult.error ?? 'Could not save security settings')
+      return
+    }
+
     const config =
-      torResult.config ?? anchorResult.config ?? gossipResult.config ?? relayResult.config
+      securityResult.config ??
+      torResult.config ??
+      anchorResult.config ??
+      gossipResult.config ??
+      relayResult.config
     if (config) {
       setDraft(config.relays.join('\n'))
       setGossip(config.gossip)
@@ -177,9 +202,39 @@ export function SettingsPage({
       setPreferTor(config.preferTor)
       setTorMode(config.torMode)
       setTorSocks(config.torSocks)
+      setHttpsMode(config.httpsMode)
+      setWarnInsecure(config.warnInsecure)
+      setHttpExceptions(config.httpExceptions ?? [])
     }
     setTorStatus(await window.ncc.torStatus())
     setSaved(true)
+  }
+
+  const saveSecurity = async (): Promise<void> => {
+    setLoading(true)
+    setError(null)
+    const result = await window.ncc.setSecurityConfig({ httpsMode, warnInsecure })
+    setLoading(false)
+    if (!result.ok) {
+      setError(result.error ?? 'Could not save security settings')
+      return
+    }
+    if (result.config) {
+      setHttpsMode(result.config.httpsMode)
+      setWarnInsecure(result.config.warnInsecure)
+      setHttpExceptions(result.config.httpExceptions ?? [])
+    }
+    setSaved(true)
+  }
+
+  const removeHttpException = async (key: string): Promise<void> => {
+    const config = await window.ncc.removeHttpException(key)
+    setHttpExceptions(config.httpExceptions ?? [])
+  }
+
+  const clearHttpExceptions = async (): Promise<void> => {
+    const config = await window.ncc.clearHttpExceptions()
+    setHttpExceptions(config.httpExceptions ?? [])
   }
 
   const testTor = async (): Promise<void> => {
@@ -529,6 +584,131 @@ export function SettingsPage({
                     {loading ? 'Saving…' : 'Save settings'}
                   </button>
                 </div>
+              </div>
+            </>
+          ) : null}
+
+          {section === 'security' ? (
+            <>
+              <SectionHeading
+                title="Secure connections"
+                hint="Prefer or require HTTPS, and decide how plaintext HTTP is warned about."
+              />
+
+              <div className="rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-4">
+                <label
+                  htmlFor="https-mode"
+                  className="mb-1.5 block text-[10.5px] font-semibold uppercase tracking-wide text-[color:var(--color-muted)]"
+                >
+                  HTTPS policy
+                </label>
+                <select
+                  id="https-mode"
+                  value={httpsMode}
+                  onChange={(event) => {
+                    setHttpsMode(
+                      event.target.value === 'off'
+                        ? 'off'
+                        : event.target.value === 'only'
+                          ? 'only'
+                          : 'prefer'
+                    )
+                    setSaved(false)
+                  }}
+                  className="w-full rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] px-3 py-2 text-[12px] text-[#dfe3ea] outline-none focus:border-[color:var(--color-accent)]/60"
+                >
+                  <option value="off">Off — load HTTP normally</option>
+                  <option value="prefer">Prefer HTTPS — try HTTPS, then fall back with a warning</option>
+                  <option value="only">HTTPS only — never load HTTP without confirmation</option>
+                </select>
+
+                <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] p-3.5">
+                  <input
+                    type="checkbox"
+                    id="warn-insecure"
+                    checked={warnInsecure}
+                    onChange={(event) => {
+                      setWarnInsecure(event.target.checked)
+                      setSaved(false)
+                    }}
+                    className="mt-0.5 h-4 w-4 accent-[color:var(--color-accent)]"
+                  />
+                  <span>
+                    <span className="block text-[12px] font-medium text-[#e7e9ef]">
+                      Ask before loading HTTP pages
+                    </span>
+                    <span className="mt-0.5 block text-[11.5px] leading-relaxed text-[color:var(--color-muted)]">
+                      Show a blocking interstitial before a clearnet HTTP page or an NCC HTTP
+                      endpoint. The amber warning bar appears on HTTP pages either way.
+                    </span>
+                  </span>
+                </label>
+
+                <p className="mt-3 text-[11px] leading-relaxed text-[color:var(--color-muted)]">
+                  Loopback addresses and <span className="font-mono">.onion</span> services are
+                  exempt from automatic HTTPS upgrades. NCC endpoints only use HTTPS when the
+                  publisher actually published an HTTPS endpoint.
+                </p>
+
+                {error ? (
+                  <p className="mt-2 text-xs text-[color:var(--color-danger)]">{error}</p>
+                ) : saved ? (
+                  <p className="mt-2 text-xs text-[color:var(--color-ok)]">Saved.</p>
+                ) : null}
+
+                <div className="mt-3 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => void saveSecurity()}
+                    disabled={loading}
+                    className="rounded-lg bg-[color:var(--color-accent)] px-3.5 py-1.5 text-[11.5px] font-semibold text-[#0b0c10] disabled:opacity-60"
+                  >
+                    {loading ? 'Saving…' : 'Save security settings'}
+                  </button>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-4">
+                <h3 className="text-[12px] font-semibold text-[#e7e9ef]">HTTP exceptions</h3>
+                <p className="mt-1 text-[11.5px] leading-relaxed text-[color:var(--color-muted)]">
+                  Origins you have explicitly allowed over HTTP. Private and Tor tab exceptions
+                  live only for that session and are not listed here.
+                </p>
+                {httpExceptions.length > 0 ? (
+                  <ul className="mt-3 space-y-1.5">
+                    {httpExceptions.map((entry) => (
+                      <li
+                        key={entry}
+                        data-http-exception={entry}
+                        className="flex items-center justify-between gap-2 rounded-lg border border-[color:var(--color-line)] bg-[#0e1016] px-2.5 py-2"
+                      >
+                        <span className="min-w-0 truncate font-mono text-[11px] text-[#c9d1e0]">
+                          {entry}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => void removeHttpException(entry)}
+                          className="shrink-0 rounded px-1.5 py-0.5 text-[10.5px] text-[color:var(--color-danger)] hover:bg-[color:var(--color-danger)]/10"
+                        >
+                          remove
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-3 text-[11px] text-[color:var(--color-muted)]">
+                    No HTTP exceptions.
+                  </p>
+                )}
+                {httpExceptions.length > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => void clearHttpExceptions()}
+                    className="mt-3 rounded-lg border border-[color:var(--color-danger)]/30 px-2.5 py-1 text-[11px] text-[color:var(--color-danger)] hover:bg-[color:var(--color-danger)]/10"
+                  >
+                    Clear all exceptions
+                  </button>
+                ) : null}
               </div>
             </>
           ) : null}

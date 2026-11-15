@@ -2,7 +2,7 @@ import { mkdirSync, existsSync } from 'node:fs'
 import { basename, extname, join } from 'node:path'
 import { app, type DownloadItem, type Session } from 'electron'
 import { sortDownloads } from '@shared/downloads'
-import type { DownloadNotice, DownloadState } from '@shared/types'
+import type { DownloadNotice, DownloadState, TabKind } from '@shared/types'
 
 /**
  * Strip anything that could escape the download directory or upset the filesystem.
@@ -46,6 +46,7 @@ interface Entry {
   notice: DownloadNotice
   item: DownloadItem | null
   lastEmit: number
+  kind: TabKind
 }
 
 const PROGRESS_INTERVAL_MS = 250
@@ -69,8 +70,8 @@ export class DownloadManager {
     this.now = options.now ?? (() => Date.now())
   }
 
-  install(session: Session): void {
-    session.on('will-download', (_event, item) => this.track(item))
+  install(session: Session, kind: TabKind = 'normal'): void {
+    session.on('will-download', (_event, item) => this.track(item, kind))
   }
 
   list(): DownloadNotice[] {
@@ -98,7 +99,15 @@ export class DownloadManager {
     return this.list()
   }
 
-  private track(item: DownloadItem): void {
+  /** Drop the metadata of downloads started by a private or Tor session. */
+  clearFor(kind: TabKind): DownloadNotice[] {
+    for (const [id, entry] of this.entries) {
+      if (entry.kind === kind) this.entries.delete(id)
+    }
+    return this.list()
+  }
+
+  private track(item: DownloadItem, kind: TabKind): void {
     const filename = safeFilename(item.getFilename() || 'download')
     // Reserve the name while the download runs so two files with the same name do
     // not both pick the same free path before either exists on disk.
@@ -123,9 +132,10 @@ export class DownloadManager {
         state: 'failed',
         receivedBytes: 0,
         totalBytes: 0,
-        startedAt
+        startedAt,
+        private: kind !== 'normal'
       }
-      this.entries.set(id, { notice: failed, item: null, lastEmit: startedAt })
+      this.entries.set(id, { notice: failed, item: null, lastEmit: startedAt, kind })
       this.notify(failed)
       return
     }
@@ -137,9 +147,10 @@ export class DownloadManager {
       path: target,
       receivedBytes: 0,
       totalBytes: Math.max(0, item.getTotalBytes()),
-      startedAt
+      startedAt,
+      private: kind !== 'normal'
     }
-    const entry: Entry = { notice, item, lastEmit: 0 }
+    const entry: Entry = { notice, item, lastEmit: 0, kind }
     this.entries.set(id, entry)
     this.notify(notice)
 

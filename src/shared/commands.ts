@@ -4,6 +4,8 @@
 
 export type CommandId =
   | 'new-tab'
+  | 'new-private-tab'
+  | 'new-tor-tab'
   | 'close-tab'
   | 'next-tab'
   | 'previous-tab'
@@ -45,6 +47,13 @@ export const COMMAND_ORDER: CommandGroup[] = [
 
 export const COMMANDS: CommandDefinition[] = [
   { id: 'new-tab', label: 'New tab', shortcut: 'Ctrl+T', group: 'Tabs' },
+  {
+    id: 'new-private-tab',
+    label: 'New private tab',
+    shortcut: 'Ctrl+Shift+N',
+    group: 'Tabs'
+  },
+  { id: 'new-tor-tab', label: 'New Tor tab', shortcut: 'Ctrl+Shift+O', group: 'Tabs' },
   { id: 'close-tab', label: 'Close tab', shortcut: 'Ctrl+W', group: 'Tabs' },
   { id: 'next-tab', label: 'Next tab', shortcut: 'Ctrl+Tab', group: 'Tabs' },
   { id: 'previous-tab', label: 'Previous tab', shortcut: 'Ctrl+Shift+Tab', group: 'Tabs' },

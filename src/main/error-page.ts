@@ -164,3 +164,56 @@ export function renderErrorPage(options: ErrorPageOptions): string {
 export function renderPlainFailure(code: string, message: string): string {
   return `NCC resolution failed (${code}): ${message}`
 }
+
+export interface HttpWarningOptions {
+  address: string
+  host: string
+  service: string
+  mode: 'off' | 'prefer' | 'only'
+  continueUrl: string
+}
+
+/** Interstitial for an NCC service that would be fetched over plaintext HTTP. */
+export function renderHttpWarningPage(options: HttpWarningOptions): string {
+  const only = options.mode === 'only'
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="dark" />
+<title>${only ? 'HTTPS required' : 'Not secure'} — NCC</title>
+<style>
+  :root { --bg:#0b0c10; --panel:#14161d; --line:#262a36; --text:#e7e9ef; --muted:#9aa3b2; --warn:#ffcc66; --accent:#8ab4ff; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin:0; background:radial-gradient(1000px 460px at 50% -10%, rgba(255,204,102,0.13), transparent 60%), var(--bg); color:var(--text); font-family:ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; display:grid; place-items:center; padding:32px; }
+  .card { width:min(620px,100%); background:color-mix(in srgb, var(--panel) 90%, transparent); border:1px solid var(--line); border-radius:18px; padding:32px; box-shadow:0 24px 80px rgba(0,0,0,.45); }
+  .badge { display:inline-flex; gap:8px; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px; color:var(--warn); background:rgba(255,204,102,.1); border:1px solid rgba(255,204,102,.28); border-radius:999px; padding:6px 12px; }
+  h1 { margin:18px 0 10px; font-size:27px; letter-spacing:-.02em; }
+  p { margin:10px 0; color:var(--muted); font-size:14px; line-height:1.55; }
+  .address { margin-top:16px; padding:12px; background:#0d0f15; border:1px solid var(--line); border-radius:10px; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px; color:#c8cfdb; overflow-wrap:anywhere; }
+  .actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:24px; }
+  a.button { display:inline-flex; align-items:center; padding:10px 16px; border-radius:9px; background:var(--accent); color:#0b0c10; font-weight:650; font-size:13px; text-decoration:none; }
+  a.button.secondary { background:transparent; border:1px solid var(--line); color:var(--text); font-weight:500; }
+  footer { margin-top:24px; color:#6d7585; font-size:12px; }
+</style>
+</head>
+<body>
+  <main class="card">
+    <span class="badge">NCC-05 · ${only ? 'HTTPS required' : 'plaintext HTTP'}</span>
+    <h1>${only ? 'This service does not offer HTTPS' : 'This connection is not secure'}</h1>
+    <p>${only
+      ? 'HTTPS-only is enabled, so this service would be fetched over plaintext HTTP. Continue only if you trust the destination.'
+      : 'This service is fetched over plaintext HTTP. Anyone on the network can read or modify the page.'}</p>
+    <p><strong>${escapeHtml(options.service)}</strong> · ${escapeHtml(options.host)}</p>
+    <div class="address">${escapeHtml(options.address)}</div>
+    <div class="actions">
+      <a class="button" href="${escapeHtml(options.continueUrl)}">Continue over HTTP</a>
+      <a class="button secondary" href="#" onclick="history.back(); return false">Go back</a>
+    </div>
+    <footer>The npub signature protects the locator, not the page content. HTTP has no TLS layer.</footer>
+  </main>
+</body>
+</html>`
+}

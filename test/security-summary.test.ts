@@ -13,7 +13,10 @@ function nav(overrides: Partial<NavState> = {}): NavState {
     canGoForward: false,
     security: null,
     failure: null,
-    tor: { preferTor: false, onionAvailable: false, active: false },
+    tor: { preferTor: false, onionAvailable: false, active: false, tabTor: false },
+    tabKind: 'normal',
+    banner: null,
+    insecurePrompt: null,
     tabs: [],
     activeTabId: null,
     windowMaximized: false,
@@ -48,6 +51,7 @@ function security(overrides: Partial<SecurityInfo> = {}): SecurityInfo {
     host: 'example.com',
     pinned: true,
     viaTor: false,
+    onion: false,
     anchor: anchor('anchored'),
     ...overrides
   }
@@ -111,12 +115,13 @@ describe('securitySummary', () => {
       nav({
         mode: 'ncc',
         displayUrl: 'ncc://npub/web/',
-        tor: { preferTor: false, onionAvailable: true, active: true },
+        tor: { preferTor: false, onionAvailable: true, active: true, tabTor: false },
         security: security({
           transport: 'plaintext',
           pinned: false,
           host: 'abc.onion',
           viaTor: true,
+          onion: true,
           anchor: anchor('unanchored', 'none')
         })
       })
@@ -132,7 +137,7 @@ describe('securitySummary', () => {
           mode: 'web',
           displayUrl: 'http://abc.onion/',
           url: 'http://abc.onion/',
-          tor: { preferTor: false, onionAvailable: false, active: true }
+          tor: { preferTor: false, onionAvailable: false, active: true, tabTor: false }
         })
       )
     ).toMatchObject({ tone: 'warn', label: 'onion', host: 'abc.onion' })

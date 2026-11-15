@@ -116,6 +116,17 @@ export function SignerPrompt({ request, onRespond }: SignerPromptProps) {
               {remote ? ' Your remote signer will also ask you to confirm.' : ''}
             </span>
           </p>
+          {request.ephemeral ? (
+            <p className="mt-2 text-[10.5px] leading-relaxed text-[color:var(--color-muted)]">
+              This private/Tor tab forgets remembered permissions when it closes.
+            </p>
+          ) : null}
+          {request.torTab && remote ? (
+            <p className="mt-2 flex items-start gap-2 text-[10.5px] leading-relaxed text-[color:var(--color-warn)]">
+              <ShieldAlert className="mt-0.5 h-3 w-3 shrink-0" />
+              Remote-signer relay traffic is not routed through Tor.
+            </p>
+          ) : null}
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[color:var(--color-line)] px-5 py-3.5">
@@ -127,7 +138,7 @@ export function SignerPrompt({ request, onRespond }: SignerPromptProps) {
               onChange={(event) => setRemember(event.target.checked)}
               className="h-3.5 w-3.5 accent-[color:var(--color-accent)]"
             />
-            Always allow this service
+            {request.rememberLabel ?? 'Always allow this service'}
           </label>
 
           <div className="flex items-center gap-2">

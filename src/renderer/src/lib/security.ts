@@ -50,11 +50,15 @@ export function securitySummary(state: NavState): SecuritySummary {
       tooltip:
         web.label === 'onion'
           ? `Onion service over Tor · ${web.host} — click for details`
-          : web.label === 'secure'
-            ? `Secure HTTPS · ${web.host} — click for details`
-            : web.label === 'insecure'
-              ? `Not secure · HTTP · ${web.host} — click for details`
-              : 'Clearnet page — click for details',
+          : state.tor.tabTor
+            ? web.label === 'secure'
+              ? `Secure HTTPS over Tor · ${web.host} — click for details`
+              : `HTTP over Tor — no TLS · ${web.host} — click for details`
+            : web.label === 'secure'
+              ? `Secure HTTPS · ${web.host} — click for details`
+              : web.label === 'insecure'
+                ? `Not secure · HTTP · ${web.host} — click for details`
+                : 'Clearnet page — click for details',
       clickable: true
     }
   }
@@ -70,7 +74,7 @@ export function securitySummary(state: NavState): SecuritySummary {
   const label =
     !security
       ? 'ncc'
-      : state.tor.active && security.transport === 'plaintext'
+      : security.onion && security.transport === 'plaintext'
         ? 'onion'
         : security.transport
   const anchorState = anchor?.status ?? 'none'

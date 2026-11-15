@@ -1,7 +1,17 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
-import { ChevronsDown, Maximize2, Minus, Plus, Volume2, VolumeX, X } from 'lucide-react'
+import {
+  ChevronsDown,
+  EyeOff,
+  Maximize2,
+  Minus,
+  Plus,
+  Volume2,
+  VolumeX,
+  X
+} from 'lucide-react'
 import type { TabSummary } from '@shared/types'
 import { cn } from '../lib/cn'
+import { OnionIcon } from './TransportIcons'
 
 interface TabStripProps {
   tabs: TabSummary[]
@@ -97,6 +107,7 @@ export function TabStrip({
               key={tab.id}
               role="tab"
               data-tab-id={tab.id}
+              data-tab-kind={tab.kind}
               data-no-drag
               aria-selected={active}
               tabIndex={0}
@@ -136,6 +147,14 @@ export function TabStrip({
                 active
                   ? 'border-[color:var(--color-line)] bg-[color:var(--color-panel)] text-[#e7e9ef]'
                   : 'border-transparent text-[color:var(--color-muted)] hover:bg-white/5',
+                tab.kind === 'private' &&
+                  (active
+                    ? 'border-[#7c6ad6]/40 bg-[#171328]'
+                    : 'text-[#b9a9e8] hover:bg-[#7c6ad6]/10'),
+                tab.kind === 'tor' &&
+                  (active
+                    ? 'border-[#7c6ad6]/50 bg-[#18142b]'
+                    : 'text-[#c4b5fd] hover:bg-[#7c6ad6]/10'),
                 dragId === tab.id && 'opacity-50'
               )}
             >
@@ -157,6 +176,15 @@ export function TabStrip({
               )}
 
               <span className="min-w-0 flex-1 truncate">{tab.title}</span>
+
+              {tab.kind === 'private' ? (
+                <EyeOff
+                  className="h-3 w-3 shrink-0 text-[#a78bfa]"
+                  aria-label="Private tab"
+                />
+              ) : tab.kind === 'tor' ? (
+                <OnionIcon className="h-3 w-3 shrink-0 text-[#c4b5fd]" />
+              ) : null}
 
               {tab.audible || tab.muted ? (
                 <button

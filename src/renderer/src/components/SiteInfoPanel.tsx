@@ -75,9 +75,15 @@ export function SiteInfoPanel({
           />
         ) : null}
 
-        {state.tor.onionAvailable || state.tor.active ? (
-          <TorBlock active={state.tor.active} available={state.tor.onionAvailable} />
+        {state.tor.tabTor || state.tor.onionAvailable || state.tor.active ? (
+          <TorBlock
+            active={state.tor.active}
+            available={state.tor.onionAvailable}
+            tabTor={state.tor.tabTor}
+          />
         ) : null}
+
+        {state.tabKind === 'private' ? <PrivateBlock /> : null}
 
         {!web && !security && !failure ? (
           <div className="flex items-start gap-2 rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] p-3">
@@ -238,7 +244,15 @@ function TransportBlock({
   )
 }
 
-function TorBlock({ active, available }: { active: boolean; available: boolean }) {
+function TorBlock({
+  active,
+  available,
+  tabTor
+}: {
+  active: boolean
+  available: boolean
+  tabTor: boolean
+}) {
   return (
     <div
       data-tor-block
@@ -256,14 +270,31 @@ function TorBlock({ active, available }: { active: boolean; available: boolean }
         )}
       >
         <Globe className="h-3.5 w-3.5" />
-        {active ? 'Using Tor' : 'Onion endpoint available'}
+        {tabTor ? 'Tor tab' : active ? 'Using Tor' : 'Onion endpoint available'}
       </p>
       <p className="mt-1 text-[11px] leading-relaxed text-[color:var(--color-muted)]">
-        {active
-          ? 'This page is loaded from an onion endpoint through Tor. Clearnet subresources and redirects are blocked to avoid revealing your IP.'
-          : available
-            ? 'This locator also publishes an onion endpoint. Use the onion button in the address bar to load it over Tor.'
-            : 'This page is loaded through Tor.'}
+        {tabTor
+          ? 'All traffic from this tab is routed through Tor. HTTP pages still have no TLS layer.'
+          : active
+            ? 'This page is loaded from an onion endpoint through Tor. Clearnet subresources and redirects are blocked to avoid revealing your IP.'
+            : available
+              ? 'This locator also publishes an onion endpoint. Use the onion button in the address bar to load it over Tor.'
+              : 'This page is loaded through Tor.'}
+      </p>
+    </div>
+  )
+}
+
+function PrivateBlock() {
+  return (
+    <div
+      data-private-block
+      className="rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] p-3"
+    >
+      <p className="text-[11.5px] font-medium text-[#c4b5fd]">Private tab</p>
+      <p className="mt-1 text-[11px] leading-relaxed text-[color:var(--color-muted)]">
+        Cookies, cache and remembered signer permissions stay in memory and are cleared when
+        the last private tab closes. History is not saved.
       </p>
     </div>
   )

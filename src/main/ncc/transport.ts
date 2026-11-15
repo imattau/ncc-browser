@@ -3,7 +3,7 @@
  * endpoints. Kept free of Electron and Tor so every rule is unit-testable.
  */
 
-import type { ResolvedEndpoint } from '@shared/types'
+import type { HttpsMode, ResolvedEndpoint } from '@shared/types'
 
 export interface TransportSelection {
   /** Endpoints that should be attempted for this request, in priority order. */
@@ -42,6 +42,20 @@ export function selectTransportEndpoints(
     onionAvailable,
     onionOnly: onionAvailable && direct.length === 0
   }
+}
+
+/**
+ * Prefer endpoints the publisher actually published over HTTPS. Stable within the
+ * resolver's existing priority order.
+ */
+export function sortCandidatesForHttps(
+  endpoints: readonly ResolvedEndpoint[],
+  mode: HttpsMode
+): ResolvedEndpoint[] {
+  if (mode === 'off') return [...endpoints]
+  return [...endpoints].sort(
+    (a, b) => Number(b.protocol === 'https') - Number(a.protocol === 'https')
+  )
 }
 
 /**

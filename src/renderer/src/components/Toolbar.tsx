@@ -104,6 +104,7 @@ export function Toolbar({
         bookmarked={bookmarked}
         security={security}
         tor={state.tor}
+        tabKind={state.tabKind}
         onToggleBookmark={onToggleBookmark}
         onToggleTor={onToggleTor}
         onOpenSiteInfo={onOpenSiteInfo}

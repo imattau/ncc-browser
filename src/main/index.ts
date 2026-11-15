@@ -1,7 +1,8 @@
-import { app, Menu, safeStorage, session, type Session } from 'electron'
+import { app, Menu, safeStorage } from 'electron'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { nip19 } from 'nostr-tools'
+import type { TabKind } from '@shared/types'
 import { ApprovalBroker } from './approval'
 import { BookmarkStore } from './bookmarks'
 import { LocatorCacheStore } from './cache-store'
@@ -11,12 +12,20 @@ import { registerIpc } from './ipc'
 import { EndpointHealth } from './ncc/health'
 import { closeSharedPool, NccResolver, signerFromSecret, type LocatorSigner } from './ncc/resolver'
 import { installCertificatePinning, PinStore } from './pins'
-import { installNccProtocol, registerNccScheme } from './protocol'
+import { installNccProtocol, registerNccScheme, type ProtocolActivity } from './protocol'
 import { BrowserShell } from './shell'
 import { SessionStore } from './session-store'
+import {
+  clearContentSession,
+  createContentSessions,
+  partitionFor,
+  type ContentSessions
+} from './sessions'
 import { TransportPolicy } from './ncc/transport'
+import { HttpPolicy } from './security'
 import { TorGuard } from './tor/guard'
 import { TorManager } from './tor/manager'
+import { TorRelayPool } from './tor/relay'
 import { TorSessionProxy } from './tor/session'
 import { IdentityStore } from './signer/identity'
 import { registerNip07 } from './signer/ipc'
@@ -37,19 +46,16 @@ if (!gotLock) {
   app.quit()
 }
 
-const CONTENT_PARTITION = 'persist:ncc-content'
-
 let shell: BrowserShell | null = null
-let contentSession: Session | null = null
+let contentSessions: ContentSessions | null = null
 let torManager: TorManager | null = null
+let torRelays: TorRelayPool | null = null
 
 app.whenReady().then(async () => {
   const config = new ConfigStore()
   const pins = new PinStore()
   const health = new EndpointHealth()
   const cacheStore = new LocatorCacheStore(join(app.getPath('userData'), 'locator-cache.json'))
-  const activeService = new Map<string, string>()
-  const endpointOwners = new Map<string, { pubkey: string; service: string }>()
 
   const encryptionAvailable = await safeStorage.isAsyncEncryptionAvailable()
   const identityCodec = {
@@ -93,22 +99,28 @@ app.whenReady().then(async () => {
   )
   const envLocatorSigner = locatorSignerFromEnv()
 
-  const resolver = new NccResolver({
+  const resolverOptions = {
     relays: () => config.getRelays(),
     gossip: () => config.get().gossip,
     anchorRequired: () => config.get().anchorRequired,
-    cacheStore,
     getSigner: () => identity.locatorSigner() ?? envLocatorSigner
-  })
+  }
+  const torRelayPool = (torRelays = new TorRelayPool())
+  const resolver = new NccResolver({ ...resolverOptions, cacheStore })
+  const privateResolver = new NccResolver(resolverOptions)
+  const torResolver = new NccResolver({ ...resolverOptions, query: torRelayPool.query })
+  const resolvers = [resolver, privateResolver, torResolver]
 
-  contentSession = session.fromPartition(CONTENT_PARTITION)
-  contentSession.setSpellCheckerEnabled(false)
-  installCertificatePinning(contentSession, pins)
+  const content = createContentSessions()
+  contentSessions = content
+  for (const value of Object.values(content)) installCertificatePinning(value, pins)
 
   const torGuard = new TorGuard()
-  torGuard.install(contentSession)
+  torGuard.install(content.normal)
+  torGuard.install(content.private)
+
   const transport = new TransportPolicy(() => config.get().preferTor)
-  const torSessionProxy = new TorSessionProxy(contentSession)
+  const torSessionProxy = new TorSessionProxy([content.normal, content.private], [content.tor])
   try {
     await torSessionProxy.start()
   } catch (error) {
@@ -123,31 +135,77 @@ app.whenReady().then(async () => {
     ...(Number(process.env.NCC_TOR_BOOTSTRAP_TIMEOUT_MS) > 0
       ? { bootstrapTimeoutMs: Number(process.env.NCC_TOR_BOOTSTRAP_TIMEOUT_MS) }
       : {}),
-    onProxyChange: (proxy) => torSessionProxy.apply(proxy),
+    onProxyChange: (proxy) => {
+      torRelayPool.setProxy(proxy)
+      return torSessionProxy.apply(proxy)
+    },
     ...(process.env.NCC_TOR_DEBUG === '1'
       ? { log: (line: string) => console.log('[tor]', line) }
       : {})
   })
   const tor = torManager
 
+  const httpPolicies: Record<TabKind, HttpPolicy> = {
+    normal: new HttpPolicy('normal', config),
+    private: new HttpPolicy('private', config),
+    tor: new HttpPolicy('tor', config)
+  }
+
+  const activeServices: Record<TabKind, Map<string, string>> = {
+    normal: new Map(),
+    private: new Map(),
+    tor: new Map()
+  }
+  const endpointOwners: Record<TabKind, Map<string, { pubkey: string; service: string }>> = {
+    normal: new Map(),
+    private: new Map(),
+    tor: new Map()
+  }
+
   const downloadDirectory = process.env.NCC_DOWNLOAD_DIR?.trim()
   const downloads = new DownloadManager({
     ...(downloadDirectory ? { directory: downloadDirectory } : {}),
     notify: (notice) => shell?.notifyDownload(notice)
   })
-  downloads.install(contentSession)
+  downloads.install(content.normal, 'normal')
+  downloads.install(content.private, 'private')
+  downloads.install(content.tor, 'tor')
 
-  installNccProtocol({
-    session: contentSession,
-    resolver,
+  let nip07Service: Nip07Service | null = null
+  const releaseSession = (kind: TabKind): void => {
+    if (kind === 'normal') return
+    nip07Service?.clearEphemeral(kind)
+    httpPolicies[kind].clearEphemeral()
+    downloads.clearFor(kind)
+    activeServices[kind].clear()
+    endpointOwners[kind].clear()
+    if (kind === 'private') privateResolver.clearCache()
+    else torResolver.clearCache()
+    void clearContentSession(content[kind]).catch((error) =>
+      console.warn(`[session] could not clear the ${kind} session:`, error)
+    )
+  }
+
+  const protocolDeps = (kind: TabKind, kindResolver: NccResolver) => ({
+    session: content[kind],
+    resolver: kindResolver,
     pins,
     health,
     transport,
     tor,
-    isTorService: (pubkey, service) => shell?.isTorService(pubkey, service) ?? false,
-    activeService,
-    endpointOwners,
-    onActivity: (activity) => shell?.reportActivity(activity)
+    httpPolicy: httpPolicies[kind],
+    isTorService: (pubkey: string, service: string) =>
+      shell?.isTorService(pubkey, service) ?? false,
+    activeService: activeServices[kind],
+    endpointOwners: endpointOwners[kind],
+    onActivity: (activity: ProtocolActivity) => shell?.reportActivity(activity)
+  })
+  installNccProtocol(protocolDeps('normal', resolver))
+  installNccProtocol(protocolDeps('private', privateResolver))
+  installNccProtocol({
+    ...protocolDeps('tor', torResolver),
+    forceTor: true,
+    strictTor: false
   })
 
   const bookmarks = new BookmarkStore(join(app.getPath('userData'), 'bookmarks.json'))
@@ -159,7 +217,10 @@ app.whenReady().then(async () => {
     contentPreloadPath: join(__dirname, '../preload/content.js'),
     rendererUrl: process.env.ELECTRON_RENDERER_URL,
     rendererFile: join(__dirname, '../renderer/index.html'),
-    activeService,
+    activeServices,
+    httpPolicies,
+    partitionFor,
+    releaseSession,
     bookmarks,
     sessionStore,
     initialSession,
@@ -184,14 +245,18 @@ app.whenReady().then(async () => {
     timeoutMs: 120_000
   })
 
-  const nip07 = new Nip07Service({
+  nip07Service = new Nip07Service({
     identity,
     permissions,
     approvals,
     getRelays: () => config.getRelays(),
     autoApprove: process.env.NCC_SIGNER_AUTO_APPROVE === '1'
   })
-  registerNip07(nip07, contentSession)
+  registerNip07(nip07Service, [
+    { session: content.normal, kind: 'normal' },
+    { session: content.private, kind: 'private' },
+    { session: content.tor, kind: 'tor' }
+  ])
 
   shell.window.on('closed', () => approvals.cancelAll())
 
@@ -210,7 +275,7 @@ app.whenReady().then(async () => {
   registerIpc({
     shell,
     config,
-    resolver,
+    resolvers,
     pins,
     cacheStore,
     health,
@@ -258,6 +323,7 @@ app.on('before-quit', () => {
   shell?.saveSessionNow()
   closeSharedPool()
   void torManager?.stop()
+  torRelays?.close()
 })
 
 /** Packaged Tor binary, with a repo-local resources directory for development. */

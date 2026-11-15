@@ -239,6 +239,13 @@ is CJS and the package is ESM-only.
   of clearnet subresources and redirects from Tor pages; `tor-unavailable` and
   `onion-only` failure states; unit and fake-SOCKS5 end-to-end coverage. Relay traffic,
   bridges/pluggable transports and per-site stream isolation remain outstanding.
+- **M8 — Private and Tor tabs:** ✅ one shared in-memory private session, a separate
+  full-Tor session with a fixed SOCKS proxy, Tor-routed NCC relay queries, WebRTC leak
+  protection, session-only NIP-07 permissions, private/Tor download metadata, tab
+  indicators/commands, and session-restore exclusion.
+- **M9 — Security policy:** ✅ Off/Prefer/HTTPS-only modes, published-HTTPS endpoint
+  preference, loopback and onion exemptions, a persistent HTTP warning banner, optional
+  clearnet and NCC HTTP interstitials, and persisted/session HTTP exceptions.
 
 ---
 
@@ -273,6 +280,12 @@ These are bugs in the reference implementation, found while building this:
   validation, Tor manager bootstrap/fallback with an injected process, and a fake-SOCKS5
   end-to-end path covering the onion toggle, automatic preference, strict clearnet
   blocking, direct onion URLs, `onion-only` and `tor-unavailable`.
+- **Private/Tor tabs:** cookie isolation and clearing on last close, session-restore
+  exclusion, ephemeral NIP-07 permissions, full-Tor page/endpoint/relay routing through a
+  fake SOCKS proxy, and WebRTC policy.
+- **Security:** HTTPS upgrade decisions, loopback/onion exemptions, published HTTPS
+  endpoint ordering, banner/interstitial rendering, NCC warning tokens, persisted vs
+  session HTTP exceptions.
 - **Manual:** sidecar publisher on machine A → `ncc://<npub>/<service>` on machine B;
   self-signed HTTPS with matching `k`; mismatched `k`; `http` endpoint; dead endpoint;
   bundled Tor bootstrap in the packaged deb/Flatpak.

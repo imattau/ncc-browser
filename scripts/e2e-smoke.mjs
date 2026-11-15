@@ -136,6 +136,23 @@ async function startService(npub, options = {}) {
       response.end()
       return
     }
+    if (request.url.startsWith('/cookie-set')) {
+      response.writeHead(200, {
+        'content-type': 'text/html',
+        'set-cookie': 'ncc_cookie=normal; Path=/; SameSite=Lax'
+      })
+      response.end('<!doctype html><title>Cookie</title><h1 id="cookie">COOKIE SET</h1>')
+      return
+    }
+    if (request.url.startsWith('/cookie-read')) {
+      const cookie = request.headers.cookie ?? ''
+      const value = cookie.match(/(?:^|;\s*)ncc_cookie=([^;]+)/)?.[1] ?? 'none'
+      response.writeHead(200, { 'content-type': 'text/html' })
+      response.end(
+        `<!doctype html><title>Cookie</title><h1 id="cookie">COOKIE ${value}</h1>`
+      )
+      return
+    }
     if (request.url === '/counter') {
       counter += 1
       response.writeHead(200, {
@@ -191,8 +208,9 @@ async function startService(npub, options = {}) {
  * Tiny SOCKS5 server for the Tor e2e path. The PAC only sends *.onion hosts here,
  * and this proxy connects them to the local onion test service.
  */
-async function startSocksProxy(targetPort) {
+async function startSocksProxy(onionPort) {
   let connections = 0
+  const targets = []
   const server = createNetServer((socket) => {
     let buffer = Buffer.alloc(0)
     let stage = 'greeting'
@@ -238,6 +256,28 @@ async function startSocksProxy(targetPort) {
         return
       }
 
+      let host
+      let portOffset
+      if (addressType === 1) {
+        host = [...buffer.subarray(4, 8)].join('.')
+        portOffset = 8
+      } else if (addressType === 3) {
+        const length = buffer[4]
+        host = buffer.subarray(5, 5 + length).toString()
+        portOffset = 5 + length
+      } else {
+        host = 'ipv6'
+        portOffset = 20
+      }
+      const requestedPort = buffer.readUInt16BE(portOffset)
+      const onion = host.endsWith('.onion')
+      const targetPort = onion ? onionPort : requestedPort
+      targets.push({ host, port: requestedPort, onion })
+      if (!targetPort) {
+        socket.destroy()
+        return
+      }
+
       stage = 'piping'
       connections += 1
       const upstream = connectNet({ host: '127.0.0.1', port: targetPort }, () => {
@@ -259,6 +299,7 @@ async function startSocksProxy(targetPort) {
     server,
     port: server.address().port,
     getConnections: () => connections,
+    getTargets: () => targets,
     close: () => {
       if (server.listening) server.close()
     }
@@ -604,7 +645,8 @@ async function readSecurity(cdp) {
       return {
         tone: button.getAttribute('data-security-tone'),
         label: button.getAttribute('data-security-label'),
-        anchor: button.getAttribute('data-anchor-state')
+        anchor: button.getAttribute('data-anchor-state'),
+        tooltip: button.getAttribute('title')
       }
     })()`
   )
@@ -685,6 +727,22 @@ async function main() {
   ])
   publishLocator(relayA, 'toronly', [
     { type: 'http', uri: `e2e.onion:${onionPort}`, priority: 1, family: 'onion' }
+  ])
+  publishLocator(relayA, 'directonly', [
+    { type: 'http', uri: `127.0.0.1:${servicePort}`, priority: 1, family: 'ipv4' }
+  ])
+  publishLocator(relayA, 'mixed', [
+    { type: 'http', uri: `127.0.0.1:${servicePort}`, priority: 1, family: 'ipv4' },
+    {
+      type: 'https',
+      uri: `127.0.0.1:${secure.port}`,
+      priority: 10,
+      family: 'ipv4',
+      k: pinnedK
+    }
+  ])
+  publishLocator(relayA, 'insecure', [
+    { type: 'http', uri: 'example.invalid', priority: 1, family: 'ipv4' }
   ])
   publishLocator(relayA, 'secure', [
     { type: 'https', uri: `127.0.0.1:${secure.port}`, priority: 1, family: 'ipv4', k: pinnedK }
@@ -830,6 +888,24 @@ async function main() {
       initialSecurity?.anchor === 'unanchored',
       JSON.stringify(initialSecurity)
     )
+    const bannerText = await evaluate(
+      chrome,
+      'document.querySelector("[data-insecure-banner]")?.textContent ?? ""'
+    )
+    const bannerBox = await evaluate(
+      chrome,
+      `(() => {
+        const element = document.querySelector('[data-insecure-banner]')
+        if (!element) return null
+        const rect = element.getBoundingClientRect()
+        return { height: Math.round(rect.height), text: element.textContent }
+      })()`
+    )
+    check(
+      'shows the HTTP warning banner',
+      String(bannerText).includes('Not secure') && bannerBox?.height === 30,
+      JSON.stringify(bannerBox)
+    )
 
     // The site information panel explains what anchoring would add.
     await evaluate(chrome, 'document.querySelector("[data-security-button]").click()')
@@ -877,6 +953,103 @@ async function main() {
       String(favicon).slice(0, 40)
     )
 
+    // Private tabs use their own in-memory session. Cookies survive between
+    // private tabs but are cleared when the last one closes.
+    const normalTabId = await evaluate(
+      chrome,
+      'window.ncc.getState().then((state) => state.activeTabId)'
+    )
+    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/web/cookie-set` })
+    await waitForText(cdp, 'COOKIE SET', 80)
+    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/web/cookie-read?normal=1` })
+    const normalCookie = await waitForText(cdp, 'COOKIE normal', 80)
+    check('normal tab stores its cookie', normalCookie.includes('COOKIE normal'))
+
+    const privateOneId = await evaluate(
+      chrome,
+      `window.ncc.newPrivateTab('ncc://${serviceNpub}/_/web/cookie-read?private=1')`
+    )
+    const privateOneTarget = await waitForTarget((entry) =>
+      String(entry.url).includes('/_/web/cookie-read?private=1')
+    )
+    const privateOne = new Cdp(privateOneTarget.webSocketDebuggerUrl)
+    await privateOne.connect()
+    const privateOneText = await waitForText(privateOne, 'COOKIE none', 80)
+    check('private tab starts without normal cookies', privateOneText.includes('COOKIE none'))
+    check(
+      'private tab is marked in the chrome',
+      (await evaluate(
+        chrome,
+        'window.ncc.getState().then((state) => state.tabKind)'
+      )) === 'private' &&
+        (await evaluate(
+          chrome,
+          'Boolean(document.querySelector(\'[data-tab-kind="private"]\'))'
+        )) === true &&
+        (await evaluate(
+          chrome,
+          'Boolean(document.querySelector(\'[data-tab-kind-badge="private"]\'))'
+        )) === true
+    )
+
+    await privateOne.send('Page.navigate', {
+      url: `ncc://${serviceNpub}/_/web/cookie-set?private=1`
+    })
+    await waitForText(privateOne, 'COOKIE SET', 80)
+    await privateOne.send('Page.navigate', {
+      url: `ncc://${serviceNpub}/_/web/cookie-read?private=1b`
+    })
+    const privateCookie = await waitForText(privateOne, 'COOKIE normal', 80)
+    check('private tab keeps its own cookie', privateCookie.includes('COOKIE normal'))
+
+    const privateTwoId = await evaluate(
+      chrome,
+      `window.ncc.newPrivateTab('ncc://${serviceNpub}/_/web/cookie-read?private=2')`
+    )
+    const privateTwoTarget = await waitForTarget((entry) =>
+      String(entry.url).includes('/_/web/cookie-read?private=2')
+    )
+    const privateTwo = new Cdp(privateTwoTarget.webSocketDebuggerUrl)
+    await privateTwo.connect()
+    const privateTwoText = await waitForText(privateTwo, 'COOKIE normal', 80)
+    check(
+      'private tabs share one in-memory session',
+      privateTwoText.includes('COOKIE normal')
+    )
+
+    await evaluate(chrome, `window.ncc.closeTab(${JSON.stringify(privateTwoId)})`)
+    await evaluate(chrome, `window.ncc.closeTab(${JSON.stringify(privateOneId)})`)
+    privateOne.close()
+    privateTwo.close()
+    await sleep(250)
+
+    const privateThreeId = await evaluate(
+      chrome,
+      `window.ncc.newPrivateTab('ncc://${serviceNpub}/_/web/cookie-read?private=3')`
+    )
+    const privateThreeTarget = await waitForTarget((entry) =>
+      String(entry.url).includes('/_/web/cookie-read?private=3')
+    )
+    const privateThree = new Cdp(privateThreeTarget.webSocketDebuggerUrl)
+    await privateThree.connect()
+    const privateThreeText = await waitForText(privateThree, 'COOKIE none', 80)
+    check(
+      'clears private cookies after the last private tab closes',
+      privateThreeText.includes('COOKIE none')
+    )
+    await evaluate(chrome, `window.ncc.closeTab(${JSON.stringify(privateThreeId)})`)
+    privateThree.close()
+
+    await evaluate(chrome, `window.ncc.selectTab(${JSON.stringify(normalTabId)})`)
+    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/web/cookie-read?normal=2` })
+    const normalCookieAgain = await waitForText(cdp, 'COOKIE normal', 80)
+    check(
+      'normal session keeps its cookies across private tabs',
+      normalCookieAgain.includes('COOKIE normal')
+    )
+    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/web/` })
+    await waitForText(cdp, 'NCC E2E OK', 80)
+
     // Settings is a page in the chrome, not a modal dialog.
     await evaluate(chrome, 'document.querySelector(\'button[data-signer-button]\').click()')
     await waitForText(chrome, 'Remote signer', 60)
@@ -902,6 +1075,16 @@ async function main() {
     )
     const generalShot = await chrome.send('Page.captureScreenshot', { format: 'png' })
     writeFileSync(join(ARTIFACTS, 'settings-general.png'), Buffer.from(generalShot.data, 'base64'))
+    await evaluate(chrome, 'document.querySelector(\'[data-settings-section="security"]\').click()')
+    await waitForText(chrome, 'Secure connections', 40)
+    check(
+      'settings page exposes the HTTPS policy',
+      (await evaluate(chrome, 'Boolean(document.querySelector("#https-mode"))')) === true
+    )
+    check(
+      'settings page exposes the HTTP interstitial toggle',
+      (await evaluate(chrome, 'Boolean(document.querySelector("#warn-insecure"))')) === true
+    )
     await evaluate(chrome, 'document.querySelector(\'[data-settings-page] header button\').click()')
     await sleep(350)
     check(
@@ -1774,6 +1957,178 @@ async function main() {
     )
     await sleep(400)
 
+    // A full Tor tab routes page traffic, ncc endpoint fetches and NCC relay
+    // queries through the fixed SOCKS proxy.
+    const torTabId = await evaluate(
+      chrome,
+      `window.ncc.newTorTab('ncc://${serviceNpub}/_/directonly/')`
+    )
+    const torTabTarget = await waitForTarget((entry) =>
+      String(entry.url).includes('/_/directonly/')
+    )
+    const torTabCdp = new Cdp(torTabTarget.webSocketDebuggerUrl)
+    await torTabCdp.connect()
+    await waitForText(torTabCdp, 'NCC E2E OK', 120)
+    await sleep(500)
+    const torTabState = await evaluate(
+      chrome,
+      'window.ncc.getState().then((s) => ({ tabKind: s.tabKind, tor: s.tor }))'
+    )
+    check(
+      'opens a full Tor tab',
+      torTabState?.tabKind === 'tor' &&
+        torTabState?.tor?.tabTor === true &&
+        torTabState?.tor?.active === true,
+      JSON.stringify(torTabState)
+    )
+    check(
+      'marks the Tor tab in the chrome',
+      (await evaluate(
+        chrome,
+        'Boolean(document.querySelector(\'[data-tab-kind="tor"]\'))'
+      )) === true &&
+        (await evaluate(
+          chrome,
+          'Boolean(document.querySelector(\'[data-tab-kind-badge="tor"]\'))'
+        )) === true &&
+        (await evaluate(
+          chrome,
+          'Boolean(document.querySelector("[data-tor-button]"))'
+        )) === false
+    )
+    const torTargets = torProxy.getTargets()
+    check(
+      'routes the Tor tab endpoint through the SOCKS proxy',
+      torTargets.some((target) => target.port === servicePort),
+      JSON.stringify(torTargets.slice(-8))
+    )
+    check(
+      'routes NCC relay lookups through the SOCKS proxy',
+      torTargets.some((target) => target.port === relayA.port),
+      JSON.stringify(torTargets.slice(-8))
+    )
+    const torTabSecurity = await readSecurity(chrome)
+    check(
+      'Tor tab security says HTTP over Tor',
+      torTabSecurity?.label === 'plaintext' &&
+        torTabSecurity?.tone === 'warn' &&
+        String(torTabSecurity?.tooltip ?? '').includes('over Tor'),
+      JSON.stringify(torTabSecurity)
+    )
+    check(
+      'Tor tab shows the HTTP-over-Tor banner',
+      String(
+        await evaluate(
+          chrome,
+          'document.querySelector("[data-insecure-banner]")?.textContent ?? ""'
+        )
+      ).includes('HTTP over Tor')
+    )
+
+    await evaluate(chrome, `window.ncc.closeTab(${JSON.stringify(torTabId)})`)
+    torTabCdp.close()
+    await sleep(400)
+
+    // HTTPS preference uses the HTTPS endpoint the publisher actually published,
+    // even when an HTTP endpoint has a better priority.
+    await evaluate(chrome, `window.ncc.selectTab(${JSON.stringify(normalTabId)})`)
+    await evaluate(
+      chrome,
+      "window.ncc.setSecurityConfig({ httpsMode: 'prefer', warnInsecure: false })"
+    )
+    await sleep(600)
+    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/mixed/` })
+    const mixedHttps = await waitForText(cdp, 'SECURE OK', 100)
+    check('prefers a published HTTPS endpoint', mixedHttps.includes('SECURE OK'))
+    await sleep(400)
+    const mixedSecurity = await readSecurity(chrome)
+    check(
+      'HTTPS endpoint keeps its pinned transport',
+      mixedSecurity?.label === 'pinned-tls' && mixedSecurity?.tone === 'ok',
+      JSON.stringify(mixedSecurity)
+    )
+
+    await evaluate(
+      chrome,
+      "window.ncc.setSecurityConfig({ httpsMode: 'off', warnInsecure: false })"
+    )
+    await sleep(600)
+    const mixedHttp = await waitForText(cdp, 'NCC E2E OK', 100)
+    check('HTTPS off follows the published priority', mixedHttp.includes('NCC E2E OK'))
+
+    await evaluate(
+      chrome,
+      "window.ncc.setSecurityConfig({ httpsMode: 'only', warnInsecure: false })"
+    )
+    await sleep(600)
+    const mixedOnly = await waitForText(cdp, 'SECURE OK', 100)
+    check('HTTPS only uses the secure endpoint', mixedOnly.includes('SECURE OK'))
+
+    // An HTTP-only NCC service gets a blocking warning in HTTPS-only mode.
+    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/insecure/` })
+    const insecureWarning = await waitForText(cdp, 'This service does not offer HTTPS', 100)
+    check(
+      'warns before an HTTP-only NCC service',
+      insecureWarning.includes('Continue over HTTP') &&
+        insecureWarning.includes('HTTPS required')
+    )
+    await evaluate(cdp, 'document.querySelector("a.button").click()')
+    await sleep(700)
+    const nccExceptionConfig = await evaluate(chrome, 'window.ncc.getConfig()')
+    check(
+      'records the NCC HTTP exception only after confirmation',
+      Array.isArray(nccExceptionConfig?.httpExceptions) &&
+        nccExceptionConfig.httpExceptions.includes(`ncc://${serviceNpub}/insecure`) &&
+        (await waitForText(cdp, 'Endpoint unreachable', 80)).includes('Endpoint unreachable')
+    )
+    await evaluate(chrome, 'window.ncc.clearHttpExceptions()')
+
+    // A non-loopback clearnet HTTP URL gets the chrome interstitial.
+    await evaluate(
+      chrome,
+      "window.ncc.setSecurityConfig({ httpsMode: 'off', warnInsecure: true })"
+    )
+    await evaluate(chrome, "window.ncc.navigate('http://example.invalid/')")
+    await waitForText(chrome, 'This connection is not secure', 80)
+    check(
+      'shows the clearnet HTTP interstitial',
+      (await evaluate(
+        chrome,
+        'document.querySelector("[data-insecure-prompt]")?.textContent ?? ""'
+      )).includes('example.invalid')
+    )
+    await evaluate(chrome, 'document.querySelector("[data-insecure-always]").click()')
+    await sleep(500)
+    const exceptionConfig = await evaluate(chrome, 'window.ncc.getConfig()')
+    check(
+      'persists an HTTP exception from the interstitial',
+      Array.isArray(exceptionConfig?.httpExceptions) &&
+        exceptionConfig.httpExceptions.includes('http://example.invalid')
+    )
+    await evaluate(chrome, 'window.ncc.clearHttpExceptions()')
+    await evaluate(
+      chrome,
+      "window.ncc.setSecurityConfig({ httpsMode: 'only', warnInsecure: false })"
+    )
+    await evaluate(chrome, "window.ncc.navigate('http://example.invalid/')")
+    await waitForText(chrome, 'HTTPS is unavailable', 80)
+    check(
+      'HTTPS-only explains the clearnet fallback',
+      (await evaluate(
+        chrome,
+        'document.querySelector("[data-insecure-prompt]")?.textContent ?? ""'
+      )).includes('Continue once')
+    )
+    await evaluate(chrome, 'document.querySelector("[data-insecure-go-back]").click()')
+    await sleep(300)
+
+    await evaluate(
+      chrome,
+      "window.ncc.setSecurityConfig({ httpsMode: 'prefer', warnInsecure: false })"
+    )
+    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/toronly/` })
+    await waitForText(cdp, 'Onion endpoint only', 80)
+
     // With the proxy gone, Tor must fail closed rather than fall back to direct.
     torProxy.close()
     const torDown = await evaluate(chrome, 'window.ncc.torRestart()')
@@ -1878,6 +2233,24 @@ async function main() {
       )) === 1
     )
 
+    // Private tabs must never be written to the restore session.
+    const keepNormalId = await evaluate(
+      chrome,
+      'window.ncc.getState().then((state) => state.activeTabId)'
+    )
+    await evaluate(
+      chrome,
+      `window.ncc.newPrivateTab('ncc://${serviceNpub}/_/web/private-restore')`
+    )
+    await evaluate(chrome, `window.ncc.selectTab(${JSON.stringify(keepNormalId)})`)
+    await sleep(1200)
+    const savedForRestart = JSON.parse(readFileSync(join(userData, 'session.json'), 'utf8'))
+    check(
+      'does not save private tabs in the session',
+      !JSON.stringify(savedForRestart.tabs).includes('private-restore'),
+      JSON.stringify(savedForRestart.tabs)
+    )
+
     // Restart with the same profile and no command-line address: the session file
     // must bring the tab back without any extra flags.
     await sleep(1100)
@@ -1935,6 +2308,13 @@ async function main() {
       'restores the saved address',
       String(restoredState?.tabs?.[0]?.url).includes(missingNpub),
       String(restoredState?.tabs?.[0]?.url)
+    )
+    check(
+      'never restores a private tab',
+      Array.isArray(restoredState?.tabs) &&
+        restoredState.tabs.every((tab) => tab.kind === 'normal') &&
+        !JSON.stringify(restoredState.tabs).includes('private-restore'),
+      JSON.stringify(restoredState?.tabs)
     )
 
     const restoredContent = await waitForTarget(

@@ -6,6 +6,7 @@ import type {
   IdentityStatus,
   NavState,
   OverlayReason,
+  HttpsMode,
   SignerPermission,
   SignerRequest,
   TabHistory,
@@ -31,7 +32,10 @@ export interface NccApi {
   forceReload(): Promise<void>
   stop(): Promise<void>
   toggleTor(): Promise<void>
+  insecureChoice(choice: 'cancel' | 'continue' | 'always'): Promise<void>
   newTab(input?: string): Promise<string>
+  newPrivateTab(input?: string): Promise<string>
+  newTorTab(input?: string): Promise<string>
   closeTab(id?: string): Promise<void>
   selectTab(id: string): Promise<void>
   moveTab(id: string, toIndex: number): Promise<void>
@@ -68,6 +72,12 @@ export interface NccApi {
     mode: TorMode
     socks: string
   }): Promise<SetRelaysResult>
+  setSecurityConfig(config: {
+    httpsMode: HttpsMode
+    warnInsecure: boolean
+  }): Promise<SetRelaysResult>
+  removeHttpException(key: string): Promise<AppConfig>
+  clearHttpExceptions(): Promise<AppConfig>
   torStatus(): Promise<TorStatus>
   torTest(): Promise<TorStatus>
   torRestart(): Promise<TorStatus>

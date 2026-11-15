@@ -14,6 +14,7 @@ import { ChromeMenu } from './components/ChromeMenu'
 import { DownloadsPanel } from './components/DownloadsPanel'
 import { HistoryPanel } from './components/HistoryPanel'
 import { type PopoverAnchor } from './components/Popover'
+import { InsecureWarning, SecurityBanner } from './components/SecurityNotice'
 import { SettingsPage, type SettingsSection } from './components/SettingsPage'
 import { SignerPrompt } from './components/SignerPrompt'
 import { SiteInfoPanel } from './components/SiteInfoPanel'
@@ -32,7 +33,10 @@ const EMPTY_STATE: NavState = {
   canGoForward: false,
   security: null,
   failure: null,
-  tor: { preferTor: false, onionAvailable: false, active: false },
+  tor: { preferTor: false, onionAvailable: false, active: false, tabTor: false },
+  tabKind: 'normal',
+  banner: null,
+  insecurePrompt: null,
   tabs: [],
   activeTabId: null,
   windowMaximized: false
@@ -207,6 +211,20 @@ export function App() {
     })
   }, [])
 
+  const newPrivateTab = useCallback(() => {
+    setHint(null)
+    void window.ncc.newPrivateTab().then(() => {
+      window.dispatchEvent(new Event('ncc:focus-address'))
+    })
+  }, [])
+
+  const newTorTab = useCallback(() => {
+    setHint(null)
+    void window.ncc.newTorTab().then(() => {
+      window.dispatchEvent(new Event('ncc:focus-address'))
+    })
+  }, [])
+
   const closeTab = useCallback((id?: string) => {
     void window.ncc.closeTab(id)
   }, [])
@@ -344,8 +362,17 @@ export function App() {
         onOpenMenu={() => showOverlay('menu')}
       />
 
+      {state.banner && !state.insecurePrompt && !overlay ? (
+        <SecurityBanner banner={state.banner} />
+      ) : null}
+
       <main className="relative min-h-0 flex-1 overflow-hidden">
-        {overlay === 'settings' ? (
+        {state.insecurePrompt ? (
+          <InsecureWarning
+            prompt={state.insecurePrompt}
+            onChoice={(choice) => void window.ncc.insecureChoice(choice)}
+          />
+        ) : overlay === 'settings' ? (
           <SettingsPage
             open
             initialSection={settingsSection}
@@ -353,7 +380,11 @@ export function App() {
             onIdentityChange={setIdentity}
           />
         ) : state.mode === 'blank' ? (
-          <Welcome onOpenSettings={() => openSettings('general')} />
+          <Welcome
+            onOpenSettings={() => openSettings('general')}
+            onNewPrivateTab={newPrivateTab}
+            onNewTorTab={newTorTab}
+          />
         ) : null}
       </main>
 

@@ -14,6 +14,8 @@ export function commandForInput(input: Input): CommandId | null {
 
   if (primary && !input.alt) {
     if (key === 't' && !input.shift) return 'new-tab'
+    if (key === 'n' && input.shift) return 'new-private-tab'
+    if (key === 'o' && input.shift) return 'new-tor-tab'
     if (key === 'w' && !input.shift) return 'close-tab'
     if (key === 'l' && !input.shift) return 'focus-address'
     if (key === 'r') return input.shift ? 'force-reload' : 'reload'

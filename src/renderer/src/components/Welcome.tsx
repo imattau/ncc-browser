@@ -1,13 +1,16 @@
 import { useEffect, useState } from 'react'
-import { Check, Copy, KeyRound, Settings2, ShieldCheck, TimerOff } from 'lucide-react'
+import { Check, Copy, EyeOff, KeyRound, Settings2, ShieldCheck, TimerOff } from 'lucide-react'
+import { OnionIcon } from './TransportIcons'
 
 interface WelcomeProps {
   onOpenSettings: () => void
+  onNewPrivateTab: () => void
+  onNewTorTab: () => void
 }
 
 const EXAMPLE = 'ncc://npub1…/web'
 
-export function Welcome({ onOpenSettings }: WelcomeProps) {
+export function Welcome({ onOpenSettings, onNewPrivateTab, onNewTorTab }: WelcomeProps) {
   const [relays, setRelays] = useState<string[]>([])
   const [copied, setCopied] = useState(false)
 
@@ -62,6 +65,25 @@ export function Welcome({ onOpenSettings }: WelcomeProps) {
             >
               {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
               {copied ? 'copied' : 'copy'}
+            </button>
+          </div>
+
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={onNewPrivateTab}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[color:var(--color-line)] px-3 py-1.5 text-[11.5px] text-[color:var(--color-muted)] hover:bg-[#7c6ad6]/10 hover:text-[#c4b5fd]"
+            >
+              <EyeOff className="h-3.5 w-3.5" />
+              New private tab
+            </button>
+            <button
+              type="button"
+              onClick={onNewTorTab}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[color:var(--color-line)] px-3 py-1.5 text-[11.5px] text-[color:var(--color-muted)] hover:bg-[#7c6ad6]/10 hover:text-[#c4b5fd]"
+            >
+              <OnionIcon className="h-3.5 w-3.5" />
+              New Tor tab
             </button>
           </div>
 

@@ -2,7 +2,13 @@ import { app } from 'electron'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { normalizeRelays, defaultRelays } from '@shared/relays'
-import { DEFAULT_TOR_SOCKS, type AppConfig, type TorMode } from '@shared/types'
+import {
+  DEFAULT_HTTPS_MODE,
+  DEFAULT_TOR_SOCKS,
+  type AppConfig,
+  type HttpsMode,
+  type TorMode
+} from '@shared/types'
 
 /**
  * Tiny JSON settings store in `userData`: relay list, NIP-65 gossip, and whether a
@@ -65,6 +71,42 @@ export class ConfigStore {
     return this.get()
   }
 
+  setHttpsMode(value: unknown): AppConfig {
+    const httpsMode: HttpsMode =
+      value === 'off' || value === 'only' ? value : value === 'prefer' ? 'prefer' : DEFAULT_HTTPS_MODE
+    this.config = { ...this.get(), httpsMode }
+    this.write()
+    return this.get()
+  }
+
+  setWarnInsecure(value: unknown): AppConfig {
+    this.config = { ...this.get(), warnInsecure: value === true }
+    this.write()
+    return this.get()
+  }
+
+  allowHttp(key: string): AppConfig {
+    const value = key.trim()
+    if (!value) return this.get()
+    const httpExceptions = [...new Set([...this.get().httpExceptions, value])].slice(-200)
+    this.config = { ...this.get(), httpExceptions }
+    this.write()
+    return this.get()
+  }
+
+  removeHttpException(key: string): AppConfig {
+    const httpExceptions = this.get().httpExceptions.filter((entry) => entry !== key)
+    this.config = { ...this.get(), httpExceptions }
+    this.write()
+    return this.get()
+  }
+
+  clearHttpExceptions(): AppConfig {
+    this.config = { ...this.get(), httpExceptions: [] }
+    this.write()
+    return this.get()
+  }
+
   private read(): AppConfig {
     try {
       if (existsSync(this.path)) {
@@ -78,7 +120,15 @@ export class ConfigStore {
           torSocks:
             typeof parsed.torSocks === 'string' && parsed.torSocks.trim()
               ? parsed.torSocks.trim()
-              : DEFAULT_TOR_SOCKS
+              : DEFAULT_TOR_SOCKS,
+          httpsMode:
+            parsed.httpsMode === 'off' || parsed.httpsMode === 'only'
+              ? parsed.httpsMode
+              : DEFAULT_HTTPS_MODE,
+          warnInsecure: parsed.warnInsecure === true,
+          httpExceptions: Array.isArray(parsed.httpExceptions)
+            ? parsed.httpExceptions.filter((entry): entry is string => typeof entry === 'string').slice(-200)
+            : []
         }
       }
     } catch (error) {
@@ -90,7 +140,10 @@ export class ConfigStore {
       anchorRequired: false,
       preferTor: false,
       torMode: 'auto',
-      torSocks: DEFAULT_TOR_SOCKS
+      torSocks: DEFAULT_TOR_SOCKS,
+      httpsMode: DEFAULT_HTTPS_MODE,
+      warnInsecure: false,
+      httpExceptions: []
     }
   }
 

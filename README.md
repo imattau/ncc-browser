@@ -10,11 +10,11 @@ Built with Electron 45, React 19, and Vite. The resolver is a spec-correct
 implementation on top of `nostr-tools`, not a wrapper around `ncc-05-js` (see
 [Why not `ncc-05-js`](#why-not-ncc-05-js)).
 
-**Status:** M0–M7 are implemented. That includes the resolver, proxy and pinning, the
+**Status:** M0–M9 are implemented. That includes the resolver, proxy and pinning, the
 browser chrome and signer, NCC-02 anchoring with a trust panel, the separate publisher
 app in [`publisher/`](./publisher/) (a NIP-07 flow for NCC-05 locators and NCC-02 service
-records), bundled Tor with the onion preference/toggle, and packaged Linux, macOS and
-Windows releases.
+records), bundled Tor with the onion preference/toggle and full Tor tabs, private tabs,
+HTTPS policy and HTTP warnings, and packaged Linux, macOS and Windows releases.
 
 ![Start screen](./docs/welcome.png)
 
@@ -99,6 +99,12 @@ working while the remote page has focus.
   overflow button appears when the strip cannot fit every tab, with a searchable list.
   Right-click a tab for reload, duplicate, mute, copy address, close, close others and
   close to the right. A blank tab shows the welcome screen.
+- **Private tabs** — a separate in-memory session, a mask indicator and `Ctrl+Shift+N`.
+  Cookies, cache, history and remembered signer permissions are dropped when the last
+  private tab closes. Private tabs are never written to the restore session.
+- **Tor tabs** — a full Tor tab (`Ctrl+Shift+O`) routes page traffic, downloads and NCC
+  relay lookups through Tor, disables WebRTC leaking, and is always ephemeral. It is
+  separate from the per-locator onion preference.
 - **Toolbar** — back/forward (right-click or hold for a jump list), reload/stop
   (the refresh button bypasses the HTTP cache), history, address bar with a
   colour-coded padlock and bookmark star, downloads with progress, identity key,
@@ -108,12 +114,15 @@ working while the remote page has focus.
   publishes an onion endpoint gets an onion button in the address bar; clicking it
   reloads that service over Tor, clicking again returns to direct. Direct `.onion` URLs
   work too.
-- **Settings** is a page, not a modal: `General`, `Identity & signer`, `Trusted services`
-  and `About`, with a back-to-browsing button. `Esc` also leaves it.
+- **Settings** is a page, not a modal: `General`, `Security`, `Identity & signer`,
+  `Trusted services` and `About`, with a back-to-browsing button. `Esc` also leaves it.
+  **Security** controls Off / Prefer HTTPS / HTTPS only, the optional HTTP interstitial,
+  and the list of persisted HTTP exceptions.
 - **Shortcuts** (also shown in the menu): `Ctrl+T`, `Ctrl+W`, `Ctrl+Tab` /
-  `Ctrl+Shift+Tab`, `Ctrl+L`, `Ctrl+R`, `Ctrl+Shift+R`, `Ctrl+.`, `Ctrl+D` (bookmark),
-  `Ctrl+H` (history), `Ctrl+J` (downloads), `Alt+←/→`, `Ctrl++/-/0`, `Ctrl+Shift+I/J`,
-  `Ctrl+Q`. On macOS `Cmd` replaces `Ctrl`. `Ctrl+R` is a normal reload; the toolbar
+  `Ctrl+Shift+Tab`, `Ctrl+Shift+N` (private tab), `Ctrl+Shift+O` (Tor tab), `Ctrl+L`,
+  `Ctrl+R`, `Ctrl+Shift+R`, `Ctrl+.`, `Ctrl+D` (bookmark), `Ctrl+H` (history),
+  `Ctrl+J` (downloads), `Alt+←/→`, `Ctrl++/-/0`, `Ctrl+Shift+I/J`, `Ctrl+Q`. On macOS
+  `Cmd` replaces `Ctrl`. `Ctrl+R` is a normal reload; the toolbar
   refresh uses the `Ctrl+Shift+R` path (clear the content session cache, then reload).
 - **Right-click content** — links (open in new tab, copy address), images (open, copy
   address, save), editable fields (cut/copy/paste/select all), plus back/forward/reload
@@ -125,8 +134,9 @@ working while the remote page has focus.
   one jumps straight to it. History is per tab and can be cleared from the panel.
 - **Bookmarks** — the star in the address bar toggles the current page; the hamburger
   menu lists bookmarks with remove buttons. They are local to this browser.
-- **Session restore** — open tabs, the active tab and window geometry are saved to
-  `userData/session.json` and restored on the next launch. Only addresses are stored.
+- **Session restore** — normal tabs, the active tab and window geometry are saved to
+  `userData/session.json` and restored on the next launch. Private and Tor tabs are never
+  restored; only addresses are stored.
 - **Window title** follows the active page.
 
 ---
@@ -258,6 +268,82 @@ ships Tor's BSD licence and a source notice alongside the binary.
 
 ---
 
+## Private tabs
+
+Private tabs use an in-memory content session (`ncc-private`) separate from normal
+browsing. All private tabs share it, so a login works across private tabs, but the
+session is cleared when the last private tab closes.
+
+- Cookies, cache, auth cache and host resolver cache are cleared with the session.
+- The on-disk locator cache is bypassed; resolutions stay in memory.
+- NIP-07 “Always allow” decisions are **session-only**. Private tabs neither inherit nor
+  write the persistent trust list; the approval sheet says “Remember for this session”.
+- Download metadata is marked `private` and removed when the session ends; downloaded
+  files remain on disk.
+- History is already per-tab and disappears with the tab. Bookmarks can still be created
+  deliberately.
+- Private tabs are never written to `session.json`; a private-only session restores as a
+  blank normal tab.
+
+The tab strip uses a mask indicator, the address bar shows a **Private** badge, and
+`Ctrl+Shift+N` opens a new private tab.
+
+---
+
+## Tor tabs
+
+A Tor tab is stronger than the per-locator onion toggle. It uses a separate in-memory
+session (`ncc-tor`) with a **fixed SOCKS5 proxy for every request**:
+
+- Clearnet pages, NCC endpoint fetches, subresources and downloads go through Tor.
+- NCC-05 relay queries from a Tor tab use a Tor-aware WebSocket pool, so relays do not
+  see the user's IP or the npub being resolved.
+- WebRTC is set to `disable_non_proxied_udp` for the tab.
+- Endpoint selection prefers an onion endpoint, otherwise uses the published clearnet
+  endpoint over Tor. The address bar shows a permanent **Tor** badge instead of the
+  per-page onion toggle.
+- Tor tabs are always ephemeral: no cookies/storage or session restore, no persistent
+  locator cache, no persistent NIP-07 permissions.
+- If Tor cannot start, the tab fails with `tor-unavailable`; it never falls back to a
+  direct connection.
+- The approval sheet warns that **NIP-46 remote-signer relay traffic is not routed
+  through Tor** yet; NCC relay lookups and page traffic are.
+
+`Ctrl+Shift+O` opens a Tor tab. Tor tabs and the global **Prefer Tor connections** setting
+are independent: the setting controls endpoint choice in normal/private tabs, while a Tor
+tab always proxies all traffic.
+
+---
+
+## Secure connections and HTTP warnings
+
+Settings → **Security** controls the HTTPS policy:
+
+- **Off** — navigate HTTP normally; the amber warning bar still appears.
+- **Prefer HTTPS** — try HTTPS first. If it fails, fall back to HTTP after the optional
+  interstitial. This is the default.
+- **HTTPS only** — never load HTTP silently. The browser either uses a published HTTPS
+  endpoint or shows a blocking `HTTPS is unavailable` interstitial with an explicit
+  continue/exception.
+
+Details:
+- Loopback hosts (`localhost`, `127.0.0.0/8`, `::1`) and `.onion` services are exempt
+  from automatic upgrades. Tor-encrypted onion HTTP is not made TLS.
+- NCC endpoints are never rewritten to invented HTTPS ports. The resolver prefers an
+  HTTPS endpoint the publisher actually published, then falls back according to the
+  policy.
+- **Ask before loading HTTP pages** adds a blocking interstitial for clearnet HTTP URLs
+  and a self-contained warning page for NCC HTTP endpoints. The page only loads after
+  **Continue once** or **Always allow this host**.
+- The amber banner always appears on HTTP pages: “Not secure” for clearnet and “HTTP
+  over Tor” when Tor provides the path but there is no TLS.
+- “Always allow” exceptions persist for normal tabs and live only for the current private
+  or Tor session. Settings → Security lists and clears persisted exceptions.
+- NCC HTTP exceptions are bound to the `ncc://<npub>/<service>` service, not the raw
+  endpoint host, so a locator rotation does not silently disable the warning.
+
+---
+
 ## NCC-02 anchoring and trust
 
 NCC-02 service records (`kind 30059`) are the identity and trust anchor for a service;
@@ -370,10 +456,13 @@ src/main
   shell.ts           BrowserWindow (chrome) + one WebContentsView per tab
   protocol.ts        ses.protocol.handle('ncc') — resolve, fetch, rewrite, error pages
   pins.ts            SPKI pin store + setCertificateVerifyProc
-  config.ts          relay list, gossip, anchoring and Tor settings, persisted to userData
+  config.ts          relays, anchoring, Tor, HTTPS policy and HTTP exceptions
+  sessions.ts        normal/private/Tor content sessions and their lifecycle
+  security.ts        pure HTTPS policy, HTTP exceptions and warning tokens
   tor/manager.ts     bundled/local Tor lifecycle, bootstrap, fallback
   tor/proxy.ts       pure: SOCKS5 validation, probe, onion-only PAC
-  tor/session.ts     loopback PAC server applied to the content session
+  tor/session.ts     loopback PAC server + fixed proxy for full Tor tabs
+  tor/relay.ts       Tor-routed Nostr relay WebSocket pool
   tor/guard.ts       strict per-tab allowlist for resources loaded over Tor
   cache-store.ts     on-disk locator cache (public records only)
   bookmarks.ts       local bookmarks, persisted to userData
@@ -404,8 +493,8 @@ src/main
 src/preload
   index.ts           contextBridge → window.ncc (chrome only)
   content.ts         contextBridge → window.nostr (top-level page frames only)
-src/renderer         React chrome: tabs, toolbar, menu, downloads, history, settings page,
-                     signer sheet, welcome
+src/renderer         React chrome: tabs, toolbar, menu, downloads, history, settings,
+                     security banner/interstitial, signer sheet, welcome
 src/shared           ncc:// parser, types, relay validation, commands, tab order,
                      download formatting (no Node imports)
 publisher/           separate Vite/React/Tailwind app: NIP-07 locator + NCC-02 publisher
@@ -420,12 +509,12 @@ general IPC bridge.
 ## Testing
 
 ```bash
-npm test       # 254 unit tests: URL parser, locator rules, resolver, routing, pins,
+npm test       # 263 unit tests: URL parser, locator rules, resolver, routing, pins,
                # signer crypto, identity storage, NIP-46, approvals, permissions,
-               # shortcuts, context menus, relays, downloads, tab order, bookmarks,
-               # favicons, session storage, NCC-02 anchoring, Tor transport selection,
-               # proxy/PAC validation, Tor manager fallback, clearnet lock state,
-               # publisher events
+               # ephemeral signer permissions, shortcuts, context menus, relays,
+               # downloads, tab order, bookmarks, favicons, session storage, NCC-02
+               # anchoring, Tor transport selection, proxy/PAC validation, Tor manager
+               # fallback, HTTPS policy/exceptions, clearnet lock state, publisher events
 npm run e2e    # real Electron window against a mock relay and local HTTP services
 ```
 
@@ -444,8 +533,11 @@ subframes), NCC-02 anchoring (trust panel, `u` fallback, required-mode refusal),
 settings page, the downloads panel (a real file written to disk), the per-tab history
 panel, bookmarks, a toolbar refresh against a `max-age` cached document, Tor transport
 (the onion toggle, automatic preference, strict clearnet blocking, direct `.onion`
-navigation, onion-only and Tor-unavailable failures against a fake SOCKS5 proxy), the
-hamburger menu, **real global shortcuts sent through X**
+navigation, onion-only and Tor-unavailable failures against a fake SOCKS5 proxy), a
+**full Tor tab** whose page, endpoint and relay lookups all hit the fake SOCKS proxy,
+**private tab cookie isolation and clearing**, private-tab session-restore exclusion,
+HTTPS endpoint preference, the HTTP warning banner, clearnet and NCC HTTP
+interstitials/exceptions, the hamburger menu, **real global shortcuts sent through X**
 (Ctrl+T/W/L while the page is focused), a **real NIP-46 round-trip against a mock
 bunker** — connect, remote signing, remote decryption of a targeted locator, and
 disconnect — and the **publisher app publishing through the built-in signer and being
@@ -546,10 +638,11 @@ or SmartScreen prompts. The Flatpak bundle declares the flathub
 - **Pins are keyed by hostname, not host:port** — Chromium's verify proc does not expose
   the port. Two HTTPS services on the same IP with different certificates can collide;
   give each its own address for now.
-- **Tor only covers page traffic.** NCC-05 relay queries and NIP-46 relay traffic still
-  use the normal network, so relays can see your IP and the npub being resolved. Tor
-  pages also share one SOCKS port, so there is no Tor Browser-style per-site stream
-  isolation.
+- **Normal/private onion mode does not proxy relay lookups.** A full Tor tab routes NCC
+  relay queries through Tor, but onion pages opened from a normal or private tab still
+  query relays directly, so relays can see the IP and npub. **NIP-46 relay traffic is
+  direct in every mode**; the Tor-tab approval sheet warns about this. Tor pages also
+  share one SOCKS port, so there is no Tor Browser-style per-site stream isolation.
 - **No bridges or pluggable transports yet.** The bundled Tor uses the public Tor
   network; the Expert Bundle's pluggable transports are not shipped. Tor updates are
   security updates and must be bumped in `scripts/tor-version.json`.
@@ -583,6 +676,9 @@ or SmartScreen prompts. The Flatpak bundle declares the flathub
 - **Installers are unsigned.** macOS builds are ad-hoc signed only, Windows builds have
   no Authenticode certificate, and there is no auto-update channel yet. Signed builds and
   updates need maintainer certificates and a publishing key.
+- **HTTPS policy is not HSTS.** “Prefer HTTPS” and “HTTPS only” apply to navigation and
+  NCC endpoint selection; a page can still request plaintext subresources that Chromium
+  does not already block as mixed content. HTTP exceptions are local to this profile.
 - **Clearnet pages** load directly, with normal Chromium error handling.
 
 ---

@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { Lock, Star } from 'lucide-react'
-import type { TorState } from '@shared/types'
+import { EyeOff, Lock, Star } from 'lucide-react'
+import type { TabKind, TorState } from '@shared/types'
 import type { SecuritySummary } from '../lib/security'
 import type { PopoverAnchor } from './Popover'
+import { OnionIcon } from './TransportIcons'
 import { cn } from '../lib/cn'
 
 interface AddressBarProps {
@@ -12,6 +13,7 @@ interface AddressBarProps {
   bookmarked: boolean
   security: SecuritySummary
   tor: TorState
+  tabKind: TabKind
   onToggleBookmark: () => void
   onToggleTor: () => void
   onOpenSiteInfo: (anchor: PopoverAnchor) => void
@@ -26,6 +28,7 @@ export function AddressBar({
   bookmarked,
   security,
   tor,
+  tabKind,
   onToggleBookmark,
   onToggleTor,
   onOpenSiteInfo,
@@ -93,6 +96,25 @@ export function AddressBar({
             />
           ) : null}
         </button>
+        {tabKind === 'tor' ? (
+          <span
+            data-tab-kind-badge="tor"
+            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[#7c6ad6]/35 bg-[#7c6ad6]/10 px-1.5 py-0.5 text-[9.5px] font-medium text-[#c4b5fd]"
+            title="Tor tab — all traffic is routed through Tor"
+          >
+            <OnionIcon className="h-3 w-3" />
+            Tor
+          </span>
+        ) : tabKind === 'private' ? (
+          <span
+            data-tab-kind-badge="private"
+            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[color:var(--color-line)] bg-white/[0.04] px-1.5 py-0.5 text-[9.5px] font-medium text-[color:var(--color-muted)]"
+            title="Private tab — cookies and history are not saved"
+          >
+            <EyeOff className="h-3 w-3" />
+            Private
+          </span>
+        ) : null}
         <input
           ref={inputRef}
           value={draft}
@@ -128,7 +150,7 @@ export function AddressBar({
           aria-label="Address"
           className="h-full flex-1 bg-transparent font-mono text-[13px] text-[#e7e9ef] placeholder:text-[#5d6575] focus:outline-none"
         />
-        {tor.onionAvailable && !tor.preferTor ? (
+        {!tor.tabTor && tor.onionAvailable && !tor.preferTor ? (
           <button
             type="button"
             data-tor-button
@@ -152,7 +174,7 @@ export function AddressBar({
                 : 'text-[#7c6ad6]/70 hover:text-[#a78bfa]'
             )}
           >
-            <OnionMark className="h-3.5 w-3.5" />
+            <OnionIcon className="h-3.5 w-3.5" />
           </button>
         ) : null}
 
@@ -202,25 +224,4 @@ function anchorDot(state: string): string {
     return 'bg-[color:var(--color-warn)]'
   }
   return 'bg-[#5d6575]'
-}
-
-/** A layered onion mark for the Tor transport toggle. */
-function OnionMark({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.7}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <path d="M12 21c4.7 0 8.2-3.7 8.2-8.2C20.2 7.4 16.5 3 12 3S3.8 7.4 3.8 12.8C3.8 17.3 7.3 21 12 21Z" />
-      <path d="M12 18.2c2.9 0 5.1-2.4 5.1-5.5 0-3.2-1.9-5.7-5.1-5.7s-5.1 2.5-5.1 5.7c0 3.1 2.2 5.5 5.1 5.5Z" />
-      <path d="M12 15.3c1.3 0 2.2-1.1 2.2-2.7 0-1.6-.9-2.7-2.2-2.7s-2.2 1.1-2.2 2.7c0 1.6.9 2.7 2.2 2.7Z" />
-      <path d="M12 3c0-1 .6-1.7 1.6-2" />
-    </svg>
-  )
 }
