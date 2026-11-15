@@ -1,5 +1,10 @@
 import { protocol, type Session } from 'electron'
-import { isNostrId, routeNccPath, serviceFromReferer } from '@shared/ncc-url'
+import {
+  isNostrId,
+  parseNccAddress,
+  routeNccPath,
+  serviceFromReferer
+} from '@shared/ncc-url'
 import type { AnchorInfo, TransportSecurity } from '@shared/types'
 import { renderErrorPage, renderPlainFailure } from './error-page'
 import { orderByHealth, type EndpointHealth } from './ncc/health'
@@ -45,7 +50,8 @@ const FAILURE_STATUS: Record<string, number> = {
   'anchor-k-mismatch': 502,
   'onion-only': 502,
   'tor-unavailable': 503,
-  'tor-clearnet-redirect': 403
+  'tor-clearnet-redirect': 403,
+  'tor-blocked-resource': 403
 }
 
 export interface ProtocolActivity {
@@ -69,6 +75,8 @@ export interface ProtocolDeps {
   health: EndpointHealth
   transport: TransportPolicy
   tor: TorManager
+  /** True when this service currently has a document loaded through Tor. */
+  isTorService: (pubkey: string, service: string) => boolean
   activeService: Map<string, string>
   /** Endpoint origin → the NCC address it was resolved for, used to rewrite redirects. */
   endpointOwners: Map<string, { pubkey: string; service: string }>
@@ -142,8 +150,20 @@ async function handleNccRequest(request: Request, deps: ProtocolDeps): Promise<R
   }
 
   const onionAvailable = hasOnionEndpoint(outcome.record.endpoints)
-  const useTor = deps.transport.useTor(pubkey, service, onionAvailable)
+  const documentRequest = isDocumentRequest(request)
+  const fromTorPage = !documentRequest && refererUsesTor(request, deps)
+  const useTor = deps.transport.useTor(pubkey, service, onionAvailable) || fromTorPage
   const selection = selectTransportEndpoints(outcome.record.endpoints, useTor)
+
+  if (fromTorPage && !onionAvailable) {
+    return failureResponse(
+      request,
+      'tor-blocked-resource',
+      'Tor blocked a clearnet NCC resource',
+      request.url,
+      'The referring Tor page requested a service with no onion endpoint.'
+    )
+  }
 
   if (selection.candidates.length === 0) {
     const code = selection.onionOnly ? 'onion-only' : 'no-endpoint'
@@ -400,6 +420,18 @@ function isDocumentRequest(request: Request): boolean {
   const destination = request.headers.get('sec-fetch-dest')
   if (destination) return destination === 'document'
   return (request.headers.get('accept') ?? '').includes('text/html')
+}
+
+/** A subresource is initiated by a page; if that page is on Tor, stay on Tor. */
+function refererUsesTor(request: Request, deps: ProtocolDeps): boolean {
+  const referer = request.headers.get('referer')
+  if (!referer) return false
+  try {
+    const address = parseNccAddress(referer)
+    return deps.isTorService(address.pubkey, address.service)
+  } catch {
+    return false
+  }
 }
 
 function failureResponse(

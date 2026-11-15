@@ -639,6 +639,13 @@ export class BrowserShell {
     this.syncState()
   }
 
+  /** True when at least one tab for this service is currently served over Tor. */
+  isTorService(pubkey: string, service: string): boolean {
+    return this.tabs.some(
+      (tab) => tab.pubkey === pubkey && tab.service === service && tab.tor.active
+    )
+  }
+
   /** Flip the per-service onion override, then reload through the other transport. */
   toggleTor(): void {
     const tab = this.activeTab()

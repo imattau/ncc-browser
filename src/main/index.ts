@@ -144,6 +144,7 @@ app.whenReady().then(async () => {
     health,
     transport,
     tor,
+    isTorService: (pubkey, service) => shell?.isTorService(pubkey, service) ?? false,
     activeService,
     endpointOwners,
     onActivity: (activity) => shell?.reportActivity(activity)

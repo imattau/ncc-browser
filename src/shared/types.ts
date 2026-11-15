@@ -333,6 +333,10 @@ export const ERROR_COPY: Record<string, { title: string; hint: string }> = {
     title: 'Tor blocked a clearnet redirect',
     hint: 'The onion service tried to redirect this page to the clearnet. The redirect was blocked so the request could not reveal your IP. Load the page without Tor if you trust the destination.'
   },
+  'tor-blocked-resource': {
+    title: 'Tor blocked a clearnet resource',
+    hint: 'A page loaded over Tor requested an NCC resource whose locator has no onion endpoint. The request was blocked so it could not reveal your IP.'
+  },
   'relay-error': {
     title: 'Relay query failed',
     hint: 'The configured relays could not be reached. Check your connection and relay list.'
