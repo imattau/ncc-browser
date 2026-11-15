@@ -16,21 +16,32 @@ export interface RewriteContext {
   endpointOwners: Map<string, { pubkey: string; service: string }>
 }
 
-/** Build an endpoint request and attach canonical (hex) identity for NCC gateways. */
+/**
+ * Build an endpoint request for an NCC gateway.
+ *
+ * No longer attaches x-ncc-pubkey/x-ncc-service: nothing reads them back
+ * (grepped the whole codebase to confirm) and nothing but our own
+ * ncc-server ever consumed them server-side, which has since moved to one
+ * dedicated port per service instead of routing by these headers on a
+ * shared origin. Keeping them would still buy nothing now that the one
+ * consumer is gone, and actively cost something: their mere presence on an
+ * otherwise-simple GET/HEAD forces the Fetch spec's "not a simple request"
+ * classification, requiring an OPTIONS preflight before every single
+ * subresource load (script, stylesheet, image) a page makes -- which only
+ * works at all if the destination server bothers to answer OPTIONS
+ * correctly, something more than one third-party app we don't control the
+ * source of (npanel, ditto-web) got wrong in exactly this way. Dropping
+ * them removes that whole failure mode, not just the extra round-trip.
+ */
 export function upstreamRequestInit(
   request: Request,
   target: URL,
   pubkey: string,
-  service: string
+  _service: string
 ): RequestInit {
   const headers = new Headers(request.headers)
   headers.delete('host')
   headers.delete('content-length')
-
-  // These are routing hints, not credentials. Always replace page-supplied
-  // values with the identity and service resolved from the ncc:// address.
-  headers.set('x-ncc-pubkey', pubkey)
-  headers.set('x-ncc-service', service)
 
   const origin = headers.get('origin')
   if (origin === `ncc://${pubkey}`) headers.set('origin', target.origin)
