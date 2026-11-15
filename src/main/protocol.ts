@@ -8,7 +8,12 @@ import {
 import type { AnchorInfo, LocatorInfo, ResolvedService, TransportSecurity } from '@shared/types'
 import { renderErrorPage, renderHttpWarningPage, renderPlainFailure } from './error-page'
 import { orderByHealth, type EndpointHealth } from './ncc/health'
-import { joinPaths, rewriteLocation, upstreamRequestInit } from './ncc/routing'
+import {
+  joinPaths,
+  rewriteLocation,
+  shouldRetryWithActiveService,
+  upstreamRequestInit
+} from './ncc/routing'
 import { toHexPubkey, type NccResolver } from './ncc/resolver'
 import {
   hasOnionEndpoint,
@@ -182,6 +187,20 @@ async function handleNccRequest(
 
   const outcome = await deps.resolver.resolve(pubkey, service)
   if (!outcome.ok) {
+    // See shouldRetryWithActiveService's own comment (ncc/routing.ts) for
+    // why this retry exists: a subresource's service can be guessed wrong
+    // when routing ran before the active-service map had an answer.
+    if (
+      allowRetry &&
+      shouldRetryWithActiveService(
+        isDocumentRequest(request),
+        refererService,
+        service,
+        deps.activeService.get(pubkey) ?? null
+      )
+    ) {
+      return handleNccRequest(request, deps, false)
+    }
     if (isDocumentRequest(request)) {
       deps.onActivity({
         pubkey,

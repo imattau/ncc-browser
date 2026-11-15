@@ -6,6 +6,41 @@
 
 import { buildInternalUrl } from '@shared/ncc-url'
 
+/**
+ * Whether a failed service resolution for a subresource (e.g. a stylesheet
+ * or script, never the document itself) should be retried against the
+ * active-service map's own answer instead of surfacing the failure.
+ *
+ * An absolute-path subresource request (e.g. "/assets/app.js") carries no
+ * service of its own in its path. routeNccPath (ncc-url.ts) only reaches
+ * its own last resort -- guessing the path's first segment as a service
+ * name -- when neither the Referer header nor the active-service map had
+ * an answer *at the moment routing ran*. That guess is right for a
+ * deliberate cross-service reference (routeNccPath's own `/web/docs`
+ * case), but wrong whenever the segment is really just this page's own
+ * subresource folder ("assets" guessed as a service): a guaranteed
+ * 'no-record' failure for what should have been an ordinary stylesheet or
+ * script load. If the active-service map has an answer *now* -- it may
+ * have been set a moment after routing ran, e.g. by the very document
+ * navigation this subresource belongs to, still resolving concurrently --
+ * and it names a different service than the one just tried, that answer
+ * is worth one retry before giving up.
+ */
+export function shouldRetryWithActiveService(
+  isDocumentRequest: boolean,
+  refererService: string | null,
+  triedService: string,
+  activeService: string | null
+): boolean {
+  if (isDocumentRequest) return false
+  // An explicit referer-named service is a deliberate cross-service
+  // reference, same as routeNccPath itself treats it -- never overridden
+  // by a guess at what the *current* tab happens to be showing.
+  if (refererService) return false
+  if (!activeService) return false
+  return activeService !== triedService
+}
+
 export interface RewriteContext {
   pubkey: string
   service: string
