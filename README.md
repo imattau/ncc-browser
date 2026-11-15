@@ -760,9 +760,9 @@ three runners and attaches every artifact to a single GitHub release:
 The release job also uploads `SHA256SUMS.txt`. Pushing a tag is the whole release flow:
 
 ```bash
-npm version patch --no-git-tag-version   # or edit package.json
-git commit -am "Release v0.3.1"
-git tag -a v0.3.1 -m "Nostr Navigator v0.3.1"
+npm version minor --no-git-tag-version   # or edit package.json
+git commit -am "Release v0.5.0"
+git tag -a v0.5.0 -m "Nostr Navigator v0.5.0"
 git push origin main --follow-tags
 ```
 
@@ -799,7 +799,7 @@ or SmartScreen prompts. The Flatpak bundle declares the flathub
 
 ---
 
-## Known limitations (v0.4)
+## Known limitations (v0.5)
 
 - **Absolute-path subresources** (`/style.css`) are attributed to the page's service via
   the `Referer` header, falling back to the active service for that npub. A page-authored
