@@ -10,7 +10,7 @@ Built with Electron 45, React 19, and Vite. The resolver is a spec-correct
 implementation on top of `nostr-tools`, not a wrapper around `ncc-05-js` (see
 [Why not `ncc-05-js`](#why-not-ncc-05-js)).
 
-**Status:** M0–M14 are implemented. That includes the resolver, proxy and pinning, the
+**Status:** M0–M15 are implemented. That includes the resolver, proxy and pinning, the
 browser chrome and signer, NCC-02 anchoring with a trust panel, the separate publisher
 app in [`publisher/`](./publisher/) (a NIP-07 flow for NCC-05 locators and NCC-02 service
 records), bundled Tor with the onion preference/toggle and full Tor tabs, private tabs,
@@ -835,8 +835,8 @@ The release job also uploads `SHA256SUMS.txt`. Pushing a tag is the whole releas
 
 ```bash
 npm version minor --no-git-tag-version   # or edit package.json
-git commit -am "Release v0.6.0"
-git tag -a v0.6.0 -m "Nostr Navigator v0.6.0"
+git commit -am "Release v0.7.0"
+git tag -a v0.7.0 -m "Nostr Navigator v0.7.0"
 git push origin main --follow-tags
 ```
 
