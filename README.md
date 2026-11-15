@@ -763,7 +763,7 @@ general IPC bridge.
 ## Testing
 
 ```bash
-npm test       # 416 unit tests: URL parser, locator rules, resolver, routing, pins,
+npm test       # 420 unit tests: URL parser, locator rules, resolver, routing, pins,
                # signer crypto, identity storage, NIP-46, approvals, permissions,
                # ephemeral signer permissions, shortcuts, context menus, relays,
                # downloads, tab order, bookmarks, favicons, session storage, NCC-02
@@ -861,8 +861,8 @@ The release job also uploads `SHA256SUMS.txt`. Pushing a tag is the whole releas
 
 ```bash
 npm version minor --no-git-tag-version   # or edit package.json
-git commit -am "Release v0.8.0"
-git tag -a v0.8.0 -m "Nostr Navigator v0.8.0"
+git commit -am "Release v0.8.1"
+git tag -a v0.8.1 -m "Nostr Navigator v0.8.1"
 git push origin main --follow-tags
 ```
 
