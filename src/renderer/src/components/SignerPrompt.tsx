@@ -42,13 +42,14 @@ export function SignerPrompt({ request, onRespond, waiting = 0 }: SignerPromptPr
   }, [onRespond, remember])
 
   const remote = request.mode === 'nip46'
+  const agent = request.kind === 'automation'
 
   return (
     <div
       data-signer-prompt
       role="dialog"
       aria-modal="true"
-      aria-label="Signer request"
+      aria-label={agent ? 'Agent control request' : 'Signer request'}
       className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto bg-[color:var(--color-scrim-strong)] px-4 py-[9vh] backdrop-blur-sm"
     >
       <div
@@ -61,7 +62,7 @@ export function SignerPrompt({ request, onRespond, waiting = 0 }: SignerPromptPr
               {remote ? <Smartphone className="h-4 w-4" /> : <KeyRound className="h-4 w-4" />}
             </span>
             <div className="min-w-0">
-              <h2 className="text-ui-13 font-semibold text-[color:var(--color-text-strong)]">Signer request</h2>
+              <h2 className="text-ui-13 font-semibold text-[color:var(--color-text-strong)]">{agent ? 'Agent control request' : 'Signer request'}</h2>
               {waiting > 0 ? (
                 <p className="mt-0.5 text-ui-10 text-[color:var(--color-muted)]">
                   {waiting} more waiting
@@ -88,7 +89,9 @@ export function SignerPrompt({ request, onRespond, waiting = 0 }: SignerPromptPr
 
         <div className="px-5 py-4">
           <h3 className="text-ui-15 font-semibold leading-snug text-[color:var(--color-text-strong)]">
-            This service wants to {request.action}.
+            {agent
+              ? `An AI agent wants to ${request.action}.`
+              : `This service wants to ${request.action}.`}
           </h3>
 
           {request.note ? (
@@ -99,6 +102,7 @@ export function SignerPrompt({ request, onRespond, waiting = 0 }: SignerPromptPr
 
           {request.event ? <EventPreview event={request.event} /> : null}
 
+          {agent ? null : (
           <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-field)] px-3 py-2">
             <span className="min-w-0 truncate font-mono text-ui-11 text-[color:var(--color-text-soft)]">
               {request.identity ? shorten(request.identity) : 'No identity configured'}
@@ -114,16 +118,24 @@ export function SignerPrompt({ request, onRespond, waiting = 0 }: SignerPromptPr
               {MODE_LABEL[request.mode]}
             </span>
           </div>
+          )}
 
           <p className="mt-3 flex items-start gap-2 text-ui-11 leading-relaxed text-[color:var(--color-warn)]">
             <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            {agent ? (
+              <span>
+                The agent can read this site&apos;s pages and act as you on it: click, type and
+                submit forms. Allow it only for a task you started.
+              </span>
+            ) : (
             <span>
               Approve only if you trust this service. On `ncc://` addresses the npub is the
               identity; a similar service name is not the same publisher.
               {remote ? ' Your remote signer will also ask you to confirm.' : ''}
             </span>
+            )}
           </p>
-          {request.ephemeral ? (
+          {request.ephemeral && !agent ? (
             <p className="mt-2 text-ui-105 leading-relaxed text-[color:var(--color-muted)]">
               This private/Tor tab forgets remembered permissions when it closes.
             </p>

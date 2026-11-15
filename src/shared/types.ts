@@ -722,6 +722,8 @@ export interface SignerRequest {
   torTab?: boolean
   /** Label for the remember control, e.g. "Always allow" or "Remember for this session". */
   rememberLabel?: string
+  /** Not a signer request: an agent asks to control a site through the automation server. */
+  kind?: 'automation'
 }
 
 export interface SignerDecision {

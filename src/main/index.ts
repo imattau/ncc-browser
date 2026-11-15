@@ -6,6 +6,10 @@ import { parseNccAddress } from '@shared/ncc-url'
 import { parseNsiteAddress } from '@shared/nsite-url'
 import type { TabKind } from '@shared/types'
 import { ApprovalBroker } from './approval'
+import { createElectronHost } from './automation/electron-host'
+import { AutomationController } from './automation/controller'
+import { registerAutomationIpc } from './automation/ipc'
+import { AutomationSettings } from './automation/settings'
 import { applyThemeSource } from './appearance'
 import { BookmarkStore } from './bookmarks'
 import { HistoryStore } from './history'
@@ -502,6 +506,25 @@ app.whenReady().then(async () => {
       else void shell?.navigate(startupAddress)
     })
   }
+
+  // Agent control: a loopback MCP server that lets a client such as Claude Code drive
+  // ordinary tabs. Off until enabled in Settings (or NCC_AUTOMATION=1); docs/automation.md.
+  const automation = new AutomationController({
+    settings: new AutomationSettings(join(app.getPath('userData'), 'automation-settings.json')),
+    host: createElectronHost(shell),
+    approvals,
+    version: app.getVersion(),
+    infoFile: join(app.getPath('userData'), 'automation.json'),
+    forced: process.env.NCC_AUTOMATION === '1',
+    autoApprove: process.env.NCC_AUTOMATION_AUTO_APPROVE === '1',
+    ...(Number(process.env.NCC_AUTOMATION_PORT) > 0
+      ? { port: Number(process.env.NCC_AUTOMATION_PORT) }
+      : {}),
+    onChange: (state) => shell?.sendToChrome('ncc:automation-state', state)
+  })
+  registerAutomationIpc(automation, { shell })
+  void automation.sync().catch((error) => console.warn('[automation] could not start:', error))
+  app.on('before-quit', () => automation.shutdown())
 
   shell.loadChrome()
   relaySync?.start()

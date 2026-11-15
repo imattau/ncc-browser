@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { NccApi } from '@shared/api'
+import type { AutomationState } from '@shared/automation'
 import type { ExtensionsState } from '@shared/extensions'
 import { readAppearanceBootArgument } from '@shared/appearance'
 import {
@@ -93,6 +94,19 @@ const api: NccApi = {
   passwordsImportOpen: () => ipcRenderer.invoke('ncc:password-import-open'),
   passwordsImportCommit: (id, mode) => ipcRenderer.invoke('ncc:password-import-commit', id, mode),
   passwordsExport: (format) => ipcRenderer.invoke('ncc:password-export', format),
+  automationState: () => ipcRenderer.invoke('ncc:automation-state'),
+  automationSetEnabled: (value) => ipcRenderer.invoke('ncc:automation-set-enabled', value),
+  automationRegenerate: () => ipcRenderer.invoke('ncc:automation-regenerate'),
+  automationRevoke: (site) => ipcRenderer.invoke('ncc:automation-revoke', site),
+  automationCopyCommand: () => ipcRenderer.invoke('ncc:automation-copy-command'),
+  onAutomation: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, state: AutomationState): void =>
+      listener(state)
+    ipcRenderer.on('ncc:automation-state', handler)
+    return () => {
+      ipcRenderer.removeListener('ncc:automation-state', handler)
+    }
+  },
   extensionsState: () => ipcRenderer.invoke('ncc:extensions-state'),
   extensionsSetDeveloper: (value) => ipcRenderer.invoke('ncc:extensions-set-developer', value),
   extensionsInstall: (kind) => ipcRenderer.invoke('ncc:extensions-install', kind),

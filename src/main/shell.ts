@@ -228,6 +228,14 @@ export class BrowserShell {
     return contents && !contents.isDestroyed() ? contents : null
   }
 
+  /** Live contents for automation. Private and Tor tabs are never handed out. */
+  automationContents(tabId: string): WebContents | null {
+    const tab = this.tabs.find((entry) => entry.id === tabId)
+    if (!tab || tab.kind !== 'normal') return null
+    const contents = tab.view.webContents
+    return contents.isDestroyed() ? null : contents
+  }
+
   tabIdForContents(webContentsId: number): string | null {
     const tab = this.tabs.find(
       (entry) => !entry.view.webContents.isDestroyed() && entry.view.webContents.id === webContentsId

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import {
+  Bot,
   ArrowLeft,
   CircleHelp,
   Copy,
@@ -32,6 +33,7 @@ import type {
 import { cn } from '../lib/cn'
 import { applyAppearance } from '../lib/appearance'
 import { AppearanceSettings } from './AppearanceSettings'
+import { AgentSettings } from './AgentSettings'
 import { ExtensionSettings } from './ExtensionSettings'
 import { PasswordSettings } from './PasswordSettings'
 
@@ -42,6 +44,7 @@ export type SettingsSection =
   | 'identity'
   | 'passwords'
   | 'extensions'
+  | 'agent'
   | 'trusted'
   | 'about'
 
@@ -61,6 +64,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string; icon: typeof KeyRoun
   { id: 'identity', label: 'Identity & signer', icon: KeyRound },
   { id: 'passwords', label: 'Passwords', icon: Vault },
   { id: 'extensions', label: 'Extensions', icon: Puzzle },
+  { id: 'agent', label: 'Agent control', icon: Bot },
   { id: 'trusted', label: 'Trusted services', icon: ShieldCheck },
   { id: 'about', label: 'About', icon: CircleHelp }
 ]
@@ -1365,6 +1369,8 @@ export function SettingsPage({
           ) : null}
 
           {section === 'extensions' ? <ExtensionSettings /> : null}
+
+          {section === 'agent' ? <AgentSettings /> : null}
 
           {section === 'trusted' ? (
             <>

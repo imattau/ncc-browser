@@ -1,3 +1,4 @@
+import type { AutomationState } from './automation'
 import type { CommandId } from './commands'
 import type {
   ExtensionInstallResult,
@@ -166,6 +167,12 @@ export interface NccApi {
   extensionsReveal(id: string): Promise<void>
   extensionsAction(id: string, anchor: { top: number; left: number }): Promise<void>
   onExtensions(listener: (state: ExtensionsState) => void): () => void
+  automationState(): Promise<AutomationState>
+  automationSetEnabled(value: boolean): Promise<AutomationState>
+  automationRegenerate(): Promise<AutomationState>
+  automationRevoke(site: string | null): Promise<AutomationState>
+  automationCopyCommand(): Promise<boolean>
+  onAutomation(listener: (state: AutomationState) => void): () => void
   torStatus(): Promise<TorStatus>
   appInfo(): Promise<AppInfo>
   torTest(): Promise<TorStatus>
