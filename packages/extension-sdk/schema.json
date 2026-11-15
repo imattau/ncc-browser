@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NCC extension manifest",
+  "type": "object",
+  "required": ["manifest_version", "name", "version"],
+  "properties": {
+    "manifest_version": { "const": 3 },
+    "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+    "version": { "type": "string", "pattern": "^[0-9]+(\\.[0-9]+){0,3}" },
+    "description": { "type": "string", "maxLength": 500 },
+    "permissions": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "host_permissions": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "background": {
+      "type": "object",
+      "required": ["service_worker"],
+      "properties": {
+        "service_worker": { "type": "string" },
+        "type": { "enum": ["module", "classic"] }
+      }
+    },
+    "content_scripts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["matches"],
+        "properties": {
+          "matches": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+          "js": { "type": "array", "items": { "type": "string" } },
+          "css": { "type": "array", "items": { "type": "string" } },
+          "run_at": { "enum": ["document_start", "document_end", "document_idle"] },
+          "all_frames": { "type": "boolean" }
+        }
+      }
+    },
+    "action": { "type": "object" },
+    "options_ui": { "type": "object" },
+    "icons": { "type": "object" },
+    "ncc": { "type": "object" }
+  }
+}

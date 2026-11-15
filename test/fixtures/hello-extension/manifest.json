@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "Hello NCC",
+  "version": "1.0.0",
+  "description": "E2E fixture: a content script, background messaging, storage, a popup, options and the Nostr bridge.",
+  "permissions": [
+    "storage",
+    "tabs",
+    "contextMenus",
+    "notifications",
+    "nostr:pubkey",
+    "nostr:sign"
+  ],
+  "host_permissions": ["ncc://*/*", "http://127.0.0.1/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "content_scripts": [
+    {
+      "matches": ["ncc://*/*", "http://127.0.0.1/*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "Hello NCC",
+    "default_popup": "popup.html",
+    "default_icon": "icon.svg"
+  },
+  "options_ui": { "page": "options.html" },
+  "icons": { "128": "icon.svg" },
+  "ncc": { "min_version": "0.6.0" }
+}

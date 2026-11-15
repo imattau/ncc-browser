@@ -1,4 +1,8 @@
 import type { CommandId } from './commands'
+import type {
+  ExtensionInstallResult,
+  ExtensionsState
+} from './extensions'
 import type { SearchEngineId } from './search'
 import type {
   AppearanceConfig,
@@ -138,6 +142,17 @@ export interface NccApi {
   onPasswordContext(listener: (context: PasswordContext) => void): () => void
   onPasswordSaveRequest(listener: (request: PasswordSaveRequest) => void): () => void
   onPasswordToast(listener: (toast: PasswordToast) => void): () => void
+  extensionsState(): Promise<ExtensionsState>
+  extensionsSetDeveloper(value: boolean): Promise<ExtensionsState>
+  extensionsInstall(kind: 'folder' | 'zip'): Promise<ExtensionInstallResult>
+  extensionsRemove(id: string): Promise<ExtensionsState>
+  extensionsSetEnabled(id: string, value: boolean): Promise<ExtensionsState>
+  extensionsSetPrivate(id: string, value: boolean): Promise<ExtensionsState>
+  extensionsReload(id: string): Promise<ExtensionsState>
+  extensionsOpenOptions(id: string): Promise<void>
+  extensionsReveal(id: string): Promise<void>
+  extensionsAction(id: string, anchor: { top: number; left: number }): Promise<void>
+  onExtensions(listener: (state: ExtensionsState) => void): () => void
   torStatus(): Promise<TorStatus>
   torTest(): Promise<TorStatus>
   torRestart(): Promise<TorStatus>

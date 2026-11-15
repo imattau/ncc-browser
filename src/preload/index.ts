@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { NccApi } from '@shared/api'
+import type { ExtensionsState } from '@shared/extensions'
 import { readAppearanceBootArgument } from '@shared/appearance'
 import {
   DEFAULT_APPEARANCE,
@@ -87,6 +88,16 @@ const api: NccApi = {
   passwordsImportOpen: () => ipcRenderer.invoke('ncc:password-import-open'),
   passwordsImportCommit: (id, mode) => ipcRenderer.invoke('ncc:password-import-commit', id, mode),
   passwordsExport: (format) => ipcRenderer.invoke('ncc:password-export', format),
+  extensionsState: () => ipcRenderer.invoke('ncc:extensions-state'),
+  extensionsSetDeveloper: (value) => ipcRenderer.invoke('ncc:extensions-set-developer', value),
+  extensionsInstall: (kind) => ipcRenderer.invoke('ncc:extensions-install', kind),
+  extensionsRemove: (id) => ipcRenderer.invoke('ncc:extensions-remove', id),
+  extensionsSetEnabled: (id, value) => ipcRenderer.invoke('ncc:extensions-set-enabled', id, value),
+  extensionsSetPrivate: (id, value) => ipcRenderer.invoke('ncc:extensions-set-private', id, value),
+  extensionsReload: (id) => ipcRenderer.invoke('ncc:extensions-reload', id),
+  extensionsOpenOptions: (id) => ipcRenderer.invoke('ncc:extensions-open-options', id),
+  extensionsReveal: (id) => ipcRenderer.invoke('ncc:extensions-reveal', id),
+  extensionsAction: (id, anchor) => ipcRenderer.invoke('ncc:extensions-action', id, anchor),
   torStatus: () => ipcRenderer.invoke('ncc:tor-status'),
   torTest: () => ipcRenderer.invoke('ncc:tor-test'),
   torRestart: () => ipcRenderer.invoke('ncc:tor-restart'),
@@ -207,6 +218,14 @@ const api: NccApi = {
     ipcRenderer.on('ncc:password-toast', handler)
     return () => {
       ipcRenderer.removeListener('ncc:password-toast', handler)
+    }
+  },
+  onExtensions: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, state: ExtensionsState): void =>
+      listener(state)
+    ipcRenderer.on('ncc:extensions-state', handler)
+    return () => {
+      ipcRenderer.removeListener('ncc:extensions-state', handler)
     }
   },
   onDownload: (listener) => {

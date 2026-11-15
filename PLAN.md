@@ -271,6 +271,15 @@ is CJS and the package is ESM-only.
   CSV import/export plus encrypted vault export, NIP-65 write relays with an optional
   dedicated vault relay, ciphertext-only cache, and relay sync with offline retry.
   Private tabs are disabled; Tor tabs fill but never save.
+- **M14 — Extension host:** ✅ Settings → Extensions plus toolbar actions for
+  Manifest V3-shaped packages with a supported `chrome.*` subset (`runtime`, `storage`,
+  `tabs`, `scripting`, `action`, `contextMenus`, `notifications`, `i18n`), per-extension
+  isolated worlds, a suspendable hidden background page, `ncc-ext://` popups/options,
+  and NCC match patterns so content scripts run on `ncc://` as well as web pages.
+  Adds `ncc.nostr` signing/encryption behind the existing approval broker, ephemeral
+  `ncc.storage.private`, folder/`.nccx` install with a dependency-free ZIP reader,
+  private-tab grants, a hard Tor exclusion, and an `ncc-ext port` CLI that rewrites
+  Chromium manifests and reports unsupported APIs.
 
 ---
 

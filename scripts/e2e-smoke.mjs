@@ -843,7 +843,8 @@ async function main() {
         NCC_DOWNLOAD_DIR: join(configHome, 'downloads'),
         NCC_TOR_SOCKS: `socks5://127.0.0.1:${torProxy.port}`,
         NCC_PASSWORDS_IMPORT: passwordImportPath,
-        NCC_PASSWORDS_EXPORT: passwordExportDir
+        NCC_PASSWORDS_EXPORT: passwordExportDir,
+        NCC_EXTENSION_DIR: join(ROOT, 'test/fixtures/hello-extension')
       },
       stdio: ['ignore', 'pipe', 'pipe']
     }
@@ -886,6 +887,18 @@ async function main() {
     check('renders the resolved page', text.includes('NCC E2E OK'))
     check('proxies absolute-path subresources', text.includes('resolved-and-proxied'))
 
+    await waitForValue(
+      cdp,
+      'document.documentElement.dataset.helloExtension === "1" ? "ready" : ""',
+      80
+    )
+    check('injects a content script into an ncc page', true)
+    const extensionCount = await waitForValue(
+      cdp,
+      'document.documentElement.dataset.helloCount || ""',
+      80
+    )
+    check('routes content-script messages to the background', extensionCount === '1', String(extensionCount))
     const background = await evaluate(cdp, 'getComputedStyle(document.body).backgroundColor')
     check('subresource CSS applied', background === 'rgb(12, 34, 56)', `(got ${background})`)
 
@@ -910,6 +923,66 @@ async function main() {
     const chromeTarget = await waitForTarget((entry) => entry.url?.includes('/renderer/index.html'))
     const chrome = new Cdp(chromeTarget.webSocketDebuggerUrl)
     await chrome.connect()
+
+    check(
+      'shows the extension action in the toolbar',
+      (await evaluate(
+        chrome,
+        'Boolean(document.querySelector("[data-extension-action]"))'
+      )) === true
+    )
+
+    await evaluate(cdp, 'document.querySelector("#ncc-ext-sign").click()')
+    await waitForValue(
+      chrome,
+      'document.querySelector("[data-signer-prompt]") ? "ready" : ""',
+      80
+    )
+    check(
+      'shows the extension name in the signer prompt',
+      (await evaluate(chrome, 'document.body.innerText')).includes('Hello NCC')
+    )
+    await evaluate(chrome, 'document.querySelector("[data-signer-remember]").click()')
+    await evaluate(chrome, 'document.querySelector("[data-signer-allow]").click()')
+    const signedId = await waitForValue(
+      cdp,
+      'document.documentElement.dataset.helloSigned || ""',
+      120
+    )
+    check('signs a Nostr event through the extension bridge', /^[0-9a-f]{64}$/.test(signedId))
+    check(
+      'returns the identity public key to the extension',
+      (await evaluate(cdp, 'document.documentElement.dataset.helloPubkey')) === signerPk
+    )
+
+    await evaluate(
+      chrome,
+      'document.querySelector("[data-extension-action]").click()'
+    )
+    const popupTarget = await waitForTarget((entry) => entry.url?.includes('/popup.html'), 80)
+    const popup = new Cdp(popupTarget.webSocketDebuggerUrl)
+    await popup.connect()
+    check(
+      'opens the extension popup',
+      (await waitForText(popup, 'Hello NCC', 40)).includes('Hello NCC')
+    )
+    await evaluate(popup, 'window.close()')
+
+    await evaluate(
+      chrome,
+      'window.ncc.extensionsState().then((state) => window.ncc.extensionsOpenOptions(state.extensions[0].id))'
+    )
+    const optionsTarget = await waitForTarget((entry) => entry.url?.includes('/options.html'), 80)
+    const options = new Cdp(optionsTarget.webSocketDebuggerUrl)
+    await options.connect()
+    const optionsText = await waitForText(options, 'Hello NCC', 40)
+    check('opens the extension options page', optionsText.includes('Hello NCC'))
+    check(
+      'serves extension pages from the ncc-ext origin',
+      String(await evaluate(options, 'location.origin')).startsWith('ncc-ext://')
+    )
+    await evaluate(options, 'window.close()')
+
 
     const address = await evaluate(
       chrome,
@@ -1170,6 +1243,12 @@ async function main() {
     await privateOne.connect()
     const privateOneText = await waitForText(privateOne, 'COOKIE none', 80)
     check('private tab starts without normal cookies', privateOneText.includes('COOKIE none'))
+    await waitForValue(
+      privateOne,
+      'document.documentElement.dataset.helloExtension === "1" ? "ready" : ""',
+      80
+    )
+    check('runs extensions in private tabs when allowed', true)
     check(
       'private tab is marked in the chrome',
       (await evaluate(
@@ -2180,6 +2259,13 @@ async function main() {
     const torTabCdp = new Cdp(torTabTarget.webSocketDebuggerUrl)
     await torTabCdp.connect()
     await waitForText(torTabCdp, 'NCC E2E OK', 120)
+    check(
+      'does not run extensions in Tor tabs',
+      (await evaluate(
+        torTabCdp,
+        'document.documentElement.dataset.helloExtension ?? ""'
+      )) === ''
+    )
     await sleep(500)
     const torTabState = await evaluate(
       chrome,
@@ -2517,6 +2603,7 @@ async function main() {
       Buffer.from(lightShot.data, 'base64')
     )
 
+
     const sampleBefore = await evaluate(
       chrome,
       'getComputedStyle(document.querySelector("[data-text-size-sample]")).fontSize'
@@ -2579,6 +2666,17 @@ async function main() {
     writeFileSync(
       join(ARTIFACTS, 'settings-appearance.png'),
       Buffer.from(appearanceShot.data, 'base64')
+    )
+
+    await evaluate(
+      chrome,
+      'document.querySelector(\'[data-settings-section="extensions"]\').click()'
+    )
+    await waitForText(chrome, 'Hello NCC', 60)
+    const extensionsShot = await chrome.send('Page.captureScreenshot', { format: 'png' })
+    writeFileSync(
+      join(ARTIFACTS, 'settings-extensions.png'),
+      Buffer.from(extensionsShot.data, 'base64')
     )
     await chrome.send('Emulation.clearDeviceMetricsOverride')
 
@@ -2854,7 +2952,8 @@ async function main() {
           NCC_NIP46_TIMEOUT_MS: '15000',
           NCC_DOWNLOAD_DIR: join(configHome, 'downloads'),
           NCC_PASSWORDS_IMPORT: passwordImportPath,
-          NCC_PASSWORDS_EXPORT: passwordExportDir
+          NCC_PASSWORDS_EXPORT: passwordExportDir,
+          NCC_EXTENSION_DIR: join(ROOT, 'test/fixtures/hello-extension')
         },
         stdio: ['ignore', 'pipe', 'pipe']
       }
@@ -2918,6 +3017,19 @@ async function main() {
       restoredChrome,
       'window.ncc.passwordsUnlock().then(() => window.ncc.passwordsList())'
     )
+    const restoredExtensions = await evaluate(
+      restoredChrome,
+      'window.ncc.extensionsState().then((state) => state.extensions)'
+    )
+    check(
+      'restores installed extensions on the next launch',
+      Array.isArray(restoredExtensions) &&
+        restoredExtensions.length === 1 &&
+        restoredExtensions[0].name === 'Hello NCC' &&
+        restoredExtensions[0].enabled === true,
+      JSON.stringify(restoredExtensions)
+    )
+
     check(
       'restores passwords from the relay on the next launch',
       Array.isArray(restoredPasswords) &&

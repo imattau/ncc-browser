@@ -6,6 +6,7 @@ import {
   Globe,
   KeyRound,
   Palette,
+  Puzzle,
   RotateCcw,
   Vault,
   Search,
@@ -29,6 +30,7 @@ import type {
 import { cn } from '../lib/cn'
 import { applyAppearance } from '../lib/appearance'
 import { AppearanceSettings } from './AppearanceSettings'
+import { ExtensionSettings } from './ExtensionSettings'
 import { PasswordSettings } from './PasswordSettings'
 
 export type SettingsSection =
@@ -37,6 +39,7 @@ export type SettingsSection =
   | 'security'
   | 'identity'
   | 'passwords'
+  | 'extensions'
   | 'trusted'
   | 'about'
 
@@ -55,6 +58,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string; icon: typeof KeyRoun
   { id: 'security', label: 'Security', icon: Shield },
   { id: 'identity', label: 'Identity & signer', icon: KeyRound },
   { id: 'passwords', label: 'Passwords', icon: Vault },
+  { id: 'extensions', label: 'Extensions', icon: Puzzle },
   { id: 'trusted', label: 'Trusted services', icon: ShieldCheck },
   { id: 'about', label: 'About', icon: CircleHelp }
 ]
@@ -540,7 +544,7 @@ export function SettingsPage({
         <div className="min-w-0">
           <h1 className="text-ui-13 font-semibold text-[color:var(--color-text-strong)]">Settings</h1>
           <p className="truncate text-ui-105 text-[color:var(--color-muted)]">
-            Relays, appearance, identity, passwords and signing permissions.
+            Relays, appearance, identity, passwords, extensions and signing permissions.
           </p>
         </div>
         <span className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-[color:var(--color-line)] px-2 py-1 text-ui-105 text-[color:var(--color-muted)]">
@@ -1261,6 +1265,8 @@ export function SettingsPage({
               onOpenIdentity={() => setSection('identity')}
             />
           ) : null}
+
+          {section === 'extensions' ? <ExtensionSettings /> : null}
 
           {section === 'trusted' ? (
             <>

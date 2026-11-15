@@ -1,0 +1,22 @@
+body {
+  margin: 0;
+  padding: 16px;
+  font: 13px/1.5 system-ui, sans-serif;
+  background: #14161b;
+  color: #e8eaf0;
+}
+h1 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+code {
+  font-size: 11px;
+}
+button {
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid #3a3f4b;
+  background: #22262f;
+  color: inherit;
+}

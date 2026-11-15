@@ -22,7 +22,11 @@
     "dist": "npm run tor:fetch && npm run build && electron-builder --publish never",
     "dist:linux": "npm run tor:fetch -- linux-x64 && npm run build && electron-builder --linux deb rpm flatpak --x64 --publish never",
     "dist:mac": "npm run tor:fetch -- mac-x64 mac-arm64 && npm run build && electron-builder --mac dmg zip --x64 --arm64 --publish never",
-    "dist:win": "npm run tor:fetch -- win-x64 && npm run build && electron-builder --win nsis --x64 --publish never"
+    "dist:win": "npm run tor:fetch -- win-x64 && npm run build && electron-builder --win nsis --x64 --publish never",
+    "ext:init": "node packages/extension-sdk/bin/ncc-ext.mjs init",
+    "ext:validate": "node packages/extension-sdk/bin/ncc-ext.mjs validate",
+    "ext:port": "node packages/extension-sdk/bin/ncc-ext.mjs port",
+    "ext:pack": "node packages/extension-sdk/bin/ncc-ext.mjs pack"
   },
   "dependencies": {
     "@nostrify/nostrify": "^0.55.1",

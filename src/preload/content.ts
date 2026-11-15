@@ -1,15 +1,20 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { installPasswordManager } from './password-manager'
+import { installExtensionRuntime } from './extension-content'
+import { installExtensionPage } from './extension-page'
 
 /**
- * Content preload for remote pages. The only thing exposed is a NIP-07 provider;
- * there is no general IPC bridge, no Node, and no access to the chrome UI. The
- * password bridge runs entirely in this isolated world and exposes nothing.
+ * Content preload for remote pages and extension pages. Web/NCC pages get a NIP-07
+ * provider plus the isolated password and extension runtimes; `ncc-ext://` pages get
+ * only the extension shim. There is no general IPC bridge and no Node either way.
  */
 
 const isMainFrame = (process as unknown as { isMainFrame?: boolean }).isMainFrame !== false
 
-if (isMainFrame) {
+if (location.protocol === 'ncc-ext:') {
+  if (isMainFrame) installExtensionPage()
+} else if (isMainFrame) {
+  installExtensionRuntime()
   installPasswordManager()
 
   const nip04 = {

@@ -1,0 +1,16 @@
+{
+  "name": "ncc-extension-sdk",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Manifest types and a small CLI for building, validating and porting NCC browser extensions",
+  "type": "module",
+  "bin": {
+    "ncc-ext": "./bin/ncc-ext.mjs"
+  },
+  "exports": {
+    ".": "./types.d.ts",
+    "./types": "./types.d.ts"
+  },
+  "files": ["bin", "lib", "types.d.ts", "schema.json", "README.md"],
+  "license": "MIT"
+}

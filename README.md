@@ -10,14 +10,15 @@ Built with Electron 45, React 19, and Vite. The resolver is a spec-correct
 implementation on top of `nostr-tools`, not a wrapper around `ncc-05-js` (see
 [Why not `ncc-05-js`](#why-not-ncc-05-js)).
 
-**Status:** M0–M13 are implemented. That includes the resolver, proxy and pinning, the
+**Status:** M0–M14 are implemented. That includes the resolver, proxy and pinning, the
 browser chrome and signer, NCC-02 anchoring with a trust panel, the separate publisher
 app in [`publisher/`](./publisher/) (a NIP-07 flow for NCC-05 locators and NCC-02 service
 records), bundled Tor with the onion preference/toggle and full Tor tabs, private tabs,
 HTTPS policy and HTTP warnings, an address bar with local suggestions, scheme inference
 and search engines, identity-resolved relay entries with enforced `k` pins, appearance
 themes with text/density/accent controls, an encrypted NIP-78 password manager with
-fill/save and TOTP, and packaged Linux, macOS and Windows releases.
+fill/save and TOTP, a Manifest V3 extension host with `chrome.*` compatibility and NCC
+Nostr APIs, and packaged Linux, macOS and Windows releases.
 
 ![Start screen](./docs/welcome.png)
 
@@ -128,12 +129,14 @@ working while the remote page has focus.
   reloads that service over Tor, clicking again returns to direct. Direct `.onion` URLs
   work too.
 - **Settings** is a page, not a modal: `General`, `Appearance`, `Security`,
-  `Identity & signer`, `Passwords`, `Trusted services` and `About`, with a back-to-browsing
-  button. `Esc` also leaves it.
+  `Identity & signer`, `Passwords`, `Extensions`, `Trusted services` and `About`, with a
+  back-to-browsing button. `Esc` also leaves it.
   **General** also picks the search engine and the Tor onion search preference.
   **Appearance** covers light/dark, text size, density, accent colour and reduced motion.
   **Passwords** unlocks the encrypted login vault, lists and edits entries, generates
   passwords, shows TOTP codes, controls sync relays and imports/exports credentials.
+  **Extensions** installs packages or unpacked folders, enables/disables them, grants
+  private-tab access and shows permissions, warnings and errors.
   **Security** controls Off / Prefer HTTPS / HTTPS only, the optional HTTP interstitial,
   the list of persisted HTTP exceptions, and clearing browsing history.
 - **Shortcuts** (also shown in the menu): `Ctrl+T`, `Ctrl+W`, `Ctrl+Tab` /
@@ -208,6 +211,36 @@ the author, timestamps and the approximate size.
 
 The Nostr key is the recovery key: losing it loses the vault. The vault is not encrypted
 with a separate master passphrase in this version.
+
+---
+
+## Extensions
+
+Chromium's content-script engine cannot inject into `ncc://` pages, so the browser ships
+its own extension host. It keeps the Manifest V3 authoring model and a documented subset
+of `chrome.*`, and adds NCC-native APIs:
+
+- **Content scripts** run on both `https://` and `ncc://` pages in a per-extension
+  isolated world. A page cannot see `chrome`, `ncc`, or the IPC bridge.
+- **Manifest patterns** add `ncc://*/*`, `ncc://<npub>/*` and
+  `ncc://<npub>/<service>/*`.
+- **Background** runs as a suspendable hidden sandboxed page with `chrome.runtime`,
+  `chrome.storage`, `chrome.tabs`, `chrome.scripting`, `chrome.action`,
+  `chrome.contextMenus`, `chrome.notifications` and `chrome.i18n`.
+- **Toolbar actions and popups**, an options page, and a Settings → Extensions manager.
+- **`ncc.nostr`** exposes `getPublicKey`, `signEvent`, `getRelays`, NIP-04 and NIP-44 to
+  extensions, gated by manifest permissions and the normal approval sheet.
+- **Packages** install from a `.zip`/`.nccx` file or, in developer mode, an unpacked
+  folder. Packages are copied into `userData/extensions/<id>` before loading.
+- **Private tabs** run extensions only with a per-extension grant; **Tor tabs** never run
+  them and never expose their URLs. `ncc.storage.private` is ephemeral.
+- **Porting** is supported by `packages/extension-sdk`: `ncc-ext port` rewrites the
+  manifest, optionally adds NCC match patterns and reports unsupported APIs.
+
+![Extensions settings](./docs/settings-extensions.png)
+
+See [`docs/extensions.md`](./docs/extensions.md) for the manifest, API table, security
+model and limitations.
 
 ---
 
@@ -576,14 +609,17 @@ NCC-05 `k` pin or route an onion relay through Tor. `signer/bunker-relay.ts` sup
 bundled into the main process only; the renderer and the NCC resolver use `nostr-tools`
 directly, and no Nostrify state or React bindings leak into the UI.
 
-### Why not browser extensions?
+### Why a separate extension host?
 
 Chrome extension content scripts only match `http`, `https`, `file`, and `ftp` URLs. A
 signer extension (nos2x, Alby, …) can therefore never inject into an `ncc://` page, no
 matter how Electron loads it. Electron also cannot install extensions from the Chrome Web
-Store, only unpacked ones, and MV3 extension support is partial. For NCC pages the
-built-in provider is the only mechanism that works; unpacked extension support for
-clearnet pages is a possible later addition.
+Store, only unpacked ones, and its MV3 support is oriented around DevTools.
+
+The NIP-07 provider therefore stays built in. Separately, `src/main/extensions` runs an
+NCC extension host that reuses the manifest and `chrome.*` programming model but injects
+scripts itself, so the same extension can run on a web page and an `ncc://` page. See
+[`docs/extensions.md`](./docs/extensions.md).
 
 ---
 
@@ -642,13 +678,23 @@ src/main
   passwords/import-export.ts  CSV and encrypted vault import/export
   passwords/ipc.ts      chrome/content password IPC, clipboard and file dialogs
   relay/nip65.ts        own NIP-65 write-relay discovery for vault sync
+  extensions/registry.ts   installed packages under userData/extensions
+  extensions/runtime.ts    background lifecycle, messaging, tabs, actions, Nostr bridge
+  extensions/protocol.ts   ncc-ext:// pages and generated background HTML
+  extensions/storage.ts    local/sync/session/private storage areas
+  extensions/zip.ts        dependency-free ZIP reader with zip-slip guards
+  extensions/ipc.ts        chrome management IPC and the content/page bridge
 src/preload
   index.ts           contextBridge → window.ncc (chrome only)
-  content.ts         contextBridge → window.nostr (top-level page frames only)
+  content.ts         window.nostr for pages; extension shim for ncc-ext:// pages
+  extension-content.ts per-extension isolated-world injection
+  extension-page.ts  extension page and background bootstrap
+  extension-shim.ts  chrome.* / ncc.* surface evaluated in extension contexts
   password-manager.ts  isolated login-form detection, fill and submit capture
 src/renderer         React chrome: tabs, toolbar, omnibox, menu, downloads, history,
                      settings, security banner/interstitial, signer sheet, password
-                     popover/save sheet, welcome
+                     popover/save sheet, extension manager and toolbar actions, welcome
+packages/extension-sdk  manifest types and the `ncc-ext` init/validate/port/pack CLI
 src/shared           ncc:// parser, omnibox classifier, search engines, types, relay
                      validation, commands, tab order, download formatting (no Node imports)
 publisher/           separate Vite/React/Tailwind app: NIP-07 locator + NCC-02 publisher
@@ -663,7 +709,7 @@ general IPC bridge.
 ## Testing
 
 ```bash
-npm test       # 381 unit tests: URL parser, locator rules, resolver, routing, pins,
+npm test       # 400 unit tests: URL parser, locator rules, resolver, routing, pins,
                # signer crypto, identity storage, NIP-46, approvals, permissions,
                # ephemeral signer permissions, shortcuts, context menus, relays,
                # downloads, tab order, bookmarks, favicons, session storage, NCC-02
@@ -799,7 +845,7 @@ or SmartScreen prompts. The Flatpak bundle declares the flathub
 
 ---
 
-## Known limitations (v0.5)
+## Known limitations
 
 - **Absolute-path subresources** (`/style.css`) are attributed to the page's service via
   the `Referer` header, falling back to the active service for that npub. A page-authored
@@ -851,9 +897,12 @@ or SmartScreen prompts. The Flatpak bundle declares the flathub
 - **The publisher signs through NIP-07 only.** It is a static web app and never handles
   an `nsec`; in Nostr Navigator the built-in provider can delegate to a local key or NIP-46
   signer. Keep the publisher app separate from any service content.
-- **No extension support.** Chrome extensions cannot inject into `ncc://` pages (content
-  script match patterns exclude custom schemes) and Electron cannot install Web Store
-  extensions. The inbuilt provider is the supported path.
+- **Extensions are a supported subset, not Chromium.** Content scripts run in the top
+  frame only; `webRequest`, `declarativeNetRequest`, `cookies`, `history`, `bookmarks`,
+  `downloads`, `identity`, message ports and Chrome-only UI surfaces are not implemented.
+  Packages are unsigned and have no auto-update. Private-tab access is a grant, and a
+  shared background can still exfiltrate private page content; Tor tabs never run
+  extensions. See [`docs/extensions.md`](./docs/extensions.md).
 - **Session restore stores addresses only** — no scroll position, form state or POST
   results. Bookmarks and sessions are local to this profile and are not synced over
   Nostr.

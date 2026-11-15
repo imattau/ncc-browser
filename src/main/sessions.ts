@@ -14,20 +14,24 @@ export const SESSION_PARTITIONS: Record<TabKind, string> = {
   tor: 'ncc-tor'
 }
 
+export const EXTENSION_PARTITION = 'persist:ncc-extensions'
+
 export interface ContentSessions {
   normal: Session
   private: Session
   tor: Session
+  extensions: Session
 }
 
 export function createContentSessions(): ContentSessions {
   const normal = session.fromPartition(SESSION_PARTITIONS.normal)
   const privateSession = session.fromPartition(SESSION_PARTITIONS.private)
   const tor = session.fromPartition(SESSION_PARTITIONS.tor)
-  for (const value of [normal, privateSession, tor]) {
+  const extensions = session.fromPartition(EXTENSION_PARTITION)
+  for (const value of [normal, privateSession, tor, extensions]) {
     value.setSpellCheckerEnabled(false)
   }
-  return { normal, private: privateSession, tor }
+  return { normal, private: privateSession, tor, extensions }
 }
 
 export function sessionFor(sessions: ContentSessions, kind: TabKind): Session {

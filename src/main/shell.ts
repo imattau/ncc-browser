@@ -21,6 +21,7 @@ import { renderErrorPage } from './error-page'
 import { windowBackground } from './appearance'
 import type { BookmarkStore } from './bookmarks'
 import type { SavedSession, SavedWindow, SessionStore } from './session-store'
+import type { ExtensionPage } from '@shared/extensions'
 import type {
   AppearanceConfig,
   AppConfig,
@@ -69,6 +70,7 @@ export interface ShellDeps {
   preferTor: () => boolean
   appearance: () => AppearanceConfig
   onContentWebContents?: (contents: WebContents) => void
+  extensionContextItems?: (url: string) => Array<{ label: string; click: () => void }>
 }
 
 interface Tab {
@@ -207,6 +209,30 @@ export class BrowserShell {
       (entry) => !entry.view.webContents.isDestroyed() && entry.view.webContents.id === webContentsId
     )
     return tab?.id ?? null
+  }
+
+  /** Chrome-style tab list for the extension runtime. */
+  extensionPages(): ExtensionPage[] {
+    return this.tabs.map((tab) => {
+      const contents = tab.view.webContents
+      return {
+        id: contents.isDestroyed() ? -1 : contents.id,
+        tabId: tab.id,
+        kind: tab.kind,
+        url:
+          contents.isDestroyed() || !contents.getURL()
+            ? tab.displayUrl
+            : contents.getURL(),
+        title: tabTitle(tab),
+        active: tab.id === this.activeId,
+        incognito: tab.kind !== 'normal'
+      }
+    })
+  }
+
+  navigateTab(tabId: string, input: string): void {
+    const tab = this.tabs.find((entry) => entry.id === tabId)
+    if (tab) void this.navigateInTab(tab, input)
   }
 
   sendToContent(tabId: string, channel: string, payload: unknown): boolean {
@@ -1238,7 +1264,8 @@ export class BrowserShell {
       getWindow: () => this.window,
       openInNewTab: (url) => {
         void this.openInNewTab(url, tab.kind)
-      }
+      },
+      extensionItems: (url) => this.deps.extensionContextItems?.(url) ?? []
     })
 
     // Keyboard shortcuts are routed in main so they work while the page has focus.

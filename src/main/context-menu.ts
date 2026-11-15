@@ -18,6 +18,7 @@ import {
 export interface ContentContextMenuDeps {
   getWindow: () => BrowserWindow | null
   openInNewTab: (url: string) => void
+  extensionItems?: (url: string) => Array<{ label: string; click: () => void }>
 }
 
 export function installContentContextMenu(
@@ -36,9 +37,16 @@ export function installContentContextMenu(
       canGoForward: history.canGoForward()
     })
 
-    const template = actions.map((action) =>
+    const template: MenuItemConstructorOptions[] = actions.map((action) =>
       toMenuItem(action, contents, params.linkURL, params.srcURL, params.x, params.y, deps)
     )
+    const extensionItems = deps.extensionItems?.(contents.getURL()) ?? []
+    if (extensionItems.length > 0) {
+      template.push({ type: 'separator' })
+      for (const item of extensionItems) {
+        template.push({ label: item.label, click: item.click })
+      }
+    }
     Menu.buildFromTemplate(template).popup({ window: deps.getWindow() ?? undefined })
   })
 }

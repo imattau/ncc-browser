@@ -8,9 +8,11 @@ import {
   LockKeyhole,
   LockKeyholeOpen,
   Menu,
+  Puzzle,
   RotateCw,
   X
 } from 'lucide-react'
+import type { ExtensionActionInfo } from '@shared/extensions'
 import type {
   DownloadNotice,
   IdentityStatus,
@@ -33,6 +35,8 @@ interface ToolbarProps {
   downloads: DownloadNotice[]
   passwordStatus: PasswordVaultStatus | null
   passwordContext: PasswordContext | null
+  extensionActions: ExtensionActionInfo[]
+  onExtensionAction: (id: string, anchor: PopoverAnchor) => void
   onNavigate: (input: string) => void
   onBack: () => void
   onForward: () => void
@@ -58,6 +62,8 @@ export function Toolbar({
   downloads,
   passwordStatus,
   passwordContext,
+  extensionActions,
+  onExtensionAction,
   onNavigate,
   onBack,
   onForward,
@@ -124,6 +130,27 @@ export function Toolbar({
         onOpenSiteInfo={onOpenSiteInfo}
         onNavigate={onNavigate}
       />
+
+      {extensionActions.map((action) => (
+        <button
+          key={action.extensionId}
+          type="button"
+          aria-label={action.title}
+          title={action.title}
+          data-extension-action={action.extensionId}
+          onClick={(event) => {
+            const rect = event.currentTarget.getBoundingClientRect()
+            onExtensionAction(action.extensionId, { top: rect.bottom, left: rect.left })
+          }}
+          className="inline-flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg text-[color:var(--color-muted)] transition-colors hover:bg-[color:var(--color-hover)] hover:text-[color:var(--color-text-strong)]"
+        >
+          {action.iconDataUrl ? (
+            <img src={action.iconDataUrl} alt="" className="h-4 w-4" />
+          ) : (
+            <Puzzle className="h-4 w-4" />
+          )}
+        </button>
+      ))}
 
       <PasswordButton
         status={passwordStatus}

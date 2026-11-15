@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CommandId } from '@shared/commands'
+import type { ExtensionActionInfo, ExtensionsState } from '@shared/extensions'
 import { sortDownloads } from '@shared/downloads'
 import type {
   Bookmark,
@@ -72,6 +73,7 @@ export function App() {
   const [passwordSaveError, setPasswordSaveError] = useState<string | null>(null)
   const [passwordDraftOrigin, setPasswordDraftOrigin] = useState<string | null>(null)
   const [passwordToast, setPasswordToast] = useState<PasswordToast | null>(null)
+  const [extensions, setExtensions] = useState<ExtensionsState | null>(null)
 
   /**
    * One overlay at a time. The shell hides every content view while an overlay is
@@ -127,6 +129,11 @@ export function App() {
       }),
     []
   )
+
+  useEffect(() => {
+    void window.ncc.extensionsState().then(setExtensions).catch(() => undefined)
+    return window.ncc.onExtensions(setExtensions)
+  }, [])
 
   useEffect(() => {
     let alive = true
@@ -538,6 +545,8 @@ export function App() {
         downloads={downloads}
         passwordStatus={passwordStatus}
         passwordContext={passwordContext}
+        extensionActions={extensions?.actions ?? []}
+        onExtensionAction={(id, anchor) => void window.ncc.extensionsAction(id, anchor)}
         onNavigate={navigate}
         onBack={back}
         onForward={forward}

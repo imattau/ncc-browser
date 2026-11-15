@@ -12,6 +12,11 @@ import { LocatorCacheStore } from './cache-store'
 import { ConfigStore } from './config'
 import { DownloadManager } from './downloads'
 import { registerIpc } from './ipc'
+import { registerExtensionIpc } from './extensions/ipc'
+import { installExtensionProtocol, registerExtensionScheme } from './extensions/protocol'
+import { ExtensionRegistry } from './extensions/registry'
+import { ExtensionService } from './extensions/runtime'
+import { ExtensionStorage } from './extensions/storage'
 import { PasswordCache } from './passwords/cache'
 import { electronClipboard, electronFileDialogs, registerPasswordIpc } from './passwords/ipc'
 import { PasswordService } from './passwords/service'
@@ -28,6 +33,7 @@ import { SessionStore } from './session-store'
 import {
   clearContentSession,
   createContentSessions,
+  EXTENSION_PARTITION,
   partitionFor,
   type ContentSessions
 } from './sessions'
@@ -47,6 +53,7 @@ import { Nip46SessionStore } from './signer/session'
 
 // Custom schemes must be registered before the app is ready.
 registerNccScheme()
+registerExtensionScheme()
 
 app.setName('Nostr Navigator')
 // Keep the profile created by earlier NCC Browser builds across the rename.
@@ -63,6 +70,7 @@ let torManager: TorManager | null = null
 let torRelays: TorRelayPool | null = null
 let relaySync: RelaySync | null = null
 let passwords: PasswordService | null = null
+let extensions: ExtensionService | null = null
 
 app.whenReady().then(async () => {
   const config = new ConfigStore()
@@ -218,9 +226,14 @@ app.whenReady().then(async () => {
   downloads.install(content.tor, 'tor')
 
   let nip07Service: Nip07Service | null = null
+  const extensionDir = join(app.getPath('userData'), 'extensions')
+  const extensionRegistry = new ExtensionRegistry(extensionDir)
+  const extensionStorage = new ExtensionStorage(extensionDir)
+
   const releaseSession = (kind: TabKind): void => {
     if (kind === 'normal') return
     nip07Service?.clearEphemeral(kind)
+    extensions?.onSessionReleased(kind)
     httpPolicies[kind].clearEphemeral()
     downloads.clearFor(kind)
     activeServices[kind].clear()
@@ -253,6 +266,10 @@ app.whenReady().then(async () => {
     forceTor: true,
     strictTor: false
   })
+  installExtensionProtocol(
+    [content.normal, content.private, content.tor, content.extensions],
+    extensionRegistry
+  )
 
   const bookmarks = new BookmarkStore(join(app.getPath('userData'), 'bookmarks.json'))
   const omnibox = new OmniboxService({
@@ -285,7 +302,8 @@ app.whenReady().then(async () => {
     onContentWebContents: (contents) => {
       // Remote content must never be able to keep the window from closing.
       contents.on('will-prevent-unload', (event) => event.preventDefault())
-    }
+    },
+    extensionContextItems: (url) => extensions?.contextMenuItems(url) ?? []
   })
 
   const approvals = new ApprovalBroker({
@@ -324,6 +342,18 @@ app.whenReady().then(async () => {
     { session: content.private, kind: 'private' },
     { session: content.tor, kind: 'tor' }
   ])
+
+  const extensionService = new ExtensionService({
+    registry: extensionRegistry,
+    storage: extensionStorage,
+    host: shell,
+    nip07: () => nip07Service,
+    preloadPath: join(__dirname, '../preload/content.js'),
+    partition: EXTENSION_PARTITION
+  })
+  extensions = extensionService
+  registerExtensionIpc(extensionService, { shell })
+  extensionService.start()
 
   shell.window.on('closed', () => approvals.cancelAll())
 
@@ -420,6 +450,7 @@ app.on('activate', () => {
 app.on('before-quit', () => {
   shell?.saveSessionNow()
   passwords?.dispose()
+  extensions?.dispose()
   relaySync?.stop()
   closeSharedPool()
   void torManager?.stop()
