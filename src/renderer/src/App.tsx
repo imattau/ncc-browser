@@ -7,12 +7,18 @@ import type {
   IdentityStatus,
   NavState,
   OverlayReason,
+  PasswordContext,
+  PasswordSaveRequest,
+  PasswordToast,
+  PasswordVaultStatus,
   SignerRequest,
   TabHistory
 } from '@shared/types'
 import { ChromeMenu } from './components/ChromeMenu'
 import { DownloadsPanel } from './components/DownloadsPanel'
 import { HistoryPanel } from './components/HistoryPanel'
+import { PasswordsPanel } from './components/PasswordsPanel'
+import { PasswordSavePrompt } from './components/PasswordSavePrompt'
 import { type PopoverAnchor } from './components/Popover'
 import { InsecureWarning, SecurityBanner } from './components/SecurityNotice'
 import { SettingsPage, type SettingsSection } from './components/SettingsPage'
@@ -23,6 +29,7 @@ import { TabStrip } from './components/TabStrip'
 import { Toolbar } from './components/Toolbar'
 import { Welcome } from './components/Welcome'
 import { applyAppearance } from './lib/appearance'
+import { cn } from './lib/cn'
 
 const EMPTY_STATE: NavState = {
   mode: 'blank',
@@ -55,6 +62,16 @@ export function App() {
   const [history, setHistory] = useState<TabHistory | null>(null)
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('general')
   const [siteInfoAnchor, setSiteInfoAnchor] = useState<PopoverAnchor | null>(null)
+  const [passwordStatus, setPasswordStatus] = useState<PasswordVaultStatus | null>(null)
+  const [passwordContext, setPasswordContext] = useState<PasswordContext | null>(null)
+  const [passwordAnchor, setPasswordAnchor] = useState<PopoverAnchor | null>(null)
+  const [passwordBusy, setPasswordBusy] = useState(false)
+  const [passwordError, setPasswordError] = useState<string | null>(null)
+  const [passwordSave, setPasswordSave] = useState<PasswordSaveRequest | null>(null)
+  const [passwordSaveBusy, setPasswordSaveBusy] = useState(false)
+  const [passwordSaveError, setPasswordSaveError] = useState<string | null>(null)
+  const [passwordDraftOrigin, setPasswordDraftOrigin] = useState<string | null>(null)
+  const [passwordToast, setPasswordToast] = useState<PasswordToast | null>(null)
 
   /**
    * One overlay at a time. The shell hides every content view while an overlay is
@@ -113,6 +130,161 @@ export function App() {
 
   useEffect(() => {
     let alive = true
+    void window.ncc.passwordsStatus().then((next) => {
+      if (alive) setPasswordStatus(next)
+    })
+    void window.ncc.passwordsContext().then((next) => {
+      if (alive) setPasswordContext(next)
+    })
+    const offStatus = window.ncc.onPasswordStatus(setPasswordStatus)
+    const offContext = window.ncc.onPasswordContext(setPasswordContext)
+    const offSave = window.ncc.onPasswordSaveRequest((request) => {
+      setPasswordToast(null)
+      setPasswordSave(request)
+      setPasswordSaveError(null)
+      setPasswordDraftOrigin(null)
+      showOverlay('password-save')
+    })
+    const offToast = window.ncc.onPasswordToast((toast) => setPasswordToast(toast))
+    return () => {
+      alive = false
+      offStatus()
+      offContext()
+      offSave()
+      offToast()
+    }
+  }, [showOverlay])
+
+  useEffect(() => {
+    let alive = true
+    void window.ncc.passwordsContext().then((next) => {
+      if (alive) setPasswordContext(next)
+    })
+    return () => {
+      alive = false
+    }
+  }, [state.url, state.activeTabId])
+
+  useEffect(() => {
+    if (overlayRef.current === 'passwords') showOverlay(null)
+  }, [state.url, state.activeTabId, showOverlay])
+
+  useEffect(() => {
+    let alive = true
+    void window.ncc.passwordsContext().then((next) => {
+      if (alive) setPasswordContext(next)
+    })
+    return () => {
+      alive = false
+    }
+  }, [passwordStatus?.unlocked, passwordStatus?.lastSyncedAt])
+
+  useEffect(() => {
+    if (!passwordToast) return
+    const timer = window.setTimeout(() => setPasswordToast(null), 4_500)
+    return () => window.clearTimeout(timer)
+  }, [passwordToast])
+
+  const refreshPasswords = useCallback(async (): Promise<void> => {
+    const [status, context] = await Promise.all([
+      window.ncc.passwordsStatus(),
+      window.ncc.passwordsContext()
+    ])
+    setPasswordStatus(status)
+    setPasswordContext(context)
+  }, [])
+
+  const openPasswords = useCallback(
+    (anchor: PopoverAnchor) => {
+      setPasswordAnchor(anchor)
+      setPasswordError(null)
+      void refreshPasswords()
+      showOverlay('passwords')
+    },
+    [refreshPasswords, showOverlay]
+  )
+
+  const unlockPasswords = useCallback(async (): Promise<void> => {
+    setPasswordBusy(true)
+    setPasswordError(null)
+    try {
+      const status = await window.ncc.passwordsUnlock()
+      setPasswordStatus(status)
+      await refreshPasswords()
+      if (status.error) setPasswordError(status.error)
+    } catch (unlockError) {
+      setPasswordError(messageOf(unlockError))
+    } finally {
+      setPasswordBusy(false)
+    }
+  }, [refreshPasswords])
+
+  const lockPasswords = useCallback(async (): Promise<void> => {
+    setPasswordStatus(await window.ncc.passwordsLock())
+    await refreshPasswords()
+  }, [refreshPasswords])
+
+  const fillPassword = useCallback(
+    async (id: string): Promise<void> => {
+      closeOverlay()
+      const result = await window.ncc.passwordsFill(id)
+      if (!result.ok) setPasswordToast({ tone: 'error', message: result.error ?? 'Could not fill' })
+      else setPasswordToast({ tone: 'ok', message: 'Login filled.' })
+      await refreshPasswords()
+    },
+    [closeOverlay, refreshPasswords]
+  )
+
+  const copyPassword = useCallback(
+    async (id: string, field: 'username' | 'password' | 'totp'): Promise<void> => {
+      const result = await window.ncc.passwordsCopy(id, field)
+      if (!result.ok) {
+        setPasswordToast({ tone: 'error', message: result.error ?? 'Could not copy' })
+        return
+      }
+      setPasswordToast({
+        tone: 'ok',
+        message: result.clearsAt
+          ? 'Copied. The clipboard clears in 30 seconds.'
+          : 'Username copied.'
+      })
+    },
+    []
+  )
+
+  const openPasswordSettings = useCallback(
+    (origin?: string | null) => {
+      setPasswordAnchor(null)
+      setPasswordDraftOrigin(origin ?? null)
+      openSettings('passwords')
+    },
+    [openSettings]
+  )
+
+  const respondToPasswordSave = useCallback(
+    async (action: 'save' | 'never' | 'dismiss'): Promise<void> => {
+      const request = passwordSave
+      if (!request) return
+      setPasswordSaveBusy(true)
+      setPasswordSaveError(null)
+      try {
+        const result = await window.ncc.passwordsRespond(request.id, action)
+        if (!result.ok) {
+          setPasswordSaveError(result.error ?? 'Could not save the login')
+          return
+        }
+        setPasswordSave(null)
+        closeOverlay()
+        await refreshPasswords()
+      } finally {
+        setPasswordSaveBusy(false)
+      }
+    },
+    [closeOverlay, passwordSave, refreshPasswords]
+  )
+
+  useEffect(() => {
+    let alive = true
     void window.ncc.bookmarks().then((next) => {
       if (alive) setBookmarks(next)
     })
@@ -158,6 +330,7 @@ export function App() {
       openSettings(
         payload.section === 'identity' ||
           payload.section === 'appearance' ||
+          payload.section === 'passwords' ||
           payload.section === 'security' ||
           payload.section === 'trusted' ||
           payload.section === 'about'
@@ -363,6 +536,8 @@ export function App() {
         signerPending={signerRequest !== null}
         bookmarked={bookmarked}
         downloads={downloads}
+        passwordStatus={passwordStatus}
+        passwordContext={passwordContext}
         onNavigate={navigate}
         onBack={back}
         onForward={forward}
@@ -372,6 +547,7 @@ export function App() {
         onToggleTor={toggleTor}
         onOpenDownloads={() => showOverlay('downloads')}
         onOpenHistory={openHistory}
+        onOpenPasswords={openPasswords}
         onHistoryMenu={(direction) => void window.ncc.showHistoryMenu(direction)}
         onOpenSiteInfo={(anchor) => {
           setSiteInfoAnchor(anchor)
@@ -397,6 +573,8 @@ export function App() {
             initialSection={settingsSection}
             onClose={closeOverlay}
             onIdentityChange={setIdentity}
+            passwordDraftOrigin={passwordDraftOrigin}
+            onPasswordDraftUsed={() => setPasswordDraftOrigin(null)}
           />
         ) : state.mode === 'blank' ? (
           <Welcome
@@ -438,6 +616,22 @@ export function App() {
         />
       ) : null}
 
+      {overlay === 'passwords' ? (
+        <PasswordsPanel
+          context={passwordContext}
+          anchor={passwordAnchor}
+          busy={passwordBusy}
+          error={passwordError}
+          onClose={closeOverlay}
+          onUnlock={() => void unlockPasswords()}
+          onLock={() => void lockPasswords()}
+          onFill={(id) => void fillPassword(id)}
+          onCopy={(id, field) => void copyPassword(id, field)}
+          onAdd={() => openPasswordSettings(passwordContext?.origin ?? null)}
+          onManage={() => openPasswordSettings()}
+        />
+      ) : null}
+
       {overlay === 'site-info' ? (
         <SiteInfoPanel
           state={state}
@@ -471,6 +665,37 @@ export function App() {
       {signerRequest ? (
         <SignerPrompt request={signerRequest} onRespond={respondToSigner} />
       ) : null}
+
+      {passwordSave ? (
+        <PasswordSavePrompt
+          request={passwordSave}
+          busy={passwordSaveBusy}
+          error={passwordSaveError}
+          onRespond={(action) => void respondToPasswordSave(action)}
+        />
+      ) : null}
+
+      {passwordToast ? (
+        <div
+          className={cn(
+            'fixed bottom-3 right-3 z-[110] max-w-sm rounded-xl border px-3 py-2 text-ui-11 shadow-lg',
+            passwordToast.tone === 'error'
+              ? 'border-[color:var(--color-danger)]/35 bg-[color:var(--color-danger)]/10 text-[color:var(--color-danger)]'
+              : passwordToast.tone === 'warn'
+                ? 'border-[color:var(--color-warn)]/35 bg-[color:var(--color-warn)]/10 text-[color:var(--color-warn)]'
+                : 'border-[color:var(--color-ok)]/35 bg-[color:var(--color-ok)]/10 text-[color:var(--color-ok)]'
+          )}
+          role="status"
+        >
+          {passwordToast.message}
+        </div>
+      ) : null}
     </div>
   )
+}
+
+function messageOf(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  const marker = raw.lastIndexOf('Error: ')
+  return marker === -1 ? raw : raw.slice(marker + 7)
 }

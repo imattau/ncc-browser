@@ -25,6 +25,7 @@ export type CommandId =
   | 'open-downloads'
   | 'open-settings'
   | 'open-identity'
+  | 'open-passwords'
   | 'open-spec'
   | 'quit'
 
@@ -82,6 +83,7 @@ export const COMMANDS: CommandDefinition[] = [
   },
   { id: 'open-settings', label: 'Settings', group: 'Application' },
   { id: 'open-identity', label: 'Identity & signer', group: 'Application' },
+  { id: 'open-passwords', label: 'Passwords', group: 'Application' },
   { id: 'open-downloads', label: 'Downloads', shortcut: 'Ctrl+J', group: 'Application' },
   { id: 'open-spec', label: 'NCC-05 specification', group: 'Application' },
   { id: 'quit', label: 'Quit', shortcut: 'Ctrl+Q', group: 'Application' }

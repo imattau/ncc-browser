@@ -10,6 +10,21 @@ import type {
   OmniboxSuggestion,
   OverlayReason,
   HttpsMode,
+  PasswordConfig,
+  PasswordContext,
+  PasswordCopyResult,
+  PasswordDraft,
+  PasswordEntry,
+  PasswordExportResult,
+  PasswordFillResult,
+  PasswordGeneratorOptions,
+  PasswordImportPreview,
+  PasswordSaveRequest,
+  PasswordSaveResult,
+  PasswordSummary,
+  PasswordToast,
+  PasswordTotpCode,
+  PasswordVaultStatus,
   RelayEntry,
   RelayLocatorOutcome,
   SignerPermission,
@@ -96,6 +111,33 @@ export interface NccApi {
     useOnionSearch: boolean
   }): Promise<SetRelaysResult>
   setAppearance(appearance: Partial<AppearanceConfig>): Promise<SetAppearanceResult>
+  passwordsStatus(): Promise<PasswordVaultStatus>
+  passwordsContext(): Promise<PasswordContext>
+  passwordsUnlock(): Promise<PasswordVaultStatus>
+  passwordsLock(): Promise<PasswordVaultStatus>
+  passwordsList(): Promise<PasswordSummary[]>
+  passwordsEntry(id: string): Promise<PasswordEntry | null>
+  passwordsReveal(id: string): Promise<string>
+  passwordsTotp(id: string): Promise<PasswordTotpCode>
+  passwordsCopy(id: string, field: 'username' | 'password' | 'totp'): Promise<PasswordCopyResult>
+  passwordsGenerate(options: PasswordGeneratorOptions): Promise<string>
+  passwordsSave(entry: PasswordDraft): Promise<PasswordSaveResult>
+  passwordsRemove(id: string): Promise<PasswordSaveResult>
+  passwordsSync(): Promise<PasswordVaultStatus>
+  passwordsFill(id: string): Promise<PasswordFillResult>
+  passwordsSetConfig(config: Partial<PasswordConfig>): Promise<PasswordVaultStatus>
+  passwordsRemoveNever(origin: string): Promise<PasswordVaultStatus>
+  passwordsRespond(id: string, action: 'save' | 'never' | 'dismiss'): Promise<PasswordSaveResult>
+  passwordsImportOpen(): Promise<PasswordImportPreview>
+  passwordsImportCommit(
+    id: string,
+    mode: 'merge' | 'skip' | 'add'
+  ): Promise<PasswordSaveResult>
+  passwordsExport(format: 'encrypted' | 'csv'): Promise<PasswordExportResult>
+  onPasswordStatus(listener: (status: PasswordVaultStatus) => void): () => void
+  onPasswordContext(listener: (context: PasswordContext) => void): () => void
+  onPasswordSaveRequest(listener: (request: PasswordSaveRequest) => void): () => void
+  onPasswordToast(listener: (toast: PasswordToast) => void): () => void
   torStatus(): Promise<TorStatus>
   torTest(): Promise<TorStatus>
   torRestart(): Promise<TorStatus>

@@ -12,6 +12,9 @@ import { LocatorCacheStore } from './cache-store'
 import { ConfigStore } from './config'
 import { DownloadManager } from './downloads'
 import { registerIpc } from './ipc'
+import { PasswordCache } from './passwords/cache'
+import { electronClipboard, electronFileDialogs, registerPasswordIpc } from './passwords/ipc'
+import { PasswordService } from './passwords/service'
 import { EndpointHealth } from './ncc/health'
 import { closeSharedPool, NccResolver, signerFromSecret, type LocatorSigner } from './ncc/resolver'
 import { installCertificatePinning, PinStore } from './pins'
@@ -59,6 +62,7 @@ let contentSessions: ContentSessions | null = null
 let torManager: TorManager | null = null
 let torRelays: TorRelayPool | null = null
 let relaySync: RelaySync | null = null
+let passwords: PasswordService | null = null
 
 app.whenReady().then(async () => {
   const config = new ConfigStore()
@@ -294,6 +298,20 @@ app.whenReady().then(async () => {
     timeoutMs: 120_000
   })
 
+  const passwordService = new PasswordService({
+    config,
+    identity,
+    relays: relayPool,
+    cache: new PasswordCache(join(app.getPath('userData'), 'passwords.json')),
+    host: shell,
+    clipboard: electronClipboard(),
+    dialogs: electronFileDialogs(shell)
+  })
+  passwords = passwordService
+  registerPasswordIpc(passwordService, { shell })
+  shell.window.webContents.on('did-finish-load', () => passwordService.clearOverlays())
+  shell.window.on('focus', () => void passwordService.onWindowFocus())
+
   nip07Service = new Nip07Service({
     identity,
     permissions,
@@ -362,7 +380,8 @@ app.whenReady().then(async () => {
     identity,
     permissions,
     approvals,
-    downloads
+    downloads,
+    passwords: passwordService
   })
 
   // Optional launch address: `ncc-browser ncc://npub1…/service`. A fresh launch uses
@@ -400,6 +419,7 @@ app.on('activate', () => {
 
 app.on('before-quit', () => {
   shell?.saveSessionNow()
+  passwords?.dispose()
   relaySync?.stop()
   closeSharedPool()
   void torManager?.stop()

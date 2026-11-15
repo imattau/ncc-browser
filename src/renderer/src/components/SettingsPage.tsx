@@ -7,6 +7,7 @@ import {
   KeyRound,
   Palette,
   RotateCcw,
+  Vault,
   Search,
   Shield,
   ShieldCheck,
@@ -28,12 +29,14 @@ import type {
 import { cn } from '../lib/cn'
 import { applyAppearance } from '../lib/appearance'
 import { AppearanceSettings } from './AppearanceSettings'
+import { PasswordSettings } from './PasswordSettings'
 
 export type SettingsSection =
   | 'general'
   | 'appearance'
   | 'security'
   | 'identity'
+  | 'passwords'
   | 'trusted'
   | 'about'
 
@@ -42,6 +45,8 @@ interface SettingsPageProps {
   initialSection: SettingsSection
   onClose: () => void
   onIdentityChange?: (status: IdentityStatus) => void
+  passwordDraftOrigin?: string | null
+  onPasswordDraftUsed?: () => void
 }
 
 const SECTIONS: Array<{ id: SettingsSection; label: string; icon: typeof KeyRound }> = [
@@ -49,6 +54,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string; icon: typeof KeyRoun
   { id: 'appearance', label: 'Appearance', icon: Palette },
   { id: 'security', label: 'Security', icon: Shield },
   { id: 'identity', label: 'Identity & signer', icon: KeyRound },
+  { id: 'passwords', label: 'Passwords', icon: Vault },
   { id: 'trusted', label: 'Trusted services', icon: ShieldCheck },
   { id: 'about', label: 'About', icon: CircleHelp }
 ]
@@ -137,7 +143,9 @@ export function SettingsPage({
   open,
   initialSection,
   onClose,
-  onIdentityChange
+  onIdentityChange,
+  passwordDraftOrigin,
+  onPasswordDraftUsed
 }: SettingsPageProps) {
   const [section, setSection] = useState<SettingsSection>(initialSection)
   const backRef = useRef<HTMLButtonElement>(null)
@@ -532,7 +540,7 @@ export function SettingsPage({
         <div className="min-w-0">
           <h1 className="text-ui-13 font-semibold text-[color:var(--color-text-strong)]">Settings</h1>
           <p className="truncate text-ui-105 text-[color:var(--color-muted)]">
-            Relays, appearance, identity and signing permissions for this browser.
+            Relays, appearance, identity, passwords and signing permissions.
           </p>
         </div>
         <span className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-[color:var(--color-line)] px-2 py-1 text-ui-105 text-[color:var(--color-muted)]">
@@ -1243,6 +1251,15 @@ export function SettingsPage({
                 ) : null}
               </div>
             </>
+          ) : null}
+
+          {section === 'passwords' ? (
+            <PasswordSettings
+              identity={identity}
+              draftOrigin={passwordDraftOrigin ?? null}
+              onDraftUsed={onPasswordDraftUsed}
+              onOpenIdentity={() => setSection('identity')}
+            />
           ) : null}
 
           {section === 'trusted' ? (

@@ -264,6 +264,13 @@ is CJS and the package is ESM-only.
   reduced motion. All chrome colours moved to semantic tokens, and the error/HTTP-warning
   pages plus the native window background follow the theme. Changes apply immediately and
   persist in `config.json`.
+- **M13 — Password manager:** ✅ Settings → Passwords and a toolbar popover backed by one
+  NIP-78 kind `30078` event whose content is NIP-44 encrypted to the active identity.
+  Session unlock and auto-lock, exact-origin `https`/`ncc` matching, isolated-world
+  login-form fill and save-on-submit capture, TOTP display/copy, password generation,
+  CSV import/export plus encrypted vault export, NIP-65 write relays with an optional
+  dedicated vault relay, ciphertext-only cache, and relay sync with offline retry.
+  Private tabs are disabled; Tor tabs fill but never save.
 
 ---
 

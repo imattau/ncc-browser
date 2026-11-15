@@ -10,13 +10,14 @@ Built with Electron 45, React 19, and Vite. The resolver is a spec-correct
 implementation on top of `nostr-tools`, not a wrapper around `ncc-05-js` (see
 [Why not `ncc-05-js`](#why-not-ncc-05-js)).
 
-**Status:** M0–M11 are implemented. That includes the resolver, proxy and pinning, the
+**Status:** M0–M13 are implemented. That includes the resolver, proxy and pinning, the
 browser chrome and signer, NCC-02 anchoring with a trust panel, the separate publisher
 app in [`publisher/`](./publisher/) (a NIP-07 flow for NCC-05 locators and NCC-02 service
 records), bundled Tor with the onion preference/toggle and full Tor tabs, private tabs,
 HTTPS policy and HTTP warnings, an address bar with local suggestions, scheme inference
-and search engines, identity-resolved relay entries with enforced `k` pins, and packaged
-Linux, macOS and Windows releases.
+and search engines, identity-resolved relay entries with enforced `k` pins, appearance
+themes with text/density/accent controls, an encrypted NIP-78 password manager with
+fill/save and TOTP, and packaged Linux, macOS and Windows releases.
 
 ![Start screen](./docs/welcome.png)
 
@@ -35,6 +36,10 @@ Linux, macOS and Windows releases.
 | Appearance: dark | Appearance: light |
 | --- | --- |
 | ![Appearance settings with dark theme](./docs/settings-appearance.png) | ![Appearance settings with light theme](./docs/settings-appearance-light.png) |
+
+| Password manager | Toolbar popover | Save prompt |
+| --- | --- | --- |
+| ![Encrypted password vault in Settings](./docs/passwords.png) | ![Matching login in the toolbar popover](./docs/passwords-popover.png) | ![Save or update a submitted login](./docs/password-save.png) |
 
 ![Address bar with a local search action, highlighted match and a history suggestion](./docs/omnibox.png)
 
@@ -123,10 +128,12 @@ working while the remote page has focus.
   reloads that service over Tor, clicking again returns to direct. Direct `.onion` URLs
   work too.
 - **Settings** is a page, not a modal: `General`, `Appearance`, `Security`,
-  `Identity & signer`, `Trusted services` and `About`, with a back-to-browsing button.
-  `Esc` also leaves it.
+  `Identity & signer`, `Passwords`, `Trusted services` and `About`, with a back-to-browsing
+  button. `Esc` also leaves it.
   **General** also picks the search engine and the Tor onion search preference.
   **Appearance** covers light/dark, text size, density, accent colour and reduced motion.
+  **Passwords** unlocks the encrypted login vault, lists and edits entries, generates
+  passwords, shows TOTP codes, controls sync relays and imports/exports credentials.
   **Security** controls Off / Prefer HTTPS / HTTPS only, the optional HTTP interstitial,
   the list of persisted HTTP exceptions, and clearing browsing history.
 - **Shortcuts** (also shown in the menu): `Ctrl+T`, `Ctrl+W`, `Ctrl+Tab` /
@@ -170,6 +177,37 @@ The theme is driven by Electron's `nativeTheme`: setting Light or Dark also over
 Error and HTTP-warning pages, the window background, native form controls and
 scrollbars follow the same choice. **Reset appearance** returns every field to its
 default. Native context menus are drawn by the OS and still follow the system theme.
+
+---
+
+## Password manager
+
+The password manager is a **NIP-78 encrypted list** stored on Nostr. One addressable
+kind `30078` event with `d = ncc-browser/passwords/v1` holds the whole vault; the event
+content is NIP-44 self-encrypted with the active identity. The relay sees only ciphertext,
+the author, timestamps and the approximate size.
+
+- **Unlock** uses the active Nostr identity and a session auto-lock (15 minutes by
+  default). Locked vaults reveal nothing, not even entry titles.
+- **Origins** are exact `https://host[:port]` or `ncc://<pubkey>/<service>` values. Plain
+  HTTP is refused; `ncc://` over HTTP is allowed with a warning because the npub is the
+  anchor.
+- **Toolbar popover** lists logins matching the active origin. Clicking one fills the
+  visible login form in the isolated content preload; the password never passes through
+  the chrome renderer. Fill is never automatic and never submits the form.
+- **Save prompt** appears after a real form submit. It shows the exact origin and
+  username, never the password, and offers Save/Update, Never for this site, or Not now.
+  Private tabs and Tor tabs never offer to save.
+- **TOTP** secrets stay inside the encrypted vault. Codes are generated in the main
+  process and can be displayed or copied from the toolbar and Settings.
+- **Storage** uses the browser relays plus the identity's NIP-65 write relays, with an
+  optional dedicated vault relay that overrides both. Saves are retried when a relay is
+  offline; the local cache contains only the signed ciphertext event.
+- **Import/export** supports Chrome/Edge and Bitwarden CSV, plus the encrypted vault
+  event. CSV export is plaintext and requires an explicit confirmation.
+
+The Nostr key is the recovery key: losing it loses the vault. The vault is not encrypted
+with a separate master passphrase in this version.
 
 ---
 
@@ -598,11 +636,19 @@ src/main
   signer/service.ts  approvals queue, delegates to the active provider
   signer/ipc.ts      NIP-07 IPC, caller origin derived from the main frame
   approval.ts        in-app approval broker (chrome sheet, content hidden)
+  passwords/service.ts  unlock/lock, vault encryption, sync, fill and save capture
+  passwords/cache.ts    ciphertext-only vault cache in userData
+  passwords/totp.ts     otpauth:// parsing and TOTP generation
+  passwords/import-export.ts  CSV and encrypted vault import/export
+  passwords/ipc.ts      chrome/content password IPC, clipboard and file dialogs
+  relay/nip65.ts        own NIP-65 write-relay discovery for vault sync
 src/preload
   index.ts           contextBridge → window.ncc (chrome only)
   content.ts         contextBridge → window.nostr (top-level page frames only)
+  password-manager.ts  isolated login-form detection, fill and submit capture
 src/renderer         React chrome: tabs, toolbar, omnibox, menu, downloads, history,
-                     settings, security banner/interstitial, signer sheet, welcome
+                     settings, security banner/interstitial, signer sheet, password
+                     popover/save sheet, welcome
 src/shared           ncc:// parser, omnibox classifier, search engines, types, relay
                      validation, commands, tab order, download formatting (no Node imports)
 publisher/           separate Vite/React/Tailwind app: NIP-07 locator + NCC-02 publisher
@@ -617,7 +663,7 @@ general IPC bridge.
 ## Testing
 
 ```bash
-npm test       # 293 unit tests: URL parser, locator rules, resolver, routing, pins,
+npm test       # 381 unit tests: URL parser, locator rules, resolver, routing, pins,
                # signer crypto, identity storage, NIP-46, approvals, permissions,
                # ephemeral signer permissions, shortcuts, context menus, relays,
                # downloads, tab order, bookmarks, favicons, session storage, NCC-02
@@ -654,7 +700,11 @@ hamburger menu, **real global shortcuts sent through X**
 (Ctrl+T/W/L while the page is focused), a **real NIP-46 round-trip against a mock
 bunker** — connect, remote signing, remote decryption of a targeted locator, and
 disconnect — and the **publisher app publishing through the built-in signer and being
-resolved back by the browser**. Screenshots land in `/tmp/opencode/ncc-browser-e2e/`.
+resolved back by the browser**. The password-manager pass covers unlock, encrypted
+publishing, toolbar fill, save-on-submit update, TOTP generation, lock refusal, CSV
+import/export, encrypted export, NIP-65 write relays, ciphertext-only relay contents,
+private-tab refusal, and recovery from the relay after deleting the local cache and
+restarting. Screenshots land in `/tmp/opencode/ncc-browser-e2e/`.
 
 To try it against a real publisher, run [`ncc-sidecar`](../nostr-community-conventions/ncc-06/ncc-sidecar/)
 or [`ncc_publish.py`](../nostr-community-conventions/ncc_publish.py), point both sides at
@@ -814,6 +864,20 @@ or SmartScreen prompts. The Flatpak bundle declares the flathub
   stored in `config.json` and are not synced over Nostr. At Extra large text a few fixed
   chrome labels truncate rather than resize the tab strip or toolbar, because the native
   content view is positioned from those fixed heights.
+- **The password vault is one NIP-78 event.** Very large vaults (roughly 200 simple
+  entries, fewer with long notes or many TOTP secrets) hit the 40 KB plaintext cap. The
+  encrypted event is replaced as a whole, so two devices saving at the same instant can
+  lose one update; the app merges before saving, but last-writer-wins still applies.
+  Relays can see that a vault exists and when it changes.
+- **Password recovery is identity recovery.** There is no separate vault passphrase and
+  no nsec export in this version. A generated identity with no backup means an
+  unrecoverable vault. NIP-46 signers must support NIP-44 and may ask for approval on
+  unlock or save.
+- **Password filling is toolbar-first.** There is no inline autofill dropdown, no OTP-field
+  autofill, and no iframe or closed-shadow-DOM form support. Private tabs are disabled;
+  Tor tabs can fill but never offer to save. Plain HTTP pages are refused.
+- **Plaintext CSV export is deliberately available.** It requires a confirmation and
+  writes a `0600` file, but anything that reads that file can read every password.
 - **Installers are unsigned.** macOS builds are ad-hoc signed only, Windows builds have
   no Authenticode certificate, and there is no auto-update channel yet. Signed builds and
   updates need maintainer certificates and a publishing key.

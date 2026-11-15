@@ -10,11 +10,14 @@ import {
 import {
   DEFAULT_APPEARANCE,
   DEFAULT_HTTPS_MODE,
+  DEFAULT_PASSWORD_CONFIG,
   DEFAULT_TOR_SOCKS,
   normalizeAppearance,
+  normalizePasswordConfig,
   type AppearanceConfig,
   type AppConfig,
   type HttpsMode,
+  type PasswordConfig,
   type RelayEntry,
   type TorMode
 } from '@shared/types'
@@ -176,6 +179,33 @@ export class ConfigStore {
     return this.get()
   }
 
+  setPasswordConfig(input: unknown): AppConfig {
+    const current = this.get()
+    const patch = input && typeof input === 'object' ? input : {}
+    const passwords: PasswordConfig = normalizePasswordConfig({ ...current.passwords, ...patch })
+    this.config = { ...current, passwords }
+    this.write()
+    return this.get()
+  }
+
+  addNeverSave(origin: string): AppConfig {
+    const value = origin.trim()
+    if (!value) return this.get()
+    const current = this.get()
+    const neverSave = [...new Set([...current.passwords.neverSave, value])].slice(-200)
+    this.config = { ...current, passwords: { ...current.passwords, neverSave } }
+    this.write()
+    return this.get()
+  }
+
+  removeNeverSave(origin: string): AppConfig {
+    const current = this.get()
+    const neverSave = current.passwords.neverSave.filter((entry) => entry !== origin)
+    this.config = { ...current, passwords: { ...current.passwords, neverSave } }
+    this.write()
+    return this.get()
+  }
+
   private read(): AppConfig {
     try {
       if (existsSync(this.path)) {
@@ -208,7 +238,8 @@ export class ConfigStore {
               ? parsed.searchEngineCustom.trim().slice(0, 2048)
               : '',
           useOnionSearch: parsed.useOnionSearch !== false,
-          appearance: normalizeAppearance(parsed.appearance)
+          appearance: normalizeAppearance(parsed.appearance),
+          passwords: normalizePasswordConfig(parsed.passwords)
         }
       }
     } catch (error) {
@@ -227,7 +258,8 @@ export class ConfigStore {
       searchEngine: DEFAULT_SEARCH_ENGINE,
       searchEngineCustom: '',
       useOnionSearch: true,
-      appearance: { ...DEFAULT_APPEARANCE }
+      appearance: { ...DEFAULT_APPEARANCE },
+      passwords: { ...DEFAULT_PASSWORD_CONFIG }
     }
   }
 

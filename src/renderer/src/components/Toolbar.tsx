@@ -5,11 +5,19 @@ import {
   Download,
   History,
   KeyRound,
+  LockKeyhole,
+  LockKeyholeOpen,
   Menu,
   RotateCw,
   X
 } from 'lucide-react'
-import type { DownloadNotice, IdentityStatus, NavState } from '@shared/types'
+import type {
+  DownloadNotice,
+  IdentityStatus,
+  NavState,
+  PasswordContext,
+  PasswordVaultStatus
+} from '@shared/types'
 import { isActiveDownload } from '@shared/downloads'
 import { AddressBar } from './AddressBar'
 import type { PopoverAnchor } from './Popover'
@@ -23,6 +31,8 @@ interface ToolbarProps {
   signerPending: boolean
   bookmarked: boolean
   downloads: DownloadNotice[]
+  passwordStatus: PasswordVaultStatus | null
+  passwordContext: PasswordContext | null
   onNavigate: (input: string) => void
   onBack: () => void
   onForward: () => void
@@ -32,6 +42,7 @@ interface ToolbarProps {
   onToggleTor: () => void
   onOpenDownloads: () => void
   onOpenHistory: () => void
+  onOpenPasswords: (anchor: PopoverAnchor) => void
   onHistoryMenu: (direction: 'back' | 'forward') => void
   onOpenSiteInfo: (anchor: PopoverAnchor) => void
   onOpenSettings: () => void
@@ -45,6 +56,8 @@ export function Toolbar({
   signerPending,
   bookmarked,
   downloads,
+  passwordStatus,
+  passwordContext,
   onNavigate,
   onBack,
   onForward,
@@ -54,6 +67,7 @@ export function Toolbar({
   onToggleTor,
   onOpenDownloads,
   onOpenHistory,
+  onOpenPasswords,
   onHistoryMenu,
   onOpenSiteInfo,
   onOpenSettings,
@@ -111,6 +125,12 @@ export function Toolbar({
         onNavigate={onNavigate}
       />
 
+      <PasswordButton
+        status={passwordStatus}
+        context={passwordContext}
+        onOpen={onOpenPasswords}
+      />
+
       {downloads.length > 0 ? (
         <button
           type="button"
@@ -157,6 +177,55 @@ export function Toolbar({
         <Menu className="h-4 w-4" />
       </NavButton>
     </header>
+  )
+}
+
+function PasswordButton({
+  status,
+  context,
+  onOpen
+}: {
+  status: PasswordVaultStatus | null
+  context: PasswordContext | null
+  onOpen: (anchor: PopoverAnchor) => void
+}) {
+  const matches = context?.matches.length ?? 0
+  const unlocked = status?.unlocked === true
+  const title = !status?.configured
+    ? 'Passwords — set up an identity'
+    : !unlocked
+      ? 'Passwords — locked'
+      : matches > 0
+        ? `Passwords — ${matches} login${matches === 1 ? '' : 's'} for this site`
+        : 'Passwords'
+
+  return (
+    <button
+      type="button"
+      aria-label="Passwords"
+      data-passwords-button
+      title={title}
+      onClick={(event) => {
+        const rect = event.currentTarget.getBoundingClientRect()
+        onOpen({ top: rect.bottom, left: rect.left })
+      }}
+      className="relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[color:var(--color-muted)] transition-colors hover:bg-[color:var(--color-hover)] hover:text-[color:var(--color-text-strong)]"
+    >
+      {unlocked ? (
+        <LockKeyholeOpen className="h-4 w-4 text-[color:var(--color-accent)]" />
+      ) : (
+        <LockKeyhole className="h-4 w-4" />
+      )}
+      {matches > 0 ? (
+        <span className="absolute -right-0.5 -top-0.5 inline-flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-[color:var(--color-accent)] px-1 text-ui-9 font-semibold text-[color:var(--color-on-accent)]">
+          {matches > 9 ? '9+' : matches}
+        </span>
+      ) : context?.formDetected && unlocked ? (
+        <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-[color:var(--color-warn)]" />
+      ) : context?.pendingSave ? (
+        <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 animate-pulse rounded-full bg-[color:var(--color-warn)]" />
+      ) : null}
+    </button>
   )
 }
 

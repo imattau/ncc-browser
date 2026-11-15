@@ -17,6 +17,7 @@ import type { RelayPinStore } from './relay/socket'
 import type { ApprovalBroker } from './approval'
 import { applyThemeSource } from './appearance'
 import type { IdentityManager } from './signer/manager'
+import type { PasswordService } from './passwords/service'
 import type { PermissionStore } from './signer/permissions'
 import type { BrowserShell } from './shell'
 
@@ -36,6 +37,7 @@ export interface IpcDeps {
   permissions: PermissionStore
   approvals: ApprovalBroker
   downloads: DownloadManager
+  passwords: PasswordService
 }
 
 export function registerIpc(deps: IpcDeps): void {
@@ -350,30 +352,35 @@ export function registerIpc(deps: IpcDeps): void {
 
   ipcMain.handle('ncc:identity-import', async (_event, secret: unknown) => {
     const status = await deps.identity.importLocal(String(secret ?? ''))
+    deps.passwords.onIdentityChanged()
     resetCaches(deps)
     return status
   })
 
   ipcMain.handle('ncc:identity-generate', async () => {
     const status = await deps.identity.generateLocal()
+    deps.passwords.onIdentityChanged()
     resetCaches(deps)
     return status
   })
 
   ipcMain.handle('ncc:identity-remove', async () => {
     const status = await deps.identity.removeLocal()
+    deps.passwords.onIdentityChanged()
     resetCaches(deps)
     return status
   })
 
   ipcMain.handle('ncc:identity-connect-bunker', async (_event, url: unknown) => {
     const status = await deps.identity.connectRemote(String(url ?? ''))
+    deps.passwords.onIdentityChanged()
     resetCaches(deps)
     return status
   })
 
   ipcMain.handle('ncc:identity-disconnect', async () => {
     const status = await deps.identity.disconnectRemote()
+    deps.passwords.onIdentityChanged()
     resetCaches(deps)
     return status
   })

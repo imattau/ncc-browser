@@ -1,13 +1,17 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import { installPasswordManager } from './password-manager'
 
 /**
  * Content preload for remote pages. The only thing exposed is a NIP-07 provider;
- * there is no general IPC bridge, no Node, and no access to the chrome UI.
+ * there is no general IPC bridge, no Node, and no access to the chrome UI. The
+ * password bridge runs entirely in this isolated world and exposes nothing.
  */
 
 const isMainFrame = (process as unknown as { isMainFrame?: boolean }).isMainFrame !== false
 
 if (isMainFrame) {
+  installPasswordManager()
+
   const nip04 = {
     encrypt: (peer: string, plaintext: string): Promise<string> =>
       ipcRenderer.invoke('nip07:nip04-encrypt', peer, plaintext),

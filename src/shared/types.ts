@@ -64,6 +64,208 @@ export const TEXT_SIZE_PREFERENCES: TextSizePreference[] = ['small', 'default', 
 export const ACCENT_PREFERENCES: AccentPreference[] = ['blue', 'violet', 'green', 'amber']
 export const DENSITY_PREFERENCES: DensityPreference[] = ['comfortable', 'compact']
 
+/* ------------------------------------------------------------------ */
+/*  Password manager                                                  */
+/* ------------------------------------------------------------------ */
+
+/** One decrypted credential. Never exposed to page content. */
+export interface PasswordEntry {
+  id: string
+  /** Normalized page origin: https://host[:port] or ncc://<pubkey>/<service>. */
+  origin: string
+  title: string
+  username: string
+  password: string
+  notes: string
+  /** Base32 secret or otpauth:// URI. Empty when the entry has no TOTP. */
+  totp: string
+  createdAt: number
+  updatedAt: number
+  /** Tombstone entries stay in the vault so deletions propagate across devices. */
+  deleted?: boolean
+}
+
+/** Editable fields sent from the trusted chrome renderer. */
+export interface PasswordDraft {
+  id?: string
+  origin: string
+  title: string
+  username: string
+  password: string
+  notes: string
+  totp: string
+}
+
+/** Metadata safe to list in the toolbar and settings without revealing passwords. */
+export interface PasswordSummary {
+  id: string
+  origin: string
+  title: string
+  username: string
+  hasTotp: boolean
+  createdAt: number
+  updatedAt: number
+}
+
+export interface PasswordConfig {
+  /** 0 disables automatic locking for this session. */
+  autoLockMinutes: number
+  offerSave: boolean
+  useNip65: boolean
+  /** When set, the vault uses only this relay and skips browser/NIP-65 relays. */
+  vaultRelay: string
+  /** Origins the user chose never to save for. */
+  neverSave: string[]
+}
+
+export const DEFAULT_PASSWORD_CONFIG: PasswordConfig = {
+  autoLockMinutes: 15,
+  offerSave: true,
+  useNip65: true,
+  vaultRelay: '',
+  neverSave: []
+}
+
+export function normalizePasswordConfig(input: unknown): PasswordConfig {
+  const value = input && typeof input === 'object' ? (input as Partial<PasswordConfig>) : {}
+  const minutes =
+    typeof value.autoLockMinutes === 'number' && Number.isFinite(value.autoLockMinutes)
+      ? Math.max(0, Math.min(24 * 60, Math.round(value.autoLockMinutes)))
+      : DEFAULT_PASSWORD_CONFIG.autoLockMinutes
+  const vaultRelay =
+    typeof value.vaultRelay === 'string' ? value.vaultRelay.trim().slice(0, 2048) : ''
+  return {
+    autoLockMinutes: minutes,
+    offerSave: typeof value.offerSave === 'boolean' ? value.offerSave : true,
+    useNip65: typeof value.useNip65 === 'boolean' ? value.useNip65 : true,
+    vaultRelay:
+      vaultRelay.startsWith('ws://') || vaultRelay.startsWith('wss://') ? vaultRelay : '',
+    neverSave: Array.isArray(value.neverSave)
+      ? value.neverSave
+          .filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)
+          .slice(-200)
+      : []
+  }
+}
+
+export type PasswordRelaySource = 'dedicated' | 'browser' | 'browser+nip65'
+
+export interface PasswordVaultStatus {
+  /** An identity exists and can encrypt/decrypt. */
+  configured: boolean
+  available: boolean
+  unlocked: boolean
+  entryCount: number
+  pending: boolean
+  syncing: boolean
+  lastSyncedAt: number | null
+  relays: string[]
+  relaySource: PasswordRelaySource
+  mode: IdentityMode
+  error: string | null
+  autoLockMinutes: number
+  offerSave: boolean
+  useNip65: boolean
+  vaultRelay: string
+  neverSave: string[]
+}
+
+export interface PasswordContext {
+  origin: string | null
+  title: string
+  secure: boolean
+  scheme: 'https' | 'http' | 'ncc' | null
+  tabKind: TabKind
+  locked: boolean
+  configured: boolean
+  status: PasswordVaultStatus
+  matches: PasswordSummary[]
+  formDetected: boolean
+  pendingSave: boolean
+  canFill: boolean
+  canSave: boolean
+  warning: string | null
+}
+
+export interface PasswordSaveRequest {
+  id: string
+  origin: string
+  title: string
+  username: string
+  mode: 'create' | 'update'
+  existingId?: string
+  secure: boolean
+  tabKind: TabKind
+  locked: boolean
+}
+
+export interface PasswordSaveResult {
+  ok: boolean
+  error?: string
+  status?: PasswordVaultStatus
+  pending?: boolean
+  path?: string
+}
+
+export interface PasswordFillResult {
+  ok: boolean
+  error?: string
+}
+
+export interface PasswordCopyResult {
+  ok: boolean
+  error?: string
+  clearsAt?: number
+}
+
+export interface PasswordTotpCode {
+  code: string
+  remaining: number
+  period: number
+}
+
+export interface PasswordGeneratorOptions {
+  length?: number
+  uppercase?: boolean
+  lowercase?: boolean
+  digits?: boolean
+  symbols?: boolean
+  avoidAmbiguous?: boolean
+}
+
+export interface PasswordImportPreview {
+  id: string
+  cancelled?: boolean
+  format: 'chrome' | 'bitwarden' | 'ncc' | 'encrypted'
+  count: number
+  duplicates: number
+  projectedBytes: number
+  entries: Array<{ title: string; origin: string; username: string }>
+  error?: string
+}
+
+export interface PasswordExportResult {
+  ok: boolean
+  path?: string
+  error?: string
+}
+
+export interface PasswordToast {
+  tone: 'ok' | 'warn' | 'error'
+  message: string
+}
+
+/** Main-process view of the active tab, handed to the password service. */
+export interface PasswordPage {
+  tabId: string
+  kind: TabKind
+  mode: PageMode
+  url: string
+  displayUrl: string
+  title: string
+  security: SecurityInfo | null
+}
+
 /**
  * Tolerant normalisation for anything that may have come from an older config
  * file or from the renderer. Unknown values fall back to the defaults.
@@ -325,7 +527,9 @@ export const OVERLAY_REASONS = [
   'history',
   'tabs',
   'site-info',
-  'insecure'
+  'insecure',
+  'passwords',
+  'password-save'
 ] as const
 
 export type OverlayReason = (typeof OVERLAY_REASONS)[number]
@@ -391,6 +595,8 @@ export interface AppConfig {
   useOnionSearch: boolean
   /** Theme, text size, density, accent and motion preferences. */
   appearance: AppearanceConfig
+  /** Password manager lock, save, relay and never-save preferences. */
+  passwords: PasswordConfig
 }
 
 export type OmniboxSuggestionKind = 'action' | 'bookmark' | 'history' | 'tab' | 'service'

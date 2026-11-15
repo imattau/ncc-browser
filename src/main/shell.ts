@@ -29,6 +29,7 @@ import type {
   NavState,
   OmniboxSuggestion,
   PageMode,
+  PasswordPage,
   SecurityInfo,
   TabHistory,
   TabKind,
@@ -174,6 +175,45 @@ export class BrowserShell {
   /** Push an updated config to the chrome renderer, e.g. after a relay rotated. */
   sendConfig(config: AppConfig): void {
     this.sendChrome('ncc:config', config)
+  }
+
+  /** Public chrome notification used by services that live outside the shell. */
+  sendToChrome(channel: string, payload?: unknown): boolean {
+    return this.sendChrome(channel, payload)
+  }
+
+  /** Main-process view of one tab, for the password manager. */
+  pageForTab(tabId: string): PasswordPage | null {
+    const tab = this.tabs.find((entry) => entry.id === tabId)
+    if (!tab) return null
+    const contents = tab.view.webContents
+    return {
+      tabId: tab.id,
+      kind: tab.kind,
+      mode: tab.mode,
+      url: contents.isDestroyed() ? tab.displayUrl : contents.getURL() || tab.displayUrl,
+      displayUrl: tab.displayUrl,
+      title: tabTitle(tab),
+      security: tab.security
+    }
+  }
+
+  activePage(): PasswordPage | null {
+    return this.activeId ? this.pageForTab(this.activeId) : null
+  }
+
+  tabIdForContents(webContentsId: number): string | null {
+    const tab = this.tabs.find(
+      (entry) => !entry.view.webContents.isDestroyed() && entry.view.webContents.id === webContentsId
+    )
+    return tab?.id ?? null
+  }
+
+  sendToContent(tabId: string, channel: string, payload: unknown): boolean {
+    const tab = this.tabs.find((entry) => entry.id === tabId)
+    if (!tab || tab.view.webContents.isDestroyed()) return false
+    tab.view.webContents.send(channel, payload)
+    return true
   }
 
   /** Match the native window background to the resolved theme. */
@@ -438,6 +478,9 @@ export class BrowserShell {
         break
       case 'open-identity':
         this.sendChrome('ncc:open-settings', { section: 'identity' })
+        break
+      case 'open-passwords':
+        this.sendChrome('ncc:open-settings', { section: 'passwords' })
         break
       case 'open-spec':
         void shell.openExternal(

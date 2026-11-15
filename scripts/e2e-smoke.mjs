@@ -15,7 +15,7 @@ import { createHash, createPublicKey } from 'node:crypto'
 import { createServer } from 'node:http'
 import { createServer as createHttpsServer } from 'node:https'
 import { connect as connectNet, createServer as createNetServer } from 'node:net'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, extname } from 'node:path'
 import { WebSocketServer, WebSocket } from 'ws'
@@ -127,6 +127,7 @@ async function startService(npub, options = {}) {
 <p id="proxied">resolved-and-proxied</p>
 <a id="next" href="second">second</a>
 <a id="download" href="/sample.txt" download="sample.txt">download</a>
+<a id="login-link" href="/login">login</a>
 <a id="cross" href="ncc://${npub}/_/secure/">secure service</a>${extraBody}</body></html>`
 
   const server = createServer((request, response) => {
@@ -185,6 +186,20 @@ async function startService(npub, options = {}) {
     if (request.url === '/second') {
       response.writeHead(200, { 'content-type': 'text/html' })
       response.end('<!doctype html><title>Second</title><h1 id="second">SECOND PAGE</h1>')
+      return
+    }
+    if (request.url === '/login') {
+      response.writeHead(200, { 'content-type': 'text/html' })
+      response.end(
+        '<!doctype html><title>Example login</title>' +
+          '<h1>Sign in</h1>' +
+          '<form id="login-form" action="/login" method="post" ' +
+          "onsubmit=\"event.preventDefault(); document.getElementById('login-result').textContent='SUBMITTED';\">" +
+          '<label>Username <input id="username" name="username" autocomplete="username"></label>' +
+          '<label>Password <input id="password" name="password" type="password" autocomplete="current-password"></label>' +
+          '<button id="login-submit" type="submit">Sign in</button>' +
+          '</form><p id="login-result"></p>'
+      )
       return
     }
     if (request.url.startsWith('/search')) {
@@ -377,6 +392,20 @@ function publishRelayList(relay, hintRelayUrl) {
       content: ''
     },
     serviceSk
+  )
+  relay.events.push(event)
+  return event
+}
+
+function publishSignerRelayList(relay, writeRelayUrl) {
+  const event = finalizeEvent(
+    {
+      kind: 10002,
+      created_at: Math.floor(Date.now() / 1000),
+      tags: [['r', writeRelayUrl, 'write']],
+      content: ''
+    },
+    signerSk
   )
   relay.events.push(event)
   return event
@@ -762,6 +791,7 @@ async function main() {
   publishAnchor(relayA, 'ncc02only', { u: `http://127.0.0.1:${servicePort}` })
   // `hinted` only exists on relay B; relay A holds the NIP-65 list pointing there.
   publishRelayList(relayA, `ws://127.0.0.1:${relayB.port}`)
+  publishSignerRelayList(relayA, `ws://127.0.0.1:${relayB.port}`)
   publishLocator(relayB, 'hinted', [
     { type: 'http', uri: `127.0.0.1:${servicePort}`, priority: 1, family: 'ipv4' }
   ])
@@ -780,6 +810,13 @@ async function main() {
     join(userData, 'config.json'),
     `${JSON.stringify({ relays: [`ws://127.0.0.1:${relayA.port}`], gossip: true }, null, 2)}\n`
   )
+  const passwordImportPath = join(configHome, 'import-passwords.csv')
+  const passwordExportDir = join(configHome, 'password-exports')
+  writeFileSync(
+    passwordImportPath,
+    'name,url,username,password,notes\nImported login,https://imported.example,carol,imported-pass,from csv\n'
+  )
+  mkdirSync(passwordExportDir, { recursive: true })
 
   const xvfb = await startXvfb()
 
@@ -804,7 +841,9 @@ async function main() {
         NCC_IDENTITY_NSEC: nip19.nsecEncode(signerSk),
         NCC_NIP46_TIMEOUT_MS: '15000',
         NCC_DOWNLOAD_DIR: join(configHome, 'downloads'),
-        NCC_TOR_SOCKS: `socks5://127.0.0.1:${torProxy.port}`
+        NCC_TOR_SOCKS: `socks5://127.0.0.1:${torProxy.port}`,
+        NCC_PASSWORDS_IMPORT: passwordImportPath,
+        NCC_PASSWORDS_EXPORT: passwordExportDir
       },
       stdio: ['ignore', 'pipe', 'pipe']
     }
@@ -2543,6 +2582,248 @@ async function main() {
     )
     await chrome.send('Emulation.clearDeviceMetricsOverride')
 
+    // Password manager: encrypted vault, toolbar fill and save-on-submit.
+    await evaluate(chrome, 'document.querySelector("[data-settings-page] header button").click()')
+    await sleep(250)
+    await evaluate(chrome, 'window.ncc.setAppearance({ theme: "dark" })')
+    await sleep(250)
+    await evaluate(
+      chrome,
+      `window.ncc.navigate(${JSON.stringify(`ncc://${serviceNpub}/web/login`)})`
+    )
+    await waitForText(cdp, 'Sign in', 100)
+
+    const vaultOrigin = `ncc://${serviceNpub}/web`
+    await evaluate(chrome, 'window.ncc.runCommand("open-passwords")')
+    await waitForValue(
+      chrome,
+      'document.querySelector("[data-password-unlock]") ? "ready" : ""',
+      80
+    )
+    await evaluate(chrome, 'document.querySelector("[data-password-unlock]").click()')
+    await waitForText(chrome, 'Vault unlocked', 120)
+    check('unlocks the password vault', true)
+    await evaluate(chrome, 'document.querySelector("[data-settings-page] header button").click()')
+    await sleep(250)
+
+    const savedLogin = await evaluate(
+      chrome,
+      `window.ncc.passwordsSave(${JSON.stringify({
+        origin: vaultOrigin,
+        title: 'E2E login',
+        username: 'alice',
+        password: 's3cret',
+        notes: 'e2e note',
+        totp: 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ'
+      })})`
+    )
+    check('saves an encrypted login', savedLogin?.ok === true, JSON.stringify(savedLogin))
+    const savedList = await evaluate(chrome, 'window.ncc.passwordsList()')
+    const passwordId = savedList?.[0]?.id
+    check(
+      'lists the saved login without passwords',
+      savedList?.length === 1 && savedList[0].hasTotp === true && !('password' in savedList[0]),
+      JSON.stringify(savedList)
+    )
+
+    await evaluate(chrome, 'window.ncc.runCommand("open-passwords")')
+    await waitForValue(
+      chrome,
+      'document.querySelector("[data-password-entry]") ? "ready" : ""',
+      80
+    )
+    check(
+      'settings lists the saved login',
+      (await evaluate(chrome, 'document.body.innerText')).includes('E2E login')
+    )
+    const passwordShot = await chrome.send('Page.captureScreenshot', { format: 'png' })
+    writeFileSync(
+      join(ARTIFACTS, 'settings-passwords.png'),
+      Buffer.from(passwordShot.data, 'base64')
+    )
+    await evaluate(chrome, 'document.querySelector("[data-settings-page] header button").click()')
+    await sleep(250)
+
+    await evaluate(chrome, 'document.querySelector("[data-passwords-button]").click()')
+    await waitForValue(
+      chrome,
+      'document.querySelector("[data-password-matches]") ? "ready" : ""',
+      60
+    )
+    check(
+      'toolbar lists the matching login',
+      (await evaluate(chrome, 'document.body.innerText')).includes('alice')
+    )
+    const popoverShot = await chrome.send('Page.captureScreenshot', { format: 'png' })
+    writeFileSync(
+      join(ARTIFACTS, 'passwords-popover.png'),
+      Buffer.from(popoverShot.data, 'base64')
+    )
+    await evaluate(
+      chrome,
+      `document.querySelector('[data-password-fill="${passwordId}"]').click()`
+    )
+    await waitForValue(
+      cdp,
+      'document.querySelector("#username")?.value === "alice" ? "filled" : ""',
+      80
+    )
+    check(
+      'fills the username and password',
+      (await evaluate(cdp, 'document.querySelector("#password")?.value')) === 's3cret'
+    )
+
+    // Change the password and submit with a real click so the content preload sees
+    // a trusted submit event.
+    await evaluate(
+      cdp,
+      `(() => {
+        const input = document.querySelector('#password')
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
+        setter.call(input, 'n3wpass')
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+        return true
+      })()`
+    )
+    const submitRect = await evaluate(
+      cdp,
+      `(() => {
+        const rect = document.querySelector('#login-submit').getBoundingClientRect()
+        return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
+      })()`
+    )
+    await cdp.send('Input.dispatchMouseEvent', {
+      type: 'mousePressed',
+      x: submitRect.x,
+      y: submitRect.y,
+      button: 'left',
+      clickCount: 1
+    })
+    await cdp.send('Input.dispatchMouseEvent', {
+      type: 'mouseReleased',
+      x: submitRect.x,
+      y: submitRect.y,
+      button: 'left',
+      clickCount: 1
+    })
+    await waitForValue(
+      chrome,
+      'document.querySelector("[data-password-save-prompt]") ? "ready" : ""',
+      80
+    )
+    check(
+      'offers to update a changed password',
+      (await evaluate(chrome, 'document.body.innerText')).includes('Update saved password')
+    )
+    const savePromptShot = await chrome.send('Page.captureScreenshot', { format: 'png' })
+    writeFileSync(
+      join(ARTIFACTS, 'password-save-prompt.png'),
+      Buffer.from(savePromptShot.data, 'base64')
+    )
+    await evaluate(
+      chrome,
+      'document.querySelector(\'[data-password-save-action="save"]\').click()'
+    )
+    await waitForValue(
+      chrome,
+      'document.querySelector("[data-password-save-prompt]") ? "" : "closed"',
+      80
+    )
+    const updatedPassword = await evaluate(
+      chrome,
+      `window.ncc.passwordsReveal(${JSON.stringify(passwordId)})`
+    )
+    check('updates the saved password', updatedPassword === 'n3wpass', String(updatedPassword))
+
+    const totp = await evaluate(
+      chrome,
+      `window.ncc.passwordsTotp(${JSON.stringify(passwordId)})`
+    )
+    check(
+      'generates a TOTP code',
+      typeof totp?.code === 'string' && /^\d{6}$/.test(totp.code) && totp.period === 30,
+      JSON.stringify(totp)
+    )
+
+    await evaluate(chrome, 'window.ncc.passwordsLock()')
+    const lockedFill = await evaluate(
+      chrome,
+      `window.ncc.passwordsFill(${JSON.stringify(passwordId)})`
+    )
+    check('refuses to fill while locked', lockedFill?.ok === false, JSON.stringify(lockedFill))
+
+    await evaluate(chrome, 'window.ncc.passwordsUnlock()')
+    const importPreview = await evaluate(chrome, 'window.ncc.passwordsImportOpen()')
+    check(
+      'previews a CSV import',
+      importPreview?.count === 1 && importPreview?.duplicates === 0,
+      JSON.stringify(importPreview)
+    )
+    const importResult = await evaluate(
+      chrome,
+      `window.ncc.passwordsImportCommit(${JSON.stringify(importPreview.id)}, 'merge')`
+    )
+    check('imports CSV logins', importResult?.ok === true, JSON.stringify(importResult))
+    const afterImport = await evaluate(chrome, 'window.ncc.passwordsList()')
+    check(
+      'imported login is in the vault',
+      afterImport.some((entry) => entry.origin === 'https://imported.example'),
+      JSON.stringify(afterImport.map((entry) => entry.origin))
+    )
+
+    const encryptedExport = await evaluate(chrome, 'window.ncc.passwordsExport("encrypted")')
+    check(
+      'exports an encrypted vault',
+      encryptedExport?.ok === true && existsSync(encryptedExport.path),
+      JSON.stringify(encryptedExport)
+    )
+    const csvExport = await evaluate(chrome, 'window.ncc.passwordsExport("csv")')
+    check(
+      'exports CSV with a warning path',
+      csvExport?.ok === true &&
+        existsSync(csvExport.path) &&
+        readFileSync(csvExport.path, 'utf8').includes('imported-pass'),
+      JSON.stringify(csvExport)
+    )
+
+    const vaultEvents = relayA.events.filter(
+      (entry) =>
+        entry.kind === 30078 &&
+        entry.tags.some((tag) => tag[0] === 'd' && tag[1] === 'ncc-browser/passwords/v1')
+    )
+    check('publishes the vault to a relay', vaultEvents.length > 0)
+    check(
+      'follows NIP-65 write relays for the vault',
+      relayB.events.some(
+        (entry) =>
+          entry.kind === 30078 &&
+          entry.tags.some((tag) => tag[0] === 'd' && tag[1] === 'ncc-browser/passwords/v1')
+      )
+    )
+    check(
+      'never publishes plaintext credentials',
+      vaultEvents.every((entry) => !/alice|s3cret|n3wpass|imported-pass/.test(entry.content))
+    )
+
+    const privateTabId = await evaluate(
+      chrome,
+      `window.ncc.newPrivateTab(${JSON.stringify(`ncc://${serviceNpub}/web/login`)})`
+    )
+    await sleep(800)
+    const privateContext = await evaluate(chrome, 'window.ncc.passwordsContext()')
+    check(
+      'disables passwords in private tabs',
+      privateContext?.tabKind === 'private' && privateContext?.matches.length === 0,
+      JSON.stringify(privateContext)
+    )
+    await evaluate(chrome, `window.ncc.closeTab(${JSON.stringify(privateTabId)})`)
+    await evaluate(chrome, 'window.ncc.setAppearance({ theme: "light" })')
+    await cdp.send('Page.navigate', { url: `ncc://${missingNpub}/web/` })
+    await waitForText(cdp, 'No locator published', 100)
+
+    // Prove relay recovery on the next launch by dropping the ciphertext cache.
+    rmSync(join(userData, 'passwords.json'), { force: true })
+
     // Restart with the same profile and no command-line address: the session file
     // must bring the tab back without any extra flags.
     await sleep(1100)
@@ -2571,7 +2852,9 @@ async function main() {
           ELECTRON_DISABLE_SECURITY_WARNINGS: '1',
           NCC_IDENTITY_NSEC: nip19.nsecEncode(signerSk),
           NCC_NIP46_TIMEOUT_MS: '15000',
-          NCC_DOWNLOAD_DIR: join(configHome, 'downloads')
+          NCC_DOWNLOAD_DIR: join(configHome, 'downloads'),
+          NCC_PASSWORDS_IMPORT: passwordImportPath,
+          NCC_PASSWORDS_EXPORT: passwordExportDir
         },
         stdio: ['ignore', 'pipe', 'pipe']
       }
@@ -2629,6 +2912,20 @@ async function main() {
         restoredChrome,
         'matchMedia("(prefers-color-scheme: light)").matches'
       )) === true
+    )
+
+    const restoredPasswords = await evaluate(
+      restoredChrome,
+      'window.ncc.passwordsUnlock().then(() => window.ncc.passwordsList())'
+    )
+    check(
+      'restores passwords from the relay on the next launch',
+      Array.isArray(restoredPasswords) &&
+        restoredPasswords.some(
+          (entry) => entry.origin.endsWith('/web') && entry.username === 'alice'
+        ) &&
+        restoredPasswords.some((entry) => entry.origin === 'https://imported.example'),
+      JSON.stringify(restoredPasswords?.map((entry) => entry.origin))
     )
 
     const restoredContent = await waitForTarget(

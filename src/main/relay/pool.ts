@@ -5,7 +5,7 @@
  * proxy when Tor is ready. Both paths share one pool so a mixed relay list works.
  */
 
-import { SimplePool, type Event, type Filter } from 'nostr-tools'
+import { SimplePool, type Event, type EventTemplate, type Filter } from 'nostr-tools'
 import { SocksProxyAgent } from 'socks-proxy-agent'
 import type { Agent } from 'node:http'
 import WebSocket from 'ws'
@@ -58,6 +58,48 @@ export class RelayPool {
   readonly query: QueryFn = async (relays: string[], filter: Filter): Promise<Event[]> => {
     this.track(relays)
     return this.instance().querySync(relays, filter)
+  }
+
+  /**
+   * Query with an optional NIP-42 AUTH signer. `querySync` does not expose the
+   * callback, so use the EOSE subscription directly when auth may be needed.
+   */
+  async queryAuth(
+    relays: string[],
+    filter: Filter,
+    onauth?: (event: EventTemplate) => Promise<Event>
+  ): Promise<Event[]> {
+    this.track(relays)
+    if (!onauth) return this.query(relays, filter)
+    return new Promise<Event[]>((resolve) => {
+      const events: Event[] = []
+      let finished = false
+      const finish = (): void => {
+        if (finished) return
+        finished = true
+        resolve(events)
+      }
+      const timeout = setTimeout(finish, 6_000)
+      timeout.unref?.()
+      this.instance().subscribeEose(relays, filter, {
+        onevent: (event) => events.push(event),
+        onclose: () => {
+          clearTimeout(timeout)
+          finish()
+        },
+        onauth: onauth as never
+      })
+    })
+  }
+
+  /** Publish to one relay, signing NIP-42 AUTH challenges when needed. */
+  publishWithAuth(
+    url: string,
+    event: Event,
+    onauth?: (event: EventTemplate) => Promise<Event>
+  ): Promise<string> {
+    this.track([url])
+    return this.instance().publish([url], event, onauth ? { onauth: onauth as never } : undefined)[0]
   }
 
   /** Publish to one relay, returning the relay's own acceptance message. */

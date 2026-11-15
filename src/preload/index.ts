@@ -7,6 +7,10 @@ import {
   type Bookmark,
   type DownloadNotice,
   type NavState,
+  type PasswordContext,
+  type PasswordSaveRequest,
+  type PasswordToast,
+  type PasswordVaultStatus,
   type SignerRequest
 } from '@shared/types'
 
@@ -63,6 +67,26 @@ const api: NccApi = {
   clearBrowsingHistory: () => ipcRenderer.invoke('ncc:clear-browsing-history'),
   setSearchConfig: (config) => ipcRenderer.invoke('ncc:set-search-config', config),
   setAppearance: (appearance) => ipcRenderer.invoke('ncc:set-appearance', appearance),
+  passwordsStatus: () => ipcRenderer.invoke('ncc:password-status'),
+  passwordsContext: () => ipcRenderer.invoke('ncc:password-context'),
+  passwordsUnlock: () => ipcRenderer.invoke('ncc:password-unlock'),
+  passwordsLock: () => ipcRenderer.invoke('ncc:password-lock'),
+  passwordsList: () => ipcRenderer.invoke('ncc:password-list'),
+  passwordsEntry: (id) => ipcRenderer.invoke('ncc:password-entry', id),
+  passwordsReveal: (id) => ipcRenderer.invoke('ncc:password-reveal', id),
+  passwordsTotp: (id) => ipcRenderer.invoke('ncc:password-totp', id),
+  passwordsCopy: (id, field) => ipcRenderer.invoke('ncc:password-copy', id, field),
+  passwordsGenerate: (options) => ipcRenderer.invoke('ncc:password-generate', options),
+  passwordsSave: (entry) => ipcRenderer.invoke('ncc:password-save', entry),
+  passwordsRemove: (id) => ipcRenderer.invoke('ncc:password-remove', id),
+  passwordsSync: () => ipcRenderer.invoke('ncc:password-sync'),
+  passwordsFill: (id) => ipcRenderer.invoke('ncc:password-fill', id),
+  passwordsSetConfig: (config) => ipcRenderer.invoke('ncc:password-config', config),
+  passwordsRemoveNever: (origin) => ipcRenderer.invoke('ncc:password-remove-never', origin),
+  passwordsRespond: (id, action) => ipcRenderer.invoke('ncc:password-respond', id, action),
+  passwordsImportOpen: () => ipcRenderer.invoke('ncc:password-import-open'),
+  passwordsImportCommit: (id, mode) => ipcRenderer.invoke('ncc:password-import-commit', id, mode),
+  passwordsExport: (format) => ipcRenderer.invoke('ncc:password-export', format),
   torStatus: () => ipcRenderer.invoke('ncc:tor-status'),
   torTest: () => ipcRenderer.invoke('ncc:tor-test'),
   torRestart: () => ipcRenderer.invoke('ncc:tor-restart'),
@@ -151,6 +175,38 @@ const api: NccApi = {
     ipcRenderer.on('ncc:config', handler)
     return () => {
       ipcRenderer.removeListener('ncc:config', handler)
+    }
+  },
+  onPasswordStatus: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, status: PasswordVaultStatus): void =>
+      listener(status)
+    ipcRenderer.on('ncc:password-status', handler)
+    return () => {
+      ipcRenderer.removeListener('ncc:password-status', handler)
+    }
+  },
+  onPasswordContext: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, context: PasswordContext): void =>
+      listener(context)
+    ipcRenderer.on('ncc:password-context', handler)
+    return () => {
+      ipcRenderer.removeListener('ncc:password-context', handler)
+    }
+  },
+  onPasswordSaveRequest: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, request: PasswordSaveRequest): void =>
+      listener(request)
+    ipcRenderer.on('ncc:password-save-request', handler)
+    return () => {
+      ipcRenderer.removeListener('ncc:password-save-request', handler)
+    }
+  },
+  onPasswordToast: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, toast: PasswordToast): void =>
+      listener(toast)
+    ipcRenderer.on('ncc:password-toast', handler)
+    return () => {
+      ipcRenderer.removeListener('ncc:password-toast', handler)
     }
   },
   onDownload: (listener) => {
