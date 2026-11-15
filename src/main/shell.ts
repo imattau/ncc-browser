@@ -10,6 +10,8 @@ import {
   type WebContents
 } from 'electron'
 import { parseNccAddress, toDisplayUrl, toInternalUrl, type NccAddress } from '@shared/ncc-url'
+import { buildNsiteUrl, parseNsiteAddress, type NsiteAddress } from '@shared/nsite-url'
+import type { NsiteActivity } from './nsite/protocol'
 import { BANNER_HEIGHT, CHROME_HEIGHT } from '@shared/layout'
 import type { CommandId } from '@shared/commands'
 import { reorderTabs } from '@shared/tabs'
@@ -596,7 +598,7 @@ export class BrowserShell {
     }
     // A forced reload is the user saying "this endpoint is wrong": drop the cached
     // locator too, so the handler asks relays instead of replaying the same record.
-    if (tab.mode === 'ncc' && tab.displayUrl) {
+    if ((tab.mode === 'ncc' || tab.mode === 'nsite') && tab.displayUrl) {
       this.deps.invalidateSite?.(tab.displayUrl, tab.kind)
     }
     if (contents.isDestroyed()) return
@@ -825,6 +827,37 @@ export class BrowserShell {
     this.syncState()
   }
 
+  /** State update from the nsite protocol handler. */
+  reportNsiteActivity(activity: NsiteActivity): void {
+    const tabs = this.tabs.filter(
+      (tab) =>
+        tab.mode === 'nsite' &&
+        tab.pubkey === activity.pubkey &&
+        (tab.service ?? null) === activity.site
+    )
+    if (tabs.length === 0) return
+
+    for (const tab of tabs) {
+      if (activity.failureCode) {
+        tab.failure = { code: activity.failureCode, message: activity.failureCode }
+        tab.security = null
+      } else {
+        tab.failure = null
+        tab.security = {
+          transport: 'nsite',
+          host: '',
+          pinned: false,
+          viaTor: tab.kind === 'tor',
+          onion: false,
+          anchor: null,
+          locator: null,
+          manifest: activity.manifest ?? null
+        }
+      }
+    }
+    this.syncState()
+  }
+
   /** True when at least one tab for this service is currently served over Tor. */
   isTorService(pubkey: string, service: string): boolean {
     return this.tabs.some(
@@ -902,6 +935,31 @@ export class BrowserShell {
 
     if (target.kind === 'web' || target.kind === 'search') {
       await this.openWebUrl(tab, target.url)
+      return
+    }
+
+    if (target.kind === 'nsite') {
+      let nsite: NsiteAddress
+      try {
+        nsite = parseNsiteAddress(target.url)
+      } catch (error) {
+        tab.failure = {
+          code: 'invalid-address',
+          message: error instanceof Error ? error.message : 'Invalid nsite address'
+        }
+        this.syncState()
+        return
+      }
+      tab.mode = 'nsite'
+      tab.pubkey = nsite.pubkey
+      tab.service = nsite.site
+      tab.displayUrl = buildNsiteUrl(nsite)
+      tab.security = null
+      tab.failure = null
+      tab.tor = { onionAvailable: false, active: tab.kind === 'tor' }
+      this.deps.torGuard.set(tab.view.webContents.id, tab.kind === 'tor')
+      this.showOnly(tab.id)
+      await this.load(tab, buildNsiteUrl(nsite))
       return
     }
 

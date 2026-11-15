@@ -8,6 +8,7 @@
  */
 
 import { isNostrId } from '@shared/ncc-url'
+import { nsiteOrigin, parseNsiteAddress } from '@shared/nsite-url'
 
 export interface SignerOrigin {
   origin: string
@@ -29,6 +30,15 @@ export function signerOriginFromUrl(raw: string): SignerOrigin | null {
     const service = path.startsWith('_/') ? path.slice(2).split('/')[0] : path.split('/')[0]
     const label = `ncc://${pubkey}/${service || 'addr'}`
     return { origin: label, label }
+  }
+
+  if (url.protocol === 'nsite:') {
+    try {
+      const parsed = parseNsiteAddress(raw)
+      return { origin: nsiteOrigin(parsed.pubkey, parsed.site), label: nsiteOrigin(parsed.pubkey, parsed.site) }
+    } catch {
+      return null
+    }
   }
 
   if (url.protocol === 'https:' || url.protocol === 'http:') {

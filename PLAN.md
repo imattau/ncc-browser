@@ -498,3 +498,79 @@ Cost is small either way — the store is 100 lines and the file is versioned �
 friction that trains people to tick "Always allow" without reading. Not scheduled; worth
 doing only if identity switching becomes common or a report shows the widening being
 abused.
+
+---
+
+## 12. `nsite://` — NIP-5A static sites
+
+Implemented in 0.10.0. A NIP-5A site is a signed manifest plus Blossom blobs, so it
+needs no HTTP endpoint: the npub signature and event ordering decide what the site is,
+and each file's sha256 decides whether it may be served.
+
+### Address model
+
+```
+nsite://<npub>/                 root site (kind 15128)
+nsite://<npub>/<d>/             named site (kind 35128, d = <d>)
+nsite://<npub>/<d>/<path…>      a file in that named site
+nsite://<npub>/<path…>          a file in the root site
+```
+
+The first path segment is a named site when it matches the NIP-5A d-tag grammar
+`^[a-z0-9-]{1,13}$` and does not end with `-`; anything else is a root-site path. That
+is the one ambiguous corner of the scheme: a root-site file or directory whose name is a
+valid d tag (`/about`, `/logo`) is read as a named site. Root pages should use paths
+with an extension (the common case: `/style.css`, `/about.html`) or live under a named
+site. Gateways avoid this by putting root and named sites on different hostnames, which
+a single scheme cannot do.
+
+`nsite://npub1…/blog` and `nsite://npub1…/blog/` both mean the named site; the browser
+canonicalises to the trailing slash.
+
+### Resolution
+
+1. Root: `{ kinds: [15128], authors: [hex], limit: 5 }`. Named:
+   `{ kinds: [35128], authors: [hex], '#d': [d], limit: 5 }`, through the same pool and
+   8 s timeout as NCC, and the Tor pool for Tor tabs.
+2. Verify signature, author, kind and `d`; index `path` tags (`/`-absolute, no `..`,
+   64-hex hashes); at least one usable path or `manifest-invalid`.
+3. Newest `created_at` wins. Manifests are cached in memory for 60 s and confirmed in the
+   background after that: a relay hiccup never blanks a working page. Forced reload
+   invalidates the manifest for that site.
+4. Path resolution: exact match; `/dir/` → `/dir/index.html`; `/dir` → 302 to `/dir/` when
+   files exist under it; otherwise `/404.html` with status 404; otherwise `no-file`. No
+   SPA fallback.
+
+### Content
+
+Blobs come from `server` tags in the manifest, then the author's kind `10063` list,
+max 8 attempts, with per-server failure counts. A blob is read with a 25 MB cap,
+hashed, and only served on an exact match; mismatch is `hash-mismatch` and the bytes are
+discarded. Verified blobs are cached by hash — in memory (32 MB) and on disk
+(`userData/nsite-blobs`, 512 MB LRU) for normal tabs; private and Tor tabs are
+memory-only so closing them leaves nothing behind.
+
+Ranges, media streaming and manifest snapshots (kind 5128) are **not** implemented. A
+`Range` request gets the whole verified file with 200. Video therefore works only after
+a full download.
+
+### Origins and trust
+
+`nsite://<npub>` and `nsite://<npub>/<d>` are secure, standard, privileged origins
+registered in the single `registerPrivilegedSchemes()` call, so storage, service workers
+and NIP-07 behave as they do on `ncc://`. NIP-07 trust is a separate record from the same
+publisher's `ncc://` origin because the content model is different.
+
+The security state reports `transport: 'nsite'` with the manifest (title, aggregate,
+servers, file count, event id, update time). The padlock reads "Nostr site" and the site
+panel shows the manifest block instead of transport/anchor blocks.
+
+### Deferred
+
+- `transport: "nsite"` as an NCC-05 endpoint variant (a locator that can fall back from a
+  server to the site). Only worth a spec change if the fallback chain is wanted.
+- Manifest snapshots (`nsite://v<eventIdB36>`).
+- Disk persistence of manifests (they are re-fetched after restart).
+- Range support with incremental verification for media.
+- Evicting a single site's blobs from the global hash cache on "clear site data"; today
+  the whole cache is cleared with the session.

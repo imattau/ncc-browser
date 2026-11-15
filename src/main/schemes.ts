@@ -18,6 +18,7 @@
 
 import { protocol } from 'electron'
 import { EXTENSION_SCHEME } from '@shared/extensions'
+import { NSITE_SCHEME } from '@shared/nsite-url'
 import { NCC_SCHEME } from './protocol'
 
 /** Must run before `app.whenReady()`. */
@@ -25,6 +26,17 @@ export function registerPrivilegedSchemes(): void {
   protocol.registerSchemesAsPrivileged([
     {
       scheme: NCC_SCHEME,
+      privileges: {
+        standard: true,
+        secure: true,
+        supportFetchAPI: true,
+        corsEnabled: true,
+        stream: true,
+        allowServiceWorkers: true
+      }
+    },
+    {
+      scheme: NSITE_SCHEME,
       privileges: {
         standard: true,
         secure: true,

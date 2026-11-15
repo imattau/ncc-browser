@@ -13,7 +13,7 @@ export type TabKind = 'normal' | 'private' | 'tor'
 export type EndpointFamily = 'onion' | 'ipv6' | 'ipv4' | 'unknown'
 
 /** How the transport to the resolved endpoint is protected. */
-export type TransportSecurity = 'pinned-tls' | 'tls' | 'plaintext' | 'unknown'
+export type TransportSecurity = 'pinned-tls' | 'tls' | 'plaintext' | 'nsite' | 'unknown'
 
 /** Automatic uses the bundled Tor, then a local SOCKS proxy. Local uses the configured one. */
 export type TorMode = 'auto' | 'local'
@@ -472,6 +472,22 @@ export interface SecurityInfo {
   anchor: AnchorInfo | null
   /** The NCC-05 record that produced the endpoint, for the site panel. */
   locator: LocatorInfo | null
+  /** NIP-5A manifest that produced this page, when the page came from nsite://. */
+  manifest?: NsiteInfo | null
+}
+
+/** What the site panel shows for a page served from a NIP-5A manifest. */
+export interface NsiteInfo {
+  /** Named site id, or null for the author's root site. */
+  site: string | null
+  title: string | null
+  description: string | null
+  source: string | null
+  eventId: string
+  updatedAt: number
+  aggregate: string | null
+  servers: string[]
+  files: number
 }
 
 /** How old the record behind the current page is, and where it came from. */
@@ -489,7 +505,7 @@ export interface LocatorInfo {
   fallback: boolean
 }
 
-export type PageMode = 'blank' | 'ncc' | 'web' | 'error'
+export type PageMode = 'blank' | 'ncc' | 'nsite' | 'web' | 'error'
 
 export interface TabSummary {
   id: string
@@ -728,6 +744,30 @@ export const ERROR_COPY: Record<string, { title: string; hint: string }> = {
   'no-record': {
     title: 'No locator published',
     hint: 'The npub is valid, but no fresh NCC-05 (kind 30058) record was found on the configured relays. Check that the publisher is online and pointed at these relays.'
+  },
+  'no-manifest': {
+    title: 'No site published',
+    hint: 'No NIP-5A manifest was found for this npub on the configured relays. For a named site, check the site id; for a root site, look for a kind 15128 event.'
+  },
+  'manifest-invalid': {
+    title: 'Malformed site manifest',
+    hint: 'The manifest was signed by the right key, but it has no usable path entries or contains an invalid hash.'
+  },
+  'no-file': {
+    title: 'File not in this site',
+    hint: 'The manifest does not list this path, and no /404.html was published. Static sites only serve the files in their manifest.'
+  },
+  'blob-unavailable': {
+    title: 'File unavailable',
+    hint: 'The manifest lists this file, but no Blossom server returned it. The author needs to republish the blob, or add a server hint.'
+  },
+  'hash-mismatch': {
+    title: 'File failed verification',
+    hint: 'A Blossom server returned bytes that do not match the sha256 in the signed manifest. The file was discarded.'
+  },
+  'too-large': {
+    title: 'File is too large',
+    hint: 'The file exceeds the 25 MB limit for hash-verified downloads. Large media is not supported yet.'
   },
   expired: {
     title: 'Locator expired',

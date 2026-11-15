@@ -7,6 +7,7 @@
  */
 
 import { buildNccUrl, looksLikeNccInput, parseNccAddress } from './ncc-url'
+import { buildNsiteUrl, looksLikeNsiteInput, parseNsiteAddress } from './nsite-url'
 import {
   buildSearchUrl,
   resolveSearchTemplate,
@@ -21,6 +22,7 @@ export interface OmniboxContext extends SearchSettings {
 
 export type OmniboxTarget =
   | { kind: 'ncc'; url: string }
+  | { kind: 'nsite'; url: string }
   | { kind: 'web'; url: string }
   | { kind: 'search'; url: string; query: string; engineLabel: string }
   | { kind: 'invalid'; code: string; message: string }
@@ -47,6 +49,17 @@ export function classifyOmniboxInput(raw: string, context: OmniboxContext): Omni
   const query = forcedSearch ? text.slice(1).trim() : text
 
   if (!forcedSearch) {
+    if (looksLikeNsiteInput(text)) {
+      try {
+        return { kind: 'nsite', url: buildNsiteUrl(parseNsiteAddress(text)) }
+      } catch (error) {
+        return invalid(
+          'invalid-address',
+          error instanceof Error ? error.message : 'That is not a valid nsite address'
+        )
+      }
+    }
+
     if (/^ncc:/i.test(text) || looksLikeNccInput(text)) {
       try {
         const address = parseNccAddress(text)
@@ -78,7 +91,7 @@ export function classifyOmniboxInput(raw: string, context: OmniboxContext): Omni
     if (scheme && !/^[a-z][a-z0-9+.-]*:\d+([/?#]|$)/i.test(text)) {
       return invalid(
         'unsupported-scheme',
-        `Only ncc://, http:// and https:// addresses are supported (got ${scheme[1]}:)`
+        `Only ncc://, nsite://, http:// and https:// addresses are supported (got ${scheme[1]}:)`
       )
     }
 
@@ -103,6 +116,7 @@ export function omniboxActionLabel(target: OmniboxTarget): string {
     case 'search':
       return `Search ${target.engineLabel} for "${truncate(target.query, 70)}"`
     case 'ncc':
+    case 'nsite':
     case 'web':
       return `Open ${target.url}`
     case 'invalid':

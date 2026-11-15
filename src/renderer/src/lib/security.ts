@@ -65,7 +65,9 @@ export function securitySummary(state: NavState): SecuritySummary {
 
   const tone: SecurityTone = !security
     ? 'muted'
-    : security.transport === 'pinned-tls' || security.transport === 'tls'
+    : security.transport === 'pinned-tls' ||
+        security.transport === 'tls' ||
+        security.transport === 'nsite'
       ? 'ok'
       : security.transport === 'plaintext'
         ? 'warn'
@@ -80,14 +82,18 @@ export function securitySummary(state: NavState): SecuritySummary {
   const anchorState = anchor?.status ?? 'none'
   const torSuffix = state.tor.active ? ' over Tor' : ''
 
+  const nsite = security?.transport === 'nsite'
+
   return {
     tone,
     label,
     host: security?.host ?? '',
     anchorState,
     tooltip: !security
-      ? 'NCC page — resolution details'
-      : `${transportLabel(security.transport)}${torSuffix} · ${security.host}${anchor ? ` · NCC-02 ${anchor.status}` : ''} — click for details`,
+      ? `${state.mode === 'nsite' ? 'Nostr site' : 'NCC page'} — resolution details`
+      : nsite
+        ? `${transportLabel(security.transport)}${torSuffix} · files hash-verified — click for details`
+        : `${transportLabel(security.transport)}${torSuffix} · ${security.host}${anchor ? ` · NCC-02 ${anchor.status}` : ''} — click for details`,
     clickable: true
   }
 }
@@ -104,5 +110,6 @@ function transportLabel(transport: string): string {
   if (transport === 'pinned-tls') return 'Pinned TLS'
   if (transport === 'tls') return 'TLS'
   if (transport === 'plaintext') return 'Plaintext'
+  if (transport === 'nsite') return 'Nostr site'
   return 'Unknown transport'
 }

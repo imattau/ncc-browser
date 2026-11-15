@@ -101,6 +101,10 @@ export function SiteInfoPanel({
           />
         ) : null}
 
+        {security?.manifest ? (
+          <NsiteBlock info={security.manifest} address={pageUrl} />
+        ) : null}
+
         {signerOrigin && !state.tor.tabTor ? (
           <SignerAccessBlock
             state={signerOrigin}
@@ -139,7 +143,7 @@ export function SiteInfoPanel({
           </div>
         ) : null}
 
-        {!web && security ? (
+        {!web && security && security.transport !== 'nsite' ? (
           <AnchorBlock anchor={anchor} />
         ) : null}
 
@@ -149,9 +153,9 @@ export function SiteInfoPanel({
 
         {!web ? (
           <p className="border-t border-[color:var(--color-line)] pt-2 text-ui-105 leading-relaxed text-[color:var(--color-faint)]">
-            The npub in the address is the trust anchor. NCC-02 adds service intent and a
-            transport key; NCC-05 supplies the reachable endpoint. A conflicting transport
-            key fails closed.
+            {security?.transport === 'nsite'
+              ? 'The manifest signature and event ordering decide what this site is; each file is checked against its sha256 before it is served.'
+              : 'The npub in the address is the trust anchor. NCC-02 adds service intent and a transport key; NCC-05 supplies the reachable endpoint. A conflicting transport key fails closed.'}
           </p>
         ) : null}
       </div>
@@ -251,6 +255,13 @@ function TransportBlock({
             icon: Lock,
             tone: 'text-[color:var(--color-accent)]'
           }
+        : transport === 'nsite'
+        ? {
+            title: 'Nostr site',
+            hint: 'Files came from Blossom and match the sha256 in a signed NIP-5A manifest. No server identity is trusted.',
+            icon: Globe,
+            tone: 'text-[color:var(--color-ok)]'
+          }
         : transport === 'plaintext'
           ? {
               title: viaTor ? 'HTTP over Tor' : 'Plaintext',
@@ -285,6 +296,71 @@ function TransportBlock({
         {copy.hint}
       </p>
       {host ? <p className="mt-1 truncate font-mono text-ui-10 text-[color:var(--color-faint)]">{host}</p> : null}
+    </div>
+  )
+}
+
+function NsiteBlock({
+  info,
+  address
+}: {
+  info: NonNullable<NavState['security']>['manifest']
+  address: string
+}) {
+  if (!info) return null
+  const updated = new Date(info.updatedAt * 1000)
+  return (
+    <div className="rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-field)] p-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="truncate text-ui-12 font-medium text-[color:var(--color-text-strong)]">
+            {info.title || (info.site ? `${info.site} (named site)` : 'Root site')}
+          </p>
+          <p className="mt-0.5 truncate font-mono text-ui-10 text-[color:var(--color-faint)]">
+            {address}
+          </p>
+        </div>
+        <span className="shrink-0 rounded border border-[color:var(--color-ok)]/25 px-1.5 py-0.5 text-ui-95 text-[color:var(--color-ok)]">
+          hash verified
+        </span>
+      </div>
+      {info.description ? (
+        <p className="mt-2 text-ui-11 leading-relaxed text-[color:var(--color-muted)]">
+          {info.description}
+        </p>
+      ) : null}
+      <dl className="mt-2 grid grid-cols-2 gap-1 text-ui-10">
+        <div>
+          <dt className="text-[color:var(--color-muted)]">Files</dt>
+          <dd className="font-mono text-[color:var(--color-text-soft)]">{info.files}</dd>
+        </div>
+        <div>
+          <dt className="text-[color:var(--color-muted)]">Updated</dt>
+          <dd className="font-mono text-[color:var(--color-text-soft)]">
+            {Number.isNaN(updated.getTime()) ? '—' : updated.toISOString().slice(0, 10)}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-[color:var(--color-muted)]">Blossom servers</dt>
+          <dd className="font-mono text-[color:var(--color-text-soft)]">
+            {info.servers.length || 'from 10063'}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-[color:var(--color-muted)]">Manifest</dt>
+          <dd className="font-mono text-[color:var(--color-text-soft)]">
+            {info.eventId.slice(0, 10)}…
+          </dd>
+        </div>
+      </dl>
+      {info.aggregate ? (
+        <p className="mt-1 truncate font-mono text-ui-10 text-[color:var(--color-faint)]">
+          aggregate {info.aggregate.slice(0, 16)}…
+        </p>
+      ) : null}
+      {info.source ? (
+        <p className="mt-1 truncate text-ui-10 text-[color:var(--color-faint)]">{info.source}</p>
+      ) : null}
     </div>
   )
 }

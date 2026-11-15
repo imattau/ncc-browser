@@ -233,6 +233,15 @@ function actionSuggestion(target: OmniboxTarget): OmniboxSuggestion | null {
         detail: 'NCC service',
         url: target.url
       }
+    case 'nsite':
+      return {
+        id: 'action:nsite',
+        kind: 'action',
+        icon: 'ncc',
+        title: omniboxActionLabel(target),
+        detail: 'Nostr site',
+        url: target.url
+      }
     case 'web':
       return {
         id: 'action:web',

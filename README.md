@@ -61,12 +61,41 @@ ncc://npub1…/web/docs
 ```
 
 The address bar also accepts `npub1…/web`, `ncc:npub1…/web`, and plain `http(s)://`
-URLs. A URL passed on the command line opens on launch:
+URLs, plus `nsite://` for NIP-5A static sites (below). A URL passed on the command line
+opens on launch:
 
 ```bash
 npm run build
 npx electron . 'ncc://npub1…/web'
 ```
+
+---
+
+## Static sites: `nsite://`
+
+NIP-5A sites are served natively, without an HTTP host:
+
+- `nsite://<npub>/` is the author's root site (kind `15128`).
+- `nsite://<npub>/<d>/` is a named site (kind `35128`), e.g. `nsite://npub1…/blog/`.
+
+Files are fetched from Blossom and checked against the sha256 in the signed manifest
+before a single byte reaches the page, so a mirror can cause a miss but never wrong
+bytes. The padlock shows "Nostr site" and the panel lists the manifest's title, aggregate
+hash, servers and update time.
+
+Limits worth knowing:
+
+- The first path segment is a named site when it looks like a NIP-5A d tag
+  (`[a-z0-9-]{1,13}`), otherwise it is a root-site path. Root-site pages should link to
+  files with extensions (`/about.html`), not extensionless directories.
+- 25 MB per file, no `Range` support yet: video plays only after the whole blob is
+  downloaded and verified.
+- Manifests are cached for 60 s and refreshed in the background; a forced reload asks
+  the relays again. Snapshots (`nsite://v…`) are not supported yet.
+
+A gateway deployment still works and is a useful fallback: publish an NCC-05 locator
+whose endpoint is `<npub>.nsite-host.com`, then `ncc://<npub>/site/` resolves through
+NCC with TLS pinning as usual.
 
 ---
 
@@ -777,7 +806,7 @@ general IPC bridge.
 ## Testing
 
 ```bash
-npm test       # 428 unit tests: URL parser, locator rules, resolver, routing, pins,
+npm test       # 456 unit tests: URL parser, locator rules, resolver, routing, pins,
                # signer crypto, identity storage, NIP-46, approvals, permissions,
                # ephemeral signer permissions, shortcuts, context menus, relays,
                # downloads, tab order, bookmarks, favicons, session storage, NCC-02
@@ -875,8 +904,8 @@ The release job also uploads `SHA256SUMS.txt`. Pushing a tag is the whole releas
 
 ```bash
 npm version minor --no-git-tag-version   # or edit package.json
-git commit -am "Release v0.9.1"
-git tag -a v0.9.1 -m "Nostr Navigator v0.9.1"
+git commit -am "Release v0.10.0"
+git tag -a v0.10.0 -m "Nostr Navigator v0.10.0"
 git push origin main --follow-tags
 ```
 

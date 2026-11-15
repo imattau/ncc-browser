@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { nip19 } from 'nostr-tools'
 import { parseNccAddress } from '@shared/ncc-url'
+import { parseNsiteAddress } from '@shared/nsite-url'
 import type { TabKind } from '@shared/types'
 import { ApprovalBroker } from './approval'
 import { applyThemeSource } from './appearance'
@@ -25,6 +26,9 @@ import { electronClipboard, electronFileDialogs, registerPasswordIpc } from './p
 import { PasswordService } from './passwords/service'
 import { EndpointHealth } from './ncc/health'
 import { closeSharedPool, NccResolver, signerFromSecret, type LocatorSigner } from './ncc/resolver'
+import { NsiteBlobs } from './nsite/blob'
+import { NsiteResolver } from './nsite/resolver'
+import { installNsiteProtocol } from './nsite/protocol'
 import { installCertificatePinning, PinStore } from './pins'
 import { installNccProtocol, type ProtocolActivity } from './protocol'
 import { registerPrivilegedSchemes } from './schemes'
@@ -151,6 +155,22 @@ app.whenReady().then(async () => {
   const torResolver = new NccResolver({ ...resolverOptions, query: torRelayPool.query })
   const resolvers = [resolver, privateResolver, torResolver]
 
+  const nsiteRelays = () => config.get().relays.map((entry) => entry.url).filter(Boolean)
+  const nsiteResolver = new NsiteResolver({ query: relayPool.query, relays: nsiteRelays })
+  const privateNsiteResolver = new NsiteResolver({ query: relayPool.query, relays: nsiteRelays })
+  const torNsiteResolver = new NsiteResolver({ query: torRelayPool.query, relays: nsiteRelays })
+  const nsiteResolvers: Record<TabKind, NsiteResolver> = {
+    normal: nsiteResolver,
+    private: privateNsiteResolver,
+    tor: torNsiteResolver
+  }
+  const blobDirectory = join(app.getPath('userData'), 'nsite-blobs')
+  const nsiteBlobs: Record<TabKind, NsiteBlobs> = {
+    normal: new NsiteBlobs({ fetch: (url, init) => content.normal.fetch(url, init), directory: blobDirectory }),
+    private: new NsiteBlobs({ fetch: (url, init) => content.private.fetch(url, init), directory: null }),
+    tor: new NsiteBlobs({ fetch: (url, init) => content.tor.fetch(url, init), directory: null })
+  }
+
   const relayLocator = new RelayLocatorService({
     resolver,
     entries: () => config.getRelayEntries(),
@@ -249,6 +269,8 @@ app.whenReady().then(async () => {
     endpointOwners[kind].clear()
     if (kind === 'private') privateResolver.clearCache()
     else torResolver.clearCache()
+    nsiteResolvers[kind].clearCache()
+    nsiteBlobs[kind].clear()
     void clearContentSession(content[kind]).catch((error) =>
       console.warn(`[session] could not clear the ${kind} session:`, error)
     )
@@ -275,6 +297,14 @@ app.whenReady().then(async () => {
     forceTor: true,
     strictTor: false
   })
+  for (const kind of ['normal', 'private', 'tor'] as const) {
+    installNsiteProtocol({
+      session: content[kind],
+      resolver: nsiteResolvers[kind],
+      blobs: nsiteBlobs[kind],
+      onActivity: (activity) => shell?.reportNsiteActivity(activity)
+    })
+  }
   installExtensionProtocol(
     [content.normal, content.private, content.tor, content.extensions],
     extensionRegistry
@@ -290,18 +320,21 @@ app.whenReady().then(async () => {
   const initialSession = sessionStore.load()
 
   const invalidateSite = (rawUrl: string, kind: TabKind): void => {
-    let pubkey = ''
-    let service: string | null = null
     try {
       const parsed = parseNccAddress(rawUrl)
-      pubkey = parsed.pubkey
-      service = parsed.service
-    } catch {
+      const resolver =
+        kind === 'private' ? privateResolver : kind === 'tor' ? torResolver : resolvers[0]
+      resolver.invalidate(parsed.pubkey, parsed.service)
       return
+    } catch {
+      // Not an NCC address; try nsite below.
     }
-    const resolver =
-      kind === 'private' ? privateResolver : kind === 'tor' ? torResolver : resolvers[0]
-    resolver.invalidate(pubkey, service)
+    try {
+      const parsed = parseNsiteAddress(rawUrl)
+      nsiteResolvers[kind].invalidate(parsed.pubkey, parsed.site)
+    } catch {
+      // Neither scheme: nothing to invalidate.
+    }
   }
 
   shell = new BrowserShell({

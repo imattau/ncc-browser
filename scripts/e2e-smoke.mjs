@@ -385,6 +385,45 @@ function publishLocator(relay, d, endpoints, options = {}) {
   return event
 }
 
+function startBlossom(files) {
+  const server = createServer((request, response) => {
+    const hash = String(request.url ?? '/').replace(/^\/+/, '').split('?')[0]
+    const file = files.get(hash)
+    if (!file) {
+      response.writeHead(404, { 'content-type': 'text/plain' })
+      response.end('not found')
+      return
+    }
+    response.writeHead(200, {
+      'content-type': file.type,
+      'content-length': String(file.bytes.length)
+    })
+    response.end(file.bytes)
+  })
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () =>
+      resolve({ server, port: server.address().port })
+    )
+  })
+}
+
+function publishNsite(relay, { d, paths, servers, at }) {
+  const tags = paths.map(([path, hash]) => ['path', path, hash])
+  if (d) tags.unshift(['d', d])
+  for (const server of servers) tags.push(['server', server])
+  const event = finalizeEvent(
+    {
+      kind: d ? 35128 : 15128,
+      created_at: at ?? Math.floor(Date.now() / 1000),
+      tags,
+      content: ''
+    },
+    serviceSk
+  )
+  relay.events.push(event)
+  return event
+}
+
 function publishRelayList(relay, hintRelayUrl) {
   const event = finalizeEvent(
     {
@@ -3280,6 +3319,89 @@ async function main() {
       'never publishes plaintext credentials',
       vaultEvents.every((entry) => !/alice|s3cret|n3wpass|imported-pass/.test(entry.content))
     )
+
+    // NIP-5A: a static site served from a signed manifest plus Blossom blobs.
+    const indexBytes = Buffer.from('<!doctype html><title>Nsite E2E</title><h1>Hello from Nostr</h1>')
+    const indexHash = createHash('sha256').update(indexBytes).digest('hex')
+    const notFoundBytes = Buffer.from('<h1>Custom 404</h1>')
+    const notFoundHash = createHash('sha256').update(notFoundBytes).digest('hex')
+    const dirBytes = Buffer.from('<h1>Inside the directory</h1>')
+    const dirHash = createHash('sha256').update(dirBytes).digest('hex')
+    const tamperedHash = createHash('sha256').update('expected bytes').digest('hex')
+    const blossomFiles = new Map([
+      [indexHash, { bytes: indexBytes, type: 'text/html; charset=utf-8' }],
+      [notFoundHash, { bytes: notFoundBytes, type: 'text/html; charset=utf-8' }],
+      [tamperedHash, { bytes: Buffer.from('tampered'), type: 'text/plain' }]
+    ])
+    const blossom = await startBlossom(blossomFiles)
+    // Pin the relay list so the manifest query cannot miss because an earlier test
+    // changed the configured relays.
+    await evaluate(
+      chrome,
+      `window.ncc.setRelays([${JSON.stringify(`ws://127.0.0.1:${relayA.port}`)}])`
+    )
+    await sleep(300)
+    publishNsite(relayA, {
+      paths: [
+        ['/index.html', indexHash],
+        ['/404.html', notFoundHash],
+        ['/tampered.txt', tamperedHash]
+      ],
+      servers: [`http://127.0.0.1:${blossom.port}`]
+    })
+    const blogBytes = Buffer.from('<h1>Blog home</h1>')
+    const blogHash = createHash('sha256').update(blogBytes).digest('hex')
+    if (true) {
+      // Named site: same relay, different manifest kind and d tag.
+      blossomFiles.set(blogHash, { bytes: blogBytes, type: 'text/html; charset=utf-8' })
+      blossomFiles.set(dirHash, { bytes: dirBytes, type: 'text/html; charset=utf-8' })
+      publishNsite(relayA, {
+        d: 'blog',
+        paths: [
+          ['/index.html', blogHash],
+          ['/dir/index.html', dirHash]
+        ],
+        servers: [`http://127.0.0.1:${blossom.port}`]
+      })
+    }
+
+    await evaluate(chrome, `window.ncc.navigate(${JSON.stringify(`nsite://${serviceNpub}/`)})`)
+    await waitForText(cdp, 'Hello from Nostr', 120)
+    check('serves a NIP-5A site over nsite://', true)
+
+    const nsiteSecurity = await evaluate(chrome, 'window.ncc.getState().then((state) => state.security)')
+    check(
+      'reports a hash-verified nsite in the security state',
+      nsiteSecurity?.transport === 'nsite' &&
+        nsiteSecurity?.manifest?.files === 3 &&
+        nsiteSecurity?.manifest?.servers?.length === 1,
+      JSON.stringify(nsiteSecurity?.manifest ?? null)
+    )
+
+    await evaluate(
+      chrome,
+      `window.ncc.navigate(${JSON.stringify(`nsite://${serviceNpub}/missing.html`)})`
+    )
+    await waitForText(cdp, 'Custom 404', 120)
+    check('serves the site own 404 page', true)
+
+    await evaluate(chrome, `window.ncc.navigate(${JSON.stringify(`nsite://${serviceNpub}/blog/dir`)})`)
+    await waitForText(cdp, 'Inside the directory', 120)
+    const dirPath = await evaluate(cdp, 'location.pathname')
+    check('adds the trailing slash for a directory', dirPath === '/blog/dir/', String(dirPath))
+
+    await evaluate(
+      chrome,
+      `window.ncc.navigate(${JSON.stringify(`nsite://${serviceNpub}/tampered.txt`)})`
+    )
+    await waitForText(cdp, 'File failed verification', 120)
+    check('rejects a blob that fails hash verification', true)
+
+    await evaluate(
+      chrome,
+      `window.ncc.navigate(${JSON.stringify(`nsite://${serviceNpub}/`)})`)
+    await waitForText(cdp, 'Hello from Nostr', 120)
+    blossom.server.close()
 
     const privateTabId = await evaluate(
       chrome,
