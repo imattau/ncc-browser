@@ -617,7 +617,14 @@ tell the difference.
   showing the exact event being signed; "Always allow" is remembered per
   `ncc://<npub>/<service>` for NCC pages, and per origin for clearnet. While the sheet is
   open the remote page is hidden, so it cannot fake or cover the prompt. Settings →
-  Trusted services lists remembered origins with a revoke button.
+  Trusted services lists remembered origins with a revoke button, and the padlock's site
+  panel toggles trust for the page in front of you.
+- **Prompts do not pile up.** Identical requests made at the same time share one sheet,
+  and each origin has its own queue, so a page waiting on approval does not block other
+  sites. Two calls repeat on every load and are granted to the origin for the session
+  once approved: reading your public key, and NIP-42 relay logins (kind 22242, shown as
+  "log in to a relay"). Publishing, reacting, and encrypting or decrypting content still
+  ask every time. A refusal stops the same request being asked again for 30 seconds.
 - **Validation** rejects malformed kinds, non-string tags, events more than 15 minutes in
   the future, and content over 1 MB before anything reaches the signer.
 - **Development overrides:** `NCC_IDENTITY_NSEC` loads a local key from the environment,
@@ -770,7 +777,7 @@ general IPC bridge.
 ## Testing
 
 ```bash
-npm test       # 420 unit tests: URL parser, locator rules, resolver, routing, pins,
+npm test       # 428 unit tests: URL parser, locator rules, resolver, routing, pins,
                # signer crypto, identity storage, NIP-46, approvals, permissions,
                # ephemeral signer permissions, shortcuts, context menus, relays,
                # downloads, tab order, bookmarks, favicons, session storage, NCC-02
@@ -868,8 +875,8 @@ The release job also uploads `SHA256SUMS.txt`. Pushing a tag is the whole releas
 
 ```bash
 npm version minor --no-git-tag-version   # or edit package.json
-git commit -am "Release v0.8.2"
-git tag -a v0.8.2 -m "Nostr Navigator v0.8.2"
+git commit -am "Release v0.9.0"
+git tag -a v0.9.0 -m "Nostr Navigator v0.9.0"
 git push origin main --follow-tags
 ```
 

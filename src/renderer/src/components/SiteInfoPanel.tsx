@@ -5,6 +5,7 @@ import {
   Clock,
   Cookie,
   Globe,
+  KeyRound,
   Lock,
   RefreshCw,
   ShieldAlert,
@@ -15,7 +16,7 @@ import {
 } from 'lucide-react'
 import { ERROR_COPY } from '@shared/types'
 import type { SiteDataInfo } from '@shared/site-data'
-import type { AnchorInfo, LocatorInfo, NavState, TransportSecurity } from '@shared/types'
+import type { AnchorInfo, LocatorInfo, NavState, SignerOriginState, TransportSecurity } from '@shared/types'
 import { clearnetState } from '../lib/clearnet'
 import { cn } from '../lib/cn'
 import { Popover, type PopoverAnchor } from './Popover'
@@ -39,6 +40,25 @@ export function SiteInfoPanel({
   const anchor = security?.anchor ?? null
   const failure = state.failure
   const web = state.mode === 'web'
+  const [signerOrigin, setSignerOrigin] = useState<SignerOriginState | null>(null)
+
+  const pageUrl = state.url || state.displayUrl
+  useEffect(() => {
+    if (!pageUrl) {
+      setSignerOrigin(null)
+      return
+    }
+    let alive = true
+    void window.ncc
+      .signerOrigin(pageUrl)
+      .then((next) => {
+        if (alive) setSignerOrigin(next)
+      })
+      .catch(() => undefined)
+    return () => {
+      alive = false
+    }
+  }, [pageUrl])
 
   return (
     <Popover
@@ -78,6 +98,19 @@ export function SiteInfoPanel({
             host={security.host}
             pinned={security.pinned}
             viaTor={security.viaTor || state.tor.active}
+          />
+        ) : null}
+
+        {signerOrigin && !state.tor.tabTor ? (
+          <SignerAccessBlock
+            state={signerOrigin}
+            onChange={(trusted) => {
+              const url = state.url || state.displayUrl
+              void window.ncc
+                .setSignerTrust(url, trusted)
+                .then((next) => next && setSignerOrigin(next))
+                .catch(() => undefined)
+            }}
           />
         ) : null}
 
@@ -252,6 +285,46 @@ function TransportBlock({
         {copy.hint}
       </p>
       {host ? <p className="mt-1 truncate font-mono text-ui-10 text-[color:var(--color-faint)]">{host}</p> : null}
+    </div>
+  )
+}
+
+function SignerAccessBlock({
+  state,
+  onChange
+}: {
+  state: SignerOriginState
+  onChange: (trusted: boolean) => void
+}) {
+  return (
+    <div className="rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-field)] p-3">
+      <div className="flex items-center justify-between gap-2">
+        <span
+          className={cn(
+            'inline-flex items-center gap-1.5 text-ui-115 font-medium',
+            state.trusted ? 'text-[color:var(--color-ok)]' : 'text-[color:var(--color-muted)]'
+          )}
+        >
+          <KeyRound className="h-3.5 w-3.5" />
+          NIP-07 signer
+        </span>
+        <span className="rounded border border-[color:var(--color-line)] px-1.5 py-0.5 text-ui-95 text-[color:var(--color-muted)]">
+          {state.trusted ? 'trusted' : 'asks each time'}
+        </span>
+      </div>
+      <p className="mt-1 break-all text-ui-11 leading-relaxed text-[color:var(--color-muted)]">
+        {state.trusted
+          ? 'This service can read your public key, sign events and decrypt messages without asking. Revoke it if you no longer trust the publisher.'
+          : 'Every signing and decryption request asks first. Your public key and relay logins are remembered for the session once you allow them.'}
+      </p>
+      <button
+        type="button"
+        data-signer-trust-toggle
+        onClick={() => onChange(!state.trusted)}
+        className="mt-2 rounded-lg border border-[color:var(--color-line)] px-2.5 py-1.5 text-ui-11 text-[color:var(--color-text)] hover:bg-[color:var(--color-hover)]"
+      >
+        {state.trusted ? 'Revoke signer access' : 'Trust this service'}
+      </button>
     </div>
   )
 }

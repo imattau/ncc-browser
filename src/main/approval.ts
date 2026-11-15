@@ -16,6 +16,7 @@ export interface ApprovalBrokerDeps {
 }
 
 interface Pending {
+  request: SignerRequest
   resolve(decision: SignerDecision): void
   timer: ReturnType<typeof setTimeout>
 }
@@ -36,18 +37,28 @@ export class ApprovalBroker {
 
   request(request: Omit<SignerRequest, 'id'>): Promise<SignerDecision> {
     const id = randomUUID()
+    const full: SignerRequest = { ...request, id }
 
     return new Promise<SignerDecision>((resolve) => {
       const timer = setTimeout(() => {
         this.finish(id, { allow: false, remember: false }, 'timeout')
       }, this.timeoutMs)
 
-      this.pending.set(id, { resolve, timer })
+      this.pending.set(id, { request: full, resolve, timer })
       if (this.pending.size === 1) this.deps.setOverlay(true)
 
-      const sent = this.deps.send('ncc:signer-request', { ...request, id })
+      const sent = this.deps.send('ncc:signer-request', full)
       if (!sent) this.finish(id, { allow: false, remember: false }, 'unavailable')
     })
+  }
+
+  /**
+   * Requests still waiting for an answer, oldest first. The chrome renderer replays
+   * these on mount: a request can be raised while content finishes loading, before
+   * the renderer has subscribed, and `send()` cannot tell us that.
+   */
+  list(): SignerRequest[] {
+    return [...this.pending.values()].map((entry) => entry.request)
   }
 
   respond(id: string, decision: SignerDecision): void {

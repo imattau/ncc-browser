@@ -1592,15 +1592,28 @@ async function main() {
       (await evaluate(chrome, 'typeof window.nostr')) === 'undefined'
     )
 
-    // First NIP-07 call must show the in-app approval sheet.
+    // First NIP-07 call must show the in-app approval sheet. Two concurrent calls for
+    // the same thing share one prompt.
     await evaluateNoAwait(
       cdp,
       `window.nostr.getPublicKey()
         .then((value) => { window.__nip07Pub = value })
-        .catch((error) => { window.__nip07Error = String(error) })`
+        .catch((error) => { window.__nip07Error = String(error) });
+       window.nostr.getPublicKey()
+        .then((value) => { window.__nip07Pub2 = value })
+        .catch((error) => { window.__nip07Error2 = String(error) });`
     )
 
     await waitForText(chrome, 'Signer request', 80)
+    const queuedPrompts = await evaluate(
+      chrome,
+      'window.ncc.pendingSignerRequests().then((list) => list.length)'
+    )
+    check(
+      'coalesces identical NIP-07 calls into one prompt',
+      queuedPrompts === 1,
+      String(queuedPrompts)
+    )
     check(
       'shows an in-app signer prompt',
       (await evaluate(chrome, 'Boolean(document.querySelector("[data-signer-prompt]"))')) === true
@@ -1628,6 +1641,12 @@ async function main() {
 
     const approvedPub = await waitForValue(cdp, 'window.__nip07Pub')
     check('approval unblocks the NIP-07 call', approvedPub === signerPk, String(approvedPub))
+    const approvedPub2 = await waitForValue(cdp, 'window.__nip07Pub2')
+    check(
+      'one approval satisfies every waiting call',
+      approvedPub2 === signerPk,
+      String(approvedPub2)
+    )
     await sleep(300)
     check(
       'signer prompt closes after approval',
@@ -1684,6 +1703,13 @@ async function main() {
       chrome,
       'document.querySelector("[data-forget-trust]") ? "ready" : ""',
       60
+    )
+    check(
+      'site panel offers to revoke signer trust',
+      (await evaluate(
+        chrome,
+        'document.querySelector("[data-signer-trust-toggle]")?.textContent || ""'
+      )) === 'Revoke signer access'
     )
     await evaluate(chrome, 'document.querySelector("[data-forget-trust]").click()')
     await evaluate(chrome, 'document.querySelector("[data-clear-site-data]").click()')

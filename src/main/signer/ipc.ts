@@ -1,6 +1,6 @@
 import { ipcMain, type IpcMainInvokeEvent, type Session } from 'electron'
-import { isNostrId } from '@shared/ncc-url'
 import type { TabKind } from '@shared/types'
+import { signerOriginFromUrl } from './origin'
 import type { Caller, Nip07Service } from './service'
 
 /**
@@ -62,31 +62,18 @@ function callerOf(event: IpcMainInvokeEvent, sessions: Nip07ContentSession[]): C
     throw new Error('NIP-07 is not available on this page')
   }
 
-  if (url.protocol === 'ncc:') {
-    const pubkey = url.hostname.toLowerCase()
-    if (!isNostrId(pubkey)) throw new Error('Not an NCC page')
-
-    const raw = url.pathname.replace(/^\/+/, '')
-    const service = raw.startsWith('_/') ? raw.slice(2).split('/')[0] : raw.split('/')[0]
-    const label = `ncc://${pubkey}/${service || 'addr'}`
-    return {
-      origin: label,
-      label,
-      kind: content.kind,
-      ephemeral: content.kind !== 'normal',
-      torTab: content.kind === 'tor'
-    }
+  const resolved = signerOriginFromUrl(url.toString())
+  if (!resolved) {
+    throw new Error(
+      url.protocol === 'ncc:' ? 'Not an NCC page' : 'NIP-07 is not available on this page'
+    )
   }
 
-  if (url.protocol === 'https:' || url.protocol === 'http:') {
-    return {
-      origin: url.origin,
-      label: url.origin,
-      kind: content.kind,
-      ephemeral: content.kind !== 'normal',
-      torTab: content.kind === 'tor'
-    }
+  return {
+    origin: resolved.origin,
+    label: resolved.label,
+    kind: content.kind,
+    ephemeral: content.kind !== 'normal',
+    torTab: content.kind === 'tor'
   }
-
-  throw new Error('NIP-07 is not available on this page')
 }

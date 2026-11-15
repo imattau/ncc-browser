@@ -19,6 +19,7 @@ import { applyThemeSource } from './appearance'
 import type { IdentityManager } from './signer/manager'
 import type { PasswordService } from './passwords/service'
 import type { PermissionStore } from './signer/permissions'
+import { signerOriginFromUrl } from './signer/origin'
 import type { BrowserShell } from './shell'
 
 export interface IpcDeps {
@@ -386,6 +387,26 @@ export function registerIpc(deps: IpcDeps): void {
   })
 
   ipcMain.handle('ncc:signer-permissions', () => deps.permissions.list())
+
+  ipcMain.handle('ncc:signer-pending', (event) => (fromChrome(event) ? deps.approvals.list() : []))
+
+  ipcMain.handle('ncc:signer-origin', (event, raw: unknown) => {
+    if (!fromChrome(event)) return null
+    const resolved = signerOriginFromUrl(String(raw ?? ''))
+    if (!resolved) return null
+    return { ...resolved, trusted: deps.permissions.isTrusted(resolved.origin) }
+  })
+
+  ipcMain.handle('ncc:signer-trust', (event, payload: unknown) => {
+    if (!fromChrome(event)) return null
+    if (!payload || typeof payload !== 'object') return null
+    const { url, trusted } = payload as { url?: unknown; trusted?: unknown }
+    const resolved = signerOriginFromUrl(String(url ?? ''))
+    if (!resolved) return null
+    if (trusted === true) deps.permissions.trust(resolved.origin, resolved.label)
+    else deps.permissions.revoke(resolved.origin)
+    return { ...resolved, trusted: deps.permissions.isTrusted(resolved.origin) }
+  })
 
   ipcMain.handle('ncc:revoke-permission', (_event, origin: unknown) => {
     if (typeof origin === 'string') deps.permissions.revoke(origin)

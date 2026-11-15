@@ -205,6 +205,16 @@ endpoint without invalidating the record (NCC-05 §7).
   Approvals are an in-app sheet rendered by the chrome renderer: all content views are
   hidden while it is open, so the page cannot cover or spoof the prompt. A toolbar key
   icon shows the active identity and pending requests.
+- **Approval queue and grants (0.9.0):** prompts are queued per origin, so one page
+  cannot stack sheets and a pending prompt for one site does not hold up another.
+  Concurrent identical requests share a single prompt. Two calls repeat on every page
+  load and are granted to the origin for the session once approved — reading the public
+  key and NIP-42 relay authentication (kind 22242). Everything that signs or decrypts
+  content still asks, unless the origin is persistently trusted. A refusal suppresses
+  re-prompting for the same request for 30 s. Pending requests are replayed to the
+  chrome renderer on mount, so a request raised while content is still loading cannot
+  sit invisible until its timeout. The padlock's site panel shows and toggles trust for
+  the current origin alongside Settings → Signer permissions.
 - **Renderer isolation:** content view uses `sandbox: true`, `contextIsolation: true`,
   no Node, its own `persist:ncc-content` partition. The chrome UI never shares a
   session or origin with remote content.

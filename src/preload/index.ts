@@ -114,6 +114,9 @@ const api: NccApi = {
   identityDisconnect: () => ipcRenderer.invoke('ncc:identity-disconnect'),
   signerPermissions: () => ipcRenderer.invoke('ncc:signer-permissions'),
   revokePermission: (origin) => ipcRenderer.invoke('ncc:revoke-permission', origin),
+  pendingSignerRequests: () => ipcRenderer.invoke('ncc:signer-pending'),
+  signerOrigin: (url) => ipcRenderer.invoke('ncc:signer-origin', url),
+  setSignerTrust: (url, trusted) => ipcRenderer.invoke('ncc:signer-trust', { url, trusted }),
   respondToSigner: (id, allow, remember) =>
     ipcRenderer.invoke('ncc:signer-response', { id, allow, remember }),
   runCommand: (command) => ipcRenderer.invoke('ncc:command', command),

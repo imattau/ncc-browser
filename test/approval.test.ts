@@ -71,6 +71,26 @@ describe('ApprovalBroker', () => {
     expect(overlays).toEqual([true, false])
   })
 
+  it('lists pending requests and drops them once answered', async () => {
+    const { instance, sent } = broker()
+    const first = instance.request(REQUEST)
+    const second = instance.request({ ...REQUEST, method: 'getPublicKey' })
+
+    const ids = sent
+      .filter((entry) => entry.channel === 'ncc:signer-request')
+      .map((entry) => (entry.payload as { id: string }).id)
+    expect(instance.list().map((entry) => entry.id)).toEqual(ids)
+    expect(instance.list().map((entry) => entry.method)).toEqual(['signEvent', 'getPublicKey'])
+
+    instance.respond(ids[0], { allow: true, remember: false })
+    await first
+    expect(instance.list().map((entry) => entry.id)).toEqual([ids[1]])
+
+    instance.respond(ids[1], { allow: false, remember: false })
+    await second
+    expect(instance.list()).toEqual([])
+  })
+
   it('keeps the overlay while another request is pending', async () => {
     const { instance, sent, overlays } = broker()
     const first = instance.request(REQUEST)

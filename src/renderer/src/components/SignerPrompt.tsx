@@ -7,6 +7,8 @@ import { useFocusTrap } from '../lib/useFocusTrap'
 interface SignerPromptProps {
   request: SignerRequest
   onRespond: (allow: boolean, remember: boolean) => void
+  /** Further requests queued behind this one. */
+  waiting?: number
 }
 
 const MODE_LABEL: Record<SignerRequest['mode'], string> = {
@@ -15,7 +17,7 @@ const MODE_LABEL: Record<SignerRequest['mode'], string> = {
   none: 'No identity'
 }
 
-export function SignerPrompt({ request, onRespond }: SignerPromptProps) {
+export function SignerPrompt({ request, onRespond, waiting = 0 }: SignerPromptProps) {
   const [remember, setRemember] = useState(false)
   const cardRef = useRef<HTMLDivElement>(null)
   useFocusTrap(true, cardRef)
@@ -60,6 +62,11 @@ export function SignerPrompt({ request, onRespond }: SignerPromptProps) {
             </span>
             <div className="min-w-0">
               <h2 className="text-ui-13 font-semibold text-[color:var(--color-text-strong)]">Signer request</h2>
+              {waiting > 0 ? (
+                <p className="mt-0.5 text-ui-10 text-[color:var(--color-muted)]">
+                  {waiting} more waiting
+                </p>
+              ) : null}
               <p
                 className="mt-0.5 truncate font-mono text-ui-11 text-[color:var(--color-muted)]"
                 title={request.service}

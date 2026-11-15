@@ -38,6 +38,7 @@ import type {
   RelayEntry,
   RelayLocatorOutcome,
   SignerPermission,
+  SignerOriginState,
   SignerRequest,
   TabHistory,
   TorMode,
@@ -175,6 +176,11 @@ export interface NccApi {
   identityDisconnect(): Promise<IdentityStatus>
   signerPermissions(): Promise<SignerPermission[]>
   revokePermission(origin: string): Promise<SignerPermission[]>
+  /** Requests still waiting for an answer, replayed when chrome mounts. */
+  pendingSignerRequests(): Promise<SignerRequest[]>
+  /** NIP-07 trust for the page at `url`, as the site panel labels it. */
+  signerOrigin(url: string): Promise<SignerOriginState | null>
+  setSignerTrust(url: string, trusted: boolean): Promise<SignerOriginState | null>
   respondToSigner(id: string, allow: boolean, remember: boolean): Promise<void>
   runCommand(command: CommandId): Promise<void>
   setOverlay(reason: OverlayReason, active: boolean): Promise<void>

@@ -59,7 +59,8 @@ export function App() {
   const [downloads, setDownloads] = useState<DownloadNotice[]>([])
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([])
   const [identity, setIdentity] = useState<IdentityStatus | null>(null)
-  const [signerRequest, setSignerRequest] = useState<SignerRequest | null>(null)
+  const [signerRequests, setSignerRequests] = useState<SignerRequest[]>([])
+  const signerRequest = signerRequests[0] ?? null
   const [history, setHistory] = useState<TabHistory | null>(null)
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('general')
   const [siteInfoAnchor, setSiteInfoAnchor] = useState<PopoverAnchor | null>(null)
@@ -319,13 +320,25 @@ export function App() {
   }, [])
 
   useEffect(() => {
-    const unsubscribe = window.ncc.onSignerRequest((request) => {
+    const remember = (request: SignerRequest): void => {
       showOverlay(null)
-      setSignerRequest(request)
-    })
+      setSignerRequests((current) =>
+        current.some((entry) => entry.id === request.id) ? current : [...current, request]
+      )
+    }
+
+    const unsubscribe = window.ncc.onSignerRequest(remember)
     const offResolved = window.ncc.onSignerResolved((id) =>
-      setSignerRequest((current) => (current?.id === id ? null : current))
+      setSignerRequests((current) => current.filter((entry) => entry.id !== id))
     )
+
+    // A request raised before this renderer mounted was sent to nobody; the broker
+    // keeps it pending, so replay whatever it still has.
+    void window.ncc
+      .pendingSignerRequests()
+      .then((pending) => pending.forEach(remember))
+      .catch(() => undefined)
+
     return () => {
       unsubscribe()
       offResolved()
@@ -494,10 +507,9 @@ export function App() {
 
   const respondToSigner = useCallback(
     (allow: boolean, remember: boolean) => {
-      const request = signerRequest
-      if (!request) return
-      setSignerRequest(null)
-      void window.ncc.respondToSigner(request.id, allow, remember)
+      if (!signerRequest) return
+      setSignerRequests((current) => current.filter((entry) => entry.id !== signerRequest.id))
+      void window.ncc.respondToSigner(signerRequest.id, allow, remember)
     },
     [signerRequest]
   )
@@ -672,7 +684,11 @@ export function App() {
       ) : null}
 
       {signerRequest ? (
-        <SignerPrompt request={signerRequest} onRespond={respondToSigner} />
+        <SignerPrompt
+          request={signerRequest}
+          onRespond={respondToSigner}
+          waiting={signerRequests.length - 1}
+        />
       ) : null}
 
       {passwordSave ? (

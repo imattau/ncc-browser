@@ -664,6 +664,13 @@ export interface SignerPermission {
   lastUsedAt: number
 }
 
+/** Trust state for the page the site panel is showing. */
+export interface SignerOriginState {
+  origin: string
+  label: string
+  trusted: boolean
+}
+
 export interface SignerRequest {
   id: string
   method: string
