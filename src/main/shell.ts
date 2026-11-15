@@ -204,6 +204,13 @@ export class BrowserShell {
     return this.activeId ? this.pageForTab(this.activeId) : null
   }
 
+  /** Live contents for the active tab; used for in-page site-data clearing. */
+  activeContents(): WebContents | null {
+    const tab = this.activeId ? this.tabs.find((entry) => entry.id === this.activeId) : null
+    const contents = tab?.view.webContents
+    return contents && !contents.isDestroyed() ? contents : null
+  }
+
   tabIdForContents(webContentsId: number): string | null {
     const tab = this.tabs.find(
       (entry) => !entry.view.webContents.isDestroyed() && entry.view.webContents.id === webContentsId

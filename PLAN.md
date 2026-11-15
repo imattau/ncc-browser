@@ -280,6 +280,12 @@ is CJS and the package is ESM-only.
   `ncc.storage.private`, folder/`.nccx` install with a dependency-free ZIP reader,
   private-tab grants, a hard Tor exclusion, and an `ncc-ext port` CLI that rewrites
   Chromium manifests and reports unsupported APIs.
+- **M15 — Cookies, cache and site data:** ✅ Padlock → **Cookies and site data** clears
+  cookies plus `localStorage`, IndexedDB, CacheStorage and service workers for the active
+  site, with an opt-in **Forget trust decisions** that also drops the HTTP exception,
+  NIP-07 permission and never-save rule. NCC storage is keyed by identity; server cookies
+  are cleared on the endpoint host that actually holds them. Settings → Security gains a
+  **Cache** card with per-session sizes and a session-wide clear.
 
 ---
 

@@ -13,6 +13,8 @@ import { ConfigStore } from './config'
 import { DownloadManager } from './downloads'
 import { registerIpc } from './ipc'
 import { registerExtensionIpc } from './extensions/ipc'
+import { SiteDataService } from './site-data'
+import { registerSiteDataIpc } from './site-data-ipc'
 import { installExtensionProtocol, registerExtensionScheme } from './extensions/protocol'
 import { ExtensionRegistry } from './extensions/registry'
 import { ExtensionService } from './extensions/runtime'
@@ -354,6 +356,15 @@ app.whenReady().then(async () => {
   extensions = extensionService
   registerExtensionIpc(extensionService, { shell })
   extensionService.start()
+
+  const siteDataService = new SiteDataService({
+    host: shell,
+    config,
+    permissions,
+    sessions: { normal: content.normal, private: content.private, tor: content.tor },
+    extensionSession: content.extensions
+  })
+  registerSiteDataIpc(siteDataService, { shell })
 
   shell.window.on('closed', () => approvals.cancelAll())
 

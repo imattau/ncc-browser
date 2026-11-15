@@ -435,6 +435,32 @@ ships Tor's BSD licence and a source notice alongside the binary.
 
 ---
 
+## Cookies, cache and site data
+
+- **Padlock → Cookies and site data** clears cookies plus `localStorage`, IndexedDB,
+  CacheStorage and service workers for the current site. The first click arms the button
+  and the second confirms.
+- **Forget trust decisions** is an opt-in checkbox on that card. It also removes the HTTP
+  exception, the “Always allow” NIP-07 permission and any never-save password rule for
+  the service.
+- **NCC scope** — DOM storage is keyed by `ncc://<npub>`, so clearing covers every
+  service published by that identity. Server cookies belong to the resolved endpoint
+  host because that is where the protocol handler fetches documents, so clearing them
+  also signs out other services on the same endpoint. The card names that host.
+- **Settings → Security → Cache** lists the normal, private, Tor and extension cache
+  sizes and clears the network cache. Cookies, sign-ins and site data are untouched.
+- Private and Tor sessions are already wiped when their last tab closes; their cache
+  row drops to zero then.
+- Site data does **not** touch saved passwords (Settings → Passwords), extension storage
+  (Settings → Extensions), bookmarks, history or the on-disk locator cache.
+- Chromium has no per-origin HTTP cache API, so per-site clearing covers cookies and
+  storage while the network cache is cleared session-wide. **Force reload** also clears
+  the cache before reloading.
+
+![Site information with cookies and site data](./docs/site-info.png)
+
+---
+
 ## Private tabs
 
 Private tabs use an in-memory content session (`ncc-private`) separate from normal
@@ -684,6 +710,8 @@ src/main
   extensions/storage.ts    local/sync/session/private storage areas
   extensions/zip.ts        dependency-free ZIP reader with zip-slip guards
   extensions/ipc.ts        chrome management IPC and the content/page bridge
+  site-data.ts         per-site cookie/storage clearing and the session cache
+  site-data-ipc.ts     chrome-only IPC for the padlock and cache controls
 src/preload
   index.ts           contextBridge → window.ncc (chrome only)
   content.ts         window.nostr for pages; extension shim for ncc-ext:// pages
@@ -709,7 +737,7 @@ general IPC bridge.
 ## Testing
 
 ```bash
-npm test       # 400 unit tests: URL parser, locator rules, resolver, routing, pins,
+npm test       # 407 unit tests: URL parser, locator rules, resolver, routing, pins,
                # signer crypto, identity storage, NIP-46, approvals, permissions,
                # ephemeral signer permissions, shortcuts, context menus, relays,
                # downloads, tab order, bookmarks, favicons, session storage, NCC-02

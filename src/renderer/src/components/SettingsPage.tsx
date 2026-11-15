@@ -18,6 +18,7 @@ import {
 } from 'lucide-react'
 import { DEFAULT_APPEARANCE, DEFAULT_RELAYS, DEFAULT_TOR_SOCKS } from '@shared/types'
 import { SEARCH_ENGINES, type SearchEngineId } from '@shared/search'
+import { formatBytes, type CacheInfo } from '@shared/site-data'
 import type {
   AppearanceConfig,
   HttpsMode,
@@ -62,6 +63,15 @@ const SECTIONS: Array<{ id: SettingsSection; label: string; icon: typeof KeyRoun
   { id: 'trusted', label: 'Trusted services', icon: ShieldCheck },
   { id: 'about', label: 'About', icon: CircleHelp }
 ]
+
+function CacheRow({ label, bytes }: { label: string; bytes: number }) {
+  return (
+    <div className="flex items-baseline justify-between gap-2 rounded-lg bg-[color:var(--color-field)] px-2.5 py-1.5">
+      <dt className="text-[color:var(--color-muted)]">{label}</dt>
+      <dd className="font-mono text-ui-105 text-[color:var(--color-text-soft)]">{formatBytes(bytes)}</dd>
+    </div>
+  )
+}
 
 function errorMessage(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error)
@@ -173,6 +183,10 @@ export function SettingsPage({
   const [appearance, setAppearance] = useState<AppearanceConfig>(DEFAULT_APPEARANCE)
   const [appearanceError, setAppearanceError] = useState<string | null>(null)
   const [historyCleared, setHistoryCleared] = useState(false)
+  const [cache, setCache] = useState<CacheInfo | null>(null)
+  const [cacheBusy, setCacheBusy] = useState(false)
+  const [cacheNotice, setCacheNotice] = useState<string | null>(null)
+  const [cacheError, setCacheError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -199,12 +213,15 @@ export function SettingsPage({
     setConnectBusy(false)
     setHistoryCleared(false)
     setAppearanceError(null)
+    setCacheNotice(null)
+    setCacheError(null)
     void Promise.all([
       window.ncc.getConfig(),
       window.ncc.identity(),
       window.ncc.signerPermissions(),
-      window.ncc.torStatus()
-    ]).then(([config, status, trusted, tor]) => {
+      window.ncc.torStatus(),
+      window.ncc.cacheInfo()
+    ]).then(([config, status, trusted, tor, cacheInfo]) => {
       setRelayEntries(config.relays)
       setGossip(config.gossip)
       setAnchorRequired(config.anchorRequired)
@@ -222,6 +239,7 @@ export function SettingsPage({
       applyAppearance(config.appearance)
       setIdentity(status)
       setPermissions(trusted)
+      setCache(cacheInfo)
     })
     const frame = window.requestAnimationFrame(() => backRef.current?.focus())
     return () => window.cancelAnimationFrame(frame)
@@ -456,6 +474,23 @@ export function SettingsPage({
   const clearBrowsingHistory = async (): Promise<void> => {
     await window.ncc.clearBrowsingHistory()
     setHistoryCleared(true)
+  }
+
+  const clearCache = async (): Promise<void> => {
+    setCacheBusy(true)
+    setCacheNotice(null)
+    setCacheError(null)
+    try {
+      const before = cache
+      const next = await window.ncc.clearCache()
+      setCache(next)
+      const freed = before ? Math.max(0, before.total - next.total) : 0
+      setCacheNotice(freed > 0 ? `Cleared ${formatBytes(freed)}.` : 'Cache cleared.')
+    } catch (caught) {
+      setCacheError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setCacheBusy(false)
+    }
   }
 
   const testTor = async (): Promise<void> => {
@@ -1090,6 +1125,43 @@ export function SettingsPage({
                   {historyCleared ? (
                     <span className="text-ui-11 text-[color:var(--color-ok)]">Cleared.</span>
                   ) : null}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-4">
+                <h3 className="text-ui-12 font-semibold text-[color:var(--color-text-strong)]">Cache</h3>
+                <p className="mt-1 text-ui-115 leading-relaxed text-[color:var(--color-muted)]">
+                  Cached documents and assets. Clearing makes the browser re-download them, but
+                  keeps cookies, sign-ins and site data. Cookies and storage are cleared per site
+                  from the padlock.
+                </p>
+                <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-ui-11" data-cache-info>
+                  <CacheRow label="Normal tabs" bytes={cache?.normal ?? 0} />
+                  <CacheRow label="Private tabs" bytes={cache?.private ?? 0} />
+                  <CacheRow label="Tor tabs" bytes={cache?.tor ?? 0} />
+                  <CacheRow label="Extension pages" bytes={cache?.extensions ?? 0} />
+                </dl>
+                <div className="mt-3 flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    data-cache-clear
+                    disabled={cacheBusy}
+                    onClick={() => void clearCache()}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-[color:var(--color-line)] px-2.5 py-1 text-ui-11 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)] hover:text-[color:var(--color-text-strong)] disabled:opacity-40"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                    {cacheBusy ? 'Clearing…' : 'Clear cache'}
+                  </button>
+                  <span
+                    className={cn(
+                      'text-ui-11',
+                      cacheError
+                        ? 'text-[color:var(--color-danger)]'
+                        : 'text-[color:var(--color-ok)]'
+                    )}
+                  >
+                    {cacheError ?? cacheNotice}
+                  </span>
                 </div>
               </div>
             </>

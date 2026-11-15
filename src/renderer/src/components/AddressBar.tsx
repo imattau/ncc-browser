@@ -48,9 +48,12 @@ export function AddressBar({
   const committedRef = useRef(false)
   const suppressRef = useRef(false)
 
+  // Keep the draft in sync with navigation. `focused` alone is not enough: an
+  // overlay (site info, settings) can move focus without React seeing a blur, which
+  // would otherwise leave a stale address on screen.
   useEffect(() => {
-    if (!focused) setDraft(value)
-  }, [value, focused])
+    if (document.activeElement !== inputRef.current) setDraft(value)
+  }, [value])
 
   useEffect(() => {
     const focusAddress = (): void => {

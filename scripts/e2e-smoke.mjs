@@ -1323,6 +1323,89 @@ async function main() {
     await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/web/` })
     await waitForText(cdp, 'NCC E2E OK', 80)
 
+    // Cookies and site data can be cleared for the identity serving the tab.
+    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/web/cookie-set?clear=1` })
+    await waitForText(cdp, 'COOKIE SET', 80)
+    await evaluate(cdp, "localStorage.setItem('ncc-clear-me', '1')")
+    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/web/cookie-read?clear=1` })
+    await waitForText(cdp, 'COOKIE normal', 80)
+    check(
+      'ncc pages share storage across services',
+      (await evaluate(cdp, "localStorage.getItem('ncc-clear-me')")) === '1'
+    )
+
+    await evaluate(
+      chrome,
+      `(() => {
+        const button = document.querySelector('[data-security-button]')
+        button.focus()
+        button.click()
+        return true
+      })()`
+    )
+    await waitForValue(chrome, 'document.querySelector("[data-site-data]") ? "ready" : ""', 60)
+    check(
+      'padlock names the ncc identity as the site',
+      (await evaluate(chrome, 'document.querySelector("[data-site-origin]").textContent')) ===
+        `ncc://${serviceNpub}`
+    )
+    const siteBeforeClear = await evaluate(chrome, 'window.ncc.siteData()')
+    check(
+      'padlock reports the endpoint cookie jar',
+      siteBeforeClear?.cookies >= 1 &&
+        siteBeforeClear?.endpointCookies === true &&
+        siteBeforeClear?.cookieHost === '127.0.0.1',
+      JSON.stringify(siteBeforeClear)
+    )
+    check(
+      'padlock explains the endpoint cookie scope',
+      (
+        await evaluate(chrome, 'document.querySelector("[data-site-data]").textContent')
+      ).includes('endpoint host')
+    )
+    check(
+      'address bar shows the ncc site after the overlay',
+      String(
+        await evaluate(chrome, 'document.querySelector(\'input[aria-label="Address"]\').value')
+      ).startsWith('ncc://')
+    )
+    await evaluate(
+      chrome,
+      `(() => {
+        const input = document.querySelector('input[aria-label="Address"]')
+        input?.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
+        return true
+      })()`
+    )
+    await sleep(250)
+    check(
+      'omnibox suggestions close over the panel',
+      (await evaluate(chrome, 'document.querySelectorAll("[data-omnibox-url]").length')) === 0
+    )
+    const siteDataShot = await chrome.send('Page.captureScreenshot', { format: 'png' })
+    writeFileSync(
+      join(ARTIFACTS, 'site-info.png'),
+      Buffer.from(siteDataShot.data, 'base64')
+    )
+    await evaluate(chrome, 'document.querySelector("[data-clear-site-data]").click()')
+    await evaluate(chrome, 'document.querySelector("[data-clear-site-data]").click()')
+    const storageCleared = await waitForValue(
+      cdp,
+      "localStorage.getItem('ncc-clear-me') === null ? 'cleared' : ''",
+      60
+    )
+    check('clears local storage for the site', storageCleared === 'cleared')
+    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/web/cookie-read?clear=2` })
+    const clearedCookie = await waitForText(cdp, 'COOKIE none', 80)
+    check('clears cookies for the site', clearedCookie.includes('COOKIE none'))
+    await evaluate(
+      chrome,
+      'document.querySelector(\'[data-popover=site-info] button[aria-label^="Close"]\').click()'
+    )
+    await sleep(200)
+    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/web/` })
+    await waitForText(cdp, 'NCC E2E OK', 80)
+
     // Private tabs never touch the suggestion history file.
     const historyAfterPrivate = JSON.parse(readFileSync(join(userData, 'history.json'), 'utf8'))
     check(
@@ -1374,6 +1457,23 @@ async function main() {
     check(
       'settings page exposes the HTTP interstitial toggle',
       (await evaluate(chrome, 'Boolean(document.querySelector("#warn-insecure"))')) === true
+    )
+
+    const cacheBefore = await evaluate(chrome, 'window.ncc.cacheInfo()')
+    check(
+      'settings page exposes the cache controls',
+      (await evaluate(chrome, 'Boolean(document.querySelector("[data-cache-info]"))')) === true &&
+        (await evaluate(chrome, 'Boolean(document.querySelector("[data-cache-clear]"))')) === true,
+      JSON.stringify(cacheBefore)
+    )
+    await evaluate(chrome, 'document.querySelector("[data-cache-clear]").click()')
+    await sleep(800)
+    const cacheAfter = await evaluate(chrome, 'window.ncc.cacheInfo()')
+    check(
+      'clearing the cache releases cached bytes',
+      typeof cacheAfter?.total === 'number' &&
+        (cacheBefore?.total === 0 || cacheAfter.total < cacheBefore.total),
+      JSON.stringify({ before: cacheBefore, after: cacheAfter })
     )
     await evaluate(chrome, 'document.querySelector(\'[data-settings-page] header button\').click()')
     await sleep(350)
@@ -1504,6 +1604,73 @@ async function main() {
     check('NIP-44 round-trips through the signer', nip07.plain === 'secret message')
     check('NIP-04 round-trips through the signer', nip07.legacyPlain === 'legacy')
     check('NIP-07 is not exposed to subframes', nip07.iframeHasNostr === false)
+
+    // Remembering the approval gives the service signer trust, which the padlock can
+    // forget alongside its cookies and storage.
+    const trustedBeforeClear = await evaluate(chrome, 'window.ncc.signerPermissions()')
+    check(
+      'remembers signer trust for the ncc service',
+      Array.isArray(trustedBeforeClear) &&
+        trustedBeforeClear.some(
+          (permission) => permission.origin === `ncc://${serviceNpub}/web` && permission.trusted
+        ),
+      JSON.stringify(trustedBeforeClear)
+    )
+    await evaluate(cdp, "localStorage.setItem('ncc-trust-clear', '1')")
+    await evaluate(chrome, 'document.querySelector("[data-security-button]").click()')
+    await waitForValue(
+      chrome,
+      'document.querySelector("[data-forget-trust]") ? "ready" : ""',
+      60
+    )
+    await evaluate(chrome, 'document.querySelector("[data-forget-trust]").click()')
+    await evaluate(chrome, 'document.querySelector("[data-clear-site-data]").click()')
+    await evaluate(chrome, 'document.querySelector("[data-clear-site-data]").click()')
+    await sleep(900)
+    const trustedAfterClear = await evaluate(chrome, 'window.ncc.signerPermissions()')
+    check(
+      'forgetting trust revokes the signer permission',
+      Array.isArray(trustedAfterClear) &&
+        !trustedAfterClear.some((permission) => permission.origin === `ncc://${serviceNpub}/web`),
+      JSON.stringify(trustedAfterClear)
+    )
+    check(
+      'forgetting trust also clears the page storage',
+      (await evaluate(cdp, "localStorage.getItem('ncc-trust-clear')")) === null
+    )
+    await evaluate(
+      chrome,
+      'document.querySelector(\'[data-popover=site-info] button[aria-label^="Close"]\').click()'
+    )
+    await sleep(200)
+
+    // Revoked trust really takes effect: the next signature asks again, and approving
+    // once more restores the permission the later NIP-46 checks rely on.
+    await evaluateNoAwait(
+      cdp,
+      `window.nostr.getPublicKey()
+        .then((value) => { window.__nip07AfterClear = value })
+        .catch((error) => { window.__nip07AfterClearError = String(error) })`
+    )
+    await waitForText(chrome, 'Signer request', 80)
+    check(
+      'clearing trust makes the next signature prompt again',
+      (await evaluate(chrome, 'Boolean(document.querySelector("[data-signer-prompt]"))')) === true
+    )
+    await evaluate(
+      chrome,
+      `(() => {
+        const remember = document.querySelector('[data-signer-remember]')
+        if (remember && !remember.checked) remember.click()
+        document.querySelector('[data-signer-allow]').click()
+        return true
+      })()`
+    )
+    check(
+      're-approving restores the signer permission',
+      (await waitForValue(cdp, 'window.__nip07AfterClear')) === signerPk
+    )
+    await sleep(200)
 
     // NIP-46: a mock bunker over the same relay. First publish a locator encrypted to
     // the remote signer, so resolution itself must go through the remote signer.

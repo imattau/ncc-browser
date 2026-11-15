@@ -3,6 +3,12 @@ import type {
   ExtensionInstallResult,
   ExtensionsState
 } from './extensions'
+import type {
+  CacheInfo,
+  SiteDataClearOptions,
+  SiteDataClearResult,
+  SiteDataInfo
+} from './site-data'
 import type { SearchEngineId } from './search'
 import type {
   AppearanceConfig,
@@ -109,6 +115,10 @@ export interface NccApi {
   clearHttpExceptions(): Promise<AppConfig>
   omniboxSuggest(input: string): Promise<OmniboxSuggestion[]>
   clearBrowsingHistory(): Promise<void>
+  siteData(): Promise<SiteDataInfo>
+  clearSiteData(options: SiteDataClearOptions): Promise<SiteDataClearResult>
+  cacheInfo(): Promise<CacheInfo>
+  clearCache(): Promise<CacheInfo>
   setSearchConfig(config: {
     engine: SearchEngineId
     custom: string

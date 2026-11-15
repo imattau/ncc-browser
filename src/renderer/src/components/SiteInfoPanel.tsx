@@ -1,14 +1,18 @@
+import { useEffect, useState } from 'react'
 import {
   AlertTriangle,
   Anchor as AnchorIcon,
+  Cookie,
   Globe,
   Lock,
   ShieldAlert,
   ShieldCheck,
   ShieldQuestion,
-  ShieldX
+  ShieldX,
+  Trash2
 } from 'lucide-react'
 import { ERROR_COPY } from '@shared/types'
+import type { SiteDataInfo } from '@shared/site-data'
 import type { AnchorInfo, NavState, TransportSecurity } from '@shared/types'
 import { clearnetState } from '../lib/clearnet'
 import { cn } from '../lib/cn'
@@ -84,6 +88,8 @@ export function SiteInfoPanel({
         ) : null}
 
         {state.tabKind === 'private' ? <PrivateBlock /> : null}
+
+        <SiteDataBlock />
 
         {!web && !security && !failure ? (
           <div className="flex items-start gap-2 rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-field)] p-3">
@@ -283,6 +289,157 @@ function TorBlock({
       </p>
     </div>
   )
+}
+
+function SiteDataBlock() {
+  const [info, setInfo] = useState<SiteDataInfo | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [confirm, setConfirm] = useState(false)
+  const [forgetTrust, setForgetTrust] = useState(false)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let alive = true
+    void window.ncc
+      .siteData()
+      .then((next) => {
+        if (alive) setInfo(next)
+      })
+      .catch(() => undefined)
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  if (!info?.supported) return null
+
+  const hasTrust = info.hasHttpException || info.signerTrusted || info.passwordNeverSave
+  const ncc = info.origin.startsWith('ncc://')
+
+  const clear = async (): Promise<void> => {
+    if (!confirm) {
+      setConfirm(true)
+      return
+    }
+    setBusy(true)
+    setError(null)
+    setNotice(null)
+    try {
+      const outcome = await window.ncc.clearSiteData({ forgetTrust })
+      if (!outcome.ok) {
+        setError(outcome.error ?? 'Could not clear site data')
+        return
+      }
+      setConfirm(false)
+      setForgetTrust(false)
+      setNotice(outcome.trustCleared ? 'Cleared data and trust. Reloading…' : 'Cleared. Reloading…')
+      setInfo(await window.ncc.siteData())
+    } catch (clearError) {
+      setError(clearError instanceof Error ? clearError.message : String(clearError))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div
+      data-site-data
+      className="rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-field)] p-3"
+    >
+      <p className="flex items-center gap-1.5 text-ui-115 font-medium text-[color:var(--color-text-strong)]">
+        <Cookie className="h-3.5 w-3.5 text-[color:var(--color-muted)]" />
+        Cookies and site data
+      </p>
+      <p className="mt-1 truncate font-mono text-ui-10 text-[color:var(--color-faint)]" data-site-origin>
+        {info.origin}
+      </p>
+      <p className="mt-1 text-ui-11 leading-relaxed text-[color:var(--color-muted)]" data-site-cookies>
+        {info.cookies == null
+          ? 'Cookies, local storage, IndexedDB and service workers.'
+          : `${info.cookies} cookie${info.cookies === 1 ? '' : 's'} plus local storage, IndexedDB and service workers.`}
+      </p>
+      {ncc ? (
+        <p className="mt-1 text-ui-105 leading-relaxed text-[color:var(--color-faint)]">
+          Local storage is keyed by identity, so this covers every service published by this
+          npub.
+        </p>
+      ) : null}
+      {info.endpointCookies && info.cookieHost ? (
+        <p className="mt-1 text-ui-105 leading-relaxed text-[color:var(--color-faint)]">
+          Server cookies belong to the endpoint host{' '}
+          <span className="font-mono text-[color:var(--color-muted)]">{info.cookieHost}</span>, so
+          clearing them also signs out other services served by that host.
+        </p>
+      ) : null}
+      {info.ephemeral ? (
+        <p className="mt-1 text-ui-105 leading-relaxed text-[color:var(--color-faint)]">
+          This session is already wiped when the last {info.tabKind === 'tor' ? 'Tor' : 'private'}{' '}
+          tab closes.
+        </p>
+      ) : null}
+
+      {hasTrust ? (
+        <label className="mt-2 flex cursor-pointer items-start gap-2 text-ui-11 text-[color:var(--color-muted)]">
+          <input
+            type="checkbox"
+            data-forget-trust
+            checked={forgetTrust}
+            onChange={(event) => setForgetTrust(event.target.checked)}
+            disabled={busy}
+            className="mt-0.5 h-3 w-3 accent-[color:var(--color-accent)]"
+          />
+          <span>
+            Also forget trust decisions for this site
+            <span className="mt-0.5 block text-ui-100 leading-relaxed text-[color:var(--color-faint)]">
+              {trustSummary(info)}
+            </span>
+          </span>
+        </label>
+      ) : null}
+
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          data-clear-site-data
+          disabled={busy}
+          onClick={() => void clear()}
+          className={cn(
+            'inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-ui-11 disabled:opacity-40',
+            confirm
+              ? 'border-[color:var(--color-danger)]/40 bg-[color:var(--color-danger)]/10 text-[color:var(--color-danger)]'
+              : 'border-[color:var(--color-line)] text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)] hover:text-[color:var(--color-text-strong)]'
+          )}
+        >
+          <Trash2 className="h-3 w-3" />
+          {busy ? 'Clearing…' : confirm ? 'Click again to clear' : 'Clear site data'}
+        </button>
+        {confirm ? (
+          <button
+            type="button"
+            onClick={() => setConfirm(false)}
+            className="text-ui-105 text-[color:var(--color-muted)] underline-offset-2 hover:text-[color:var(--color-text-strong)] hover:underline"
+          >
+            Cancel
+          </button>
+        ) : null}
+      </div>
+
+      {error ? (
+        <p className="mt-1.5 text-ui-105 leading-relaxed text-[color:var(--color-danger)]">{error}</p>
+      ) : notice ? (
+        <p className="mt-1.5 text-ui-105 leading-relaxed text-[color:var(--color-ok)]">{notice}</p>
+      ) : null}
+    </div>
+  )
+}
+
+function trustSummary(info: SiteDataInfo): string {
+  const parts: string[] = []
+  if (info.hasHttpException) parts.push('the HTTP exception')
+  if (info.signerTrusted) parts.push('“Always allow” signing')
+  if (info.passwordNeverSave) parts.push('the password never-save rule')
+  return `Removes ${parts.join(', ')}.`
 }
 
 function PrivateBlock() {
