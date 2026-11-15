@@ -858,6 +858,15 @@ export class BrowserShell {
     this.syncState()
   }
 
+  /** Services currently open for a pubkey, used to attribute bare subresource paths. */
+  servicesFor(pubkey: string): string[] {
+    const services = new Set<string>()
+    for (const tab of this.tabs) {
+      if (tab.mode === 'ncc' && tab.pubkey === pubkey && tab.service) services.add(tab.service)
+    }
+    return [...services]
+  }
+
   /** True when at least one tab for this service is currently served over Tor. */
   isTorService(pubkey: string, service: string): boolean {
     return this.tabs.some(

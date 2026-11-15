@@ -95,6 +95,12 @@ export interface ProtocolDeps {
   /** True when this service currently has a document loaded through Tor. */
   isTorService: (pubkey: string, service: string) => boolean
   activeService: Map<string, string>
+  /**
+   * Every service currently open for this pubkey across tabs. An absolute-path
+   * subresource carries no service name, so when the active-service map has no answer
+   * (or the wrong one) these are the only candidates worth trying.
+   */
+  activeServicesFor?: (pubkey: string) => string[]
   /** Endpoint origin → the NCC address it was resolved for, used to rewrite redirects. */
   endpointOwners: Map<string, { pubkey: string; service: string }>
   onActivity: (activity: ProtocolActivity) => void
@@ -107,7 +113,8 @@ export function installNccProtocol(deps: ProtocolDeps): void {
 async function handleNccRequest(
   request: Request,
   deps: ProtocolDeps,
-  allowRetry = true
+  allowRetry = true,
+  forcedService?: string
 ): Promise<Response> {
   let requestUrl: URL
   try {
@@ -133,12 +140,14 @@ async function handleNccRequest(
   }
 
   const refererService = serviceFromReferer(request.headers.get('referer'), pubkey)
-  const routed = routeNccPath(
-    requestUrl.pathname,
-    deps.activeService.get(pubkey) ?? null,
-    refererService,
-    isDocumentRequest(request)
-  )
+  const routed = forcedService
+    ? { service: forcedService, path: requestUrl.pathname || '/' }
+    : routeNccPath(
+        requestUrl.pathname,
+        deps.activeService.get(pubkey) ?? null,
+        refererService,
+        isDocumentRequest(request)
+      )
   if (!routed) {
     return failureResponse(request, 'invalid-address', 'Could not determine the service', request.url)
   }
@@ -200,6 +209,25 @@ async function handleNccRequest(
       )
     ) {
       return handleNccRequest(request, deps, false)
+    }
+
+    // If the active-service map is also wrong or empty, the only remaining truth is
+    // "some tab on this npub is showing this page". Try each of those services once;
+    // this is the multi-tab case the active map cannot express, and the reason an
+    // asset can 404 while the document that asked for it is fine.
+    if (
+      allowRetry &&
+      !isDocumentRequest(request) &&
+      !refererService &&
+      outcome.code === 'no-record'
+    ) {
+      const candidates = (deps.activeServicesFor?.(pubkey) ?? [])
+        .filter((candidate) => candidate !== service)
+        .slice(0, 4)
+      for (const candidate of candidates) {
+        const retried = await handleNccRequest(request, deps, false, candidate)
+        if (retried.status !== 404) return retried
+      }
     }
     if (isDocumentRequest(request)) {
       deps.onActivity({

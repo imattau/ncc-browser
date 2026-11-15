@@ -1619,6 +1619,32 @@ async function main() {
     await evaluate(chrome, 'document.querySelector(\'[aria-label="Close Downloads"]\').click()')
     await sleep(250)
 
+    // A bare absolute-path subresource with no Referer has only the tab set to go on.
+    // Put a *different* service in the active-service map, then ask for an asset from
+    // the web tab without a Referer: the handler must try the open services.
+    const serviceTabId = await evaluate(
+      chrome,
+      'window.ncc.getState().then((state) => state.activeTabId)'
+    )
+    const distractionTab = await evaluate(
+      chrome,
+      `window.ncc.newTab(${JSON.stringify(`ncc://${serviceNpub}/wrongservice/`)})`
+    )
+    await sleep(600)
+    await evaluate(chrome, `window.ncc.selectTab(${JSON.stringify(serviceTabId)})`)
+    const bareAsset = await evaluate(
+      cdp,
+      `fetch('/style.css', { referrerPolicy: 'no-referrer' })
+        .then((response) => response.status)
+        .catch((error) => String(error))`
+    )
+    check(
+      'serves a bare subresource when the active service map is wrong',
+      bareAsset === 200,
+      String(bareAsset)
+    )
+    await evaluate(chrome, `window.ncc.closeTab(${JSON.stringify(distractionTab)})`)
+
     // NIP-07: the identity lives in the main process and is exposed to page content only.
     const identityStatus = await evaluate(chrome, 'window.ncc.identity()')
     check(
@@ -3349,16 +3375,27 @@ async function main() {
       ],
       servers: [`http://127.0.0.1:${blossom.port}`]
     })
-    const blogBytes = Buffer.from('<h1>Blog home</h1>')
+    const blogBytes = Buffer.from(
+      '<!doctype html><title>Blog</title><h1>Blog home</h1><script src="/assets/app.js"></script>'
+    )
     const blogHash = createHash('sha256').update(blogBytes).digest('hex')
+    const assetBytes = Buffer.from(
+      "document.body.insertAdjacentText('beforeend', ' asset loaded')"
+    )
+    const assetHash = createHash('sha256').update(assetBytes).digest('hex')
     if (true) {
       // Named site: same relay, different manifest kind and d tag.
       blossomFiles.set(blogHash, { bytes: blogBytes, type: 'text/html; charset=utf-8' })
+      blossomFiles.set(assetHash, {
+        bytes: assetBytes,
+        type: 'text/javascript; charset=utf-8'
+      })
       blossomFiles.set(dirHash, { bytes: dirBytes, type: 'text/html; charset=utf-8' })
       publishNsite(relayA, {
         d: 'blog',
         paths: [
           ['/index.html', blogHash],
+          ['/assets/app.js', assetHash],
           ['/dir/index.html', dirHash]
         ],
         servers: [`http://127.0.0.1:${blossom.port}`]
@@ -3384,6 +3421,11 @@ async function main() {
     )
     await waitForText(cdp, 'Custom 404', 120)
     check('serves the site own 404 page', true)
+
+    await evaluate(chrome, `window.ncc.navigate(${JSON.stringify(`nsite://${serviceNpub}/blog/`)})`)
+    await waitForText(cdp, 'Blog home', 120)
+    await waitForText(cdp, 'asset loaded', 120)
+    check('serves an absolute-path asset inside a named site', true)
 
     await evaluate(chrome, `window.ncc.navigate(${JSON.stringify(`nsite://${serviceNpub}/blog/dir`)})`)
     await waitForText(cdp, 'Inside the directory', 120)

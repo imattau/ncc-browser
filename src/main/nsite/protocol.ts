@@ -30,10 +30,20 @@ export interface NsiteDeps {
 }
 
 export function installNsiteProtocol(deps: NsiteDeps): void {
-  deps.session.protocol.handle(NSITE_SCHEME, (request) => handle(request, deps))
+  // Absolute-path subresources carry no site id (`/assets/app.js`), exactly like NCC's
+  // service routing. The last document request for a pubkey decides which site those
+  // paths belong to. Per session, so a private or Tor tab cannot leak into another.
+  const activeSites = new Map<string, string | null>()
+  deps.session.protocol.handle(NSITE_SCHEME, (request) =>
+    handle(request, deps, activeSites)
+  )
 }
 
-async function handle(request: Request, deps: NsiteDeps): Promise<Response> {
+async function handle(
+  request: Request,
+  deps: NsiteDeps,
+  activeSites: Map<string, string | null>
+): Promise<Response> {
   const isDocument = isDocumentRequest(request)
 
   if (request.method !== 'GET' && request.method !== 'HEAD') {
@@ -54,12 +64,30 @@ async function handle(request: Request, deps: NsiteDeps): Promise<Response> {
     )
   }
 
-  const outcome = await deps.resolver.resolve(address.pubkey, address.site)
+  // A document decides the active site; its subresources inherit it. Without this,
+  // `/assets/theme.js` would be read as a root-site path (or as a named site called
+  // "assets") and 404 the moment a named site uses absolute URLs.
+  let site = address.site
+  let requestPath = address.path
+  if (isDocument) {
+    activeSites.set(address.pubkey, address.site)
+  } else if (activeSites.has(address.pubkey)) {
+    // The URL's first segment was consumed as a site id while parsing, but for an
+    // absolute-path subresource it is really part of the site's own path.
+    site = activeSites.get(address.pubkey) ?? null
+    try {
+      requestPath = new URL(request.url).pathname || '/'
+    } catch {
+      // Keep the parsed path if the URL is somehow unparseable.
+    }
+  }
+
+  const outcome = await deps.resolver.resolve(address.pubkey, site)
   if (!outcome.ok) {
     if (isDocument) {
       deps.onActivity({
         pubkey: address.pubkey,
-        site: address.site,
+        site,
         failureCode: outcome.code
       })
     }
@@ -67,7 +95,7 @@ async function handle(request: Request, deps: NsiteDeps): Promise<Response> {
   }
 
   const manifest = outcome.manifest
-  const match = matchPath(manifest.paths, address.path, address.search)
+  const match = matchPath(manifest.paths, requestPath, address.search)
 
   if (match.kind === 'redirect') {
     return new Response(null, {
@@ -93,9 +121,9 @@ async function handle(request: Request, deps: NsiteDeps): Promise<Response> {
     const notFound = manifest.paths.get('/404.html')
     if (!notFound) {
       if (isDocument) {
-        deps.onActivity({ pubkey: address.pubkey, site: address.site, failureCode: 'no-file' })
+        deps.onActivity({ pubkey: address.pubkey, site, failureCode: 'no-file' })
       }
-      return failure(request, 'no-file', `The site does not publish ${address.path}`)
+      return failure(request, 'no-file', `The site does not publish ${requestPath}`)
     }
     hash = notFound
     servedPath = '/404.html'
@@ -107,7 +135,7 @@ async function handle(request: Request, deps: NsiteDeps): Promise<Response> {
     if (isDocument) {
       deps.onActivity({
         pubkey: address.pubkey,
-        site: address.site,
+        site,
         failureCode: blob.code
       })
     }
@@ -117,7 +145,7 @@ async function handle(request: Request, deps: NsiteDeps): Promise<Response> {
   if (isDocument) {
     deps.onActivity({
       pubkey: address.pubkey,
-      site: address.site,
+      site,
       manifest: describe(manifest)
     })
   }

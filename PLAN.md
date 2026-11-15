@@ -97,6 +97,9 @@ relative URLs resolve inside the service namespace.
 `npub`, the active-service map is ambiguous for root-relative subresources. The browser
 uses a shared content session and attributes those requests through the `Referer`; pages
 that need an unambiguous cross-service reference use the explicit `/_/<service>/…` form.
+When neither the `Referer` nor the active-service map can answer, the handler retries
+each service currently open for that pubkey, so a bare absolute-path subresource only
+404s when no open tab can serve it.
 
 ### Redirects
 
@@ -526,6 +529,14 @@ a single scheme cannot do.
 
 `nsite://npub1…/blog` and `nsite://npub1…/blog/` both mean the named site; the browser
 canonicalises to the trailing slash.
+
+Absolute-path subresources (`/assets/app.js`) carry no site id, so the protocol handler
+attributes them to the site of the last **document** request in that content session —
+the same rule NCC uses for services. Without it, `/assets/…` would be read as a root-site
+path, or as a named site called "assets", and every asset would 404. The consequence is
+the NCC consequence: a subresource that deliberately points at *another* named site by
+absolute path is attributed to the active one; cross-site references need the explicit
+`nsite://<npub>/<other>/…` form and a document navigation.
 
 ### Resolution
 
