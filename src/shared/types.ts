@@ -671,6 +671,15 @@ export interface SignerOriginState {
   trusted: boolean
 }
 
+/** Build and runtime metadata shown in Settings → About. */
+export interface AppInfo {
+  version: string
+  electron: string
+  chromium: string
+  platform: string
+  arch: string
+}
+
 export interface SignerRequest {
   id: string
   method: string

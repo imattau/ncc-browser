@@ -13,6 +13,7 @@ import type { SearchEngineId } from './search'
 import type {
   AppearanceConfig,
   AppConfig,
+  AppInfo,
   Bookmark,
   DownloadNotice,
   IdentityStatus,
@@ -166,6 +167,7 @@ export interface NccApi {
   extensionsAction(id: string, anchor: { top: number; left: number }): Promise<void>
   onExtensions(listener: (state: ExtensionsState) => void): () => void
   torStatus(): Promise<TorStatus>
+  appInfo(): Promise<AppInfo>
   torTest(): Promise<TorStatus>
   torRestart(): Promise<TorStatus>
   identity(): Promise<IdentityStatus>

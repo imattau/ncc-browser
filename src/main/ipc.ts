@@ -1,4 +1,4 @@
-import { ipcMain, shell } from 'electron'
+import { ipcMain, shell, app } from 'electron'
 import { COMMANDS, type CommandId } from '@shared/commands'
 import { OVERLAY_REASONS } from '@shared/types'
 import type { LocatorCacheStore } from './cache-store'
@@ -341,6 +341,13 @@ export function registerIpc(deps: IpcDeps): void {
   })
 
   ipcMain.handle('ncc:tor-status', () => deps.tor.status())
+  ipcMain.handle('ncc:app-info', () => ({
+    version: app.getVersion(),
+    electron: process.versions.electron ?? '',
+    chromium: process.versions.chrome ?? '',
+    platform: process.platform,
+    arch: process.arch
+  }))
   ipcMain.handle('ncc:tor-test', () => deps.tor.test())
   ipcMain.handle('ncc:tor-restart', async () => {
     await deps.tor.reset()

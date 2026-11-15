@@ -3003,6 +3003,28 @@ async function main() {
       join(ARTIFACTS, 'settings-extensions.png'),
       Buffer.from(extensionsShot.data, 'base64')
     )
+
+    await evaluate(
+      chrome,
+      'document.querySelector(\'[data-settings-section="about"]\').click()'
+    )
+    await waitForValue(
+      chrome,
+      'document.querySelector("[data-about-version]")?.innerText.includes("v") ? "ready" : ""',
+      60
+    )
+    const appVersion = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version
+    const aboutText = await evaluate(
+      chrome,
+      'document.querySelector("[data-about-version]")?.innerText ?? ""'
+    )
+    check(
+      'about shows the app version and licence',
+      aboutText.includes(`v${appVersion}`) && aboutText.includes('MIT licence'),
+      aboutText.replace(/\s+/g, ' ').slice(0, 120)
+    )
+    const aboutShot = await chrome.send('Page.captureScreenshot', { format: 'png' })
+    writeFileSync(join(ARTIFACTS, 'settings-about.png'), Buffer.from(aboutShot.data, 'base64'))
     await chrome.send('Emulation.clearDeviceMetricsOverride')
 
     // Password manager: encrypted vault, toolbar fill and save-on-submit.

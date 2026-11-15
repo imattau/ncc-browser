@@ -104,6 +104,7 @@ const api: NccApi = {
   extensionsReveal: (id) => ipcRenderer.invoke('ncc:extensions-reveal', id),
   extensionsAction: (id, anchor) => ipcRenderer.invoke('ncc:extensions-action', id, anchor),
   torStatus: () => ipcRenderer.invoke('ncc:tor-status'),
+  appInfo: () => ipcRenderer.invoke('ncc:app-info'),
   torTest: () => ipcRenderer.invoke('ncc:tor-test'),
   torRestart: () => ipcRenderer.invoke('ncc:tor-restart'),
   identity: () => ipcRenderer.invoke('ncc:identity-status'),

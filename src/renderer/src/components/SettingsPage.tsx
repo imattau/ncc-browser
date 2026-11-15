@@ -20,6 +20,7 @@ import { DEFAULT_APPEARANCE, DEFAULT_RELAYS, DEFAULT_TOR_SOCKS } from '@shared/t
 import { SEARCH_ENGINES, type SearchEngineId } from '@shared/search'
 import { formatBytes, type CacheInfo } from '@shared/site-data'
 import type {
+  AppInfo,
   AppearanceConfig,
   HttpsMode,
   IdentityStatus,
@@ -207,6 +208,7 @@ export function SettingsPage({
   const [loading, setLoading] = useState(false)
 
   const [identity, setIdentity] = useState<IdentityStatus | null>(null)
+  const [appInfo, setAppInfo] = useState<AppInfo | null>(null)
   const [permissions, setPermissions] = useState<SignerPermission[]>([])
   const [secret, setSecret] = useState('')
   const [identityError, setIdentityError] = useState<string | null>(null)
@@ -235,8 +237,9 @@ export function SettingsPage({
       window.ncc.identity(),
       window.ncc.signerPermissions(),
       window.ncc.torStatus(),
-      window.ncc.cacheInfo()
-    ]).then(([config, status, trusted, tor, cacheInfo]) => {
+      window.ncc.cacheInfo(),
+      window.ncc.appInfo()
+    ]).then(([config, status, trusted, tor, cacheInfo, about]) => {
       setRelayEntries(config.relays)
       setGossip(config.gossip)
       setAnchorRequired(config.anchorRequired)
@@ -255,6 +258,7 @@ export function SettingsPage({
       setIdentity(status)
       setPermissions(trusted)
       setCache(cacheInfo)
+      setAppInfo(about)
     })
     const frame = window.requestAnimationFrame(() => backRef.current?.focus())
     return () => window.cancelAnimationFrame(frame)
@@ -1414,6 +1418,44 @@ export function SettingsPage({
                 title="About Nostr Navigator"
                 hint="A browser that resolves services through signed Nostr locators instead of DNS."
               />
+
+              <div
+                data-about-version
+                className="rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-4"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div>
+                    <p className="text-ui-12 font-medium text-[color:var(--color-text-strong)]">
+                      Nostr Navigator
+                    </p>
+                    <p className="mt-0.5 font-mono text-ui-115 text-[color:var(--color-text)]">
+                      {appInfo ? `v${appInfo.version}` : 'reading version…'}
+                    </p>
+                  </div>
+                  <span className="rounded border border-[color:var(--color-line)] px-1.5 py-0.5 text-ui-10 font-medium text-[color:var(--color-muted)]">
+                    MIT licence
+                  </span>
+                </div>
+
+                <dl className="mt-3 grid grid-cols-1 gap-1.5 text-ui-11 sm:grid-cols-2">
+                  <AboutRow label="Electron" value={appInfo?.electron} />
+                  <AboutRow label="Chromium" value={appInfo?.chromium} />
+                  <AboutRow
+                    label="Platform"
+                    value={appInfo ? `${platformName(appInfo.platform)} ${appInfo.arch}` : undefined}
+                  />
+                  <AboutRow label="Licence" value="MIT" />
+                </dl>
+
+                <p className="mt-3 text-ui-11 leading-relaxed text-[color:var(--color-muted)]">
+                  Copyright © 2026 imattau. Source, issues and the full licence text live at{' '}
+                  <span className="font-mono text-[color:var(--color-text-soft)]">
+                    github.com/imattau/ncc-browser
+                  </span>
+                  .
+                </p>
+              </div>
+
               <div className="space-y-3 rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-4 text-ui-115 leading-relaxed text-[color:var(--color-muted)]">
                 <p>
                   An <span className="font-mono text-[color:var(--color-text)]">ncc://npub…/service</span>{' '}
@@ -1453,6 +1495,22 @@ function torStatusText(status: TorStatus | null): string {
   }
   if (status.error) return 'Tor is unavailable.'
   return 'Tor starts automatically when an onion service is opened.'
+}
+
+function platformName(platform: string): string {
+  if (platform === 'darwin') return 'macOS'
+  if (platform === 'win32') return 'Windows'
+  if (platform === 'linux') return 'Linux'
+  return platform
+}
+
+function AboutRow({ label, value }: { label: string; value?: string }) {
+  return (
+    <div className="flex items-baseline justify-between gap-2 rounded-lg bg-[color:var(--color-field)] px-2.5 py-1.5">
+      <dt className="text-[color:var(--color-muted)]">{label}</dt>
+      <dd className="font-mono text-ui-105 text-[color:var(--color-text-soft)]">{value ?? '—'}</dd>
+    </div>
+  )
 }
 
 function SectionHeading({ title, hint }: { title: string; hint: string }) {
