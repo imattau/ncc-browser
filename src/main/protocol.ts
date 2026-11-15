@@ -8,7 +8,7 @@ import {
 import type { AnchorInfo, TransportSecurity } from '@shared/types'
 import { renderErrorPage, renderHttpWarningPage, renderPlainFailure } from './error-page'
 import { orderByHealth, type EndpointHealth } from './ncc/health'
-import { joinPaths, rewriteLocation } from './ncc/routing'
+import { joinPaths, rewriteLocation, upstreamRequestInit } from './ncc/routing'
 import type { NccResolver } from './ncc/resolver'
 import {
   hasOnionEndpoint,
@@ -346,7 +346,10 @@ async function handleNccRequest(request: Request, deps: ProtocolDeps): Promise<R
 
     let response: Response
     try {
-      response = await deps.session.fetch(target.toString(), forwardedInit(request, target, pubkey))
+      response = await deps.session.fetch(
+        target.toString(),
+        upstreamRequestInit(request, target, pubkey, service)
+      )
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       deps.health.recordFailure(endpoint.url)
@@ -423,33 +426,6 @@ async function handleNccRequest(request: Request, deps: ProtocolDeps): Promise<R
     request.url,
     failures.join('\n')
   )
-}
-
-function forwardedInit(request: Request, target: URL, pubkey: string): RequestInit {
-  const headers = new Headers(request.headers)
-  headers.delete('host')
-  headers.delete('content-length')
-
-  const origin = headers.get('origin')
-  if (origin === `ncc://${pubkey}`) headers.set('origin', target.origin)
-
-  const referer = headers.get('referer')
-  if (referer?.startsWith('ncc://')) {
-    headers.set('referer', `${target.origin}${target.pathname}`)
-  }
-
-  const init: RequestInit & { duplex?: 'half' } = {
-    method: request.method,
-    headers,
-    redirect: 'manual'
-  }
-
-  if (request.method !== 'GET' && request.method !== 'HEAD' && request.body) {
-    init.body = request.body
-    init.duplex = 'half'
-  }
-
-  return init
 }
 
 function toBrowserResponse(

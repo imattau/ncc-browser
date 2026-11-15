@@ -16,6 +16,44 @@ export interface RewriteContext {
   endpointOwners: Map<string, { pubkey: string; service: string }>
 }
 
+/** Build an endpoint request and attach routing identity for NCC-aware gateways. */
+export function upstreamRequestInit(
+  request: Request,
+  target: URL,
+  pubkey: string,
+  service: string
+): RequestInit {
+  const headers = new Headers(request.headers)
+  headers.delete('host')
+  headers.delete('content-length')
+
+  // These are routing hints, not credentials. Always replace page-supplied
+  // values with the identity and service resolved from the ncc:// address.
+  headers.set('x-ncc-pubkey', pubkey)
+  headers.set('x-ncc-service', service)
+
+  const origin = headers.get('origin')
+  if (origin === `ncc://${pubkey}`) headers.set('origin', target.origin)
+
+  const referer = headers.get('referer')
+  if (referer?.startsWith('ncc://')) {
+    headers.set('referer', `${target.origin}${target.pathname}`)
+  }
+
+  const init: RequestInit & { duplex?: 'half' } = {
+    method: request.method,
+    headers,
+    redirect: 'manual'
+  }
+
+  if (request.method !== 'GET' && request.method !== 'HEAD' && request.body) {
+    init.body = request.body
+    init.duplex = 'half'
+  }
+
+  return init
+}
+
 /**
  * Rewrite a Location header so the renderer never sees a raw endpoint address.
  * Redirects to other hosts are left alone: the service is telling us to leave NCC.
