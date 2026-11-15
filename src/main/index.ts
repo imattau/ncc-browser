@@ -577,7 +577,7 @@ function torBinaryPath(): string | null {
 
 /** A URL passed on the command line opens on launch. */
 function findStartupAddress(): string | null {
-  return process.argv.find((arg) => /^(ncc|https?):\/\//i.test(arg)) ?? null
+  return process.argv.find((arg) => /^(ncc|nsite|https?):\/\//i.test(arg)) ?? null
 }
 
 /**

@@ -3360,11 +3360,14 @@ async function main() {
     const notFoundHash = createHash('sha256').update(notFoundBytes).digest('hex')
     const dirBytes = Buffer.from('<h1>Inside the directory</h1>')
     const dirHash = createHash('sha256').update(dirBytes).digest('hex')
+    const armadaBytes = Buffer.from('<h1>ARMADA ROOT</h1>')
+    const armadaHash = createHash('sha256').update(armadaBytes).digest('hex')
     const tamperedHash = createHash('sha256').update('expected bytes').digest('hex')
     const blossomFiles = new Map([
       [indexHash, { bytes: indexBytes, type: 'text/html; charset=utf-8' }],
       [notFoundHash, { bytes: notFoundBytes, type: 'text/html; charset=utf-8' }],
-      [tamperedHash, { bytes: Buffer.from('tampered'), type: 'text/plain' }]
+      [tamperedHash, { bytes: Buffer.from('tampered'), type: 'text/plain' }],
+      [armadaHash, { bytes: armadaBytes, type: 'text/html; charset=utf-8' }]
     ])
     const blossom = await startBlossom(blossomFiles)
     // Pin the relay list so the manifest query cannot miss because an earlier test
@@ -3378,7 +3381,8 @@ async function main() {
       paths: [
         ['/index.html', indexHash],
         ['/404.html', notFoundHash],
-        ['/tampered.txt', tamperedHash]
+        ['/tampered.txt', tamperedHash],
+        ['/armada/index.html', armadaHash]
       ],
       servers: [`http://127.0.0.1:${blossom.port}`]
     })
@@ -3423,10 +3427,46 @@ async function main() {
     check(
       'reports a hash-verified nsite in the security state',
       nsiteSecurity?.transport === 'nsite' &&
-        nsiteSecurity?.manifest?.files === 3 &&
+        nsiteSecurity?.manifest?.files === 4 &&
         nsiteSecurity?.manifest?.servers?.length === 1,
       JSON.stringify(nsiteSecurity?.manifest ?? null)
     )
+
+    // A d-like first segment with no named manifest is a root-site path, which is how
+    // a root site reaches its own directories from the clean form.
+    await evaluate(
+      chrome,
+      `window.ncc.navigate(${JSON.stringify(`nsite://${serviceNpub}/armada`)})`
+    )
+    await waitForText(cdp, 'ARMADA ROOT', 120)
+    const armadaOrigin = await evaluate(cdp, 'location.origin')
+    check(
+      'falls back to a root-site path when no named site exists',
+      armadaOrigin === `nsite://${serviceNpub}`,
+      String(armadaOrigin)
+    )
+
+    // Opening an nsite link must go through the tab pipeline, not the desktop browser.
+    const beforeLink = await evaluate(
+      chrome,
+      'window.ncc.getState().then((state) => ({ count: state.tabs.length, id: state.activeTabId }))'
+    )
+    const tabsBeforeLink = beforeLink.count
+    await evaluate(cdp, `window.open(${JSON.stringify(`nsite://${serviceNpub}/armada`)})`)
+    const armadaTarget = await waitForTarget((entry) => String(entry.url).includes('/armada'))
+    const armadaTab = new Cdp(armadaTarget.webSocketDebuggerUrl)
+    await armadaTab.connect()
+    const armadaText = await waitForText(armadaTab, 'ARMADA ROOT', 120)
+    check('opens an nsite link in a new tab', armadaText.includes('ARMADA ROOT'))
+    check(
+      'the link tab is tracked by the shell',
+      (await evaluate(chrome, 'window.ncc.getState().then((state) => state.tabs.length)')) ===
+        tabsBeforeLink + 1
+    )
+    armadaTab.close()
+    await evaluate(chrome, 'window.ncc.closeTab()')
+    await sleep(300)
+    await evaluate(chrome, `window.ncc.selectTab(${JSON.stringify(beforeLink.id)})`)
 
     await evaluate(
       chrome,

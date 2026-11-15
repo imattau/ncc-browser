@@ -98,6 +98,27 @@ describe('NsiteResolver', () => {
     expect(calls).toBe(2)
   })
 
+  it('caches a miss briefly instead of re-querying for every path', async () => {
+    let now = 1_800_000_000
+    let calls = 0
+    const resolver = new NsiteResolver({
+      relays: () => ['wss://relay.example'],
+      now: () => now,
+      query: async () => {
+        calls += 1
+        return []
+      }
+    })
+
+    await expect(resolver.resolve(PUB, 'armada')).resolves.toMatchObject({ ok: false })
+    await expect(resolver.resolve(PUB, 'armada')).resolves.toMatchObject({ ok: false })
+    expect(calls).toBe(1)
+
+    now += 20
+    await expect(resolver.resolve(PUB, 'armada')).resolves.toMatchObject({ ok: false })
+    expect(calls).toBe(2)
+  })
+
   it('surfaces a timeout', async () => {
     const resolver = new NsiteResolver({
       relays: () => ['wss://relay.example'],

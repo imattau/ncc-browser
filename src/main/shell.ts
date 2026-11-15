@@ -13,7 +13,7 @@ import { parseNccAddress, toDisplayUrl, toInternalUrl, type NccAddress } from '@
 import {
   buildNsiteUrl,
   parseNsiteAddress,
-  toInternalNsiteUrl,
+  toNsiteDisplayUrl,
   type NsiteAddress
 } from '@shared/nsite-url'
 import type { NsiteActivity } from './nsite/protocol'
@@ -972,7 +972,7 @@ export class BrowserShell {
       tab.tor = { onionAvailable: false, active: tab.kind === 'tor' }
       this.deps.torGuard.set(tab.view.webContents.id, tab.kind === 'tor')
       this.showOnly(tab.id)
-      await this.load(tab, toInternalNsiteUrl(nsite))
+      await this.load(tab, buildNsiteUrl(nsite))
       return
     }
 
@@ -1241,7 +1241,7 @@ export class BrowserShell {
       tab.displayUrl = formatDisplayUrl(url)
       this.applyUrlToTab(tab, url)
       // Only normal tabs contribute to address-bar suggestions.
-      if (tab.kind === 'normal' && /^(ncc:\/\/|https?:\/\/)/i.test(url)) {
+      if (tab.kind === 'normal' && /^(ncc:\/\/|nsite:\/\/|https?:\/\/)/i.test(url)) {
         this.deps.omnibox.recordVisit(tab.displayUrl, tabTitle(tab), 'normal')
       }
       this.scheduleSessionSave()
@@ -1344,10 +1344,14 @@ export class BrowserShell {
           return
         }
       }
-      if (protocol === 'ncc:' || protocol === 'http:' || protocol === 'https:') {
-        // Same-service links navigate natively. Service changes are expressed with the
-        // explicit /_/<service>/ form, which the protocol handler routes unambiguously;
-        // root-relative links are attributed to the page's service through the referrer.
+      if (
+        protocol === 'ncc:' ||
+        protocol === 'nsite:' ||
+        protocol === 'http:' ||
+        protocol === 'https:'
+      ) {
+        // Same-origin links navigate natively; the origin already names the service or
+        // site, so there is nothing to disambiguate here.
         return
       }
       event.preventDefault()
@@ -1371,7 +1375,7 @@ export class BrowserShell {
   private async openInNewTab(url: string, kind: TabKind = 'normal'): Promise<void> {
     const tab = this.createTab(kind)
     this.activateTab(tab.id)
-    if (/^https?:\/\//i.test(url) || /^ncc:\/\//i.test(url)) {
+    if (/^https?:\/\//i.test(url) || /^ncc:\/\//i.test(url) || /^nsite:\/\//i.test(url)) {
       await this.navigateInTab(tab, url)
       return
     }
@@ -1383,6 +1387,18 @@ export class BrowserShell {
   }
 
   private applyUrlToTab(tab: Tab, url: string): void {
+    if (url.startsWith('nsite://')) {
+      tab.mode = 'nsite'
+      try {
+        const address = parseNsiteAddress(url)
+        tab.pubkey = address.pubkey
+        tab.service = address.site
+      } catch {
+        // The error page's own URL may not parse; keep the previous site.
+      }
+      return
+    }
+
     if (!url.startsWith('ncc://')) {
       tab.mode = url.startsWith('http') ? 'web' : tab.mode
       if (!url.startsWith('http')) return
@@ -1608,7 +1624,9 @@ function safeProtocol(url: string): string | null {
 }
 
 function formatDisplayUrl(url: string): string {
-  return url.startsWith('ncc://') ? toDisplayUrl(url) : url
+  if (url.startsWith('ncc://')) return toDisplayUrl(url)
+  if (url.startsWith('nsite://')) return toNsiteDisplayUrl(url)
+  return url
 }
 
 function isOnionPageUrl(url: string): boolean {

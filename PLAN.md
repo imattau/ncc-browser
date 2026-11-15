@@ -540,9 +540,11 @@ for the root site — so `/assets/app.js` belongs to the site in the origin. A d
 navigation in the display form is 302'd to the internal form; subresources on the bare
 npub host always belong to the root site, which is why the redirect is documents only.
 
-One display-form ambiguity remains and is documented rather than guessed: a root-site
-*directory* whose first segment is a valid d tag (`nsite://npub/blog/`) is read as the
-named site `blog`. Root pages should link with extensions or address the file directly.
+A d-like first segment in the display form is resolved as a named site **only if one is
+actually published**; otherwise the same address is served as a root-site path. That
+makes a root site's own directories (`nsite://npub/armada/`) reachable even when their
+name looks like a site id. The remaining ambiguity, documented rather than guessed, is a
+name that exists as *both* a named site and a root directory: the named site wins.
 
 ### Resolution
 

@@ -87,8 +87,8 @@ Limits worth knowing:
 
 - Addresses are shown as `nsite://<npub>/<d>/` but loaded as `nsite://<npub>.<d>/`, so
   every named site is its own origin and its assets cannot be attributed to another
-  site. A root-site *directory* whose first segment looks like a d tag (`/blog/`) is
-  still read as the named site; root pages should link to files with extensions.
+  site. A d-like first segment (`/armada/`) is treated as a named site only when one is
+  published; otherwise it stays a root-site path. If both exist, the named site wins.
 - 25 MB per file, no `Range` support yet: video plays only after the whole blob is
   downloaded and verified.
 - Manifests are cached for 60 s and refreshed in the background; a forced reload asks
@@ -809,7 +809,7 @@ general IPC bridge.
 ## Testing
 
 ```bash
-npm test       # 444 unit tests: URL parser, locator rules, resolver, routing, pins,
+npm test       # 464 unit tests: URL parser, locator rules, resolver, routing, pins,
                # signer crypto, identity storage, NIP-46, approvals, permissions,
                # ephemeral signer permissions, shortcuts, context menus, relays,
                # downloads, tab order, bookmarks, favicons, session storage, NCC-02

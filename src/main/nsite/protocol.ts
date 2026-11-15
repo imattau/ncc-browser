@@ -74,19 +74,25 @@ async function handle(request: Request, deps: NsiteDeps): Promise<Response> {
   if (!host.canonical && isDocument) {
     const first = requestPath.replace(/^\/+/, '').split('/')[0]
     if (first && isValidSiteId(first)) {
-      const rest = requestPath.replace(/^\/+/, '').slice(first.length)
-      return new Response(null, {
-        status: 302,
-        headers: {
-          location: toInternalNsiteUrl({
-            pubkey: host.pubkey,
-            site: first,
-            path: rest || '/',
-            search: requestUrl.search
-          }),
-          'cache-control': 'no-store'
-        }
-      })
+      // A d-like first segment is a named site only if one is actually published. If
+      // not, the same address is a root-site path (`/armada`), which is how a root
+      // site's own directories stay reachable from the clean form.
+      const named = await deps.resolver.resolve(host.pubkey, first)
+      if (named.ok) {
+        const rest = requestPath.replace(/^\/+/, '').slice(first.length)
+        return new Response(null, {
+          status: 302,
+          headers: {
+            location: toInternalNsiteUrl({
+              pubkey: host.pubkey,
+              site: first,
+              path: rest || '/',
+              search: requestUrl.search
+            }),
+            'cache-control': 'no-store'
+          }
+        })
+      }
     }
   }
 

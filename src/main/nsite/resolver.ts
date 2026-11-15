@@ -12,6 +12,7 @@ import { NSITE_NAMED_KIND, NSITE_ROOT_KIND, readManifest, type NsiteManifest } f
 
 const DEFAULT_TIMEOUT_MS = 8_000
 const DEFAULT_TTL_SECONDS = 60
+const NEGATIVE_TTL_SECONDS = 15
 
 export type NsiteOutcome =
   | { ok: true; manifest: NsiteManifest; stale: boolean }
@@ -33,6 +34,8 @@ interface Cached {
 export class NsiteResolver {
   private readonly cache = new Map<string, Cached>()
   private readonly inflight = new Map<string, Promise<NsiteOutcome>>()
+  /** Short-lived misses, so a root page's d-like directories do not re-query per link. */
+  private readonly misses = new Map<string, { outcome: NsiteOutcome; until: number }>()
   private generation = 0
 
   constructor(private readonly options: NsiteResolverOptions) {}
@@ -40,6 +43,12 @@ export class NsiteResolver {
   async resolve(pubkey: string, site: string | null): Promise<NsiteOutcome> {
     const key = `${pubkey}:${site ?? ''}`
     const now = this.now()
+    const miss = this.misses.get(key)
+    if (miss) {
+      if (miss.until > now) return miss.outcome
+      this.misses.delete(key)
+    }
+
     const cached = this.cache.get(key)
     if (cached) {
       if (cached.expiresAt > now) return { ok: true, manifest: cached.manifest, stale: false }
@@ -52,12 +61,15 @@ export class NsiteResolver {
   }
 
   invalidate(pubkey: string, site: string | null): void {
-    this.cache.delete(`${pubkey}:${site ?? ''}`)
+    const key = `${pubkey}:${site ?? ''}`
+    this.cache.delete(key)
+    this.misses.delete(key)
   }
 
   clearCache(): void {
     this.generation += 1
     this.cache.clear()
+    this.misses.clear()
   }
 
   private refresh(pubkey: string, site: string | null, key: string): Promise<NsiteOutcome> {
@@ -71,6 +83,12 @@ export class NsiteResolver {
     const generation = this.generation
     const promise = this.fetch(pubkey, site)
       .then((outcome) => {
+        if (!outcome.ok && this.generation === generation) {
+          this.misses.set(key, {
+            outcome,
+            until: this.now() + NEGATIVE_TTL_SECONDS
+          })
+        }
         if (outcome.ok && this.generation === generation) {
           this.cache.set(key, {
             manifest: outcome.manifest,
