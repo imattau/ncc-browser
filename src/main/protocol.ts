@@ -124,6 +124,12 @@ async function handleNccRequest(request: Request, deps: ProtocolDeps): Promise<R
     return failureResponse(request, 'invalid-address', 'Not a valid ncc:// URL', request.url)
   }
 
+  const forwardedSearch = new URLSearchParams(requestUrl.search)
+  forwardedSearch.delete('ncc-http-ok')
+  const endpointSearch = forwardedSearch.toString()
+    ? `?${forwardedSearch.toString()}`
+    : ''
+
   const pubkey = requestUrl.hostname.toLowerCase()
   if (!isNostrId(pubkey)) {
     return failureResponse(
@@ -331,7 +337,7 @@ async function handleNccRequest(request: Request, deps: ProtocolDeps): Promise<R
     }
 
     target.pathname = joinPaths(target.pathname, path)
-    target.search = requestUrl.search
+    target.search = endpointSearch
 
     if (endpoint.k) {
       deps.pins.set(target.hostname, { k: endpoint.k, label: `${pubkey}/${service}` })
