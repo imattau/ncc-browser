@@ -334,7 +334,7 @@ Details:
   policy.
 - **Ask before loading HTTP pages** adds a blocking interstitial for clearnet HTTP URLs
   and a self-contained warning page for NCC HTTP endpoints. The page only loads after
-  **Continue once** or **Always allow this host**.
+  **Continue once** or **Always allow this site**.
 - The amber banner always appears on HTTP pages: “Not secure” for clearnet and “HTTP
   over Tor” when Tor provides the path but there is no TLS.
 - “Always allow” exceptions persist for normal tabs and live only for the current private
