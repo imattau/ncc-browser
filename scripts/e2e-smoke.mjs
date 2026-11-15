@@ -551,7 +551,7 @@ function xdotool(display, args) {
 }
 
 function findElectronWindow(display) {
-  const result = xdotool(display, ['search', '--onlyvisible', '--name', 'NCC Browser'])
+  const result = xdotool(display, ['search', '--onlyvisible', '--name', 'Nostr Navigator'])
   if (result.status !== 0) return null
   return result.stdout.trim().split('\n').filter(Boolean)[0] ?? null
 }

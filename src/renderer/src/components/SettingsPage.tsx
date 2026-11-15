@@ -574,7 +574,7 @@ export function SettingsPage({
           {section === 'about' ? (
             <>
               <SectionHeading
-                title="About NCC Browser"
+                title="About Nostr Navigator"
                 hint="A browser that resolves services through signed Nostr locators instead of DNS."
               />
               <div className="space-y-3 rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-4 text-[11.5px] leading-relaxed text-[color:var(--color-muted)]">

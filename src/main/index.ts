@@ -23,7 +23,9 @@ import { Nip46SessionStore } from './signer/session'
 // Custom schemes must be registered before the app is ready.
 registerNccScheme()
 
-app.setName('NCC Browser')
+const existingUserDataPath = app.getPath('userData')
+app.setName('Nostr Navigator')
+app.setPath('userData', existingUserDataPath)
 
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {

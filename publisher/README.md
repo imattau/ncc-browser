@@ -4,7 +4,7 @@ A small web app that publishes NCC-05 locators (kind `30058`) and optional NCC-0
 service records (kind `30059`) for a service running on a local port.
 
 It never asks for an `nsec`: every event is signed by a NIP-07 provider. That can be a
-browser extension (Alby, nos2x, …) or **NCC Browser's built-in signer** when this page is
+browser extension (Alby, nos2x, …) or **Nostr Navigator's built-in signer** when this page is
 opened inside the browser.
 
 ## Run
@@ -17,10 +17,10 @@ npm run dev
 
 Open `http://localhost:5173`.
 
-To use the built-in signer, open the same URL in NCC Browser:
+To use the built-in signer, open the same URL in Nostr Navigator:
 
 1. Start the publisher with `npm run dev`.
-2. In NCC Browser, type `http://localhost:5173` in the address bar.
+2. In Nostr Navigator, type `http://localhost:5173` in the address bar.
 3. Click **Connect signer**. The browser shows its normal per-service approval sheet.
 4. Fill in the local port and publish.
 
@@ -52,7 +52,7 @@ It stays stable when the port or host changes. Republish the locator instead.
 
 ## Privacy and reachability
 
-- `127.0.0.1` only works when NCC Browser runs on the same machine. Use a LAN address
+- `127.0.0.1` only works when Nostr Navigator runs on the same machine. Use a LAN address
   (`192.168.x.x`, `10.x.x.x`, …) for another device, and allow the port through the
   firewall.
 - A plaintext locator exposes the endpoint to relays and anyone who knows the npub. Use
@@ -61,7 +61,7 @@ It stays stable when the port or host changes. Republish the locator instead.
 - `k` is the TLS SPKI fingerprint (`base64url(sha256(SPKI DER))`). Include it for HTTPS
   endpoints when you want the browser to pin the certificate, including self-signed
   certificates.
-- `ws://`/`wss://`/`onion://` endpoints are published for other clients; NCC Browser
+- `ws://`/`wss://`/`onion://` endpoints are published for other clients; Nostr Navigator
   currently opens `http`/`https` pages.
 
 ## Stack

@@ -1,4 +1,4 @@
-# NCC Browser
+# Nostr Navigator
 
 A desktop browser that resolves services by **Nostr identity instead of DNS**.
 
@@ -68,7 +68,7 @@ npm run publisher:dev     # http://localhost:5173
 
 You can also `cd publisher && npm install && npm run dev`.
 
-Open that URL in NCC Browser to use the built-in signer (the approval sheet appears as
+Open that URL in Nostr Navigator to use the built-in signer (the approval sheet appears as
 usual), or open it in a normal browser with a NIP-07 extension. Fill in the service id,
 host/port, relays, and publish. The result is:
 
@@ -453,7 +453,7 @@ The release job also uploads `SHA256SUMS.txt`. Pushing a tag is the whole releas
 ```bash
 npm version patch --no-git-tag-version   # or edit package.json
 git commit -am "Release v0.1.4"
-git tag -a v0.1.4 -m "NCC Browser v0.1.4"
+git tag -a v0.1.4 -m "Nostr Navigator v0.1.4"
 git push origin main --follow-tags
 ```
 
@@ -502,7 +502,7 @@ or SmartScreen prompts. The Flatpak bundle declares the flathub
   `kind 30060` attestations and `kind 30061` revocations need a local trust policy before
   they can change a decision.
 - **The publisher signs through NIP-07 only.** It is a static web app and never handles
-  an `nsec`; in NCC Browser the built-in provider can delegate to a local key or NIP-46
+  an `nsec`; in Nostr Navigator the built-in provider can delegate to a local key or NIP-46
   signer. Keep the publisher app separate from any service content.
 - **No extension support.** Chrome extensions cannot inject into `ncc://` pages (content
   script match patterns exclude custom schemes) and Electron cannot install Web Store

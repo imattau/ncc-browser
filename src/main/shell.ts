@@ -103,7 +103,7 @@ export class BrowserShell {
       frame: false,
       backgroundColor: '#0b0c10',
       show: false,
-      title: 'NCC Browser',
+      title: 'Nostr Navigator',
       webPreferences: {
         preload: deps.preloadPath,
         sandbox: true,
@@ -936,17 +936,17 @@ export class BrowserShell {
     if (this.window.isDestroyed()) return
     const tab = this.activeTab()
     if (!tab) {
-      this.window.setTitle('NCC Browser')
+      this.window.setTitle('Nostr Navigator')
       return
     }
     const title = tabTitle(tab)
     const label = title && title !== 'New tab' ? title : tab.displayUrl
     if (!label) {
-      this.window.setTitle('NCC Browser')
+      this.window.setTitle('Nostr Navigator')
       return
     }
     const trimmed = label.length > 90 ? `${label.slice(0, 90)}…` : label
-    this.window.setTitle(`${trimmed} — NCC Browser`)
+    this.window.setTitle(`${trimmed} — Nostr Navigator`)
   }
 
   private wireWindow(): void {

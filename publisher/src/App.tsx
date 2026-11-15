@@ -606,7 +606,7 @@ export function App() {
                   </button>
                 </div>
                 <p className="text-[10.5px] leading-relaxed text-[color:var(--color-muted)]">
-                  Open this in NCC Browser. The address stays stable when the port or host
+                  Open this in Nostr Navigator. The address stays stable when the port or host
                   changes; republish the locator instead.
                 </p>
               </div>
@@ -688,7 +688,7 @@ export function App() {
 
           <Card title="Check the service">
             <p className="text-[11px] leading-relaxed text-[color:var(--color-muted)]">
-              The endpoint must be reachable from the device running NCC Browser. Use
+              The endpoint must be reachable from the device running Nostr Navigator. Use
               <span className="font-mono text-[#dfe3ea]"> 127.0.0.1 </span>
               when both run on this machine, or a LAN address otherwise.
             </p>
@@ -761,7 +761,7 @@ function SignerStatus({
     <div className="flex flex-wrap items-center gap-2">
       {available === false ? (
         <span className="max-w-[330px] text-[10.5px] leading-relaxed text-[color:var(--color-warn)]">
-          No NIP-07 signer found. Open this page in NCC Browser (built-in signer) or
+          No NIP-07 signer found. Open this page in Nostr Navigator (built-in signer) or
           install a browser extension.
         </span>
       ) : null}

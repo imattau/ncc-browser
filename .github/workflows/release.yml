@@ -164,7 +164,7 @@ jobs:
 
       - uses: softprops/action-gh-release@v3
         with:
-          name: NCC Browser ${{ github.ref_name }}
+          name: Nostr Navigator ${{ github.ref_name }}
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, '-') }}
           fail_on_unmatched_files: true

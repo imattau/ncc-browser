@@ -56,7 +56,7 @@ export function ChromeMenu({
         <div className="border-b border-[color:var(--color-line)] px-3 pb-2.5 pt-1">
           <div className="flex items-center justify-between gap-2">
             <span className="text-[11px] font-semibold uppercase tracking-wide text-[color:var(--color-muted)]">
-              NCC Browser
+              Nostr Navigator
             </span>
             <span
               className={cn(

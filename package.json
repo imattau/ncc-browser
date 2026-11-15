@@ -4,7 +4,7 @@
   "private": true,
   "description": "A desktop browser that resolves services through Nostr Community Convention NCC-05 instead of DNS",
   "main": "./out/main/index.js",
-  "desktopName": "ncc-browser.desktop",
+  "desktopName": "nostr-navigator.desktop",
   "author": "lostcause",
   "license": "MIT",
   "scripts": {
