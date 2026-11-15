@@ -16,6 +16,7 @@ function config(overrides: Partial<AppConfig> = {}): AppConfig {
     gossip: true,
     anchorRequired: false,
     preferTor: false,
+    ephemeralSigner: false,
     torMode: 'auto',
     torSocks: 'socks5://127.0.0.1:9050',
     httpsMode: 'prefer',

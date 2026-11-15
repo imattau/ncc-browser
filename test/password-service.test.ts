@@ -48,6 +48,7 @@ function config(): FakeConfig {
     gossip: true,
     anchorRequired: false,
     preferTor: false,
+    ephemeralSigner: false,
     torMode: 'auto',
     torSocks: DEFAULT_TOR_SOCKS,
     httpsMode: DEFAULT_HTTPS_MODE,

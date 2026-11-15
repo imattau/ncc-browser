@@ -3,7 +3,7 @@
  * a NIP-46 remote signer are interchangeable.
  */
 
-import type { Event } from 'nostr-tools'
+import { generateSecretKey, type Event } from 'nostr-tools'
 import type { IdentityStatus } from '@shared/types'
 import {
   decryptNip04,
@@ -68,5 +68,54 @@ export class LocalIdentityProvider implements IdentityProvider {
     const secret = this.store.getSecret()
     if (!secret) throw new SignerError('No Nostr identity is configured')
     return secret
+  }
+}
+
+/** A generated NIP-07 identity held only for the lifetime of a private/Tor session. */
+export class EphemeralIdentityProvider implements IdentityProvider {
+  private readonly secret = generateSecretKey()
+
+  clear(): void {
+    this.secret.fill(0)
+  }
+
+  status(): IdentityStatus {
+    return {
+      configured: true,
+      mode: 'local',
+      npub: undefined,
+      hexPubkey: hexPubkeyOf(this.secret),
+      source: 'session',
+      persisted: false,
+      encryptionAvailable: false
+    }
+  }
+
+  async getPublicKey(): Promise<string> {
+    return hexPubkeyOf(this.secret)
+  }
+
+  async signEvent(template: EventTemplate): Promise<Event> {
+    return signTemplate(this.secret, template)
+  }
+
+  async nip04Encrypt(peer: string, plaintext: string): Promise<string> {
+    return encryptNip04(this.secret, peer, plaintext)
+  }
+
+  async nip04Decrypt(peer: string, ciphertext: string): Promise<string> {
+    return decryptNip04(this.secret, peer, ciphertext)
+  }
+
+  async nip44Encrypt(peer: string, plaintext: string): Promise<string> {
+    return encryptNip44(this.secret, peer, plaintext)
+  }
+
+  async nip44Decrypt(peer: string, ciphertext: string): Promise<string> {
+    return decryptNip44(this.secret, peer, ciphertext)
+  }
+
+  async decryptLocator(peerPubkey: string, ciphertext: string): Promise<string> {
+    return this.nip44Decrypt(peerPubkey, ciphertext)
   }
 }

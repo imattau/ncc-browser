@@ -247,6 +247,17 @@ export function registerIpc(deps: IpcDeps): void {
     }
   })
 
+  ipcMain.handle('ncc:set-ephemeral-signer', (event, value: unknown) => {
+    if (!fromChrome(event)) return { ok: false, error: 'Settings can only change from the browser chrome' }
+    try {
+      const config = deps.config.setEphemeralSigner(value)
+      deps.shell.window.webContents.send('ncc:config', config)
+      return { ok: true, config }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
   ipcMain.handle('ncc:set-tor-mode', async (_event, value: unknown) => {
     try {
       const config = deps.config.setTorMode(value)

@@ -101,6 +101,12 @@ export class ConfigStore {
     return this.get()
   }
 
+  setEphemeralSigner(value: unknown): AppConfig {
+    this.config = { ...this.get(), ephemeralSigner: value === true }
+    this.write()
+    return this.get()
+  }
+
   setTorMode(value: unknown): AppConfig {
     const torMode: TorMode = value === 'local' ? 'local' : 'auto'
     this.config = { ...this.get(), torMode }
@@ -215,6 +221,7 @@ export class ConfigStore {
           gossip: parsed.gossip !== false,
           anchorRequired: parsed.anchorRequired === true,
           preferTor: parsed.preferTor === true,
+          ephemeralSigner: parsed.ephemeralSigner === true,
           torMode: parsed.torMode === 'local' ? 'local' : 'auto',
           torSocks:
             typeof parsed.torSocks === 'string' && parsed.torSocks.trim()
@@ -250,6 +257,7 @@ export class ConfigStore {
       gossip: true,
       anchorRequired: false,
       preferTor: false,
+      ephemeralSigner: false,
       torMode: 'auto',
       torSocks: DEFAULT_TOR_SOCKS,
       httpsMode: DEFAULT_HTTPS_MODE,

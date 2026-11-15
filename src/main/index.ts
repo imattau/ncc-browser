@@ -397,7 +397,8 @@ app.whenReady().then(async () => {
     permissions,
     approvals,
     getRelays: () => config.getRelays(),
-    autoApprove: process.env.NCC_SIGNER_AUTO_APPROVE === '1'
+    autoApprove: process.env.NCC_SIGNER_AUTO_APPROVE === '1',
+    useEphemeralSigner: () => config.get().ephemeralSigner
   })
   registerNip07(nip07Service, [
     { session: content.normal, kind: 'normal' },

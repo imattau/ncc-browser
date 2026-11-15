@@ -103,6 +103,7 @@ export interface NccApi {
   setGossip(value: boolean): Promise<SetRelaysResult>
   setAnchorRequired(value: boolean): Promise<SetRelaysResult>
   setPreferTor(value: boolean): Promise<SetRelaysResult>
+  setEphemeralSigner(value: boolean): Promise<SetRelaysResult>
   setTorMode(mode: TorMode): Promise<SetRelaysResult>
   setTorSocks(socks: string): Promise<SetRelaysResult>
   setTorConfig(config: {

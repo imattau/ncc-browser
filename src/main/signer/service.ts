@@ -2,7 +2,7 @@ import type { Event } from 'nostr-tools'
 import type { SignerDecision, TabKind } from '@shared/types'
 import type { ApprovalBroker } from '../approval'
 import type { IdentityManager } from './manager'
-import type { IdentityProvider } from './provider'
+import { EphemeralIdentityProvider, type IdentityProvider } from './provider'
 import type { PermissionStore } from './permissions'
 import { SignerError, validateTemplate, type EventTemplate } from './crypto'
 
@@ -26,6 +26,7 @@ export interface Nip07Deps {
   getRelays: () => string[]
   /** Development/e2e only: skip the approval popup. */
   autoApprove: boolean
+  useEphemeralSigner?: () => boolean
 }
 
 interface ApprovalDetail {
@@ -79,16 +80,19 @@ export class Nip07Service {
   private readonly ephemeralTrust = new Map<TabKind, Set<string>>()
   private readonly sessionGrants = new Map<string, Set<SessionGrant>>()
   private readonly recentlyDenied = new Map<string, number>()
+  private readonly ephemeralProviders = new Map<TabKind, EphemeralIdentityProvider>()
 
   constructor(private readonly deps: Nip07Deps) {}
 
   /** Drop permissions remembered by a private or Tor session. */
   clearEphemeral(kind: TabKind): void {
     this.ephemeralTrust.delete(kind)
+    this.ephemeralProviders.get(kind)?.clear()
+    this.ephemeralProviders.delete(kind)
   }
 
   async getPublicKey(caller: Caller): Promise<string> {
-    const provider = this.requireProvider()
+    const provider = this.requireProvider(caller)
     const decision = await this.authorize(
       caller,
       'see your public key',
@@ -102,7 +106,7 @@ export class Nip07Service {
 
   async signEvent(caller: Caller, template: unknown): Promise<Event> {
     const normalized = validateTemplate(template)
-    const provider = this.requireProvider()
+    const provider = this.requireProvider(caller)
     const relay = normalized.tags.find((tag) => tag[0] === 'relay')?.[1]
     const decision = await this.authorize(
       caller,
@@ -119,7 +123,7 @@ export class Nip07Service {
   }
 
   async nip04Encrypt(caller: Caller, peer: string, plaintext: unknown): Promise<string> {
-    const provider = this.requireProvider()
+    const provider = this.requireProvider(caller)
     const decision = await this.authorize(
       caller,
       'encrypt a NIP-04 message',
@@ -131,7 +135,7 @@ export class Nip07Service {
   }
 
   async nip04Decrypt(caller: Caller, peer: string, ciphertext: unknown): Promise<string> {
-    const provider = this.requireProvider()
+    const provider = this.requireProvider(caller)
     const decision = await this.authorize(
       caller,
       'decrypt a NIP-04 message',
@@ -143,7 +147,7 @@ export class Nip07Service {
   }
 
   async nip44Encrypt(caller: Caller, peer: string, plaintext: unknown): Promise<string> {
-    const provider = this.requireProvider()
+    const provider = this.requireProvider(caller)
     const decision = await this.authorize(
       caller,
       'encrypt a NIP-44 message',
@@ -155,7 +159,7 @@ export class Nip07Service {
   }
 
   async nip44Decrypt(caller: Caller, peer: string, ciphertext: unknown): Promise<string> {
-    const provider = this.requireProvider()
+    const provider = this.requireProvider(caller)
     const decision = await this.authorize(
       caller,
       'decrypt a NIP-44 message',
@@ -172,7 +176,15 @@ export class Nip07Service {
     )
   }
 
-  private requireProvider(): IdentityProvider {
+  private requireProvider(caller: Caller): IdentityProvider {
+    if (caller.ephemeral && this.deps.useEphemeralSigner?.()) {
+      let provider = this.ephemeralProviders.get(caller.kind)
+      if (!provider) {
+        provider = new EphemeralIdentityProvider()
+        this.ephemeralProviders.set(caller.kind, provider)
+      }
+      return provider
+    }
     const provider = this.deps.identity.provider()
     if (!provider) {
       throw new SignerError(
@@ -235,7 +247,7 @@ export class Nip07Service {
       return decision
     }
 
-    if (decision.remember && this.deps.identity.status().mode !== 'none') {
+    if (decision.remember && this.providerFor(caller).status().mode !== 'none') {
       if (caller.ephemeral) {
         const trustedOrigins = this.ephemeralTrust.get(caller.kind) ?? new Set<string>()
         trustedOrigins.add(caller.origin)
@@ -248,6 +260,18 @@ export class Nip07Service {
     }
 
     return decision
+  }
+
+  private providerFor(caller: Caller): IdentityProvider {
+    if (caller.ephemeral && this.deps.useEphemeralSigner?.()) {
+      let provider = this.ephemeralProviders.get(caller.kind)
+      if (!provider) {
+        provider = new EphemeralIdentityProvider()
+        this.ephemeralProviders.set(caller.kind, provider)
+      }
+      return provider
+    }
+    return this.deps.identity.provider() ?? new EphemeralIdentityProvider()
   }
 
   /** Keep the refusal table from growing with origins nobody retries. */

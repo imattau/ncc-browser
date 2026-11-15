@@ -59,6 +59,7 @@ const api: NccApi = {
   setGossip: (value) => ipcRenderer.invoke('ncc:set-gossip', value),
   setAnchorRequired: (value) => ipcRenderer.invoke('ncc:set-anchor-required', value),
   setPreferTor: (value) => ipcRenderer.invoke('ncc:set-prefer-tor', value),
+  setEphemeralSigner: (value) => ipcRenderer.invoke('ncc:set-ephemeral-signer', value),
   setTorMode: (mode) => ipcRenderer.invoke('ncc:set-tor-mode', mode),
   setTorSocks: (socks) => ipcRenderer.invoke('ncc:set-tor-socks', socks),
   setTorConfig: (config) => ipcRenderer.invoke('ncc:set-tor-config', config),

@@ -612,6 +612,8 @@ export interface AppConfig {
   anchorRequired: boolean
   /** Automatically use an onion endpoint when the locator publishes one. */
   preferTor: boolean
+  /** Use per-session generated NIP-07 keys in private and Tor tabs. */
+  ephemeralSigner: boolean
   /** Automatic prefers the bundled Tor, then a local proxy. */
   torMode: TorMode
   /** Explicit SOCKS proxy used in local mode or when NCC_TOR_SOCKS is unset. */

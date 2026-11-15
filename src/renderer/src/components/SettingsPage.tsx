@@ -217,6 +217,7 @@ export function SettingsPage({
   const [secret, setSecret] = useState('')
   const [identityError, setIdentityError] = useState<string | null>(null)
   const [identityBusy, setIdentityBusy] = useState(false)
+  const [ephemeralSigner, setEphemeralSigner] = useState(false)
   const [copied, setCopied] = useState(false)
   const [bunker, setBunker] = useState('')
   const [connectBusy, setConnectBusy] = useState(false)
@@ -260,6 +261,7 @@ export function SettingsPage({
       setAppearance(config.appearance)
       applyAppearance(config.appearance)
       setIdentity(status)
+      setEphemeralSigner(config.ephemeralSigner)
       setPermissions(trusted)
       setCache(cacheInfo)
       setAppInfo(about)
@@ -1303,6 +1305,35 @@ export function SettingsPage({
                   <p className="mt-2 text-ui-12 text-[color:var(--color-danger)]">{identityError}</p>
                 ) : null}
               </div>
+
+              <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-4">
+                <input
+                  type="checkbox"
+                  checked={ephemeralSigner}
+                  onChange={async (event) => {
+                    const enabled = event.target.checked
+                    setEphemeralSigner(enabled)
+                    setIdentityError(null)
+                    const result = await window.ncc.setEphemeralSigner(enabled)
+                    if (!result.ok) {
+                      setEphemeralSigner(!enabled)
+                      setIdentityError(result.error ?? 'Could not save the signer setting')
+                    }
+                  }}
+                  className="mt-0.5 h-4 w-4 accent-[color:var(--color-accent)]"
+                />
+                <span>
+                  <span className="block text-ui-12 font-medium text-[color:var(--color-text-strong)]">
+                    Use throwaway keys in private and Tor tabs
+                  </span>
+                  <span className="mt-0.5 block text-ui-115 leading-relaxed text-[color:var(--color-muted)]">
+                    NIP-07 uses one generated key shared by private tabs and another shared by Tor
+                    tabs. Both stay in memory and are discarded when the last tab of that type
+                    closes. Sites see a different public key; normal tabs keep using your usual
+                    identity.
+                  </span>
+                </span>
+              </label>
 
               <div className="rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-4">
                 <div className="flex items-center gap-2">
