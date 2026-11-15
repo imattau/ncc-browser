@@ -4,8 +4,9 @@
  */
 
 import { generateSecretKey } from 'nostr-tools'
-import type { IdentityStatus } from '@shared/types'
+import type { IdentityStatus, RelayEntry } from '@shared/types'
 import type { LocatorSigner } from '../ncc/resolver'
+import type { BunkerRelay } from './bunker-relay'
 import { secretKeyToHex } from './crypto'
 import type { IdentityStore } from './identity'
 import { parseBunker, RemoteIdentityProvider, type BunkerTarget } from './nip46'
@@ -18,6 +19,7 @@ export type RemoteFactory = (args: {
   persisted: boolean
   encryptionAvailable: boolean
   timeoutMs: number
+  relay?: BunkerRelay
 }) => RemoteIdentityProvider
 
 export interface IdentityManagerDeps {
@@ -26,6 +28,12 @@ export interface IdentityManagerDeps {
   encryptionAvailable: boolean
   timeoutMs?: number
   remoteFactory?: RemoteFactory
+  /** Pinned relay transport for the bunker's relays. */
+  bunkerRelay?: (urls: () => string[]) => BunkerRelay
+  /** Resolve an `ncc://` relay entry from a bunker URI. */
+  resolveRelayLocator?: (input: string) => Promise<RelayEntry | null>
+  /** Called whenever the remote signer's relay entries change, e.g. for TLS pins. */
+  onRelayEntriesChanged?: (entries: RelayEntry[]) => void
 }
 
 const DEFAULT_TIMEOUT_MS = 60_000
@@ -34,6 +42,7 @@ export class IdentityManager {
   private readonly localProvider: LocalIdentityProvider
   private readonly factory: RemoteFactory
   private remote: RemoteIdentityProvider | null = null
+  private remoteClientSecret: string | null = null
   private readonly timeoutMs: number
 
   constructor(private readonly deps: IdentityManagerDeps) {
@@ -52,10 +61,18 @@ export class IdentityManager {
         clientSecret: hexToBytes(session.clientSecret),
         persisted: true,
         encryptionAvailable: deps.encryptionAvailable,
-        timeoutMs: manager.timeoutMs
+        timeoutMs: manager.timeoutMs,
+        ...(deps.bunkerRelay ? { relay: deps.bunkerRelay(() => session.target.relays) } : {})
       })
+      manager.remoteClientSecret = session.clientSecret
+      deps.onRelayEntriesChanged?.(manager.relayEntries())
     }
     return manager
+  }
+
+  /** Relay entries used by the active remote signer, for pin registration. */
+  relayEntries(): RelayEntry[] {
+    return this.remote?.relayEntries() ?? []
   }
 
   provider(): IdentityProvider | null {
@@ -79,39 +96,121 @@ export class IdentityManager {
 
   async connectRemote(bunkerUrl: string): Promise<IdentityStatus> {
     const target = parseBunker(bunkerUrl)
+
+    if (target.locators?.length) {
+      if (!this.deps.resolveRelayLocator) {
+        throw new Error('NCC relay resolution is not available')
+      }
+      const entries: RelayEntry[] = []
+      for (const locator of target.locators) {
+        const entry = await this.deps.resolveRelayLocator(locator)
+        if (!entry) {
+          throw new Error(`Could not resolve the bunker relay ${locator}`)
+        }
+        entries.push(entry)
+        if (!target.relays.includes(entry.url)) target.relays.push(entry.url)
+      }
+      target.entries = entries
+      target.locators = []
+    }
+
+    if (target.relays.length === 0) {
+      throw new Error('The bunker has no usable relay')
+    }
+
+    // Register pins before connecting: a locator relay may use a self-signed
+    // certificate, which only the `k` fingerprint can authorise.
+    this.deps.onRelayEntriesChanged?.(target.entries ?? target.relays.map((url) => ({ url })))
+
     const clientSecret = generateSecretKey()
     const remote = this.factory({
       target,
       clientSecret,
       persisted: false,
       encryptionAvailable: this.deps.encryptionAvailable,
-      timeoutMs: this.timeoutMs
+      timeoutMs: this.timeoutMs,
+      ...(this.deps.bunkerRelay
+        ? { relay: this.deps.bunkerRelay(() => target.relays) }
+        : {})
     })
 
     try {
       await remote.connect()
     } catch (error) {
       await remote.close().catch(() => undefined)
+      this.deps.onRelayEntriesChanged?.([])
       throw error
     }
 
     const previous = this.remote
     this.remote = remote
+    this.remoteClientSecret = secretKeyToHex(clientSecret)
 
     const persisted = await this.deps.sessions.save({
       target,
-      clientSecret: secretKeyToHex(clientSecret),
+      clientSecret: this.remoteClientSecret,
       createdAt: Date.now()
     })
     remote.setPersisted(persisted)
 
     await previous?.close().catch(() => undefined)
+    this.deps.onRelayEntriesChanged?.(remote.relayEntries())
     return remote.status()
+  }
+
+  /**
+   * Re-resolve locator-backed bunker relays. The transport reads the URL list on
+   * every request, so updating the provider is enough; the session file is rewritten
+   * when an endpoint actually moved.
+   */
+  async refreshBunkerRelays(
+    refresh: (entry: RelayEntry) => Promise<RelayEntry | null>
+  ): Promise<RelayEntry[]> {
+    const remote = this.remote
+    if (!remote || !this.remoteClientSecret) return []
+
+    const entries = remote.relayEntries()
+    if (!entries.some((entry) => entry.locator)) return entries
+
+    let changed = false
+    const next: RelayEntry[] = []
+    for (const entry of entries) {
+      if (!entry.locator) {
+        next.push(entry)
+        continue
+      }
+      const resolved = await refresh(entry).catch(() => null)
+      if (!resolved) {
+        next.push({ ...entry, stale: true })
+        continue
+      }
+      if (
+        resolved.url !== entry.url ||
+        resolved.locator?.k !== entry.locator.k ||
+        resolved.locator?.expiresAt !== entry.locator.expiresAt
+      ) {
+        changed = true
+      }
+      next.push(resolved)
+    }
+
+    remote.setRelayEntries(next)
+    this.deps.onRelayEntriesChanged?.(next)
+    if (changed) {
+      await this.deps.sessions.save({
+        target: remote.sessionTarget(),
+        clientSecret: this.remoteClientSecret,
+        createdAt: Date.now()
+      })
+    }
+    return next
   }
 
   async disconnectRemote(): Promise<IdentityStatus> {
     const current = this.remote
     this.remote = null
+    this.remoteClientSecret = null
+    this.deps.onRelayEntriesChanged?.([])
     this.deps.sessions.clear()
     await current?.close().catch(() => undefined)
     return this.status()
@@ -137,6 +236,8 @@ export class IdentityManager {
   private async detachRemote(): Promise<void> {
     const current = this.remote
     this.remote = null
+    this.remoteClientSecret = null
+    this.deps.onRelayEntriesChanged?.([])
     this.deps.sessions.clear()
     await current?.close().catch(() => undefined)
   }

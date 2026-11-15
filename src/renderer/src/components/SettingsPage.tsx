@@ -18,6 +18,7 @@ import { SEARCH_ENGINES, type SearchEngineId } from '@shared/search'
 import type {
   HttpsMode,
   IdentityStatus,
+  RelayEntry,
   SignerPermission,
   TorMode,
   TorStatus
@@ -47,6 +48,75 @@ function errorMessage(error: unknown): string {
   return marker === -1 ? raw : raw.slice(marker + 7)
 }
 
+function formatExpiry(expiresAt: number): string {
+  const seconds = expiresAt - Math.floor(Date.now() / 1000)
+  if (seconds <= 0) return 'expired'
+  if (seconds < 3600) return `${Math.max(1, Math.round(seconds / 60))} min`
+  if (seconds < 86_400) return `${Math.round(seconds / 3600)} h`
+  return `${Math.round(seconds / 86_400)} d`
+}
+
+function shortenIdentity(identity: string): string {
+  return identity.length > 26 ? `${identity.slice(0, 16)}…${identity.slice(-6)}` : identity
+}
+
+function RelayRow({
+  entry,
+  onRemove
+}: {
+  entry: RelayEntry
+  onRemove: (url: string) => void
+}) {
+  const locator = entry.locator
+  return (
+    <li className="rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] px-3 py-2.5">
+      <div className="flex items-start gap-2">
+        <span
+          className={cn(
+            'mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full',
+            entry.stale ? 'bg-[color:var(--color-danger)]' : 'bg-[color:var(--color-ok)]'
+          )}
+        />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="break-all font-mono text-[12px] text-[#dfe3ea]">{entry.url}</span>
+            <span
+              className={cn(
+                'rounded border px-1.5 py-0.5 text-[10px] font-medium',
+                locator
+                  ? 'border-[color:var(--color-accent)]/30 bg-[color:var(--color-accent)]/10 text-[color:var(--color-accent)]'
+                  : 'border-[color:var(--color-line)] text-[color:var(--color-muted)]'
+              )}
+            >
+              {locator ? 'Identity' : 'Direct'}
+            </span>
+            {entry.stale ? (
+              <span className="rounded border border-[color:var(--color-danger)]/40 px-1.5 py-0.5 text-[10px] font-medium text-[color:var(--color-danger)]">
+                Stale locator
+              </span>
+            ) : null}
+          </div>
+          {locator ? (
+            <p className="mt-1 text-[11px] leading-relaxed text-[color:var(--color-muted)]">
+              {shortenIdentity(locator.identity)} · {locator.service} · expires in{' '}
+              {formatExpiry(locator.expiresAt)}
+              {locator.k ? ` · pin ${locator.k.slice(0, 10)}…` : ' · no pin published'}
+            </p>
+          ) : null}
+        </div>
+        <button
+          type="button"
+          aria-label={`Remove ${entry.url}`}
+          onClick={() => onRemove(entry.url)}
+          className="rounded-lg p-1.5 text-[color:var(--color-muted)] hover:bg-white/5 hover:text-[color:var(--color-danger)]"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </li>
+  )
+}
+
 /**
  * Full-page settings, in the spirit of a browser's internal settings page: it lives
  * in the chrome below the toolbar, keeps the tab strip in place, and is closed with
@@ -61,7 +131,9 @@ export function SettingsPage({
   const [section, setSection] = useState<SettingsSection>(initialSection)
   const backRef = useRef<HTMLButtonElement>(null)
 
-  const [draft, setDraft] = useState('')
+  const [relayEntries, setRelayEntries] = useState<RelayEntry[]>([])
+  const [newRelay, setNewRelay] = useState('')
+  const [relayBusy, setRelayBusy] = useState(false)
   const [gossip, setGossip] = useState(true)
   const [anchorRequired, setAnchorRequired] = useState(false)
   const [preferTor, setPreferTor] = useState(false)
@@ -107,7 +179,7 @@ export function SettingsPage({
       window.ncc.signerPermissions(),
       window.ncc.torStatus()
     ]).then(([config, status, trusted, tor]) => {
-      setDraft(config.relays.join('\n'))
+      setRelayEntries(config.relays)
       setGossip(config.gossip)
       setAnchorRequired(config.anchorRequired)
       setPreferTor(config.preferTor)
@@ -126,6 +198,25 @@ export function SettingsPage({
     const frame = window.requestAnimationFrame(() => backRef.current?.focus())
     return () => window.cancelAnimationFrame(frame)
   }, [open, initialSection])
+
+  // A locator-backed relay can rotate while Settings is open. Merge only those
+  // entries so unsaved edits to other rows are kept.
+  useEffect(() => {
+    if (!open) return
+    return window.ncc.onConfig((config) => {
+      setRelayEntries((current) =>
+        current.map((entry) => {
+          if (!entry.locator) return entry
+          const match = config.relays.find(
+            (candidate) =>
+              candidate.locator?.identity === entry.locator?.identity &&
+              candidate.locator?.service === entry.locator?.service
+          )
+          return match ?? entry
+        })
+      )
+    })
+  }, [open])
 
   useEffect(() => {
     if (!open || !torStatus?.starting) return
@@ -152,15 +243,61 @@ export function SettingsPage({
 
   if (!open) return null
 
+  const addRelay = async (): Promise<void> => {
+    const value = newRelay.trim()
+    if (!value) return
+    setError(null)
+    setRelayBusy(true)
+    try {
+      let entry: RelayEntry
+      if (/^ncc:\/\//i.test(value)) {
+        const outcome = await window.ncc.resolveRelayLocator(value)
+        if (!outcome.ok) {
+          setError(outcome.error)
+          return
+        }
+        entry = outcome.entry
+      } else {
+        let url: URL
+        try {
+          url = new URL(value)
+        } catch {
+          setError(`Not a valid relay URL: ${value}`)
+          return
+        }
+        if (url.protocol !== 'wss:' && url.protocol !== 'ws:') {
+          setError('Relays must use ws:// or wss://')
+          return
+        }
+        if (url.hash) {
+          setError('Relay URLs cannot contain a fragment')
+          return
+        }
+        entry = { url: url.toString().replace(/\/$/, '') }
+      }
+
+      if (relayEntries.some((item) => item.url === entry.url)) {
+        setError('That relay is already in the list')
+        return
+      }
+
+      setRelayEntries([...relayEntries, entry])
+      setNewRelay('')
+      setSaved(false)
+    } finally {
+      setRelayBusy(false)
+    }
+  }
+
+  const removeRelay = (url: string): void => {
+    setRelayEntries(relayEntries.filter((entry) => entry.url !== url))
+    setSaved(false)
+  }
+
   const save = async (): Promise<void> => {
     setLoading(true)
     setError(null)
-    const relays = draft
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean)
-
-    const relayResult = await window.ncc.setRelays(relays)
+    const relayResult = await window.ncc.setRelays(relayEntries)
     if (!relayResult.ok) {
       setLoading(false)
       setError(relayResult.error ?? 'Could not save relays')
@@ -218,7 +355,7 @@ export function SettingsPage({
       gossipResult.config ??
       relayResult.config
     if (config) {
-      setDraft(config.relays.join('\n'))
+      setRelayEntries(config.relays)
       setGossip(config.gossip)
       setAnchorRequired(config.anchorRequired)
       setPreferTor(config.preferTor)
@@ -411,27 +548,63 @@ export function SettingsPage({
             <>
               <SectionHeading
                 title="Relays & resolution"
-                hint="Where NCC-05 locators are looked up. One relay per line."
+                hint="Where NCC-05 locators are looked up. Add a wss:// address or an ncc:// identity."
               />
 
               <div className="rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-4">
-                <label
-                  htmlFor="relays"
-                  className="mb-2 block text-[10.5px] font-semibold uppercase tracking-wide text-[color:var(--color-muted)]"
-                >
+                <label className="mb-2 block text-[10.5px] font-semibold uppercase tracking-wide text-[color:var(--color-muted)]">
                   Resolution relays
                 </label>
-                <textarea
-                  id="relays"
-                  value={draft}
-                  onChange={(event) => {
-                    setDraft(event.target.value)
-                    setSaved(false)
-                  }}
-                  spellCheck={false}
-                  rows={5}
-                  className="w-full resize-none rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] px-3 py-2.5 font-mono text-[12.5px] leading-relaxed text-[#dfe3ea] outline-none focus:border-[color:var(--color-accent)]/60"
-                />
+
+                <ul className="space-y-2">
+                  {relayEntries.map((entry) => (
+                    <RelayRow
+                      key={
+                        entry.locator
+                          ? `${entry.locator.identity}/${entry.locator.service}`
+                          : entry.url
+                      }
+                      entry={entry}
+                      onRemove={removeRelay}
+                    />
+                  ))}
+                </ul>
+
+                <div className="mt-3 flex gap-2">
+                  <input
+                    id="new-relay"
+                    value={newRelay}
+                    onChange={(event) => {
+                      setNewRelay(event.target.value)
+                      setError(null)
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' && !relayBusy) {
+                        event.preventDefault()
+                        void addRelay()
+                      }
+                    }}
+                    placeholder="wss://relay.example or ncc://npub1…/relay"
+                    spellCheck={false}
+                    autoComplete="off"
+                    className="min-w-0 flex-1 rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] px-3 py-2 font-mono text-[12px] text-[#dfe3ea] outline-none focus:border-[color:var(--color-accent)]/60"
+                  />
+                  <button
+                    type="button"
+                    disabled={relayBusy || newRelay.trim().length === 0}
+                    onClick={() => void addRelay()}
+                    className="rounded-lg border border-[color:var(--color-accent)]/30 bg-[color:var(--color-accent)]/10 px-3 py-1.5 text-[11px] font-semibold text-[color:var(--color-accent)] disabled:opacity-40"
+                  >
+                    {relayBusy ? 'Resolving…' : 'Add'}
+                  </button>
+                </div>
+
+                <p className="mt-2 text-[11px] leading-relaxed text-[color:var(--color-muted)]">
+                  An <span className="font-mono">ncc://</span> relay is resolved from the
+                  identity&apos;s NCC-05 locator and re-resolved before it expires. The
+                  locator&apos;s <span className="font-mono">k</span> fingerprint is enforced
+                  as a TLS pin, so a self-signed relay is accepted only when it matches.
+                </p>
 
                 {error ? (
                   <p className="mt-2 text-xs text-[color:var(--color-danger)]">{error}</p>
@@ -684,7 +857,7 @@ export function SettingsPage({
                   <button
                     type="button"
                     onClick={() => {
-                      setDraft(DEFAULT_RELAYS.join('\n'))
+                      setRelayEntries(DEFAULT_RELAYS.map((url) => ({ url })))
                       setAnchorRequired(false)
                       setPreferTor(false)
                       setTorMode('auto')
@@ -996,6 +1169,26 @@ export function SettingsPage({
                 </div>
                 {remoteError ? (
                   <p className="mt-2 text-xs text-[color:var(--color-danger)]">{remoteError}</p>
+                ) : null}
+
+                {identity?.mode === 'nip46' && identity.relays?.length ? (
+                  <div className="mt-3 rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] p-3">
+                    <p className="text-[10.5px] font-semibold uppercase tracking-wide text-[color:var(--color-muted)]">
+                      Bunker relays
+                    </p>
+                    <ul className="mt-1.5 space-y-1 font-mono text-[11px] text-[#c9d1e0]">
+                      {identity.relays.map((url) => (
+                        <li key={url} className="break-all">
+                          {url}
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="mt-1.5 text-[10.5px] leading-relaxed text-[color:var(--color-muted)]">
+                      A relay listed as <span className="font-mono">ncc://</span> in the bunker
+                      URL is resolved here, pinned to its locator, and re-resolved before it
+                      expires.
+                    </p>
+                  </div>
                 ) : null}
               </div>
             </>

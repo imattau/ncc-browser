@@ -90,7 +90,7 @@ export function installCertificatePinning(session: Session, store: PinStore): vo
     }
 
     // Development placeholders such as `TESTKEY:ncc06-abc` are not real fingerprints.
-    if (pin.k.startsWith('TESTKEY:') || pin.k.includes(':')) {
+    if (!isUsableFingerprint(pin.k)) {
       callback(-3)
       return
     }
@@ -127,4 +127,11 @@ function constantTimeEqual(a: string, b: string): boolean {
     diff |= a.charCodeAt(index) ^ b.charCodeAt(index)
   }
   return diff === 0
+}
+
+export { constantTimeEqual }
+
+/** Development placeholders such as `TESTKEY:ncc06-abc` are not real fingerprints. */
+export function isUsableFingerprint(k: string): boolean {
+  return !(k.startsWith('TESTKEY:') || k.includes(':'))
 }

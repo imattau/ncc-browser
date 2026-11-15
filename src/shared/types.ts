@@ -48,8 +48,54 @@ export interface TorStatus {
   configured: string
 }
 
+/**
+ * Metadata for a relay entry that was resolved from an NCC-05 service locator
+ * (`ncc://<npub>/<service>`). Kept so the entry can be re-resolved before it goes
+ * stale, and so the locator's `k` can be enforced as a TLS pin.
+ */
+export interface RelayLocatorRef {
+  /** Identity exactly as the user entered it (npub or hex). */
+  identity: string
+  /** Hex pubkey of the identity that published the locator. */
+  pubkey: string
+  service: string
+  /** The `d` tag that matched. */
+  dTag: string
+  /** Unix seconds after which the locator must be re-resolved. */
+  expiresAt: number
+  /** SPKI fingerprint from the endpoint, enforced on `wss:` connections. */
+  k: string | null
+}
+
+export interface RelayEntry {
+  /** Resolved `ws(s)://` endpoint. */
+  url: string
+  /** Present when the entry came from an NCC-05 locator rather than a fixed URL. */
+  locator?: RelayLocatorRef
+  /** The last re-resolution failed; the entry keeps working at its previous address. */
+  stale?: boolean
+}
+
+export type RelayLocatorErrorCode =
+  | ResolveErrorCode
+  | 'onion-requires-tor'
+  | 'insecure-endpoint'
+
+export interface RelayLocatorFailure {
+  ok: false
+  code: RelayLocatorErrorCode
+  error: string
+}
+
+export interface RelayLocatorSuccess {
+  ok: true
+  entry: RelayEntry
+}
+
+export type RelayLocatorOutcome = RelayLocatorSuccess | RelayLocatorFailure
+
 export interface ResolvedEndpoint {
-  /** Absolute http(s) URL, normalised so it can be handed straight to fetch. */
+  /** Absolute http(s) or ws(s) URL, normalised so it can be handed straight to fetch. */
   url: string
   protocol: string
   priority: number
@@ -254,7 +300,8 @@ export interface NavState {
 }
 
 export interface AppConfig {
-  relays: string[]
+  /** Resolution relays; an entry may be identity-resolved rather than a fixed URL. */
+  relays: RelayEntry[]
   /** Follow NIP-65 relay hints published by the target identity. */
   gossip: boolean
   /** Refuse services that have no fresh NCC-02 service record (kind 30059). */

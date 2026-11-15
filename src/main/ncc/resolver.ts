@@ -63,6 +63,16 @@ export interface ResolverOptions {
   cacheStore?: LocatorStore
 }
 
+/** What the resolved endpoints will be used for. */
+export type ResolveMode = 'web' | 'relay'
+
+export interface ResolveOptions {
+  /** `relay` accepts ws/wss endpoints; `web` (the default) never does. */
+  mode?: ResolveMode
+  /** Override the configured relay list, e.g. for bootstrap locator lookups. */
+  relays?: string[]
+}
+
 interface Cached {
   outcome: ResolveOutcome
   expiresAt: number
@@ -136,20 +146,26 @@ export class NccResolver {
     this.now = options.now ?? (() => Math.floor(Date.now() / 1000))
   }
 
-  async resolve(pubkey: string, service?: string | null): Promise<ResolveOutcome> {
+  async resolve(
+    pubkey: string,
+    service?: string | null,
+    options: ResolveOptions = {}
+  ): Promise<ResolveOutcome> {
     const hex = toHexPubkey(pubkey)
     if (!hex) {
       return failure('invalid-address', 'That pubkey is not a valid npub', pubkey)
     }
 
+    const mode: ResolveMode = options.mode === 'relay' ? 'relay' : 'web'
     const normalizedService = (service ?? '').trim() || DEFAULT_SERVICE
-    const key = `${hex}:${normalizedService}`
+    const key = `${hex}:${normalizedService}:${mode}`
 
     const cached = this.cache.get(key)
     if (cached && cached.expiresAt > this.now()) return cached.outcome
     if (cached) this.cache.delete(key)
 
-    const persisted = this.options.cacheStore?.get(hex, normalizedService) ?? null
+    const persisted =
+      mode === 'web' ? (this.options.cacheStore?.get(hex, normalizedService) ?? null) : null
     const requiresAnchor = this.shouldRequireAnchor()
     if (persisted && (!requiresAnchor || persisted.anchor?.status === 'anchored')) {
       const ttl = Math.min(
@@ -173,7 +189,7 @@ export class NccResolver {
     const running = this.inflight.get(key)
     if (running) return running
 
-    const promise = this.resolveUncached(pubkey, hex, normalizedService)
+    const promise = this.resolveUncached(pubkey, hex, normalizedService, mode, options.relays)
       .then((outcome) => {
         const ttl = outcome.ok
           ? Math.max(
@@ -203,9 +219,13 @@ export class NccResolver {
   private async resolveUncached(
     pubkey: string,
     hexPubkey: string,
-    service: string
+    service: string,
+    mode: ResolveMode = 'web',
+    relaysOverride?: string[]
   ): Promise<ResolveOutcome> {
-    const configured = [...new Set(this.options.relays().filter(Boolean))]
+    const configured = [
+      ...new Set((relaysOverride ?? this.options.relays()).filter(Boolean))
+    ]
     if (configured.length === 0) {
       return failure('relay-error', 'No relays are configured')
     }
@@ -303,7 +323,9 @@ export class NccResolver {
           continue
         }
 
-        const endpoints = sortEndpoints(normalizeEndpoints(decoded.value.payload.endpoints))
+        const endpoints = sortEndpoints(
+          normalizeEndpoints(decoded.value.payload.endpoints, { allowWs: mode === 'relay' })
+        )
         if (endpoints.length === 0) {
           sawNoEndpoint = true
           continue
@@ -338,13 +360,18 @@ export class NccResolver {
 
       record.endpoints = applied.endpoints
       record.anchor = { ...baseAnchor, kMatch: applied.kMatch }
-      if (!record.encrypted) this.options.cacheStore?.set(record)
+      if (mode === 'web' && !record.encrypted) this.options.cacheStore?.set(record)
       return { ok: true, record }
     }
 
     // NCC-02 anchoring allows the service record's public `u` endpoint to work when
-    // NCC-05 has no usable locator (NCC-05 §7 fallback).
-    if (anchorSelection.status === 'anchored' && anchorSelection.anchor.endpoint) {
+    // NCC-05 has no usable locator (NCC-05 §7 fallback). A relay entry needs ws(s),
+    // which the `u` fallback cannot provide.
+    if (
+      mode === 'web' &&
+      anchorSelection.status === 'anchored' &&
+      anchorSelection.anchor.endpoint
+    ) {
       const fallback = anchorFallbackRecord(
         { pubkey, hexPubkey, service },
         baseAnchor,
@@ -369,7 +396,12 @@ export class NccResolver {
       return failure('expired', 'The locator record has expired', `Tried d=${candidates.join(', ')}`)
     }
     if (sawNoEndpoint) {
-      return failure('no-endpoint', 'The locator has no fetchable endpoints')
+      return failure(
+        'no-endpoint',
+        mode === 'relay'
+          ? 'The locator publishes no ws:// or wss:// endpoint'
+          : 'The locator has no fetchable endpoints'
+      )
     }
     if (sawInvalid) {
       return failure('invalid-payload', 'The locator payload is malformed')

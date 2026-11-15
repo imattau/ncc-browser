@@ -15,6 +15,10 @@ import { EndpointHealth } from './ncc/health'
 import { closeSharedPool, NccResolver, signerFromSecret, type LocatorSigner } from './ncc/resolver'
 import { installCertificatePinning, PinStore } from './pins'
 import { installNccProtocol, registerNccScheme, type ProtocolActivity } from './protocol'
+import { RelayLocatorService } from './relay/locator'
+import { RelayPool } from './relay/pool'
+import { RelayPinStore } from './relay/socket'
+import { RelaySync } from './relay/sync'
 import { BrowserShell } from './shell'
 import { SessionStore } from './session-store'
 import {
@@ -29,6 +33,7 @@ import { TorGuard } from './tor/guard'
 import { TorManager } from './tor/manager'
 import { TorRelayPool } from './tor/relay'
 import { TorSessionProxy } from './tor/session'
+import { createBunkerRelay } from './signer/bunker-relay'
 import { IdentityStore } from './signer/identity'
 import { registerNip07 } from './signer/ipc'
 import { IdentityManager } from './signer/manager'
@@ -52,10 +57,12 @@ let shell: BrowserShell | null = null
 let contentSessions: ContentSessions | null = null
 let torManager: TorManager | null = null
 let torRelays: TorRelayPool | null = null
+let relaySync: RelaySync | null = null
 
 app.whenReady().then(async () => {
   const config = new ConfigStore()
   const pins = new PinStore()
+  const relayPins = new RelayPinStore()
   const health = new EndpointHealth()
   const cacheStore = new LocatorCacheStore(join(app.getPath('userData'), 'locator-cache.json'))
 
@@ -89,17 +96,20 @@ app.whenReady().then(async () => {
     join(app.getPath('userData'), 'nip46-session.json'),
     identityCodec
   )
-  const identity = await IdentityManager.create({
-    local: localIdentity,
-    sessions,
-    encryptionAvailable,
-    timeoutMs: Number(process.env.NCC_NIP46_TIMEOUT_MS) || 60_000
-  })
 
   const permissions = new PermissionStore(
     join(app.getPath('userData'), 'signer-permissions.json')
   )
   const envLocatorSigner = locatorSignerFromEnv()
+
+  // Relay entries resolved from NCC-05 locators are pinned by `host:port`; restore
+  // the pins from the saved config before anything can connect.
+  relayPins.setFromEntries(config.getRelayEntries())
+
+  const relayPool = new RelayPool({
+    pins: relayPins,
+    proxy: () => torManager?.status().proxy ?? null
+  })
 
   const resolverOptions = {
     relays: () => config.getRelays(),
@@ -107,11 +117,36 @@ app.whenReady().then(async () => {
     anchorRequired: () => config.get().anchorRequired,
     getSigner: () => identity.locatorSigner() ?? envLocatorSigner
   }
-  const torRelayPool = (torRelays = new TorRelayPool())
-  const resolver = new NccResolver({ ...resolverOptions, cacheStore })
-  const privateResolver = new NccResolver(resolverOptions)
+  const torRelayPool = (torRelays = new TorRelayPool(relayPins))
+  const resolver = new NccResolver({
+    ...resolverOptions,
+    cacheStore,
+    query: relayPool.query
+  })
+  const privateResolver = new NccResolver({ ...resolverOptions, query: relayPool.query })
   const torResolver = new NccResolver({ ...resolverOptions, query: torRelayPool.query })
   const resolvers = [resolver, privateResolver, torResolver]
+
+  const relayLocator = new RelayLocatorService({
+    resolver,
+    entries: () => config.getRelayEntries(),
+    torReady: () => torManager?.status().ready ?? false
+  })
+
+  const identity = await IdentityManager.create({
+    local: localIdentity,
+    sessions,
+    encryptionAvailable,
+    timeoutMs: Number(process.env.NCC_NIP46_TIMEOUT_MS) || 60_000,
+    resolveRelayLocator: async (input) => {
+      const outcome = await relayLocator.resolve(input)
+      return outcome.ok ? outcome.entry : null
+    },
+    onRelayEntriesChanged: (entries) => {
+      relayPins.setFromEntries([...config.getRelayEntries(), ...entries])
+    },
+    bunkerRelay: (urls) => createBunkerRelay({ urls, pool: relayPool })
+  })
 
   const content = createContentSessions()
   contentSessions = content
@@ -139,6 +174,8 @@ app.whenReady().then(async () => {
       : {}),
     onProxyChange: (proxy) => {
       torRelayPool.setProxy(proxy)
+      // Rebuild the shared pool so new connections use the new SOCKS agent.
+      relayPool.refresh()
       return torSessionProxy.apply(proxy)
     },
     ...(process.env.NCC_TOR_DEBUG === '1'
@@ -268,6 +305,28 @@ app.whenReady().then(async () => {
 
   shell.window.on('closed', () => approvals.cancelAll())
 
+  // Re-resolve identity-backed relays before their locators expire. A rotation
+  // updates the config, moves the TLS pin and drops the old pool connection.
+  relaySync = new RelaySync({
+    entries: () => config.getRelayEntries(),
+    refresh: (entry) => relayLocator.refresh(entry),
+    apply: (previousUrl, next) => {
+      const updated = config.replaceRelayEntry(previousUrl, next)
+      relayPins.clearUrl(previousUrl)
+      relayPins.setForEntry(next)
+      if (next.url !== previousUrl) relayPool.closeUrls([previousUrl])
+      for (const value of resolvers) value.clearCache()
+      shell?.sendConfig(updated)
+    },
+    markStale: (url, stale) => {
+      shell?.sendConfig(config.markRelayStale(url, stale))
+    },
+    refreshExtra: async () => {
+      await identity.refreshBunkerRelays((entry) => relayLocator.refresh(entry))
+    },
+    onError: (error) => console.warn('[relay-sync]', error)
+  })
+
   // No in-window menu bar: shortcuts are handled in main, the rest lives in the
   // hamburger menu. macOS still needs a system application menu.
   if (process.platform === 'darwin') {
@@ -285,6 +344,9 @@ app.whenReady().then(async () => {
     config,
     resolvers,
     pins,
+    relayPins,
+    relayLocator,
+    relayPool,
     cacheStore,
     health,
     transport,
@@ -307,6 +369,7 @@ app.whenReady().then(async () => {
   }
 
   shell.loadChrome()
+  relaySync?.start()
 
   app.on('second-instance', (_event, argv) => {
     if (!shell) return
@@ -329,6 +392,7 @@ app.on('activate', () => {
 
 app.on('before-quit', () => {
   shell?.saveSessionNow()
+  relaySync?.stop()
   closeSharedPool()
   void torManager?.stop()
   torRelays?.close()

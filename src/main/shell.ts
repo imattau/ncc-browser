@@ -23,6 +23,7 @@ import { renderErrorPage } from './error-page'
 import type { BookmarkStore } from './bookmarks'
 import type { SavedSession, SavedWindow, SessionStore } from './session-store'
 import type {
+  AppConfig,
   Bookmark,
   DownloadNotice,
   NavState,
@@ -165,6 +166,11 @@ export class BrowserShell {
     } else {
       void this.window.loadFile(this.deps.rendererFile)
     }
+  }
+
+  /** Push an updated config to the chrome renderer, e.g. after a relay rotated. */
+  sendConfig(config: AppConfig): void {
+    this.sendChrome('ncc:config', config)
   }
 
   getState(): NavState {

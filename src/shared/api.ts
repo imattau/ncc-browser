@@ -9,6 +9,8 @@ import type {
   OmniboxSuggestion,
   OverlayReason,
   HttpsMode,
+  RelayEntry,
+  RelayLocatorOutcome,
   SignerPermission,
   SignerRequest,
   TabHistory,
@@ -63,7 +65,8 @@ export interface NccApi {
   minimizeWindow(): Promise<void>
   toggleMaximizeWindow(): Promise<void>
   closeWindow(): Promise<void>
-  setRelays(relays: string[]): Promise<SetRelaysResult>
+  setRelays(relays: Array<string | RelayEntry>): Promise<SetRelaysResult>
+  resolveRelayLocator(input: string): Promise<RelayLocatorOutcome>
   setGossip(value: boolean): Promise<SetRelaysResult>
   setAnchorRequired(value: boolean): Promise<SetRelaysResult>
   setPreferTor(value: boolean): Promise<SetRelaysResult>
@@ -110,6 +113,7 @@ export interface NccApi {
   onOpenDownloads(listener: () => void): () => void
   onBookmarks(listener: (bookmarks: Bookmark[]) => void): () => void
   onState(listener: (state: NavState) => void): () => void
+  onConfig(listener: (config: AppConfig) => void): () => void
   onDownload(listener: (notice: DownloadNotice) => void): () => void
 }
 

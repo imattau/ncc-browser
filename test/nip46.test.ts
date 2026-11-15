@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { finalizeEvent, generateSecretKey, getPublicKey } from 'nostr-tools'
+import { finalizeEvent, generateSecretKey, getPublicKey, nip19 } from 'nostr-tools'
 import {
   parseBunker,
   RemoteIdentityProvider,
@@ -74,6 +74,25 @@ describe('parseBunker', () => {
     expect(() =>
       parseBunker(`bunker://${REMOTE_PK}?relay=${encodeURIComponent('https://a.example')}`)
     ).toThrow(/bunker|ws/)
+  })
+
+  it('keeps ncc:// relay parameters for resolution', () => {
+    const npub = nip19.npubEncode(REMOTE_PK)
+    const target = parseBunker(
+      `bunker://${REMOTE_PK}?relay=${encodeURIComponent(`ncc://${npub}/relay`)}&relay=${encodeURIComponent('wss://a.example')}`
+    )
+    expect(target.relays).toEqual(['wss://a.example'])
+    expect(target.locators).toEqual([`ncc://${npub}/relay`])
+  })
+
+  it('accepts a bunker whose only relay is an NCC locator', () => {
+    const npub = nip19.npubEncode(REMOTE_PK)
+    const target = parseBunker(
+      `bunker://${REMOTE_PK}?relay=${encodeURIComponent(`ncc://${npub}/relay`)}&secret=abc`
+    )
+    expect(target.relays).toEqual([])
+    expect(target.locators).toHaveLength(1)
+    expect(target.secret).toBe('abc')
   })
 })
 

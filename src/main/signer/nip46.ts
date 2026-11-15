@@ -1,10 +1,11 @@
 /**
- * NIP-46 remote signer provider. Uses Nostrify's `BunkerURI`, `NConnectSigner` and
- * `NPool`, which already handle bunker parsing, request correlation, NIP-44/NIP-04
- * negotiation, timeouts and response validation.
+ * NIP-46 remote signer provider. Uses Nostrify's `BunkerURI` and `NConnectSigner`,
+ * which already handle bunker parsing, request correlation, NIP-44/NIP-04
+ * negotiation, timeouts and response validation. The transport itself is ours, so
+ * NCC-05 relay pins and onion routing apply (see `bunker-relay.ts`).
  */
 
-import { BunkerURI, NConnectSigner, NPool, NRelay1 } from '@nostrify/nostrify'
+import { BunkerURI, NConnectSigner } from '@nostrify/nostrify'
 import type { NostrSigner } from '@nostrify/nostrify'
 import {
   finalizeEvent,
@@ -15,7 +16,9 @@ import {
   verifyEvent,
   type Event
 } from 'nostr-tools'
-import type { IdentityStatus } from '@shared/types'
+import type { IdentityStatus, RelayEntry } from '@shared/types'
+import { parseRelayLocator } from '@shared/relays'
+import type { BunkerRelay } from './bunker-relay'
 import { SignerError, type EventTemplate } from './crypto'
 
 const DEFAULT_TIMEOUT_MS = 60_000
@@ -23,6 +26,10 @@ const DEFAULT_TIMEOUT_MS = 60_000
 export interface BunkerTarget {
   remotePubkey: string
   relays: string[]
+  /** `ncc://` relay entries from the bunker URI that still need resolving. */
+  locators?: string[]
+  /** Resolved relay entries, including locator metadata for rotation. */
+  entries?: RelayEntry[]
   secret?: string
 }
 
@@ -75,23 +82,26 @@ export function parseBunker(input: string): BunkerTarget {
   const value = input.trim()
   if (!value) throw new SignerError('Paste a bunker:// URL from your signer')
 
-  let uri: BunkerURI
+  let parsedUrl: URL
   try {
-    uri = new BunkerURI(value)
+    parsedUrl = new URL(value)
   } catch {
     throw new SignerError('That is not a valid bunker:// URL')
   }
-
-  const remotePubkey = uri.pubkey.toLowerCase()
-  if (!/^[0-9a-f]{64}$/.test(remotePubkey)) {
-    throw new SignerError('The bunker URL is missing the remote signer pubkey')
-  }
-  if (uri.relays.length === 0) {
-    throw new SignerError('The bunker URL does not list a relay')
+  if (parsedUrl.protocol !== 'bunker:') {
+    throw new SignerError('That is not a valid bunker:// URL')
   }
 
   const relays: string[] = []
-  for (const raw of uri.relays) {
+  const locators: string[] = []
+  for (const raw of parsedUrl.searchParams.getAll('relay')) {
+    // A signer (or a user editing the URI) may address its relay by NCC identity.
+    const locator = parseRelayLocator(raw)
+    if (locator) {
+      if (!locators.includes(locator.uri)) locators.push(locator.uri)
+      continue
+    }
+
     let url: URL
     try {
       url = new URL(raw)
@@ -105,7 +115,35 @@ export function parseBunker(input: string): BunkerTarget {
     if (!relays.includes(normalized)) relays.push(normalized)
   }
 
-  return { remotePubkey, relays, secret: uri.secret }
+  if (relays.length === 0 && locators.length === 0) {
+    throw new SignerError('The bunker URL does not list a relay')
+  }
+
+  // Validate the remote pubkey with Nostrify's parser. It insists on at least one
+  // ws(s) relay, so hand it a placeholder when every relay is an NCC locator.
+  const probe = new URL(value)
+  const secret = probe.searchParams.get('secret') ?? undefined
+  probe.search = ''
+  if (secret) probe.searchParams.set('secret', secret)
+  probe.searchParams.set('relay', 'wss://placeholder.invalid')
+  let uri: BunkerURI
+  try {
+    uri = new BunkerURI(probe.toString())
+  } catch {
+    throw new SignerError('That is not a valid bunker:// URL')
+  }
+
+  const remotePubkey = uri.pubkey.toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(remotePubkey)) {
+    throw new SignerError('The bunker URL is missing the remote signer pubkey')
+  }
+
+  return {
+    remotePubkey,
+    relays,
+    ...(locators.length > 0 ? { locators } : {}),
+    secret: uri.secret
+  }
 }
 
 export interface RemoteProviderOptions {
@@ -114,6 +152,8 @@ export interface RemoteProviderOptions {
   timeoutMs?: number
   persisted?: boolean
   encryptionAvailable?: boolean
+  /** Pinned transport over the app's relay pool; required unless `createSigner` is set. */
+  relay?: BunkerRelay
   /** Injectable for tests. */
   createSigner?: (args: {
     target: BunkerTarget
@@ -125,7 +165,6 @@ export interface RemoteProviderOptions {
 export class RemoteIdentityProvider {
   private readonly target: BunkerTarget
   private readonly signer: RemoteSignerLike
-  private readonly pool: NPool | null
   private readonly timeoutMs: number
   private persisted: boolean
   private readonly encryptionAvailable: boolean
@@ -145,19 +184,15 @@ export class RemoteIdentityProvider {
         clientSecret: options.clientSecret,
         timeoutMs: this.timeoutMs
       })
-      this.pool = null
       return
     }
 
-    const relays = this.target.relays
-    const pool = new NPool({
-      open: (url) => new NRelay1(url),
-      reqRouter: (filters) => new Map(relays.map((url) => [url, filters])),
-      eventRouter: () => relays
-    })
-    this.pool = pool
+    if (!options.relay) {
+      throw new SignerError('No NIP-46 relay transport is configured')
+    }
+
     this.signer = new NConnectSigner({
-      relay: pool,
+      relay: options.relay as never,
       pubkey: this.target.remotePubkey,
       signer: new LocalNostrSigner(options.clientSecret) as unknown as NostrSigner,
       timeout: this.timeoutMs,
@@ -227,11 +262,33 @@ export class RemoteIdentityProvider {
   async close(): Promise<void> {
     this.connection = null
     this.connected = false
-    if (this.pool) {
-      await this.pool.close()
-      return
-    }
     await this.signer.close?.()
+  }
+
+  /** Persisted relay entries, including NCC-05 locator metadata. */
+  relayEntries(): RelayEntry[] {
+    if (this.target.entries) return this.target.entries.map((entry) => ({ ...entry }))
+    return this.target.relays.map((url) => ({ url }))
+  }
+
+  /**
+   * Replace the relay list after a locator rotates. The signer reads the URL list on
+   * every request, so no rebuild is needed.
+   */
+  setRelayEntries(entries: RelayEntry[]): void {
+    this.target.entries = entries.map((entry) => ({ ...entry }))
+    this.target.relays = [...new Set(entries.map((entry) => entry.url))]
+    this.target.locators = []
+  }
+
+  /** A copy of the target suitable for persisting to the session file. */
+  sessionTarget(): BunkerTarget {
+    return {
+      remotePubkey: this.target.remotePubkey,
+      relays: [...this.target.relays],
+      entries: this.relayEntries(),
+      ...(this.target.secret ? { secret: this.target.secret } : {})
+    }
   }
 
   private ensureConnected(): Promise<void> {

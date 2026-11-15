@@ -17,7 +17,7 @@ export function Welcome({ onOpenSettings, onNewPrivateTab, onNewTorTab }: Welcom
   useEffect(() => {
     let alive = true
     void window.ncc.getConfig().then((config) => {
-      if (alive) setRelays(config.relays)
+      if (alive) setRelays(config.relays.map((entry) => entry.url))
     })
     return () => {
       alive = false

@@ -216,6 +216,37 @@ fresh, valid record wins and the matched tag is reported in the UI.
    Encrypted records are never persisted. Failures are negative-cached for 15 s, and
    failed endpoints cool down with exponential backoff (15 s → 5 min).
 
+## Relays by identity
+
+A relay does not have to be a fixed `wss://` address. Settings → General → Relay rows
+accept `ncc://<npub>/<service>` (a bare `ncc://<npub>` means the `relay` service), and a
+bunker URL may list `relay=ncc://…` parameters. Resolution uses the same NCC-05 path as
+a page, in a relay mode that accepts `ws`/`wss` endpoints and never leaks them into page
+navigation.
+
+- The **latest fresh record** wins; expiry is the earliest of the `expiration` tag and
+  `updated_at + ttl`.
+- **Onion endpoints** are used only when Tor is ready. Without it they are skipped, and
+  an onion-only locator reports `onion-requires-tor` instead of silently failing.
+- **Cleartext `ws://`** is accepted only for loopback and onion hosts. Anywhere else the
+  endpoint is rejected, because a relay carries signed DMs and NIP-46 traffic.
+- **The locator's `k` is enforced.** Relay sockets are opened by the main process, not
+  Chromium, so a dedicated TLS check compares `base64url(sha256(SPKI))` against `k`:
+  a self-signed certificate is accepted only when the fingerprint matches, an expired
+  certificate is rejected, and a locator without `k` requires a normal CA-valid chain.
+  Pins are keyed by `host:port`.
+- **Rotation is automatic.** Each entry is re-resolved shortly before its record
+  expires, with 30–180 s of jitter, and the endpoint, pin and live connection move
+  together. A failed refresh keeps the previous address and marks the row stale rather
+  than breaking resolution.
+- **Bootstrap:** locator lookups query the configured plain relays plus each
+  identity-resolved relay's last known address, falling back to the built-in defaults
+  only when the list is empty. This avoids the circular case where every relay is an
+  identity.
+- **NIP-46** reads its relay list on every request, so a rotated bunker relay needs no
+  reconnect. The resolved list is persisted with the session and re-resolved while the
+  browser runs.
+
 Each failure gets its own page: `invalid-address`, `no-record`, `expired`,
 `undecryptable`, `invalid-payload`, `no-endpoint`, `relay-error`, `timeout`, and
 `endpoint-unreachable`.
@@ -452,6 +483,8 @@ Nostr Connect, nsec.app, …). The flow is:
    signs the connect request.
 2. The remote signer approves the connection on the user's device; the browser stores
    the session (remote pubkey, relays, secret, encrypted client key) in `userData`.
+   A relay given as `ncc://<npub>/<service>` in the bunker URL is resolved first, and
+   its endpoint and `k` pin are stored with the session.
 3. Every NIP-07 call becomes a `kind 24133` request to the signer. The browser still shows
    its own per-service approval first, so the user sees *which service* is asking; the
    device then confirms the signature.
@@ -468,11 +501,14 @@ the session is ephemeral and must be reconnected after a restart.
 ### Why Nostrify?
 
 Only the NIP-46 client uses [`@nostrify/nostrify`](https://nostrify.dev/): `BunkerURI`
-for parsing, `NConnectSigner` for request correlation, encryption negotiation and
-response validation, and `NPool`/`NRelay1` for multi-relay transport. That is the part
-where hand-rolling tends to produce subtle bugs. It is bundled into the main process
-only; the renderer and the NCC resolver still use `nostr-tools` directly, and no Nostrify
-state or React bindings leak into the UI.
+for parsing and `NConnectSigner` for request correlation, encryption negotiation and
+response validation. That is the part where hand-rolling tends to produce subtle bugs.
+The transport underneath is the browser's own relay pool, because Nostrify's
+`NPool`/`NRelay1` build sockets with `websocket-ts` and offer no way to enforce an
+NCC-05 `k` pin or route an onion relay through Tor. `signer/bunker-relay.ts` supplies the
+`req()`/`event()` pair `NConnectSigner` expects over a pinned `SimplePool`. Nostrify is
+bundled into the main process only; the renderer and the NCC resolver use `nostr-tools`
+directly, and no Nostrify state or React bindings leak into the UI.
 
 ### Why not browser extensions?
 
@@ -499,8 +535,12 @@ src/main
   tor/manager.ts     bundled/local Tor lifecycle, bootstrap, fallback
   tor/proxy.ts       pure: SOCKS5 validation, probe, onion-only PAC
   tor/session.ts     loopback PAC server + fixed proxy for full Tor tabs
-  tor/relay.ts       Tor-routed Nostr relay WebSocket pool
+  tor/relay.ts       Tor-routed Nostr relay WebSocket pool (shared pin checks)
   tor/guard.ts       strict per-tab allowlist for resources loaded over Tor
+  relay/locator.ts   NCC-05 relay resolution: identity → ws endpoint, pin, bootstrap
+  relay/pool.ts      shared relay pool: direct, onion through SOCKS, pinned sockets
+  relay/socket.ts    SPKI pin store and the `ws` implementation that enforces it
+  relay/sync.ts      re-resolve locator relays before expiry and move connections
   cache-store.ts     on-disk locator cache (public records only)
   bookmarks.ts       local bookmarks, persisted to userData
   history.ts         local normal-tab history for address-bar suggestions
@@ -523,7 +563,8 @@ src/main
   signer/identity.ts encrypted local key storage (async safeStorage codec)
   signer/permissions.ts  per-service approvals
   signer/provider.ts local identity provider
-  signer/nip46.ts    NIP-46 provider (Nostrify BunkerURI/NConnectSigner/NPool)
+  signer/nip46.ts    NIP-46 provider (Nostrify BunkerURI/NConnectSigner)
+  signer/bunker-relay.ts  NIP-46 req/event over the pinned relay pool
   signer/session.ts  persisted NIP-46 session (encrypted client key)
   signer/manager.ts  one active identity: local key or remote signer
   signer/service.ts  approvals queue, delegates to the active provider
@@ -670,7 +711,7 @@ or SmartScreen prompts. The Flatpak bundle declares the flathub
 
 ---
 
-## Known limitations (v0.3)
+## Known limitations (v0.4)
 
 - **Absolute-path subresources** (`/style.css`) are attributed to the page's service via
   the `Referer` header, falling back to the active service for that npub. A page-authored
@@ -679,29 +720,37 @@ or SmartScreen prompts. The Flatpak bundle declares the flathub
 - **Cookies** are stored per `ncc://<npub>` origin, shared by all services of that
   identity. `Set-Cookie` headers carrying a `Domain=` attribute from the endpoint are
   dropped by Chromium.
-- **Pins are keyed by hostname, not host:port** — Chromium's verify proc does not expose
-  the port. Two HTTPS services on the same IP with different certificates can collide;
-  give each its own address for now.
-- **Normal/private onion mode does not proxy relay lookups.** A full Tor tab routes NCC
-  relay queries through Tor, but onion pages opened from a normal or private tab still
-  query relays directly, so relays can see the IP and npub. **NIP-46 relay traffic is
-  direct in every mode**; the Tor-tab approval sheet warns about this. Tor pages also
-  share one SOCKS port, so there is no Tor Browser-style per-site stream isolation.
+- **Content pins are keyed by hostname, not host:port** — Chromium's verify proc does not
+  expose the port. Two HTTPS services on the same IP with different certificates can
+  collide; give each its own address for now. Relay pins do use `host:port`.
+- **Normal/private onion mode does not proxy clearnet relay lookups.** A full Tor tab
+  routes NCC relay queries through Tor, but clearnet pages opened from a normal or private
+  tab still query clearnet relays directly, so relays can see the IP and npub. A relay
+  whose resolved endpoint is `.onion` is routed through Tor. **Clearnet NIP-46 relay
+  traffic is direct in every mode**; the Tor-tab approval sheet warns about this. Tor
+  pages also share one SOCKS port, so there is no Tor Browser-style per-site stream
+  isolation.
 - **No bridges or pluggable transports yet.** The bundled Tor uses the public Tor
   network; the Expert Bundle's pluggable transports are not shipped. Tor updates are
   security updates and must be bumped in `scripts/tor-version.json`.
 - **Strict Tor mode blocks clearnet assets.** A page that mixes onion content with a
   clearnet CDN, font service or WebSocket will lose those requests. Load it without Tor
   if that trade-off is unacceptable.
-- **`ws`/`wss`-only endpoints are not pages.** They are recognised by the resolver but
-  cannot be rendered; `.onion` pages are now supported through Tor.
+- **`ws`/`wss`-only endpoints are not pages.** They are recognised by the resolver in
+  relay mode and can back a relay entry; page navigation never receives them. `.onion`
+  pages are now supported through Tor.
 - **NIP-07 approvals use an in-app sheet.** "Always allow" is per
   `ncc://<npub>/<service>` (or per web origin). A compromised service on a trusted origin
   can sign anything, so revoke trust when a service changes hands. With a NIP-46 signer
   the device also confirms each signature.
 - **NIP-46 coverage depends on the signer.** Private locators need `nip44_decrypt`, and
   some signers only implement signing. Without `safeStorage` the session is not persisted
-  and must be reconnected after a restart.
+  and must be reconnected after a restart. A bunker's relay list can only be changed by
+  reconnecting with a new `bunker://` URL; Settings shows the resolved relays but does not
+  edit them.
+- **A relay that stops publishing `k` fails closed if it uses a self-signed certificate.**
+  Pinning is the only trust anchor for such an endpoint, so an unsigned locator record is
+  not a reason to accept an arbitrary certificate.
 - **NCC-02 attestations and revocations are not evaluated.** Anchoring checks the
   service record, its `exp`, its `u`/`k`, and conflicts with NCC-05. Third-party
   `kind 30060` attestations and `kind 30061` revocations need a local trust policy before

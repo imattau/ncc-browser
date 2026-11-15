@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { normalizeRelays, defaultRelays } from '@shared/relays'
+import { normalizeRelayEntries, defaultRelays, relayUrls } from '@shared/relays'
 import {
   DEFAULT_SEARCH_ENGINE,
   isSearchEngineId,
@@ -12,6 +12,7 @@ import {
   DEFAULT_TOR_SOCKS,
   type AppConfig,
   type HttpsMode,
+  type RelayEntry,
   type TorMode
 } from '@shared/types'
 
@@ -34,12 +35,44 @@ export class ConfigStore {
   }
 
   getRelays(): string[] {
-    return [...this.get().relays]
+    return relayUrls(this.get().relays)
+  }
+
+  getRelayEntries(): RelayEntry[] {
+    return this.get().relays.map((entry) => ({ ...entry }))
   }
 
   setRelays(input: unknown): AppConfig {
-    const relays = normalizeRelays(input)
+    const relays = normalizeRelayEntries(input)
     this.config = { ...this.get(), relays }
+    this.write()
+    return this.get()
+  }
+
+  /** Replace one relay entry after its locator resolved to a new endpoint. */
+  replaceRelayEntry(currentUrl: string, next: RelayEntry): AppConfig {
+    const current = this.get()
+    this.config = {
+      ...current,
+      relays: current.relays.map((entry) => (entry.url === currentUrl ? next : entry))
+    }
+    this.write()
+    return this.get()
+  }
+
+  /** Mark an entry stale without changing its endpoint. */
+  markRelayStale(url: string, stale: boolean): AppConfig {
+    const current = this.get()
+    const entry = current.relays.find((candidate) => candidate.url === url)
+    if (!entry || (entry.stale === true) === stale) return current
+    this.config = {
+      ...current,
+      relays: current.relays.map((candidate) =>
+        candidate.url === url
+          ? { ...candidate, ...(stale ? { stale: true } : { stale: false }) }
+          : candidate
+      )
+    }
     this.write()
     return this.get()
   }
@@ -135,7 +168,7 @@ export class ConfigStore {
       if (existsSync(this.path)) {
         const parsed = JSON.parse(readFileSync(this.path, 'utf8')) as Partial<AppConfig>
         return {
-          relays: normalizeRelays(parsed.relays ?? defaultRelays()),
+          relays: normalizeRelayEntries(parsed.relays ?? defaultRelays()),
           gossip: parsed.gossip !== false,
           anchorRequired: parsed.anchorRequired === true,
           preferTor: parsed.preferTor === true,
@@ -168,7 +201,7 @@ export class ConfigStore {
       console.warn('[config] could not read config, using defaults:', error)
     }
     return {
-      relays: defaultRelays(),
+      relays: defaultRelays().map((url) => ({ url })),
       gossip: true,
       anchorRequired: false,
       preferTor: false,

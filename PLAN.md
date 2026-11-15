@@ -252,6 +252,12 @@ is CJS and the package is ESM-only.
   suggestions with keyboard navigation and Tab completion; persisted normal-tab history
   that excludes private/Tor sessions; private-key refusal. Live engine suggestions are
   deliberately out of scope.
+- **M11 — Relay identities:** ✅ relay entries can be `ncc://<npub>/<service>` in Settings
+  and in NIP-46 bunker URLs; NCC-05 relay-mode endpoint selection (`ws`/`wss`, onion
+  routing, cleartext restrictions); SPKI `k` enforcement on relay sockets keyed by
+  `host:port`; automatic re-resolution with jitter before expiry; persisted locator
+  metadata for bunker sessions. Editing a connected bunker's relay list remains
+  outstanding.
 
 ---
 

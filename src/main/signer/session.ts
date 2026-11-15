@@ -6,6 +6,8 @@
 
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
+import type { RelayEntry } from '@shared/types'
+import { normalizeRelayEntries } from '@shared/relays'
 import type { IdentityCodec } from './identity'
 import type { BunkerTarget } from './nip46'
 
@@ -20,6 +22,8 @@ interface SessionFile {
   version: 1
   remotePubkey: string
   relays: string[]
+  /** Relay entries with NCC-05 locator metadata; absent in pre-locator sessions. */
+  relayEntries?: RelayEntry[]
   secret?: string
   clientSecretCiphertext: string
   createdAt: number
@@ -54,10 +58,21 @@ export class Nip46SessionStore {
       if (relays.length === 0) return null
 
       const clientSecret = await this.codec.decrypt(parsed.clientSecretCiphertext)
+
+      let entries: RelayEntry[] | undefined
+      if (Array.isArray(parsed.relayEntries)) {
+        try {
+          entries = normalizeRelayEntries(parsed.relayEntries)
+        } catch {
+          entries = undefined
+        }
+      }
+
       return {
         target: {
           remotePubkey: parsed.remotePubkey.toLowerCase(),
           relays,
+          ...(entries ? { entries } : {}),
           secret: typeof parsed.secret === 'string' ? parsed.secret : undefined
         },
         clientSecret,
@@ -78,6 +93,7 @@ export class Nip46SessionStore {
         version: 1,
         remotePubkey: session.target.remotePubkey,
         relays: session.target.relays,
+        ...(session.target.entries ? { relayEntries: session.target.entries } : {}),
         secret: session.target.secret,
         clientSecretCiphertext: await this.codec.encrypt(session.clientSecret),
         createdAt: session.createdAt

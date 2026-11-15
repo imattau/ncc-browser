@@ -11,6 +11,9 @@ import { normalizeTorProxy } from './tor/proxy'
 import { isSearchEngineId, searxTemplate, validateSearchTemplate } from '@shared/search'
 import type { TorManager } from './tor/manager'
 import type { PinStore } from './pins'
+import type { RelayLocatorService } from './relay/locator'
+import type { RelayPool } from './relay/pool'
+import type { RelayPinStore } from './relay/socket'
 import type { ApprovalBroker } from './approval'
 import type { IdentityManager } from './signer/manager'
 import type { PermissionStore } from './signer/permissions'
@@ -21,6 +24,9 @@ export interface IpcDeps {
   config: ConfigStore
   resolvers: NccResolver[]
   pins: PinStore
+  relayPins: RelayPinStore
+  relayLocator: RelayLocatorService
+  relayPool: RelayPool
   cacheStore: LocatorCacheStore
   health: EndpointHealth
   transport: TransportPolicy
@@ -162,12 +168,24 @@ export function registerIpc(deps: IpcDeps): void {
 
   ipcMain.handle('ncc:set-relays', (_event, relays: unknown) => {
     try {
+      const previous = deps.config.getRelayEntries()
       const config = deps.config.setRelays(relays)
+      deps.relayPins.setFromEntries([...config.relays, ...deps.identity.relayEntries()])
+      // Drop connections that pointed at an endpoint the user removed.
+      const next = new Set(config.relays.map((entry) => entry.url))
+      deps.relayPool.closeUrls(previous.map((entry) => entry.url).filter((url) => !next.has(url)))
       resetCaches(deps)
       return { ok: true, config }
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
+  })
+
+  ipcMain.handle('ncc:resolve-relay-locator', async (_event, input: unknown) => {
+    if (typeof input !== 'string') {
+      return { ok: false, code: 'invalid-address', error: 'Enter an ncc:// relay address' }
+    }
+    return deps.relayLocator.resolve(input)
   })
 
   ipcMain.handle('ncc:set-gossip', (_event, value: unknown) => {

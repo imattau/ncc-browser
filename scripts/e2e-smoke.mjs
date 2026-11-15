@@ -1231,7 +1231,7 @@ async function main() {
     await waitForText(chrome, 'Relays & resolution', 40)
     check(
       'settings page switches sections',
-      (await evaluate(chrome, 'Boolean(document.querySelector("#relays"))')) === true
+      (await evaluate(chrome, 'Boolean(document.querySelector("#new-relay"))')) === true
     )
     check(
       'settings page exposes NCC-02 anchoring',

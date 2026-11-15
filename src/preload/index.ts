@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { NccApi } from '@shared/api'
-import type { Bookmark, DownloadNotice, NavState, SignerRequest } from '@shared/types'
+import type { AppConfig, Bookmark, DownloadNotice, NavState, SignerRequest } from '@shared/types'
 
 const api: NccApi = {
   navigate: (input) => ipcRenderer.invoke('ncc:navigate', input),
@@ -40,6 +40,7 @@ const api: NccApi = {
   toggleMaximizeWindow: () => ipcRenderer.invoke('ncc:window-toggle-maximize'),
   closeWindow: () => ipcRenderer.invoke('ncc:window-close'),
   setRelays: (relays) => ipcRenderer.invoke('ncc:set-relays', relays),
+  resolveRelayLocator: (input) => ipcRenderer.invoke('ncc:resolve-relay-locator', input),
   setGossip: (value) => ipcRenderer.invoke('ncc:set-gossip', value),
   setAnchorRequired: (value) => ipcRenderer.invoke('ncc:set-anchor-required', value),
   setPreferTor: (value) => ipcRenderer.invoke('ncc:set-prefer-tor', value),
@@ -132,6 +133,14 @@ const api: NccApi = {
     ipcRenderer.on('ncc:state', handler)
     return () => {
       ipcRenderer.removeListener('ncc:state', handler)
+    }
+  },
+  onConfig: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, config: AppConfig): void =>
+      listener(config)
+    ipcRenderer.on('ncc:config', handler)
+    return () => {
+      ipcRenderer.removeListener('ncc:config', handler)
     }
   },
   onDownload: (listener) => {
