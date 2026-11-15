@@ -705,6 +705,16 @@ Each `dist:*` script first runs `npm run tor:fetch` for its platform, verifies t
 pinned Tor Expert Bundle checksum and stages it under `resources/tor/`. Use
 `npm run tor:fetch:all` to stage every platform for inspection.
 
+Linux packages take their icons from `build/icons/` (16–512 px). Flatpak silently drops
+any icon larger than 512 px, so a single 1024 px `build/icon.png` leaves the installed app
+with no icon at all. When `build/icon.png` changes, regenerate the set with:
+
+```bash
+for s in 16 24 32 48 64 128 256 512; do
+  convert build/icon.png -filter Lanczos -resize ${s}x${s} -strip build/icons/${s}x${s}.png
+done
+```
+
 Builds are unsigned: the macOS app is ad-hoc signed but not notarized, and the Windows
 installer has no Authenticode signature, so both show the usual "unidentified developer"
 or SmartScreen prompts. The Flatpak bundle declares the flathub

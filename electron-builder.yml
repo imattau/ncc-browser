@@ -68,7 +68,9 @@ nsis:
   artifactName: ${name}-${version}-win-${arch}-setup.${ext}
 
 linux:
-  icon: build/icon.png
+  # A directory gives flatpak every size it accepts; a single 1024px icon is
+  # skipped there because flatpak refuses icons above 512px.
+  icon: build/icons
   extraResources:
     - from: resources/tor/linux-${arch}
       to: tor
