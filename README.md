@@ -807,8 +807,8 @@ The release job also uploads `SHA256SUMS.txt`. Pushing a tag is the whole releas
 
 ```bash
 npm version minor --no-git-tag-version   # or edit package.json
-git commit -am "Release v0.5.0"
-git tag -a v0.5.0 -m "Nostr Navigator v0.5.0"
+git commit -am "Release v0.6.0"
+git tag -a v0.6.0 -m "Nostr Navigator v0.6.0"
 git push origin main --follow-tags
 ```
 
