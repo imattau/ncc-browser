@@ -7,3 +7,6 @@ release/
 .env
 .env.local
 tsconfig.tsbuildinfo
+resources/tor/*
+!resources/tor/README.md
+!resources/tor/TOR-LICENSE.txt

@@ -32,6 +32,7 @@ const EMPTY_STATE: NavState = {
   canGoForward: false,
   security: null,
   failure: null,
+  tor: { preferTor: false, onionAvailable: false, active: false },
   tabs: [],
   activeTabId: null,
   windowMaximized: false
@@ -197,6 +198,7 @@ export function App() {
   // reload, and Ctrl+Shift+R / the menu's Force reload use the same path as this.
   const reload = useCallback(() => void window.ncc.forceReload(), [])
   const stop = useCallback(() => void window.ncc.stop(), [])
+  const toggleTor = useCallback(() => void window.ncc.toggleTor(), [])
 
   const newTab = useCallback(() => {
     setHint(null)
@@ -330,6 +332,7 @@ export function App() {
         onReload={reload}
         onStop={stop}
         onToggleBookmark={toggleBookmark}
+        onToggleTor={toggleTor}
         onOpenDownloads={() => showOverlay('downloads')}
         onOpenHistory={openHistory}
         onHistoryMenu={(direction) => void window.ncc.showHistoryMenu(direction)}

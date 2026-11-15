@@ -35,6 +35,14 @@ mac:
   hardenedRuntime: false
   gatekeeperAssess: false
   notarize: false
+  # extraResources live under Contents/Resources; sign the bundled Mach-O files
+  # explicitly so ad-hoc signing covers the Tor executable and its dylib.
+  extraResources:
+    - from: resources/tor/mac-${arch}
+      to: tor
+  binaries:
+    - Resources/tor/tor/tor
+    - Resources/tor/tor/libevent-2.1.7.dylib
 
 dmg:
   artifactName: ${name}-${version}-mac-${arch}.${ext}
@@ -42,6 +50,9 @@ dmg:
 
 win:
   icon: build/icon.png
+  extraResources:
+    - from: resources/tor/win-${arch}
+      to: tor
   artifactName: ${name}-${version}-win-${arch}-setup.${ext}
   target:
     - target: nsis
@@ -58,6 +69,9 @@ nsis:
 
 linux:
   icon: build/icon.png
+  extraResources:
+    - from: resources/tor/linux-${arch}
+      to: tor
   category: Network;WebBrowser
   synopsis: Browse Nostr identity services without DNS
   description: >-

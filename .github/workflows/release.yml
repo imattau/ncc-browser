@@ -51,6 +51,12 @@ jobs:
 
       - run: npm ci
 
+      - uses: actions/cache@v6
+        with:
+          path: resources/tor
+          key: tor-linux-${{ hashFiles('scripts/tor-version.json', 'scripts/fetch-tor.mjs') }}
+          restore-keys: tor-linux-
+
       - name: Install packaging tools
         run: |
           sudo apt-get update
@@ -66,6 +72,11 @@ jobs:
 
       - name: Build deb, rpm and flatpak
         run: npm run dist:linux
+
+      - name: Verify bundled Tor
+        run: |
+          TOR_DIR=release/linux-unpacked/resources/tor/tor
+          LD_LIBRARY_PATH="$TOR_DIR" "$TOR_DIR/tor" --version
 
       - uses: actions/upload-artifact@v7
         with:
@@ -100,6 +111,12 @@ jobs:
         run: npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version --allow-same-version
 
       - run: npm ci
+
+      - uses: actions/cache@v6
+        with:
+          path: resources/tor
+          key: tor-macos-${{ hashFiles('scripts/tor-version.json', 'scripts/fetch-tor.mjs') }}
+          restore-keys: tor-macos-
 
       - name: Build dmg and zip (x64 + arm64)
         run: npm run dist:mac
@@ -136,6 +153,12 @@ jobs:
         run: npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version --allow-same-version
 
       - run: npm ci
+
+      - uses: actions/cache@v6
+        with:
+          path: resources/tor
+          key: tor-windows-${{ hashFiles('scripts/tor-version.json', 'scripts/fetch-tor.mjs') }}
+          restore-keys: tor-windows-
 
       - name: Build NSIS installer
         run: npm run dist:win

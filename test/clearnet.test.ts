@@ -18,6 +18,22 @@ describe('clearnetState', () => {
     })
   })
 
+  it('marks onion services as Tor with the underlying HTTP tone', () => {
+    expect(clearnetState('http://abc.onion/')).toEqual({
+      tone: 'warn',
+      label: 'onion',
+      host: 'abc.onion'
+    })
+    expect(clearnetState('https://abc.onion/')).toEqual({
+      tone: 'ok',
+      label: 'onion',
+      host: 'abc.onion'
+    })
+    expect(clearnetState('http://abc.onion.example.com/')).toMatchObject({
+      label: 'insecure'
+    })
+  })
+
   it('falls back to a neutral clearnet state', () => {
     expect(clearnetState('file:///tmp/page.html')).toEqual({
       tone: 'muted',

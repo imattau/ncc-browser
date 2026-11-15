@@ -233,6 +233,12 @@ is CJS and the package is ESM-only.
   Actions release workflow that verifies, builds on three runners, publishes the
   artifacts and writes `SHA256SUMS.txt`. Signing certificates and auto-update are still
   outstanding.
+- **M7 — Tor and onion services:** ✅ bundled Tor Expert Bundle per platform with a
+  local-proxy fallback; transport-aware endpoint selection; an onion-only PAC for
+  `*.onion`; the Settings preference and per-service address-bar toggle; strict blocking
+  of clearnet subresources and redirects from Tor pages; `tor-unavailable` and
+  `onion-only` failure states; unit and fake-SOCKS5 end-to-end coverage. Relay traffic,
+  bridges/pluggable transports and per-site stream isolation remain outstanding.
 
 ---
 
@@ -263,5 +269,10 @@ These are bugs in the reference implementation, found while building this:
 - **Resolver:** signed fixture events over an injected query function — public record,
   `-locator` fallback, `addr` fallback, expired, undecryptable-then-public, newest-wins,
   tie-break by id, cache refresh.
+- **Tor:** pure transport selection (direct/onion/onion-only), SOCKS5 and PAC
+  validation, Tor manager bootstrap/fallback with an injected process, and a fake-SOCKS5
+  end-to-end path covering the onion toggle, automatic preference, strict clearnet
+  blocking, direct onion URLs, `onion-only` and `tor-unavailable`.
 - **Manual:** sidecar publisher on machine A → `ncc://<npub>/<service>` on machine B;
-  self-signed HTTPS with matching `k`; mismatched `k`; `http` endpoint; dead endpoint.
+  self-signed HTTPS with matching `k`; mismatched `k`; `http` endpoint; dead endpoint;
+  bundled Tor bootstrap in the packaged deb/Flatpak.

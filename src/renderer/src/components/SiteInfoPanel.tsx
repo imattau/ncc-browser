@@ -71,7 +71,12 @@ export function SiteInfoPanel({
             transport={security.transport}
             host={security.host}
             pinned={security.pinned}
+            viaTor={security.viaTor || state.tor.active}
           />
+        ) : null}
+
+        {state.tor.onionAvailable || state.tor.active ? (
+          <TorBlock active={state.tor.active} available={state.tor.onionAvailable} />
         ) : null}
 
         {!web && !security && !failure ? (
@@ -107,18 +112,31 @@ function ClearnetBlock({ url }: { url: string }) {
   const state = clearnetState(url)
   const secure = state.label === 'secure'
   const insecure = state.label === 'insecure'
-  const Icon = secure ? Lock : insecure ? ShieldAlert : Globe
-  const tone = secure
-    ? 'text-[color:var(--color-ok)]'
-    : insecure
-      ? 'text-[color:var(--color-warn)]'
-      : 'text-[color:var(--color-muted)]'
-  const title = secure ? 'Secure HTTPS' : insecure ? 'Not secure (HTTP)' : 'Clearnet page'
-  const hint = secure
-    ? 'Normal CA-validated TLS. NCC resolution and NCC-02 anchoring were not involved.'
-    : insecure
-      ? 'This page travels over plaintext HTTP. Anyone on the network can read or modify it.'
-      : 'Loaded directly from the clearnet. NCC resolution and NCC-02 anchoring were not involved.'
+  const onion = state.label === 'onion'
+  const Icon = onion ? Globe : secure ? Lock : insecure ? ShieldAlert : Globe
+  const tone = onion
+    ? state.tone === 'ok'
+      ? 'text-[color:var(--color-ok)]'
+      : 'text-[color:var(--color-warn)]'
+    : secure
+      ? 'text-[color:var(--color-ok)]'
+      : insecure
+        ? 'text-[color:var(--color-warn)]'
+        : 'text-[color:var(--color-muted)]'
+  const title = onion
+    ? 'Onion service over Tor'
+    : secure
+      ? 'Secure HTTPS'
+      : insecure
+        ? 'Not secure (HTTP)'
+        : 'Clearnet page'
+  const hint = onion
+    ? 'This .onion address is loaded through Tor. The onion address authenticates the service; HTTP inside it has no TLS layer, while HTTPS adds one.'
+    : secure
+      ? 'Normal CA-validated TLS. NCC resolution and NCC-02 anchoring were not involved.'
+      : insecure
+        ? 'This page travels over plaintext HTTP. Anyone on the network can read or modify it.'
+        : 'Loaded directly from the clearnet. NCC resolution and NCC-02 anchoring were not involved.'
 
   return (
     <div className="rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] p-3">
@@ -155,31 +173,39 @@ function FailureBlock({ code, message }: { code: string; message: string }) {
 function TransportBlock({
   transport,
   host,
-  pinned
+  pinned,
+  viaTor
 }: {
   transport: TransportSecurity
   host: string
   pinned: boolean
+  viaTor: boolean
 }) {
   const copy =
     transport === 'pinned-tls'
       ? {
           title: 'Pinned TLS',
-          hint: 'The endpoint certificate matches the SPKI fingerprint signed into the locator.',
+          hint: viaTor
+            ? 'The endpoint certificate matches the SPKI fingerprint signed into the locator. The connection runs through Tor.'
+            : 'The endpoint certificate matches the SPKI fingerprint signed into the locator.',
           icon: ShieldCheck,
           tone: 'text-[color:var(--color-ok)]'
         }
       : transport === 'tls'
         ? {
             title: 'TLS',
-            hint: 'TLS is active without a published fingerprint, so normal CA validation applies.',
+            hint: viaTor
+              ? 'TLS is active without a published fingerprint, so normal CA validation applies. The connection runs through Tor.'
+              : 'TLS is active without a published fingerprint, so normal CA validation applies.',
             icon: Lock,
             tone: 'text-[color:var(--color-accent)]'
           }
         : transport === 'plaintext'
           ? {
-              title: 'Plaintext',
-              hint: 'The locator is signed, but page content travels over unauthenticated HTTP.',
+              title: viaTor ? 'HTTP over Tor' : 'Plaintext',
+              hint: viaTor
+                ? 'The onion service speaks HTTP, not TLS. Tor encrypts the path to the onion service and authenticates its address, but the content itself has no TLS layer.'
+                : 'The locator is signed, but page content travels over unauthenticated HTTP.',
               icon: ShieldAlert,
               tone: 'text-[color:var(--color-warn)]'
             }
@@ -208,6 +234,37 @@ function TransportBlock({
         {copy.hint}
       </p>
       {host ? <p className="mt-1 truncate font-mono text-[10px] text-[#5d6575]">{host}</p> : null}
+    </div>
+  )
+}
+
+function TorBlock({ active, available }: { active: boolean; available: boolean }) {
+  return (
+    <div
+      data-tor-block
+      className={cn(
+        'rounded-xl border p-3',
+        active
+          ? 'border-[#7c6ad6]/35 bg-[#7c6ad6]/[0.08]'
+          : 'border-[color:var(--color-line)] bg-[#0e1016]'
+      )}
+    >
+      <p
+        className={cn(
+          'flex items-center gap-1.5 text-[11.5px] font-medium',
+          active ? 'text-[#c4b5fd]' : 'text-[color:var(--color-muted)]'
+        )}
+      >
+        <Globe className="h-3.5 w-3.5" />
+        {active ? 'Using Tor' : 'Onion endpoint available'}
+      </p>
+      <p className="mt-1 text-[11px] leading-relaxed text-[color:var(--color-muted)]">
+        {active
+          ? 'This page is loaded from an onion endpoint through Tor. Clearnet subresources and redirects are blocked to avoid revealing your IP.'
+          : available
+            ? 'This locator also publishes an onion endpoint. Use the onion button in the address bar to load it over Tor.'
+            : 'This page is loaded through Tor.'}
+      </p>
     </div>
   )
 }

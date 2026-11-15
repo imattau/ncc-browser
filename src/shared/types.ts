@@ -10,6 +10,32 @@ export type EndpointFamily = 'onion' | 'ipv6' | 'ipv4' | 'unknown'
 /** How the transport to the resolved endpoint is protected. */
 export type TransportSecurity = 'pinned-tls' | 'tls' | 'plaintext' | 'unknown'
 
+/** Automatic uses the bundled Tor, then a local SOCKS proxy. Local uses the configured one. */
+export type TorMode = 'auto' | 'local'
+
+export const DEFAULT_TOR_SOCKS = 'socks5://127.0.0.1:9050'
+
+export interface TorState {
+  /** Global preference: use onion endpoints automatically when a locator has one. */
+  preferTor: boolean
+  /** The current record publishes at least one usable .onion endpoint. */
+  onionAvailable: boolean
+  /** The current document was fetched from an onion endpoint. */
+  active: boolean
+}
+
+export type TorRuntimeKind = 'bundled' | 'local'
+
+export interface TorStatus {
+  ready: boolean
+  starting: boolean
+  proxy: string | null
+  kind: TorRuntimeKind | null
+  error: string | null
+  mode: TorMode
+  configured: string
+}
+
 export interface ResolvedEndpoint {
   /** Absolute http(s) URL, normalised so it can be handed straight to fetch. */
   url: string
@@ -111,6 +137,8 @@ export interface SecurityInfo {
   /** Host of the endpoint that served the current document, never the full URL. */
   host: string
   pinned: boolean
+  /** True when the document was fetched from an onion endpoint through Tor. */
+  viaTor: boolean
   /** NCC-02 trust anchor attached to the locator that served this page. */
   anchor: AnchorInfo | null
 }
@@ -184,6 +212,7 @@ export interface NavState {
   canGoForward: boolean
   security: SecurityInfo | null
   failure: { code: string; message: string } | null
+  tor: TorState
   tabs: TabSummary[]
   activeTabId: string | null
   windowMaximized: boolean
@@ -195,6 +224,12 @@ export interface AppConfig {
   gossip: boolean
   /** Refuse services that have no fresh NCC-02 service record (kind 30059). */
   anchorRequired: boolean
+  /** Automatically use an onion endpoint when the locator publishes one. */
+  preferTor: boolean
+  /** Automatic prefers the bundled Tor, then a local proxy. */
+  torMode: TorMode
+  /** Explicit SOCKS proxy used in local mode or when NCC_TOR_SOCKS is unset. */
+  torSocks: string
 }
 
 export type IdentitySource = 'none' | 'env' | 'file' | 'session'
@@ -284,7 +319,19 @@ export const ERROR_COPY: Record<string, { title: string; hint: string }> = {
   },
   'no-endpoint': {
     title: 'No usable endpoint',
-    hint: 'The locator lists endpoints, but none can be used by this browser (for example only ws:// or .onion transports).'
+    hint: 'The locator lists endpoints, but none can be used by this browser (for example only ws:// transports).'
+  },
+  'onion-only': {
+    title: 'Onion endpoint only',
+    hint: 'This locator publishes only an onion endpoint. Turn on "Prefer Tor connections" in settings, or use the onion button in the address bar.'
+  },
+  'tor-unavailable': {
+    title: 'Tor is not available',
+    hint: 'NCC found an onion endpoint, but the browser could not start or reach Tor. Check the Tor proxy in settings, or make sure the bundled Tor binary is installed.'
+  },
+  'tor-clearnet-redirect': {
+    title: 'Tor blocked a clearnet redirect',
+    hint: 'The onion service tried to redirect this page to the clearnet. The redirect was blocked so the request could not reveal your IP. Load the page without Tor if you trust the destination.'
   },
   'relay-error': {
     title: 'Relay query failed',

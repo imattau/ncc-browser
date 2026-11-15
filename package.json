@@ -17,10 +17,12 @@
     "publisher:dev": "npm --prefix publisher run dev",
     "publisher:build": "npm --prefix publisher run build",
     "e2e": "npm run build && npm run publisher:build && node scripts/e2e-smoke.mjs",
-    "dist": "npm run build && electron-builder --publish never",
-    "dist:linux": "npm run build && electron-builder --linux deb rpm flatpak --x64 --publish never",
-    "dist:mac": "npm run build && electron-builder --mac dmg zip --x64 --arm64 --publish never",
-    "dist:win": "npm run build && electron-builder --win nsis --x64 --publish never"
+    "tor:fetch": "node scripts/fetch-tor.mjs",
+    "tor:fetch:all": "node scripts/fetch-tor.mjs --all",
+    "dist": "npm run tor:fetch && npm run build && electron-builder --publish never",
+    "dist:linux": "npm run tor:fetch -- linux-x64 && npm run build && electron-builder --linux deb rpm flatpak --x64 --publish never",
+    "dist:mac": "npm run tor:fetch -- mac-x64 mac-arm64 && npm run build && electron-builder --mac dmg zip --x64 --arm64 --publish never",
+    "dist:win": "npm run tor:fetch -- win-x64 && npm run build && electron-builder --win nsis --x64 --publish never"
   },
   "dependencies": {
     "@nostrify/nostrify": "^0.55.1",

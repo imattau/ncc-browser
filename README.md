@@ -10,10 +10,11 @@ Built with Electron 45, React 19, and Vite. The resolver is a spec-correct
 implementation on top of `nostr-tools`, not a wrapper around `ncc-05-js` (see
 [Why not `ncc-05-js`](#why-not-ncc-05-js)).
 
-**Status:** M0–M5 are implemented. That includes the resolver, proxy and pinning, the
-browser chrome and signer, NCC-02 anchoring with a trust panel, and the separate
-publisher app in [`publisher/`](./publisher/): a NIP-07 flow for publishing NCC-05
-locators and NCC-02 service records for a local port.
+**Status:** M0–M7 are implemented. That includes the resolver, proxy and pinning, the
+browser chrome and signer, NCC-02 anchoring with a trust panel, the separate publisher
+app in [`publisher/`](./publisher/) (a NIP-07 flow for NCC-05 locators and NCC-02 service
+records), bundled Tor with the onion preference/toggle, and packaged Linux, macOS and
+Windows releases.
 
 ![Start screen](./docs/welcome.png)
 
@@ -102,6 +103,11 @@ working while the remote page has focus.
   (the refresh button bypasses the HTTP cache), history, address bar with a
   colour-coded padlock and bookmark star, downloads with progress, identity key,
   hamburger menu.
+- **Tor** — release builds bundle Tor; Settings → General has **Prefer Tor connections**
+  and an automatic/local SOCKS proxy choice. With the preference off, a locator that
+  publishes an onion endpoint gets an onion button in the address bar; clicking it
+  reloads that service over Tor, clicking again returns to direct. Direct `.onion` URLs
+  work too.
 - **Settings** is a page, not a modal: `General`, `Identity & signer`, `Trusted services`
   and `About`, with a back-to-browsing button. `Esc` also leaves it.
 - **Shortcuts** (also shown in the menu): `Ctrl+T`, `Ctrl+W`, `Ctrl+Tab` /
@@ -209,6 +215,46 @@ treated as “no pin”, not as a match.
 Locator content is decrypted only when an encrypted record is addressed to you. The
 identity from the settings page is used for that automatically; there is no separate
 locator key.
+
+---
+
+## Tor and onion services
+
+Locators may publish `.onion` endpoints. They are normal `http`/`https` URLs whose
+hostname ends in `.onion`; the resolver tags them `family: 'onion'` and the transport
+layer decides whether to use them.
+
+- **Bundled Tor** — release builds include the official Tor Expert Bundle for their
+  platform. The browser starts it lazily on the first onion request, on a private
+  loopback SOCKS port, with a data directory under `userData/tor`. If the bundled binary
+  is missing or cannot bootstrap, it falls back to a local proxy on `127.0.0.1:9050` or
+  `9150` (a Tor daemon or Tor Browser).
+- **Settings → General → Tor** — **Prefer Tor connections** uses the onion endpoint
+  automatically whenever the locator publishes one; records without an onion endpoint
+  still load directly. **Tor proxy** selects automatic (bundled) or a specific local
+  SOCKS5 proxy; **Test connection** reports the active proxy and any bootstrap error.
+- **Manual toggle** — with the preference off, an onion button appears at the right of
+  the address bar whenever the locator has an onion endpoint. Clicking it force-reloads
+  that `pubkey:service` over Tor; clicking again returns to its direct endpoints. The
+  address stays `ncc://…`.
+- **Direct onion URLs** — typing `http://something.onion` works too. A PAC sends only
+  `*.onion` hosts to Tor; clearnet traffic stays on the normal path.
+- **Fail closed** — if Tor is selected but unavailable, or a locator is onion-only and
+  the preference is off, the browser shows `tor-unavailable` / `onion-only` instead of
+  silently connecting directly.
+- **Strict page isolation** — a page loaded over Tor may load only `ncc://`, inert local
+  schemes and `.onion` resources. Clearnet subresources, WebSockets and redirects are
+  blocked so the request cannot reveal the user's IP. Pages that depend on clearnet CDNs
+  will lose those assets; load them without Tor if that is acceptable.
+- **Security display** — HTTP onion pages keep the amber padlock (HTTP is still HTTP),
+  but the onion button and **Site information** explain that Tor provides the encrypted
+  transport and authenticates the onion address. HTTPS onion endpoints still use `k`
+  pinning.
+
+Tor updates are security updates. The version and per-asset SHA-256 pins live in
+[`scripts/tor-version.json`](./scripts/tor-version.json); `npm run tor:fetch` stages them
+for local packaging, and the release workflow downloads the same pins. The staged bundle
+ships Tor's BSD licence and a source notice alongside the binary.
 
 ---
 
@@ -324,7 +370,11 @@ src/main
   shell.ts           BrowserWindow (chrome) + one WebContentsView per tab
   protocol.ts        ses.protocol.handle('ncc') — resolve, fetch, rewrite, error pages
   pins.ts            SPKI pin store + setCertificateVerifyProc
-  config.ts          relay list, gossip toggle, persisted to userData
+  config.ts          relay list, gossip, anchoring and Tor settings, persisted to userData
+  tor/manager.ts     bundled/local Tor lifecycle, bootstrap, fallback
+  tor/proxy.ts       pure: SOCKS5 validation, probe, onion-only PAC
+  tor/session.ts     loopback PAC server applied to the content session
+  tor/guard.ts       strict per-tab allowlist for resources loaded over Tor
   cache-store.ts     on-disk locator cache (public records only)
   bookmarks.ts       local bookmarks, persisted to userData
   session-store.ts   saved tabs + window geometry for session restore
@@ -339,6 +389,7 @@ src/main
   ncc/anchor.ts      pure: NCC-02 parse/select, k application, u fallback
   ncc/resolver.ts    relay query, gossip, anchoring, decrypt, cache, dedupe
   ncc/routing.ts     pure: path joining and Location rewriting
+  ncc/transport.ts   pure: direct/onion endpoint selection + per-service overrides
   ncc/health.ts      endpoint cooldowns
   signer/crypto.ts   pure: template validation, signing, NIP-04/44
   signer/identity.ts encrypted local key storage (async safeStorage codec)
@@ -369,10 +420,11 @@ general IPC bridge.
 ## Testing
 
 ```bash
-npm test       # 229 unit tests: URL parser, locator rules, resolver, routing, pins,
+npm test       # 254 unit tests: URL parser, locator rules, resolver, routing, pins,
                # signer crypto, identity storage, NIP-46, approvals, permissions,
                # shortcuts, context menus, relays, downloads, tab order, bookmarks,
-               # favicons, session storage, NCC-02 anchoring, clearnet lock state,
+               # favicons, session storage, NCC-02 anchoring, Tor transport selection,
+               # proxy/PAC validation, Tor manager fallback, clearnet lock state,
                # publisher events
 npm run e2e    # real Electron window against a mock relay and local HTTP services
 ```
@@ -390,8 +442,10 @@ across a real app restart**, the full NIP-07 path (in-app approval sheet, focus
 containment, public key, verifiable signature, NIP-04/44 round-trips, no provider in
 subframes), NCC-02 anchoring (trust panel, `u` fallback, required-mode refusal), the
 settings page, the downloads panel (a real file written to disk), the per-tab history
-panel, bookmarks, a toolbar refresh against a `max-age` cached document, the hamburger
-menu, **real global shortcuts sent through X**
+panel, bookmarks, a toolbar refresh against a `max-age` cached document, Tor transport
+(the onion toggle, automatic preference, strict clearnet blocking, direct `.onion`
+navigation, onion-only and Tor-unavailable failures against a fake SOCKS5 proxy), the
+hamburger menu, **real global shortcuts sent through X**
 (Ctrl+T/W/L while the page is focused), a **real NIP-46 round-trip against a mock
 bunker** — connect, remote signing, remote decryption of a targeted locator, and
 disconnect — and the **publisher app publishing through the built-in signer and being
@@ -469,6 +523,10 @@ npm run dist:mac     # dmg + zip for x64 and arm64 (run on macOS)
 npm run dist:win     # NSIS installer (run on Windows)
 ```
 
+Each `dist:*` script first runs `npm run tor:fetch` for its platform, verifies the
+pinned Tor Expert Bundle checksum and stages it under `resources/tor/`. Use
+`npm run tor:fetch:all` to stage every platform for inspection.
+
 Builds are unsigned: the macOS app is ad-hoc signed but not notarized, and the Windows
 installer has no Authenticode signature, so both show the usual "unidentified developer"
 or SmartScreen prompts. The Flatpak bundle declares the flathub
@@ -488,8 +546,18 @@ or SmartScreen prompts. The Flatpak bundle declares the flathub
 - **Pins are keyed by hostname, not host:port** — Chromium's verify proc does not expose
   the port. Two HTTPS services on the same IP with different certificates can collide;
   give each its own address for now.
-- **No Tor.** `.onion` and `ws`/`wss`-only endpoints are recognised but not fetchable as
-  pages.
+- **Tor only covers page traffic.** NCC-05 relay queries and NIP-46 relay traffic still
+  use the normal network, so relays can see your IP and the npub being resolved. Tor
+  pages also share one SOCKS port, so there is no Tor Browser-style per-site stream
+  isolation.
+- **No bridges or pluggable transports yet.** The bundled Tor uses the public Tor
+  network; the Expert Bundle's pluggable transports are not shipped. Tor updates are
+  security updates and must be bumped in `scripts/tor-version.json`.
+- **Strict Tor mode blocks clearnet assets.** A page that mixes onion content with a
+  clearnet CDN, font service or WebSocket will lose those requests. Load it without Tor
+  if that trade-off is unacceptable.
+- **`ws`/`wss`-only endpoints are not pages.** They are recognised by the resolver but
+  cannot be rendered; `.onion` pages are now supported through Tor.
 - **NIP-07 approvals use an in-app sheet.** "Always allow" is per
   `ncc://<npub>/<service>` (or per web origin). A compromised service on a trusted origin
   can sign anything, so revoke trust when a service changes hands. With a NIP-46 signer

@@ -14,6 +14,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { createHash, createPublicKey } from 'node:crypto'
 import { createServer } from 'node:http'
 import { createServer as createHttpsServer } from 'node:https'
+import { connect as connectNet, createServer as createNetServer } from 'node:net'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, extname } from 'node:path'
@@ -114,18 +115,27 @@ async function startRelay() {
   return { wss, port: wss.address().port, events }
 }
 
-async function startService(npub) {
+async function startService(npub, options = {}) {
   let counter = 0
+  let leakRequests = 0
+  const headline = options.headline ?? 'NCC E2E OK'
+  const extraBody = options.extraBody ?? ''
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>NCC E2E</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="stylesheet" href="/style.css"></head>
-<body><h1 id="headline">NCC E2E OK</h1>
+<body><h1 id="headline">${headline}</h1>
 <p id="proxied">resolved-and-proxied</p>
 <a id="next" href="second">second</a>
 <a id="download" href="/sample.txt" download="sample.txt">download</a>
-<a id="cross" href="ncc://${npub}/_/secure/">secure service</a></body></html>`
+<a id="cross" href="ncc://${npub}/_/secure/">secure service</a>${extraBody}</body></html>`
 
   const server = createServer((request, response) => {
+    if (request.url === '/leak.png') {
+      leakRequests += 1
+      response.writeHead(200, { 'content-type': 'image/png' })
+      response.end()
+      return
+    }
     if (request.url === '/counter') {
       counter += 1
       response.writeHead(200, {
@@ -170,7 +180,89 @@ async function startService(npub) {
   })
 
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
-  return { server, port: server.address().port }
+  return {
+    server,
+    port: server.address().port,
+    getLeakRequests: () => leakRequests
+  }
+}
+
+/**
+ * Tiny SOCKS5 server for the Tor e2e path. The PAC only sends *.onion hosts here,
+ * and this proxy connects them to the local onion test service.
+ */
+async function startSocksProxy(targetPort) {
+  let connections = 0
+  const server = createNetServer((socket) => {
+    let buffer = Buffer.alloc(0)
+    let stage = 'greeting'
+
+    const onData = (chunk) => {
+      buffer = Buffer.concat([buffer, chunk])
+
+      if (stage === 'greeting') {
+        if (buffer.length < 2) return
+        const methods = buffer[1]
+        if (buffer.length < 2 + methods) return
+        const version = buffer[0]
+        buffer = buffer.subarray(2 + methods)
+        if (version !== 5) {
+          socket.destroy()
+          return
+        }
+        socket.write(Buffer.from([5, 0]))
+        stage = 'request'
+        onData(Buffer.alloc(0))
+        return
+      }
+
+      if (stage !== 'request') return
+      if (buffer.length < 5) return
+      const version = buffer[0]
+      const command = buffer[1]
+      const addressType = buffer[3]
+      let addressLength
+      if (addressType === 1) addressLength = 4
+      else if (addressType === 3) addressLength = buffer[4]
+      else if (addressType === 4) addressLength = 16
+      else {
+        socket.destroy()
+        return
+      }
+
+      const headerLength = addressType === 3 ? 5 : 4
+      if (buffer.length < headerLength + addressLength + 2) return
+      const offset = headerLength + addressLength
+      if (version !== 5 || command !== 1) {
+        socket.end(Buffer.from([5, 7, 0, 1, 0, 0, 0, 0, 0, 0]))
+        return
+      }
+
+      stage = 'piping'
+      connections += 1
+      const upstream = connectNet({ host: '127.0.0.1', port: targetPort }, () => {
+        socket.write(Buffer.from([5, 0, 0, 1, 0, 0, 0, 0, 0, 0]))
+        const rest = buffer.subarray(offset + 2)
+        if (rest.length) upstream.write(rest)
+        socket.pipe(upstream)
+        upstream.pipe(socket)
+      })
+      upstream.on('error', () => socket.destroy())
+    }
+
+    socket.on('data', onData)
+    socket.on('error', () => socket.destroy())
+  })
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  return {
+    server,
+    port: server.address().port,
+    getConnections: () => connections,
+    close: () => {
+      if (server.listening) server.close()
+    }
+  }
 }
 
 async function startPublisher() {
@@ -561,7 +653,14 @@ async function main() {
 
   const relayA = await startRelay()
   const relayB = await startRelay()
-  const { server, port: servicePort } = await startService(serviceNpub)
+  const directService = await startService(serviceNpub)
+  const servicePort = directService.port
+  const onionService = await startService(serviceNpub, {
+    headline: 'ONION E2E OK',
+    extraBody: `<img id="leak" src="http://127.0.0.1:${servicePort}/leak.png" alt="">`
+  })
+  const onionPort = onionService.port
+  const torProxy = await startSocksProxy(onionPort)
   const publisher = await startPublisher()
 
   // Two HTTPS services on different loopback addresses: one presents the pinned
@@ -581,7 +680,11 @@ async function main() {
   const bogus = await startSecureService('127.0.0.2', badCert.cert, badCert.private, 'BOGUS OK')
 
   const event = publishLocator(relayA, 'web', [
-    { type: 'http', uri: `127.0.0.1:${servicePort}`, priority: 1, family: 'ipv4' }
+    { type: 'http', uri: `127.0.0.1:${servicePort}`, priority: 1, family: 'ipv4' },
+    { type: 'http', uri: `e2e.onion:${onionPort}`, priority: 1, family: 'onion' }
+  ])
+  publishLocator(relayA, 'toronly', [
+    { type: 'http', uri: `e2e.onion:${onionPort}`, priority: 1, family: 'onion' }
   ])
   publishLocator(relayA, 'secure', [
     { type: 'https', uri: `127.0.0.1:${secure.port}`, priority: 1, family: 'ipv4', k: pinnedK }
@@ -601,6 +704,7 @@ async function main() {
 
   console.log(`relay A ws://127.0.0.1:${relayA.port} · relay B ws://127.0.0.1:${relayB.port}`)
   console.log(`service http://127.0.0.1:${servicePort}`)
+  console.log(`onion http://e2e.onion:${onionPort} via socks5://127.0.0.1:${torProxy.port}`)
   console.log(`publisher http://127.0.0.1:${publisher.port}`)
   console.log(`pinned https://127.0.0.1:${secure.port} · k ${pinnedK.slice(0, 12)}…`)
   console.log(`npub ${serviceNpub} · locator ${event.id.slice(0, 12)}…`)
@@ -635,7 +739,8 @@ async function main() {
         ELECTRON_DISABLE_SECURITY_WARNINGS: '1',
         NCC_IDENTITY_NSEC: nip19.nsecEncode(signerSk),
         NCC_NIP46_TIMEOUT_MS: '15000',
-        NCC_DOWNLOAD_DIR: join(configHome, 'downloads')
+        NCC_DOWNLOAD_DIR: join(configHome, 'downloads'),
+        NCC_TOR_SOCKS: `socks5://127.0.0.1:${torProxy.port}`
       },
       stdio: ['ignore', 'pipe', 'pipe']
     }
@@ -657,7 +762,9 @@ async function main() {
     electron.kill('SIGTERM')
     restarted?.kill('SIGTERM')
     xvfb.proc.kill('SIGTERM')
-    server.close()
+    directService.server.close()
+    onionService.server.close()
+    torProxy.close()
     publisher.server.close()
     secure.server.close()
     bogus.server.close()
@@ -1521,6 +1628,164 @@ async function main() {
     const counterTwo = await waitForText(cdp, '2', 80)
     check('refresh button bypasses the cache', counterTwo.includes('2'))
 
+    // Tor transport: the locator publishes both a direct and an onion endpoint.
+    // The onion endpoint is reached through a local SOCKS5 server standing in for
+    // Tor, and the onion service page embeds a clearnet image that strict mode
+    // must block.
+    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/web/` })
+    await waitForText(cdp, 'NCC E2E OK', 80)
+    await sleep(400)
+    const torInitial = await evaluate(chrome, 'window.ncc.getState().then((s) => s.tor)')
+    check(
+      'reports an available onion endpoint',
+      torInitial?.onionAvailable === true && torInitial?.active === false,
+      JSON.stringify(torInitial)
+    )
+    check(
+      'shows the onion toggle',
+      (await evaluate(chrome, 'Boolean(document.querySelector("[data-tor-button]"))')) === true
+    )
+    const connectionsBefore = torProxy.getConnections()
+    await evaluate(chrome, 'document.querySelector("[data-tor-button]").click()')
+    await waitForText(cdp, 'ONION E2E OK', 120)
+    await sleep(400)
+    const torActive = await evaluate(chrome, 'window.ncc.getState().then((s) => s.tor)')
+    check(
+      'switches to the onion endpoint over Tor',
+      torActive?.onionAvailable === true && torActive?.active === true,
+      JSON.stringify(torActive)
+    )
+    check('uses the SOCKS proxy', torProxy.getConnections() > connectionsBefore)
+    check(
+      'marks the onion toggle active',
+      (await evaluate(
+        chrome,
+        'document.querySelector("[data-tor-button]").getAttribute("data-tor-active")'
+      )) === 'true'
+    )
+    check('blocks clearnet subresources on a Tor page', directService.getLeakRequests() === 0)
+    const torSecurity = await readSecurity(chrome)
+    check(
+      'padlock reports the onion transport',
+      torSecurity?.label === 'onion' && torSecurity?.tone === 'warn',
+      JSON.stringify(torSecurity)
+    )
+    const onionShot = await cdp.send('Page.captureScreenshot', { format: 'png' })
+    writeFileSync(join(ARTIFACTS, 'onion.png'), Buffer.from(onionShot.data, 'base64'))
+
+    await evaluate(chrome, 'document.querySelector("[data-tor-button]").click()')
+    await waitForText(cdp, 'NCC E2E OK', 120)
+    await sleep(400)
+    const torDirect = await evaluate(chrome, 'window.ncc.getState().then((s) => s.tor)')
+    check(
+      'deselecting returns to the direct endpoint',
+      torDirect?.active === false,
+      JSON.stringify(torDirect)
+    )
+    check(
+      'marks the onion toggle inactive',
+      (await evaluate(
+        chrome,
+        'document.querySelector("[data-tor-button]").getAttribute("data-tor-active")'
+      )) === 'false'
+    )
+
+    // Prefer Tor automatically selects the onion endpoint and hides the toggle.
+    const preferOn = await evaluate(
+      chrome,
+      `window.ncc.setTorConfig({ preferTor: true, mode: 'local', socks: 'socks5://127.0.0.1:${torProxy.port}' })`
+    )
+    check(
+      'enables Prefer Tor connections',
+      preferOn?.ok === true && preferOn?.config?.preferTor === true,
+      JSON.stringify(preferOn)
+    )
+    await waitForText(cdp, 'ONION E2E OK', 120)
+    await sleep(500)
+    const automatic = await evaluate(chrome, 'window.ncc.getState().then((s) => s.tor)')
+    check(
+      'prefers onion automatically',
+      automatic?.preferTor === true && automatic?.active === true,
+      JSON.stringify(automatic)
+    )
+    check(
+      'hides the onion toggle when Tor is preferred',
+      (await evaluate(chrome, 'Boolean(document.querySelector("[data-tor-button]"))')) === false
+    )
+
+    const preferOff = await evaluate(
+      chrome,
+      `window.ncc.setTorConfig({ preferTor: false, mode: 'local', socks: 'socks5://127.0.0.1:${torProxy.port}' })`
+    )
+    check('disables Prefer Tor connections', preferOff?.config?.preferTor === false)
+    await waitForText(cdp, 'NCC E2E OK', 120)
+    await sleep(400)
+    check(
+      'restores the onion toggle after disabling the preference',
+      (await evaluate(chrome, 'Boolean(document.querySelector("[data-tor-button]"))')) === true
+    )
+
+    // Typing a .onion URL directly goes through the same Tor path.
+    await cdp.send('Page.navigate', { url: `http://e2e.onion:${onionPort}/` })
+    await waitForText(cdp, 'ONION E2E OK', 120)
+    await sleep(400)
+    const directOnion = await evaluate(
+      chrome,
+      'window.ncc.getState().then((s) => ({ mode: s.mode, tor: s.tor, url: s.displayUrl }))'
+    )
+    check(
+      'loads a direct onion URL over Tor',
+      directOnion?.mode === 'web' &&
+        directOnion?.tor?.active === true &&
+        String(directOnion?.url).includes('e2e.onion'),
+      JSON.stringify(directOnion)
+    )
+
+    // An onion-only locator explains the failure and offers the toggle.
+    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/toronly/` })
+    const onionOnlyText = await waitForText(cdp, 'Onion endpoint only', 80)
+    check('explains an onion-only service', onionOnlyText.includes('onion-only'))
+    const onionOnlyState = await evaluate(chrome, 'window.ncc.getState().then((s) => s.tor)')
+    check(
+      'offers the onion toggle on an onion-only error',
+      onionOnlyState?.onionAvailable === true &&
+        (await evaluate(
+          chrome,
+          'Boolean(document.querySelector("[data-tor-button]"))'
+        )) === true,
+      JSON.stringify(onionOnlyState)
+    )
+
+    await evaluate(chrome, 'window.ncc.runCommand("open-settings")')
+    await waitForText(chrome, 'Prefer Tor connections', 40)
+    check(
+      'settings page exposes the Tor toggle',
+      (await evaluate(chrome, 'Boolean(document.querySelector("#prefer-tor"))')) === true
+    )
+    check(
+      'settings page exposes the Tor proxy mode',
+      (await evaluate(chrome, 'Boolean(document.querySelector("#tor-mode"))')) === true
+    )
+    const settingsTorShot = await chrome.send('Page.captureScreenshot', { format: 'png' })
+    writeFileSync(join(ARTIFACTS, 'settings-tor.png'), Buffer.from(settingsTorShot.data, 'base64'))
+    await evaluate(
+      chrome,
+      'window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }))'
+    )
+    await sleep(400)
+
+    // With the proxy gone, Tor must fail closed rather than fall back to direct.
+    torProxy.close()
+    const torDown = await evaluate(chrome, 'window.ncc.torRestart()')
+    check(
+      'reports Tor as unavailable',
+      torDown?.ready === false && Boolean(torDown?.error),
+      JSON.stringify(torDown)
+    )
+    await evaluate(chrome, 'document.querySelector("[data-tor-button]").click()')
+    const torFailure = await waitForText(cdp, 'Tor is not available', 120)
+    check('fails closed when Tor is unavailable', torFailure.includes('tor-unavailable'))
+
     // Failure case: a different pubkey with no locator at all.
     await cdp.send('Page.navigate', { url: `ncc://${missingNpub}/web/` })
     const errorText = await waitForText(cdp, 'No locator published', 80)
@@ -1683,6 +1948,10 @@ async function main() {
     check('restores the page itself', restoredText.includes('No locator published'))
     restoredCdp.close()
     restoredChrome.close()
+  } catch (error) {
+    console.error('--- electron output (debug) ---')
+    console.error(logs.slice(-8000))
+    throw error
   } finally {
     cleanup()
   }

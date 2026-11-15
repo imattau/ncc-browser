@@ -8,7 +8,9 @@ import type {
   OverlayReason,
   SignerPermission,
   SignerRequest,
-  TabHistory
+  TabHistory,
+  TorMode,
+  TorStatus
 } from './types'
 
 export interface SetRelaysResult {
@@ -28,6 +30,7 @@ export interface NccApi {
   reload(): Promise<void>
   forceReload(): Promise<void>
   stop(): Promise<void>
+  toggleTor(): Promise<void>
   newTab(input?: string): Promise<string>
   closeTab(id?: string): Promise<void>
   selectTab(id: string): Promise<void>
@@ -57,6 +60,17 @@ export interface NccApi {
   setRelays(relays: string[]): Promise<SetRelaysResult>
   setGossip(value: boolean): Promise<SetRelaysResult>
   setAnchorRequired(value: boolean): Promise<SetRelaysResult>
+  setPreferTor(value: boolean): Promise<SetRelaysResult>
+  setTorMode(mode: TorMode): Promise<SetRelaysResult>
+  setTorSocks(socks: string): Promise<SetRelaysResult>
+  setTorConfig(config: {
+    preferTor: boolean
+    mode: TorMode
+    socks: string
+  }): Promise<SetRelaysResult>
+  torStatus(): Promise<TorStatus>
+  torTest(): Promise<TorStatus>
+  torRestart(): Promise<TorStatus>
   identity(): Promise<IdentityStatus>
   importIdentity(secret: string): Promise<IdentityStatus>
   generateIdentity(): Promise<IdentityStatus>

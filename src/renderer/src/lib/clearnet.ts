@@ -1,7 +1,7 @@
 /** Clearnet connection state for the toolbar lock. Pure so it is easy to test. */
 
 export type ClearnetTone = 'ok' | 'warn' | 'muted'
-export type ClearnetLabel = 'secure' | 'insecure' | 'web'
+export type ClearnetLabel = 'secure' | 'insecure' | 'web' | 'onion'
 
 export interface ClearnetState {
   tone: ClearnetTone
@@ -17,6 +17,13 @@ export function clearnetState(url: string): ClearnetState {
     parsed = null
   }
 
+  if (parsed && parsed.hostname.toLowerCase().endsWith('.onion')) {
+    return {
+      tone: parsed.protocol === 'https:' ? 'ok' : 'warn',
+      label: 'onion',
+      host: parsed.host
+    }
+  }
   if (parsed?.protocol === 'https:') {
     return { tone: 'ok', label: 'secure', host: parsed.host }
   }

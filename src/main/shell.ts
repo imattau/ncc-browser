@@ -19,6 +19,7 @@ import {
 } from './context-menu'
 import { commandForInput } from './shortcuts'
 import { fetchFavicon } from './favicon'
+import { renderErrorPage } from './error-page'
 import type { BookmarkStore } from './bookmarks'
 import type { SavedSession, SavedWindow, SessionStore } from './session-store'
 import type {
@@ -31,6 +32,10 @@ import type {
   TabSummary
 } from '@shared/types'
 import type { ProtocolActivity } from './protocol'
+import type { EndpointHealth } from './ncc/health'
+import type { TransportPolicy } from './ncc/transport'
+import { isAllowedTorUrl, isOnionHost, type TorGuard } from './tor/guard'
+import type { TorManager } from './tor/manager'
 
 export interface ShellDeps {
   preloadPath: string
@@ -41,6 +46,11 @@ export interface ShellDeps {
   bookmarks: BookmarkStore
   sessionStore: SessionStore
   initialSession?: SavedSession | null
+  transport: TransportPolicy
+  tor: TorManager
+  torGuard: TorGuard
+  health: EndpointHealth
+  preferTor: () => boolean
   onContentWebContents?: (contents: WebContents) => void
 }
 
@@ -53,6 +63,7 @@ interface Tab {
   service: string | null
   security: SecurityInfo | null
   failure: { code: string; message: string } | null
+  tor: { onionAvailable: boolean; active: boolean }
   loading: boolean
   favicon: string | null
   audible: boolean
@@ -159,6 +170,11 @@ export class BrowserShell {
       canGoForward: history?.canGoForward() ?? false,
       security: active?.security ?? null,
       failure: active?.failure ?? null,
+      tor: {
+        preferTor: this.deps.preferTor(),
+        onionAvailable: active?.tor.onionAvailable ?? false,
+        active: active?.tor.active ?? false
+      },
       tabs,
       activeTabId: this.activeId,
       windowMaximized: this.window.isMaximized()
@@ -181,6 +197,7 @@ export class BrowserShell {
 
     try {
       target.view.webContents.stop()
+      this.deps.torGuard.delete(target.view.webContents.id)
       this.window.contentView.removeChildView(target.view)
       target.view.webContents.close()
     } catch (error) {
@@ -595,20 +612,50 @@ export class BrowserShell {
 
   /** Called by the protocol handler for document-level activity only. */
   reportActivity(activity: ProtocolActivity): void {
-    const tab = this.findActivityTab(activity)
-    if (!tab) return
+    const tabs = this.tabs.filter(
+      (tab) => tab.pubkey === activity.pubkey && tab.service === activity.service
+    )
+    if (tabs.length === 0) return
 
-    if (activity.failureCode) {
-      tab.failure = { code: activity.failureCode, message: activity.failureCode }
-      tab.security = null
-    } else {
-      tab.failure = null
-      tab.security = {
-        transport: activity.transport,
-        host: activity.endpointHost ?? '',
-        pinned: activity.pinned,
-        anchor: activity.anchor ?? null
+    const onionAvailable = activity.onionAvailable === true
+    const active = !activity.failureCode && activity.viaTor === true
+    for (const tab of tabs) {
+      tab.tor = { onionAvailable, active }
+      this.deps.torGuard.set(tab.view.webContents.id, active)
+      if (activity.failureCode) {
+        tab.failure = { code: activity.failureCode, message: activity.failureCode }
+        tab.security = null
+      } else {
+        tab.failure = null
+        tab.security = {
+          transport: activity.transport,
+          host: activity.endpointHost ?? '',
+          pinned: activity.pinned,
+          viaTor: activity.viaTor === true,
+          anchor: activity.anchor ?? null
+        }
       }
+    }
+    this.syncState()
+  }
+
+  /** Flip the per-service onion override, then reload through the other transport. */
+  toggleTor(): void {
+    const tab = this.activeTab()
+    if (!tab || tab.mode !== 'ncc' || !tab.pubkey || !tab.service) return
+    if (!tab.tor.onionAvailable) return
+    this.deps.transport.toggle(tab.pubkey, tab.service, true)
+    this.deps.health.clear()
+    void this.forceReload()
+  }
+
+  /** Clear overrides and reload NCC tabs after the global Tor preference changes. */
+  applyTorPreference(): void {
+    this.deps.transport.clear()
+    this.deps.health.clear()
+    for (const tab of this.tabs) {
+      if (tab.mode !== 'ncc') continue
+      tab.view.webContents.reloadIgnoringCache()
     }
     this.syncState()
   }
@@ -631,7 +678,28 @@ export class BrowserShell {
       tab.displayUrl = text
       tab.security = null
       tab.failure = null
+      tab.tor = { onionAvailable: false, active: false }
+      this.deps.torGuard.set(tab.view.webContents.id, false)
       this.showOnly(tab.id)
+
+      if (isOnionPageUrl(text)) {
+        tab.loading = true
+        this.syncState()
+        try {
+          await this.deps.tor.ensureReady()
+        } catch (error) {
+          await this.loadWebError(
+            tab,
+            text,
+            'tor-unavailable',
+            error instanceof Error ? error.message : String(error)
+          )
+          return
+        }
+        tab.tor.active = true
+        this.deps.torGuard.set(tab.view.webContents.id, true)
+      }
+
       await this.load(tab, text)
       return
     }
@@ -658,6 +726,23 @@ export class BrowserShell {
     tab.failure = null
     this.showOnly(tab.id)
     await this.load(tab, internal)
+  }
+
+  private async loadWebError(
+    tab: Tab,
+    address: string,
+    code: string,
+    message: string
+  ): Promise<void> {
+    const html = renderErrorPage({ code, message, address })
+    await this.load(tab, `data:text/html;base64,${Buffer.from(html).toString('base64')}`)
+    tab.mode = 'web'
+    tab.displayUrl = address
+    tab.security = null
+    tab.failure = { code, message }
+    tab.tor = { onionAvailable: false, active: false }
+    this.deps.torGuard.set(tab.view.webContents.id, false)
+    this.syncState()
   }
 
   private async load(tab: Tab, url: string): Promise<void> {
@@ -692,6 +777,7 @@ export class BrowserShell {
       service: null,
       security: null,
       failure: null,
+      tor: { onionAvailable: false, active: false },
       loading: false,
       favicon: null,
       audible: false,
@@ -748,6 +834,9 @@ export class BrowserShell {
       if (!isMainFrame) return
       tab.failure = null
       tab.security = null
+      const onion = isOnionPageUrl(url)
+      tab.tor = { onionAvailable: false, active: onion }
+      this.deps.torGuard.set(contents.id, onion)
       tab.displayUrl = formatDisplayUrl(url)
       this.applyUrlToTab(tab, url)
       this.syncState()
@@ -779,6 +868,9 @@ export class BrowserShell {
         }
         return
       }
+      // Main-process fetches are not attributed to a webContents, so apply the
+      // Tor-page allowlist here as well; a clearnet favicon would leak the IP.
+      if (tab.tor.active && !isAllowedTorUrl(candidate)) return
       const referer = contents.getURL()
       void fetchFavicon(contents.session, candidate, referer).then((dataUrl) => {
         if (!dataUrl || tab.favicon === dataUrl || !this.tabs.includes(tab)) return
@@ -872,22 +964,6 @@ export class BrowserShell {
     } catch {
       // The error page's own URL may not parse; keep the previous service.
     }
-  }
-
-  private findActivityTab(activity: ProtocolActivity): Tab | null {
-    const active = this.activeTab()
-    if (
-      active &&
-      active.pubkey === activity.pubkey &&
-      active.service === activity.service
-    ) {
-      return active
-    }
-    return (
-      this.tabs.find(
-        (tab) => tab.pubkey === activity.pubkey && tab.service === activity.service
-      ) ?? null
-    )
   }
 
   private activeTab(): Tab | null {
@@ -1040,6 +1116,15 @@ function safeProtocol(url: string): string | null {
 
 function formatDisplayUrl(url: string): string {
   return url.startsWith('ncc://') ? toDisplayUrl(url) : url
+}
+
+function isOnionPageUrl(url: string): boolean {
+  if (!/^https?:\/\//i.test(url)) return false
+  try {
+    return isOnionHost(new URL(url).hostname.toLowerCase())
+  } catch {
+    return false
+  }
 }
 
 function historyLabel(title: string, url: string): string {

@@ -13,6 +13,7 @@ function nav(overrides: Partial<NavState> = {}): NavState {
     canGoForward: false,
     security: null,
     failure: null,
+    tor: { preferTor: false, onionAvailable: false, active: false },
     tabs: [],
     activeTabId: null,
     windowMaximized: false,
@@ -46,6 +47,7 @@ function security(overrides: Partial<SecurityInfo> = {}): SecurityInfo {
     transport: 'pinned-tls',
     host: 'example.com',
     pinned: true,
+    viaTor: false,
     anchor: anchor('anchored'),
     ...overrides
   }
@@ -102,6 +104,38 @@ describe('securitySummary', () => {
         })
       )
     ).toMatchObject({ tone: 'ok', label: 'pinned-tls', anchorState: 'anchored' })
+  })
+
+  it('describes an onion page without pretending HTTP became TLS', () => {
+    const summary = securitySummary(
+      nav({
+        mode: 'ncc',
+        displayUrl: 'ncc://npub/web/',
+        tor: { preferTor: false, onionAvailable: true, active: true },
+        security: security({
+          transport: 'plaintext',
+          pinned: false,
+          host: 'abc.onion',
+          viaTor: true,
+          anchor: anchor('unanchored', 'none')
+        })
+      })
+    )
+    expect(summary).toMatchObject({ tone: 'warn', label: 'onion', host: 'abc.onion' })
+    expect(summary.tooltip).toContain('over Tor')
+  })
+
+  it('labels a direct onion URL as Tor', () => {
+    expect(
+      securitySummary(
+        nav({
+          mode: 'web',
+          displayUrl: 'http://abc.onion/',
+          url: 'http://abc.onion/',
+          tor: { preferTor: false, onionAvailable: false, active: true }
+        })
+      )
+    ).toMatchObject({ tone: 'warn', label: 'onion', host: 'abc.onion' })
   })
 
   it('turns red for an NCC failure', () => {

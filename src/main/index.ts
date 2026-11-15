@@ -1,4 +1,5 @@
 import { app, Menu, safeStorage, session, type Session } from 'electron'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { nip19 } from 'nostr-tools'
 import { ApprovalBroker } from './approval'
@@ -13,6 +14,10 @@ import { installCertificatePinning, PinStore } from './pins'
 import { installNccProtocol, registerNccScheme } from './protocol'
 import { BrowserShell } from './shell'
 import { SessionStore } from './session-store'
+import { TransportPolicy } from './ncc/transport'
+import { TorGuard } from './tor/guard'
+import { TorManager } from './tor/manager'
+import { TorSessionProxy } from './tor/session'
 import { IdentityStore } from './signer/identity'
 import { registerNip07 } from './signer/ipc'
 import { IdentityManager } from './signer/manager'
@@ -23,9 +28,9 @@ import { Nip46SessionStore } from './signer/session'
 // Custom schemes must be registered before the app is ready.
 registerNccScheme()
 
-const existingUserDataPath = app.getPath('userData')
 app.setName('Nostr Navigator')
-app.setPath('userData', existingUserDataPath)
+// Keep the profile created by earlier NCC Browser builds across the rename.
+app.setPath('userData', join(app.getPath('appData'), 'NCC Browser'))
 
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
@@ -36,6 +41,7 @@ const CONTENT_PARTITION = 'persist:ncc-content'
 
 let shell: BrowserShell | null = null
 let contentSession: Session | null = null
+let torManager: TorManager | null = null
 
 app.whenReady().then(async () => {
   const config = new ConfigStore()
@@ -99,6 +105,31 @@ app.whenReady().then(async () => {
   contentSession.setSpellCheckerEnabled(false)
   installCertificatePinning(contentSession, pins)
 
+  const torGuard = new TorGuard()
+  torGuard.install(contentSession)
+  const transport = new TransportPolicy(() => config.get().preferTor)
+  const torSessionProxy = new TorSessionProxy(contentSession)
+  try {
+    await torSessionProxy.start()
+  } catch (error) {
+    console.warn('[tor] could not start the PAC server:', error)
+  }
+  torManager = new TorManager({
+    mode: () => config.get().torMode,
+    socks: () => config.get().torSocks,
+    envSocks: process.env.NCC_TOR_SOCKS ?? null,
+    binaryPath: torBinaryPath,
+    dataDir: join(app.getPath('userData'), 'tor'),
+    ...(Number(process.env.NCC_TOR_BOOTSTRAP_TIMEOUT_MS) > 0
+      ? { bootstrapTimeoutMs: Number(process.env.NCC_TOR_BOOTSTRAP_TIMEOUT_MS) }
+      : {}),
+    onProxyChange: (proxy) => torSessionProxy.apply(proxy),
+    ...(process.env.NCC_TOR_DEBUG === '1'
+      ? { log: (line: string) => console.log('[tor]', line) }
+      : {})
+  })
+  const tor = torManager
+
   const downloadDirectory = process.env.NCC_DOWNLOAD_DIR?.trim()
   const downloads = new DownloadManager({
     ...(downloadDirectory ? { directory: downloadDirectory } : {}),
@@ -111,6 +142,8 @@ app.whenReady().then(async () => {
     resolver,
     pins,
     health,
+    transport,
+    tor,
     activeService,
     endpointOwners,
     onActivity: (activity) => shell?.reportActivity(activity)
@@ -129,6 +162,11 @@ app.whenReady().then(async () => {
     bookmarks,
     sessionStore,
     initialSession,
+    transport,
+    tor,
+    torGuard,
+    health,
+    preferTor: () => config.get().preferTor,
     onContentWebContents: (contents) => {
       // Remote content must never be able to keep the window from closing.
       contents.on('will-prevent-unload', (event) => event.preventDefault())
@@ -168,7 +206,20 @@ app.whenReady().then(async () => {
     Menu.setApplicationMenu(null)
   }
 
-  registerIpc({ shell, config, resolver, pins, cacheStore, health, identity, permissions, approvals, downloads })
+  registerIpc({
+    shell,
+    config,
+    resolver,
+    pins,
+    cacheStore,
+    health,
+    transport,
+    tor,
+    identity,
+    permissions,
+    approvals,
+    downloads
+  })
 
   // Optional launch address: `ncc-browser ncc://npub1…/service`. A fresh launch uses
   // the restored blank tab; a real restored session gets the address in a new tab.
@@ -205,7 +256,25 @@ app.on('activate', () => {
 app.on('before-quit', () => {
   shell?.saveSessionNow()
   closeSharedPool()
+  void torManager?.stop()
 })
+
+/** Packaged Tor binary, with a repo-local resources directory for development. */
+function torBinaryPath(): string | null {
+  const override = process.env.NCC_TOR_BINARY?.trim()
+  if (override) return existsSync(override) ? override : null
+
+  const platform =
+    process.platform === 'darwin' ? 'mac' : process.platform === 'win32' ? 'win' : 'linux'
+  const binary = process.platform === 'win32' ? 'tor.exe' : 'tor'
+  const base = app.isPackaged
+    ? process.resourcesPath
+    : join(app.getAppPath(), 'resources')
+  const candidates = app.isPackaged
+    ? [join(base, 'tor', 'tor', binary)]
+    : [join(base, 'tor', `${platform}-${process.arch}`, 'tor', binary)]
+  return candidates.find(existsSync) ?? null
+}
 
 /** A URL passed on the command line opens on launch. */
 function findStartupAddress(): string | null {

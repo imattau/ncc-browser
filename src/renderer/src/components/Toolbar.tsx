@@ -29,6 +29,7 @@ interface ToolbarProps {
   onReload: () => void
   onStop: () => void
   onToggleBookmark: () => void
+  onToggleTor: () => void
   onOpenDownloads: () => void
   onOpenHistory: () => void
   onHistoryMenu: (direction: 'back' | 'forward') => void
@@ -50,6 +51,7 @@ export function Toolbar({
   onReload,
   onStop,
   onToggleBookmark,
+  onToggleTor,
   onOpenDownloads,
   onOpenHistory,
   onHistoryMenu,
@@ -101,7 +103,9 @@ export function Toolbar({
         hint={hint}
         bookmarked={bookmarked}
         security={security}
+        tor={state.tor}
         onToggleBookmark={onToggleBookmark}
+        onToggleTor={onToggleTor}
         onOpenSiteInfo={onOpenSiteInfo}
         onNavigate={onNavigate}
       />

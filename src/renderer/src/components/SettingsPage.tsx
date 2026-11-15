@@ -3,6 +3,7 @@ import {
   ArrowLeft,
   CircleHelp,
   Copy,
+  Globe,
   KeyRound,
   RotateCcw,
   ShieldCheck,
@@ -10,8 +11,8 @@ import {
   Smartphone,
   Trash2
 } from 'lucide-react'
-import { DEFAULT_RELAYS } from '@shared/types'
-import type { IdentityStatus, SignerPermission } from '@shared/types'
+import { DEFAULT_RELAYS, DEFAULT_TOR_SOCKS } from '@shared/types'
+import type { IdentityStatus, SignerPermission, TorMode, TorStatus } from '@shared/types'
 import { cn } from '../lib/cn'
 
 export type SettingsSection = 'general' | 'identity' | 'trusted' | 'about'
@@ -53,6 +54,11 @@ export function SettingsPage({
   const [draft, setDraft] = useState('')
   const [gossip, setGossip] = useState(true)
   const [anchorRequired, setAnchorRequired] = useState(false)
+  const [preferTor, setPreferTor] = useState(false)
+  const [torMode, setTorMode] = useState<TorMode>('auto')
+  const [torSocks, setTorSocks] = useState(DEFAULT_TOR_SOCKS)
+  const [torStatus, setTorStatus] = useState<TorStatus | null>(null)
+  const [torBusy, setTorBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -80,17 +86,33 @@ export function SettingsPage({
     void Promise.all([
       window.ncc.getConfig(),
       window.ncc.identity(),
-      window.ncc.signerPermissions()
-    ]).then(([config, status, trusted]) => {
+      window.ncc.signerPermissions(),
+      window.ncc.torStatus()
+    ]).then(([config, status, trusted, tor]) => {
       setDraft(config.relays.join('\n'))
       setGossip(config.gossip)
       setAnchorRequired(config.anchorRequired)
+      setPreferTor(config.preferTor)
+      setTorMode(config.torMode)
+      setTorSocks(config.torSocks)
+      setTorStatus(tor)
       setIdentity(status)
       setPermissions(trusted)
     })
     const frame = window.requestAnimationFrame(() => backRef.current?.focus())
     return () => window.cancelAnimationFrame(frame)
   }, [open, initialSection])
+
+  useEffect(() => {
+    if (!open || !torStatus?.starting) return
+    const timer = window.setInterval(() => {
+      void window.ncc.torStatus().then((status) => {
+        setTorStatus(status)
+        if (!status.starting) window.clearInterval(timer)
+      })
+    }, 1000)
+    return () => window.clearInterval(timer)
+  }, [open, torStatus?.starting])
 
   useEffect(() => {
     if (!open) return
@@ -129,19 +151,45 @@ export function SettingsPage({
     }
 
     const anchorResult = await window.ncc.setAnchorRequired(anchorRequired)
-    setLoading(false)
     if (!anchorResult.ok) {
+      setLoading(false)
       setError(anchorResult.error ?? 'Could not save anchoring setting')
       return
     }
 
-    const config = anchorResult.config ?? gossipResult.config ?? relayResult.config
+    const torResult = await window.ncc.setTorConfig({
+      preferTor,
+      mode: torMode,
+      socks: torSocks
+    })
+    setLoading(false)
+    if (!torResult.ok) {
+      setError(torResult.error ?? 'Could not save Tor settings')
+      return
+    }
+
+    const config =
+      torResult.config ?? anchorResult.config ?? gossipResult.config ?? relayResult.config
     if (config) {
       setDraft(config.relays.join('\n'))
       setGossip(config.gossip)
       setAnchorRequired(config.anchorRequired)
+      setPreferTor(config.preferTor)
+      setTorMode(config.torMode)
+      setTorSocks(config.torSocks)
     }
+    setTorStatus(await window.ncc.torStatus())
     setSaved(true)
+  }
+
+  const testTor = async (): Promise<void> => {
+    setTorBusy(true)
+    setError(null)
+    try {
+      setTorStatus(await window.ncc.torTest())
+    } finally {
+      setTorBusy(false)
+    }
   }
 
   const runIdentity = async (action: () => Promise<IdentityStatus>): Promise<void> => {
@@ -357,12 +405,114 @@ export function SettingsPage({
                   </span>
                 </label>
 
+                <div className="mt-4 border-t border-[color:var(--color-line)] pt-4">
+                  <div className="flex items-center gap-2">
+                    <Globe className="h-3.5 w-3.5 text-[#a78bfa]" />
+                    <h3 className="text-[12px] font-semibold text-[#e7e9ef]">Tor</h3>
+                  </div>
+
+                  <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] p-3.5">
+                    <input
+                      type="checkbox"
+                      id="prefer-tor"
+                      checked={preferTor}
+                      onChange={(event) => {
+                        setPreferTor(event.target.checked)
+                        setSaved(false)
+                      }}
+                      className="mt-0.5 h-4 w-4 accent-[color:var(--color-accent)]"
+                    />
+                    <span>
+                      <span className="block text-[12px] font-medium text-[#e7e9ef]">
+                        Prefer Tor connections
+                      </span>
+                      <span className="mt-0.5 block text-[11.5px] leading-relaxed text-[color:var(--color-muted)]">
+                        When a locator publishes an onion endpoint, load the service over Tor
+                        instead of its direct endpoints. Records without an onion endpoint
+                        load normally.
+                      </span>
+                    </span>
+                  </label>
+
+                  <div className="mt-3 rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] p-3.5">
+                    <label
+                      htmlFor="tor-mode"
+                      className="mb-1.5 block text-[10.5px] font-semibold uppercase tracking-wide text-[color:var(--color-muted)]"
+                    >
+                      Tor proxy
+                    </label>
+                    <select
+                      id="tor-mode"
+                      value={torMode}
+                      onChange={(event) => {
+                        setTorMode(event.target.value === 'local' ? 'local' : 'auto')
+                        setSaved(false)
+                      }}
+                      className="w-full rounded-xl border border-[color:var(--color-line)] bg-[#14161d] px-3 py-2 text-[12px] text-[#dfe3ea] outline-none focus:border-[color:var(--color-accent)]/60"
+                    >
+                      <option value="auto">Automatic (bundled Tor, then local)</option>
+                      <option value="local">Local SOCKS proxy</option>
+                    </select>
+
+                    {torMode === 'local' ? (
+                      <input
+                        value={torSocks}
+                        onChange={(event) => {
+                          setTorSocks(event.target.value)
+                          setSaved(false)
+                        }}
+                        placeholder={DEFAULT_TOR_SOCKS}
+                        spellCheck={false}
+                        autoComplete="off"
+                        aria-label="Tor SOCKS proxy"
+                        className="mt-2 w-full rounded-xl border border-[color:var(--color-line)] bg-[#14161d] px-3 py-2 font-mono text-[12px] text-[#dfe3ea] outline-none focus:border-[color:var(--color-accent)]/60"
+                      />
+                    ) : (
+                      <p className="mt-2 text-[11px] leading-relaxed text-[color:var(--color-muted)]">
+                        Starts the bundled Tor. If it cannot start, the browser tries a local
+                        proxy on 127.0.0.1:9050 or 9150.
+                      </p>
+                    )}
+
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                      <p
+                        data-tor-status
+                        className={cn(
+                          'text-[11px] leading-relaxed',
+                          torStatus?.error
+                            ? 'text-[color:var(--color-warn)]'
+                            : 'text-[color:var(--color-muted)]'
+                        )}
+                      >
+                        {torStatusText(torStatus)}
+                      </p>
+                      <button
+                        type="button"
+                        disabled={torBusy || loading}
+                        onClick={() => void testTor()}
+                        className="rounded-lg border border-[color:var(--color-line)] px-2.5 py-1 text-[11px] text-[#dfe3ea] hover:bg-white/5 disabled:opacity-40"
+                      >
+                        {torBusy ? 'Checking…' : 'Test saved connection'}
+                      </button>
+                    </div>
+
+                    {torStatus?.error ? (
+                      <p className="mt-2 text-[10.5px] leading-relaxed text-[color:var(--color-warn)]">
+                        {torStatus.error}
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+
                 <div className="mt-3 flex items-center justify-between gap-2">
                   <button
                     type="button"
                     onClick={() => {
                       setDraft(DEFAULT_RELAYS.join('\n'))
                       setAnchorRequired(false)
+                      setPreferTor(false)
+                      setTorMode('auto')
+                      setTorSocks(DEFAULT_TOR_SOCKS)
                       setSaved(false)
                     }}
                     className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[11.5px] text-[color:var(--color-muted)] hover:bg-white/5 hover:text-white"
@@ -588,6 +738,10 @@ export function SettingsPage({
                   The address bar shows the npub address you asked for. The endpoint
                   host and port stay out of the UI.
                 </p>
+                <p>
+                  Bundled Tor is distributed under its own BSD licence; the licence and
+                  source notice ship in the app&apos;s resources.
+                </p>
                 <button
                   type="button"
                   onClick={() => void window.ncc.runCommand('open-spec')}
@@ -602,6 +756,16 @@ export function SettingsPage({
       </div>
     </section>
   )
+}
+
+function torStatusText(status: TorStatus | null): string {
+  if (!status) return 'Tor has not been started.'
+  if (status.starting) return 'Starting Tor…'
+  if (status.ready && status.proxy) {
+    return `${status.kind === 'bundled' ? 'Bundled Tor' : 'Local Tor'} ready on ${status.proxy}`
+  }
+  if (status.error) return 'Tor is unavailable.'
+  return 'Tor starts automatically when an onion service is opened.'
 }
 
 function SectionHeading({ title, hint }: { title: string; hint: string }) {

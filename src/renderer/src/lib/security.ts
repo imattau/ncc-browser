@@ -48,11 +48,13 @@ export function securitySummary(state: NavState): SecuritySummary {
       host: web.host,
       anchorState: 'none',
       tooltip:
-        web.label === 'secure'
-          ? `Secure HTTPS · ${web.host} — click for details`
-          : web.label === 'insecure'
-            ? `Not secure · HTTP · ${web.host} — click for details`
-            : 'Clearnet page — click for details',
+        web.label === 'onion'
+          ? `Onion service over Tor · ${web.host} — click for details`
+          : web.label === 'secure'
+            ? `Secure HTTPS · ${web.host} — click for details`
+            : web.label === 'insecure'
+              ? `Not secure · HTTP · ${web.host} — click for details`
+              : 'Clearnet page — click for details',
       clickable: true
     }
   }
@@ -65,8 +67,14 @@ export function securitySummary(state: NavState): SecuritySummary {
         ? 'warn'
         : 'muted'
 
-  const label = !security ? 'ncc' : security.transport
+  const label =
+    !security
+      ? 'ncc'
+      : state.tor.active && security.transport === 'plaintext'
+        ? 'onion'
+        : security.transport
   const anchorState = anchor?.status ?? 'none'
+  const torSuffix = state.tor.active ? ' over Tor' : ''
 
   return {
     tone,
@@ -75,7 +83,7 @@ export function securitySummary(state: NavState): SecuritySummary {
     anchorState,
     tooltip: !security
       ? 'NCC page — resolution details'
-      : `${transportLabel(security.transport)} · ${security.host}${anchor ? ` · NCC-02 ${anchor.status}` : ''} — click for details`,
+      : `${transportLabel(security.transport)}${torSuffix} · ${security.host}${anchor ? ` · NCC-02 ${anchor.status}` : ''} — click for details`,
     clickable: true
   }
 }

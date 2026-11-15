@@ -61,8 +61,8 @@ It stays stable when the port or host changes. Republish the locator instead.
 - `k` is the TLS SPKI fingerprint (`base64url(sha256(SPKI DER))`). Include it for HTTPS
   endpoints when you want the browser to pin the certificate, including self-signed
   certificates.
-- `ws://`/`wss://`/`onion://` endpoints are published for other clients; Nostr Navigator
-  currently opens `http`/`https` pages.
+- `ws://`/`wss://` endpoints are published for other clients; Nostr Navigator renders
+  `http`/`https` pages, including `.onion` HTTP(S) endpoints through its bundled Tor.
 
 ## Stack
 

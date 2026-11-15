@@ -6,6 +6,9 @@ import type { ConfigStore } from './config'
 import type { DownloadManager } from './downloads'
 import type { EndpointHealth } from './ncc/health'
 import type { NccResolver } from './ncc/resolver'
+import type { TransportPolicy } from './ncc/transport'
+import { normalizeTorProxy } from './tor/proxy'
+import type { TorManager } from './tor/manager'
 import type { PinStore } from './pins'
 import type { ApprovalBroker } from './approval'
 import type { IdentityManager } from './signer/manager'
@@ -19,6 +22,8 @@ export interface IpcDeps {
   pins: PinStore
   cacheStore: LocatorCacheStore
   health: EndpointHealth
+  transport: TransportPolicy
+  tor: TorManager
   identity: IdentityManager
   permissions: PermissionStore
   approvals: ApprovalBroker
@@ -38,6 +43,10 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle('ncc:reload', () => deps.shell.reload())
   ipcMain.handle('ncc:force-reload', () => deps.shell.forceReload())
   ipcMain.handle('ncc:stop', () => deps.shell.stop())
+  ipcMain.handle('ncc:toggle-tor', (event) => {
+    if (!fromChrome(event)) return
+    deps.shell.toggleTor()
+  })
 
   ipcMain.handle('ncc:new-tab', (_event, input: unknown) =>
     deps.shell.newTab(typeof input === 'string' ? input : undefined)
@@ -129,6 +138,86 @@ export function registerIpc(deps: IpcDeps): void {
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
+  })
+
+  ipcMain.handle('ncc:set-prefer-tor', (_event, value: unknown) => {
+    try {
+      const config = deps.config.setPreferTor(value)
+      deps.transport.clear()
+      deps.shell.applyTorPreference()
+      if (config.preferTor) void deps.tor.ensureReady().catch(() => undefined)
+      return { ok: true, config }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
+  ipcMain.handle('ncc:set-tor-mode', async (_event, value: unknown) => {
+    try {
+      const config = deps.config.setTorMode(value)
+      await deps.tor.reset()
+      deps.transport.clear()
+      deps.shell.applyTorPreference()
+      return { ok: true, config }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
+  ipcMain.handle('ncc:set-tor-socks', async (_event, value: unknown) => {
+    try {
+      const normalized = normalizeTorProxy(value)
+      const config = deps.config.setTorSocks(normalized)
+      await deps.tor.reset()
+      deps.transport.clear()
+      deps.shell.applyTorPreference()
+      return { ok: true, config }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
+  ipcMain.handle('ncc:set-tor-config', async (_event, payload: unknown) => {
+    try {
+      if (!payload || typeof payload !== 'object') {
+        return { ok: false, error: 'Invalid Tor settings' }
+      }
+      const { preferTor, mode, socks } = payload as {
+        preferTor?: unknown
+        mode?: unknown
+        socks?: unknown
+      }
+      const normalized = normalizeTorProxy(socks)
+      const before = deps.config.get()
+      deps.config.setPreferTor(preferTor === true)
+      deps.config.setTorMode(mode === 'local' ? 'local' : 'auto')
+      const config = deps.config.setTorSocks(normalized)
+
+      const changed =
+        before.preferTor !== config.preferTor ||
+        before.torMode !== config.torMode ||
+        before.torSocks !== config.torSocks
+      if (!changed) return { ok: true, config }
+
+      if (before.torMode !== config.torMode || before.torSocks !== config.torSocks) {
+        await deps.tor.reset()
+      }
+      deps.transport.clear()
+      deps.shell.applyTorPreference()
+      if (config.preferTor) void deps.tor.ensureReady().catch(() => undefined)
+      return { ok: true, config }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
+  ipcMain.handle('ncc:tor-status', () => deps.tor.status())
+  ipcMain.handle('ncc:tor-test', () => deps.tor.test())
+  ipcMain.handle('ncc:tor-restart', async () => {
+    await deps.tor.reset()
+    deps.transport.clear()
+    deps.shell.applyTorPreference()
+    return deps.tor.test()
   })
 
   ipcMain.handle('ncc:identity-status', () => deps.identity.status())

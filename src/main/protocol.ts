@@ -5,7 +5,14 @@ import { renderErrorPage, renderPlainFailure } from './error-page'
 import { orderByHealth, type EndpointHealth } from './ncc/health'
 import { joinPaths, rewriteLocation } from './ncc/routing'
 import type { NccResolver } from './ncc/resolver'
+import {
+  hasOnionEndpoint,
+  selectTransportEndpoints,
+  type TransportPolicy
+} from './ncc/transport'
 import type { PinStore } from './pins'
+import { isAllowedTorRedirect } from './tor/guard'
+import type { TorManager } from './tor/manager'
 
 export const NCC_SCHEME = 'ncc'
 
@@ -35,7 +42,10 @@ const FAILURE_STATUS: Record<string, number> = {
   'no-anchor': 404,
   'anchor-expired': 410,
   'anchor-invalid': 502,
-  'anchor-k-mismatch': 502
+  'anchor-k-mismatch': 502,
+  'onion-only': 502,
+  'tor-unavailable': 503,
+  'tor-clearnet-redirect': 403
 }
 
 export interface ProtocolActivity {
@@ -44,6 +54,10 @@ export interface ProtocolActivity {
   endpointHost?: string
   transport: TransportSecurity
   pinned: boolean
+  /** The locator publishes at least one usable onion endpoint. */
+  onionAvailable?: boolean
+  /** The document is being served from an onion endpoint. */
+  viaTor?: boolean
   anchor?: AnchorInfo | null
   failureCode?: string
 }
@@ -53,6 +67,8 @@ export interface ProtocolDeps {
   resolver: NccResolver
   pins: PinStore
   health: EndpointHealth
+  transport: TransportPolicy
+  tor: TorManager
   activeService: Map<string, string>
   /** Endpoint origin → the NCC address it was resolved for, used to rewrite redirects. */
   endpointOwners: Map<string, { pubkey: string; service: string }>
@@ -125,10 +141,63 @@ async function handleNccRequest(request: Request, deps: ProtocolDeps): Promise<R
     return failureResponse(request, outcome.code, outcome.message, request.url, outcome.detail)
   }
 
+  const onionAvailable = hasOnionEndpoint(outcome.record.endpoints)
+  const useTor = deps.transport.useTor(pubkey, service, onionAvailable)
+  const selection = selectTransportEndpoints(outcome.record.endpoints, useTor)
+
+  if (selection.candidates.length === 0) {
+    const code = selection.onionOnly ? 'onion-only' : 'no-endpoint'
+    if (isDocumentRequest(request)) {
+      deps.onActivity({
+        pubkey,
+        service,
+        transport: 'unknown',
+        pinned: false,
+        onionAvailable,
+        viaTor: false,
+        failureCode: code
+      })
+    }
+    return failureResponse(
+      request,
+      code,
+      selection.onionOnly
+        ? 'This service is available only over Tor'
+        : 'The locator has no fetchable endpoints',
+      request.url
+    )
+  }
+
+  if (useTor) {
+    try {
+      await deps.tor.ensureReady()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (isDocumentRequest(request)) {
+        deps.onActivity({
+          pubkey,
+          service,
+          transport: 'unknown',
+          pinned: false,
+          onionAvailable,
+          viaTor: true,
+          failureCode: 'tor-unavailable'
+        })
+      }
+      return failureResponse(
+        request,
+        'tor-unavailable',
+        'Tor is not available',
+        request.url,
+        message
+      )
+    }
+  }
+
   const failures: string[] = []
   let certificateFailure: 'k-mismatch' | 'certificate-expired' | null = null
 
-  for (const endpoint of orderByHealth(outcome.record.endpoints, deps.health)) {
+  for (const endpoint of orderByHealth(selection.candidates, deps.health)) {
     let target: URL
     try {
       target = new URL(endpoint.url)
@@ -180,18 +249,22 @@ async function handleNccRequest(request: Request, deps: ProtocolDeps): Promise<R
         endpointHost: target.hostname,
         transport,
         pinned: transport === 'pinned-tls',
+        onionAvailable,
+        viaTor: endpoint.family === 'onion',
         anchor: outcome.record.anchor ?? null
       })
     }
 
     return toBrowserResponse(
+      request,
       response,
       requestUrl,
       target,
       pubkey,
       service,
       deps,
-      isDocumentRequest(request)
+      isDocumentRequest(request),
+      endpoint.family === 'onion'
     )
   }
 
@@ -202,6 +275,8 @@ async function handleNccRequest(request: Request, deps: ProtocolDeps): Promise<R
       service,
       transport: 'unknown',
       pinned: false,
+      onionAvailable,
+      viaTor: useTor,
       failureCode: code
     })
   }
@@ -246,13 +321,15 @@ function forwardedInit(request: Request, target: URL, pubkey: string): RequestIn
 }
 
 function toBrowserResponse(
+  request: Request,
   response: Response,
   requestUrl: URL,
   target: URL,
   pubkey: string,
   service: string,
   deps: ProtocolDeps,
-  documentRequest: boolean
+  documentRequest: boolean,
+  viaTor: boolean
 ): Response {
   const headers = new Headers(response.headers)
   for (const name of HOP_BY_HOP) headers.delete(name)
@@ -270,6 +347,32 @@ function toBrowserResponse(
 
   const location = headers.get('location')
   if (location) {
+    if (viaTor && !isAllowedTorRedirect(location, target)) {
+      if (documentRequest) {
+        deps.onActivity({
+          pubkey,
+          service,
+          transport: 'unknown',
+          pinned: false,
+          onionAvailable: true,
+          viaTor: true,
+          failureCode: 'tor-clearnet-redirect'
+        })
+      }
+      let host = location
+      try {
+        host = new URL(location, target).host
+      } catch {
+        // Keep the raw Location in the detail when it is not a URL.
+      }
+      return failureResponse(
+        request,
+        'tor-clearnet-redirect',
+        'Tor blocked a clearnet redirect',
+        requestUrl.toString(),
+        `Blocked redirect to ${host}`
+      )
+    }
     headers.set(
       'location',
       rewriteLocation(location, {
