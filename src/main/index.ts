@@ -16,7 +16,7 @@ import { registerIpc } from './ipc'
 import { registerExtensionIpc } from './extensions/ipc'
 import { SiteDataService } from './site-data'
 import { registerSiteDataIpc } from './site-data-ipc'
-import { installExtensionProtocol, registerExtensionScheme } from './extensions/protocol'
+import { installExtensionProtocol } from './extensions/protocol'
 import { ExtensionRegistry } from './extensions/registry'
 import { ExtensionService } from './extensions/runtime'
 import { ExtensionStorage } from './extensions/storage'
@@ -26,7 +26,8 @@ import { PasswordService } from './passwords/service'
 import { EndpointHealth } from './ncc/health'
 import { closeSharedPool, NccResolver, signerFromSecret, type LocatorSigner } from './ncc/resolver'
 import { installCertificatePinning, PinStore } from './pins'
-import { installNccProtocol, registerNccScheme, type ProtocolActivity } from './protocol'
+import { installNccProtocol, type ProtocolActivity } from './protocol'
+import { registerPrivilegedSchemes } from './schemes'
 import { RelayLocatorService } from './relay/locator'
 import { RelayPool } from './relay/pool'
 import { RelayPinStore } from './relay/socket'
@@ -54,9 +55,8 @@ import { PermissionStore } from './signer/permissions'
 import { Nip07Service } from './signer/service'
 import { Nip46SessionStore } from './signer/session'
 
-// Custom schemes must be registered before the app is ready.
-registerNccScheme()
-registerExtensionScheme()
+// Custom schemes must be registered before the app is ready, in a single call.
+registerPrivilegedSchemes()
 
 app.setName('Nostr Navigator')
 // Keep the profile created by earlier NCC Browser builds across the rename.

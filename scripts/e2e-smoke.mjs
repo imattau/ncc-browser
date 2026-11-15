@@ -922,6 +922,37 @@ async function main() {
       String(location)
     )
 
+    const capabilities = await evaluate(
+      cdp,
+      `({
+        secure: window.isSecureContext,
+        subtle: typeof crypto?.subtle,
+        caches: typeof caches,
+        workers: 'serviceWorker' in navigator
+      })`
+    )
+    check('ncc pages are secure contexts', capabilities.secure === true, JSON.stringify(capabilities))
+    check('ncc pages expose WebCrypto', capabilities.subtle === 'object', String(capabilities.subtle))
+    check('ncc pages expose CacheStorage', capabilities.caches === 'object', String(capabilities.caches))
+    check('ncc pages allow service workers', capabilities.workers === true, String(capabilities.workers))
+
+    const ownFetch = await evaluate(
+      cdp,
+      `(async () => {
+        try {
+          const response = await fetch(location.href)
+          return { status: response.status, bytes: (await response.text()).length }
+        } catch (error) {
+          return { error: String(error) }
+        }
+      })()`
+    )
+    check(
+      'ncc pages can fetch their own origin',
+      ownFetch.status === 200 && ownFetch.bytes > 0,
+      JSON.stringify(ownFetch)
+    )
+
     const screenshot = await cdp.send('Page.captureScreenshot', { format: 'png' })
     writeFileSync(join(ARTIFACTS, 'resolved.png'), Buffer.from(screenshot.data, 'base64'))
 
@@ -986,6 +1017,15 @@ async function main() {
     check(
       'serves extension pages from the ncc-ext origin',
       String(await evaluate(options, 'location.origin')).startsWith('ncc-ext://')
+    )
+    const extensionContext = await evaluate(
+      options,
+      `({ secure: window.isSecureContext, subtle: typeof crypto?.subtle })`
+    )
+    check(
+      'extension pages are secure contexts',
+      extensionContext.secure === true && extensionContext.subtle === 'object',
+      JSON.stringify(extensionContext)
     )
     await evaluate(options, 'window.close()')
 

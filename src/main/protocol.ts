@@ -1,4 +1,4 @@
-import { protocol, type Session } from 'electron'
+import type { Session } from 'electron'
 import {
   isNostrId,
   parseNccAddress,
@@ -93,25 +93,6 @@ export interface ProtocolDeps {
   /** Endpoint origin → the NCC address it was resolved for, used to rewrite redirects. */
   endpointOwners: Map<string, { pubkey: string; service: string }>
   onActivity: (activity: ProtocolActivity) => void
-}
-
-/**
- * Must run before `app.whenReady()`.
- */
-export function registerNccScheme(): void {
-  protocol.registerSchemesAsPrivileged([
-    {
-      scheme: NCC_SCHEME,
-      privileges: {
-        standard: true,
-        secure: true,
-        supportFetchAPI: true,
-        corsEnabled: true,
-        stream: true,
-        allowServiceWorkers: true
-      }
-    }
-  ])
 }
 
 export function installNccProtocol(deps: ProtocolDeps): void {

@@ -3,7 +3,7 @@
  * a secure, standard scheme so extension pages get a real origin, fetch and CSP.
  */
 
-import { protocol, type Session } from 'electron'
+import type { Session } from 'electron'
 import { extname } from 'node:path'
 import { EXTENSION_SCHEME, type ExtensionManifest } from '@shared/extensions'
 import type { ExtensionRegistry } from './registry'
@@ -27,21 +27,6 @@ const CONTENT_TYPES: Record<string, string> = {
   '.ttf': 'font/ttf',
   '.txt': 'text/plain; charset=utf-8',
   '.map': 'application/json; charset=utf-8'
-}
-
-export function registerExtensionScheme(): void {
-  protocol.registerSchemesAsPrivileged([
-    {
-      scheme: EXTENSION_SCHEME,
-      privileges: {
-        standard: true,
-        secure: true,
-        supportFetchAPI: true,
-        corsEnabled: true,
-        stream: true
-      }
-    }
-  ])
 }
 
 export function extensionPageUrl(id: string, path = ''): string {

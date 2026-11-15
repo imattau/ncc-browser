@@ -104,6 +104,41 @@ that need an unambiguous cross-service reference use the explicit `/_/<service>/
 `ncc://<npub>/<service>/<path>`, including `http→https` upgrades, so the renderer never
 sees a raw `ip:port`.
 
+### One scheme, not `ncc://` plus `nccs://`
+
+There is deliberately no `nccs://` scheme. In the web, `http`/`https` are separate
+origins and the split is affordable because the site owner controls both names and the
+upgrade is one-way. In NCC the scheme is the stable identity and the endpoint is the
+implementation detail: a publisher rotates, adds and reprioritises endpoints (NCC-05)
+without the address changing, and Tor selects a different endpoint for the same
+address. Encoding transport in the scheme would fork the origin — localStorage,
+IndexedDB, service-worker scope, NIP-07 trust, history, bookmarks and inbound links —
+on every rotation, and would give one publisher two trust records ("did I trust the
+secure one or the plain one?").
+
+Transport security is expressed as record properties and policy instead:
+
+- the padlock and site panel show `pinned-tls` / `tls` / `plaintext` / `onion`;
+- plaintext endpoints hit the `ncc-http-ok` interstitial before loading;
+- `httpsMode: only` makes a service refuse anything that is not TLS.
+
+If an address-level "require pinned HTTPS" is wanted later, implement `nccs://` as a
+**canonicalising alias**: parse it, set the strict policy for that pubkey/service and
+redirect to the same `ncc://` origin. Never as a second origin.
+
+### Privileged-scheme registration is a single call
+
+`protocol.registerSchemesAsPrivileged()` does not merge across calls. A second call
+leaves the schemes from the first call with `standard` URL parsing (documents still
+load) but without `secure`, `supportFetchAPI`, `corsEnabled` or
+`allowServiceWorkers`. Registering `ncc` and then `ncc-ext` separately therefore made
+every service page a non-secure context: no `crypto.subtle`, no CacheStorage, no
+service workers, and `fetch()` to the page's own origin failing — which stalled PWA
+apps (Ditto, npanel) mid-boot with open but silent relay sockets. All schemes are now
+registered in one call from `src/main/schemes.ts` (0.8.2), and the e2e suite asserts
+`isSecureContext`, `crypto.subtle`, CacheStorage and a same-origin fetch on both
+`ncc://` and `ncc-ext://` pages.
+
 ---
 
 ## 4. Resolution algorithm (spec-correct)

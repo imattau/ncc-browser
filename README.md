@@ -386,7 +386,14 @@ session handles **every** request under the origin, not just top-level documents
 - the page never learns the real `ip:port`;
 - one `npub` is one origin, so cookies and storage isolate owners naturally;
 - redirects are rewritten back into `ncc://…` (redirects to other hosts are treated as
-  "leave NCC" and passed through).
+  "leave NCC" and passed through);
+- pages get a genuine secure context: `crypto.subtle`, CacheStorage, service workers and
+  same-origin `fetch()` all work, which PWAs need during boot.
+
+There is no `nccs://` scheme: transport is a property of the resolved record, not of the
+address, so it can rotate without changing the origin (see `PLAN.md` §3). All custom
+schemes are registered in a single `registerSchemesAsPrivileged()` call — a second call
+silently drops `secure`/`supportFetchAPI` from the schemes registered by the first.
 
 When a locator endpoint is `https` and carries `k`, the SPKI fingerprint is pinned for
 that hostname via `setCertificateVerifyProc`, DANE-style:
@@ -861,8 +868,8 @@ The release job also uploads `SHA256SUMS.txt`. Pushing a tag is the whole releas
 
 ```bash
 npm version minor --no-git-tag-version   # or edit package.json
-git commit -am "Release v0.8.1"
-git tag -a v0.8.1 -m "Nostr Navigator v0.8.1"
+git commit -am "Release v0.8.2"
+git tag -a v0.8.2 -m "Nostr Navigator v0.8.2"
 git push origin main --follow-tags
 ```
 
