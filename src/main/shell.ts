@@ -50,6 +50,14 @@ import {
 import { isAllowedTorUrl, isOnionHost, type TorGuard } from './tor/guard'
 import type { TorManager } from './tor/manager'
 
+/**
+ * Where the NCC-05 specification lives. Opened as a tab in the current tab's transport
+ * mode: the browser can render it, and a Tor tab must not leak the request to the
+ * desktop browser.
+ */
+const NCC_SPEC_URL =
+  'https://github.com/imattau/nostr-community-conventions/blob/master/ncc-05/README.md'
+
 export interface ShellDeps {
   preloadPath: string
   contentPreloadPath: string
@@ -518,9 +526,11 @@ export class BrowserShell {
         this.sendChrome('ncc:open-settings', { section: 'passwords' })
         break
       case 'open-spec':
-        void shell.openExternal(
-          'https://github.com/imattau/nostr-community-conventions/blob/master/ncc-05/README.md'
-        )
+        // Open documentation in a tab, not the desktop browser: history, zoom and the
+        // current transport mode all apply, and a Tor tab does not leak to clearnet.
+        if (this.activeTab()?.kind === 'tor') this.newTorTab(NCC_SPEC_URL)
+        else if (this.activeTab()?.kind === 'private') this.newPrivateTab(NCC_SPEC_URL)
+        else this.newTab(NCC_SPEC_URL)
         break
       case 'quit':
         app.quit()

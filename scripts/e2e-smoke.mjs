@@ -3025,6 +3025,37 @@ async function main() {
     )
     const aboutShot = await chrome.send('Page.captureScreenshot', { format: 'png' })
     writeFileSync(join(ARTIFACTS, 'settings-about.png'), Buffer.from(aboutShot.data, 'base64'))
+
+    const activeBeforeSpec = await evaluate(
+      chrome,
+      'window.ncc.getState().then((state) => state.activeTabId)'
+    )
+    await evaluate(
+      chrome,
+      `(() => {
+        const button = [...document.querySelectorAll('button')].find((entry) =>
+          entry.textContent?.includes('Read the NCC-05 specification')
+        )
+        button?.click()
+        return Boolean(button)
+      })()`
+    )
+    const specTab = await waitForValue(
+      chrome,
+      `window.ncc.getState().then((state) => {
+        const tab = state.tabs.find((entry) => (entry.url || '').includes('ncc-05'))
+        return tab ? tab.id + '|' + tab.kind : ''
+      })`,
+      60
+    )
+    check(
+      'opens the specification in a tab, not the desktop browser',
+      String(specTab).endsWith('|normal'),
+      String(specTab)
+    )
+    const specTabId = String(specTab).split('|')[0]
+    if (specTabId) await evaluate(chrome, `window.ncc.closeTab(${JSON.stringify(specTabId)})`)
+    await evaluate(chrome, `window.ncc.selectTab(${JSON.stringify(activeBeforeSpec)})`)
     await chrome.send('Emulation.clearDeviceMetricsOverride')
 
     // Password manager: encrypted vault, toolbar fill and save-on-submit.
