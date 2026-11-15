@@ -5,7 +5,7 @@
   "description": "A desktop browser that resolves services through Nostr Community Convention NCC-05 instead of DNS",
   "main": "./out/main/index.js",
   "desktopName": "nostr-navigator.desktop",
-  "author": "lostcause",
+  "author": "imattau",
   "license": "MIT",
   "scripts": {
     "dev": "electron-vite dev",

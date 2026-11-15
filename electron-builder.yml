@@ -1,7 +1,7 @@
 appId: io.github.imattau.nccbrowser
 productName: Nostr Navigator
 executableName: ncc-browser
-copyright: Copyright © 2026 lostcause
+copyright: Copyright © 2026 imattau
 
 directories:
   output: release
@@ -77,8 +77,8 @@ linux:
   description: >-
     Nostr Navigator resolves ncc://<npub>/<service> through NCC-05 locators and
     renders the service bound to that Nostr identity.
-  maintainer: lostcause
-  vendor: lostcause
+  maintainer: imattau
+  vendor: imattau
   syncDesktopName: true
   mimeTypes:
     - x-scheme-handler/ncc

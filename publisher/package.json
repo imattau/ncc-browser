@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "description": "Publish NCC-05 locators and NCC-02 service records for a local service using a NIP-07 signer",
+  "author": "imattau",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
