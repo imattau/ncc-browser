@@ -70,6 +70,7 @@ const api: NccApi = {
   clearSiteData: (options) => ipcRenderer.invoke('ncc:clear-site-data', options),
   cacheInfo: () => ipcRenderer.invoke('ncc:cache-info'),
   clearCache: () => ipcRenderer.invoke('ncc:clear-cache'),
+  reResolveSite: () => ipcRenderer.invoke('ncc:re-resolve-site'),
   setSearchConfig: (config) => ipcRenderer.invoke('ncc:set-search-config', config),
   setAppearance: (appearance) => ipcRenderer.invoke('ncc:set-appearance', appearance),
   passwordsStatus: () => ipcRenderer.invoke('ncc:password-status'),

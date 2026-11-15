@@ -2,6 +2,7 @@ import { app, Menu, nativeTheme, safeStorage } from 'electron'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { nip19 } from 'nostr-tools'
+import { parseNccAddress } from '@shared/ncc-url'
 import type { TabKind } from '@shared/types'
 import { ApprovalBroker } from './approval'
 import { applyThemeSource } from './appearance'
@@ -128,11 +129,17 @@ app.whenReady().then(async () => {
     proxy: () => torManager?.status().proxy ?? null
   })
 
+  // A persisted locator is only reused without a relay query while it is this young.
+  // The e2e suite sets it low to exercise rotation without waiting a minute.
+  const revalidateSeconds = Number(process.env.NCC_REVALIDATE_SECONDS)
   const resolverOptions = {
     relays: () => config.getRelays(),
     gossip: () => config.get().gossip,
     anchorRequired: () => config.get().anchorRequired,
-    getSigner: () => identity.locatorSigner() ?? envLocatorSigner
+    getSigner: () => identity.locatorSigner() ?? envLocatorSigner,
+    ...(Number.isFinite(revalidateSeconds) && revalidateSeconds > 0
+      ? { revalidateSeconds }
+      : {})
   }
   const torRelayPool = (torRelays = new TorRelayPool(relayPins))
   const resolver = new NccResolver({
@@ -282,6 +289,21 @@ app.whenReady().then(async () => {
   const sessionStore = new SessionStore(join(app.getPath('userData'), 'session.json'))
   const initialSession = sessionStore.load()
 
+  const invalidateSite = (rawUrl: string, kind: TabKind): void => {
+    let pubkey = ''
+    let service: string | null = null
+    try {
+      const parsed = parseNccAddress(rawUrl)
+      pubkey = parsed.pubkey
+      service = parsed.service
+    } catch {
+      return
+    }
+    const resolver =
+      kind === 'private' ? privateResolver : kind === 'tor' ? torResolver : resolvers[0]
+    resolver.invalidate(pubkey, service)
+  }
+
   shell = new BrowserShell({
     preloadPath: join(__dirname, '../preload/index.js'),
     contentPreloadPath: join(__dirname, '../preload/content.js'),
@@ -305,7 +327,8 @@ app.whenReady().then(async () => {
       // Remote content must never be able to keep the window from closing.
       contents.on('will-prevent-unload', (event) => event.preventDefault())
     },
-    extensionContextItems: (url) => extensions?.contextMenuItems(url) ?? []
+    extensionContextItems: (url) => extensions?.contextMenuItems(url) ?? [],
+    invalidateSite
   })
 
   const approvals = new ApprovalBroker({
@@ -362,7 +385,18 @@ app.whenReady().then(async () => {
     config,
     permissions,
     sessions: { normal: content.normal, private: content.private, tor: content.tor },
-    extensionSession: content.extensions
+    extensionSession: content.extensions,
+    locators: {
+      count: () => cacheStore.size(),
+      clear: () => {
+        for (const value of resolvers) value.clearCache()
+        cacheStore.clear()
+      },
+      invalidate: (kind, pubkey, service) => invalidateSite(
+        `ncc://${pubkey}${service ? `/${service}` : ''}`,
+        kind
+      )
+    }
   })
   registerSiteDataIpc(siteDataService, { shell })
 

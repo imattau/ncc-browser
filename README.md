@@ -10,7 +10,7 @@ Built with Electron 45, React 19, and Vite. The resolver is a spec-correct
 implementation on top of `nostr-tools`, not a wrapper around `ncc-05-js` (see
 [Why not `ncc-05-js`](#why-not-ncc-05-js)).
 
-**Status:** M0–M15 are implemented. That includes the resolver, proxy and pinning, the
+**Status:** M0–M16 are implemented. That includes the resolver, proxy and pinning, the
 browser chrome and signer, NCC-02 anchoring with a trust panel, the separate publisher
 app in [`publisher/`](./publisher/) (a NIP-07 flow for NCC-05 locators and NCC-02 service
 records), bundled Tor with the onion preference/toggle and full Tor tabs, private tabs,
@@ -310,10 +310,35 @@ fresh, valid record wins and the matched tag is reported in the UI.
    Expired records are never used.
 8. Normalise endpoints (`url` / `uri`, scheme-less values, `tcp`→`http`), sort by
    priority (default `1000`) and family, then try them in order.
-9. Cache in memory until `expiry` (capped at 120 s so rotations are noticed) and write
-   public records to `userData/locator-cache.json` for fast, restart-safe resolution.
-   Encrypted records are never persisted. Failures are negative-cached for 15 s, and
-   failed endpoints cool down with exponential backoff (15 s → 5 min).
+9. Cache in memory for up to 120 s, and write public records to
+   `userData/locator-cache.json` for restart-safe resolution. A persisted record is
+   reused without a relay query for 60 s; after that it is served immediately while a
+   background query confirms it. Encrypted records are never persisted. Failures are
+   negative-cached for 15 s, and failed endpoints cool down with exponential backoff
+   (15 s → 5 min).
+
+### Locator freshness
+
+A record is a hint, not a permanent address. Publishers rotate endpoints, and the
+browser has to notice without a restart.
+
+- **In memory:** repeated requests reuse a resolution for up to 120 s.
+- **On disk:** `locator-cache.json` survives restarts but is trusted for only 60 s
+  (`NCC_REVALIDATE_SECONDS` overrides this for tests). An older entry is served
+  immediately *and* refreshed in the background; when relays return a newer record it
+  replaces the cached one, so the next request uses the new endpoint.
+- **Dead endpoint:** when every endpoint in a record refuses a connection, the document
+  request drops that record and re-resolves once. A rotation costs one failed attempt,
+  not the rest of the record's TTL.
+- **NCC-02 fallback:** a record synthesised from an anchor `u` endpoint lives at most
+  5 minutes, so a real NCC-05 locator takes over soon after it is published.
+- **Anchored mode:** a cached record is not accepted when its anchor's `exp` has
+  passed; relays are asked again.
+- **Manual escape hatches:** padlock → **Locator record** shows the `d` tag, age,
+  expiry and source, with **Re-resolve**. `Ctrl+Shift+R` and Settings → Security →
+  **Clear cache** also drop resolved locators.
+
+![Locator record in the site panel](./docs/locator.png)
 
 ## Relays by identity
 
@@ -448,7 +473,8 @@ ships Tor's BSD licence and a source notice alongside the binary.
   host because that is where the protocol handler fetches documents, so clearing them
   also signs out other services on the same endpoint. The card names that host.
 - **Settings → Security → Cache** lists the normal, private, Tor and extension cache
-  sizes and clears the network cache. Cookies, sign-ins and site data are untouched.
+  sizes plus resolved locators, and clears both the network cache and
+  `locator-cache.json`. Cookies, sign-ins and site data are untouched.
 - Private and Tor sessions are already wiped when their last tab closes; their cache
   row drops to zero then.
 - Site data does **not** touch saved passwords (Settings → Passwords), extension storage
@@ -737,7 +763,7 @@ general IPC bridge.
 ## Testing
 
 ```bash
-npm test       # 407 unit tests: URL parser, locator rules, resolver, routing, pins,
+npm test       # 416 unit tests: URL parser, locator rules, resolver, routing, pins,
                # signer crypto, identity storage, NIP-46, approvals, permissions,
                # ephemeral signer permissions, shortcuts, context menus, relays,
                # downloads, tab order, bookmarks, favicons, session storage, NCC-02
@@ -835,8 +861,8 @@ The release job also uploads `SHA256SUMS.txt`. Pushing a tag is the whole releas
 
 ```bash
 npm version minor --no-git-tag-version   # or edit package.json
-git commit -am "Release v0.7.0"
-git tag -a v0.7.0 -m "Nostr Navigator v0.7.0"
+git commit -am "Release v0.8.0"
+git tag -a v0.8.0 -m "Nostr Navigator v0.8.0"
 git push origin main --follow-tags
 ```
 

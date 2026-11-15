@@ -234,6 +234,8 @@ describe('anchorInfo and fallback', () => {
     expect(record?.endpoints[0].url).toBe('http://10.0.0.9:8080/')
     expect(record?.anchor?.fallback).toBe(true)
     expect(record?.dTag).toBe('web')
+    // The anchor is valid for ten minutes, but a synthesised record is only a guess.
+    expect(record?.expiresAt).toBe(NOW + 120)
   })
 
   it('does not synthesise a fallback without u', () => {

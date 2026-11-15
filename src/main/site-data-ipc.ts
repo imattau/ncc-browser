@@ -38,4 +38,9 @@ export function registerSiteDataIpc(service: SiteDataService, deps: SiteDataIpcD
     if (!fromChrome(event)) throw new Error('Cache controls are only available to the browser chrome')
     return service.clearCache()
   })
+
+  ipcMain.handle('ncc:re-resolve-site', (event) => {
+    if (!fromChrome(event)) throw new Error('Site data is only available to the browser chrome')
+    return service.revalidateActiveSite()
+  })
 }

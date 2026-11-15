@@ -64,11 +64,26 @@ const SECTIONS: Array<{ id: SettingsSection; label: string; icon: typeof KeyRoun
   { id: 'about', label: 'About', icon: CircleHelp }
 ]
 
-function CacheRow({ label, bytes }: { label: string; bytes: number }) {
+function CacheRow({
+  label,
+  bytes,
+  value,
+  testId
+}: {
+  label: string
+  bytes?: number
+  value?: string
+  testId?: string
+}) {
   return (
-    <div className="flex items-baseline justify-between gap-2 rounded-lg bg-[color:var(--color-field)] px-2.5 py-1.5">
+    <div
+      data-cache-row={testId}
+      className="flex items-baseline justify-between gap-2 rounded-lg bg-[color:var(--color-field)] px-2.5 py-1.5"
+    >
       <dt className="text-[color:var(--color-muted)]">{label}</dt>
-      <dd className="font-mono text-ui-105 text-[color:var(--color-text-soft)]">{formatBytes(bytes)}</dd>
+      <dd className="font-mono text-ui-105 text-[color:var(--color-text-soft)]">
+        {value ?? formatBytes(bytes ?? 0)}
+      </dd>
     </div>
   )
 }
@@ -485,7 +500,9 @@ export function SettingsPage({
       const next = await window.ncc.clearCache()
       setCache(next)
       const freed = before ? Math.max(0, before.total - next.total) : 0
-      setCacheNotice(freed > 0 ? `Cleared ${formatBytes(freed)}.` : 'Cache cleared.')
+      const locators = before?.locators ?? 0
+      const suffix = locators > 0 ? ` and ${locators} locator${locators === 1 ? '' : 's'}` : ''
+      setCacheNotice(freed > 0 ? `Cleared ${formatBytes(freed)}${suffix}.` : `Cache cleared${suffix}.`)
     } catch (caught) {
       setCacheError(caught instanceof Error ? caught.message : String(caught))
     } finally {
@@ -1131,15 +1148,20 @@ export function SettingsPage({
               <div className="rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-4">
                 <h3 className="text-ui-12 font-semibold text-[color:var(--color-text-strong)]">Cache</h3>
                 <p className="mt-1 text-ui-115 leading-relaxed text-[color:var(--color-muted)]">
-                  Cached documents and assets. Clearing makes the browser re-download them, but
-                  keeps cookies, sign-ins and site data. Cookies and storage are cleared per site
-                  from the padlock.
+                  Cached documents, assets and resolved NCC-05 locators. Clearing makes the
+                  browser fetch them again, but keeps cookies, sign-ins and site data. Cookies
+                  and storage are cleared per site from the padlock.
                 </p>
                 <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-ui-11" data-cache-info>
                   <CacheRow label="Normal tabs" bytes={cache?.normal ?? 0} />
                   <CacheRow label="Private tabs" bytes={cache?.private ?? 0} />
                   <CacheRow label="Tor tabs" bytes={cache?.tor ?? 0} />
                   <CacheRow label="Extension pages" bytes={cache?.extensions ?? 0} />
+                  <CacheRow
+                    label="Resolved locators"
+                    value={`${cache?.locators ?? 0} record${cache?.locators === 1 ? '' : 's'}`}
+                    testId="cache-locators"
+                  />
                 </dl>
                 <div className="mt-3 flex flex-wrap items-center gap-3">
                   <button

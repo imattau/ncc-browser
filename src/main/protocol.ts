@@ -5,7 +5,7 @@ import {
   routeNccPath,
   serviceFromReferer
 } from '@shared/ncc-url'
-import type { AnchorInfo, TransportSecurity } from '@shared/types'
+import type { AnchorInfo, LocatorInfo, ResolvedService, TransportSecurity } from '@shared/types'
 import { renderErrorPage, renderHttpWarningPage, renderPlainFailure } from './error-page'
 import { orderByHealth, type EndpointHealth } from './ncc/health'
 import { joinPaths, rewriteLocation, upstreamRequestInit } from './ncc/routing'
@@ -70,6 +70,8 @@ export interface ProtocolActivity {
   /** The selected endpoint itself is an onion endpoint. */
   viaOnion?: boolean
   anchor?: AnchorInfo | null
+  /** The NCC-05 record behind this document, for the site panel. */
+  locator?: LocatorInfo | null
   failureCode?: string
 }
 
@@ -116,7 +118,11 @@ export function installNccProtocol(deps: ProtocolDeps): void {
   deps.session.protocol.handle(NCC_SCHEME, (request) => handleNccRequest(request, deps))
 }
 
-async function handleNccRequest(request: Request, deps: ProtocolDeps): Promise<Response> {
+async function handleNccRequest(
+  request: Request,
+  deps: ProtocolDeps,
+  allowRetry = true
+): Promise<Response> {
   let requestUrl: URL
   try {
     requestUrl = new URL(request.url)
@@ -144,7 +150,8 @@ async function handleNccRequest(request: Request, deps: ProtocolDeps): Promise<R
   const routed = routeNccPath(
     requestUrl.pathname,
     deps.activeService.get(pubkey) ?? null,
-    refererService
+    refererService,
+    isDocumentRequest(request)
   )
   if (!routed) {
     return failureResponse(request, 'invalid-address', 'Could not determine the service', request.url)
@@ -308,7 +315,8 @@ async function handleNccRequest(request: Request, deps: ProtocolDeps): Promise<R
             onionAvailable,
             viaTor: deps.forceTor === true || endpoint.family === 'onion',
             viaOnion: endpoint.family === 'onion',
-            anchor: outcome.record.anchor ?? null
+            anchor: outcome.record.anchor ?? null,
+            locator: locatorSummary(outcome.record)
           })
           return new Response(
             renderHttpWarningPage({
@@ -385,7 +393,8 @@ async function handleNccRequest(request: Request, deps: ProtocolDeps): Promise<R
         onionAvailable,
         viaTor: deps.forceTor === true || endpoint.family === 'onion',
         viaOnion: endpoint.family === 'onion',
-        anchor: outcome.record.anchor ?? null
+        anchor: outcome.record.anchor ?? null,
+        locator: locatorSummary(outcome.record)
       })
     }
 
@@ -403,6 +412,20 @@ async function handleNccRequest(request: Request, deps: ProtocolDeps): Promise<R
   }
 
   const code = certificateFailure ?? 'endpoint-unreachable'
+
+  // A publisher can rotate its endpoint at any time. When nothing in the record
+  // accepts a connection, ask relays once more instead of retrying the same dead
+  // endpoint until the record's TTL runs out.
+  if (
+    allowRetry &&
+    documentRequest &&
+    code === 'endpoint-unreachable' &&
+    (request.method === 'GET' || request.method === 'HEAD')
+  ) {
+    deps.resolver.invalidate(pubkey, service)
+    return handleNccRequest(request, deps, false)
+  }
+
   if (isDocumentRequest(request)) {
     deps.onActivity({
       pubkey,
@@ -426,6 +449,18 @@ async function handleNccRequest(request: Request, deps: ProtocolDeps): Promise<R
     request.url,
     failures.join('\n')
   )
+}
+
+/** The record fields the site panel shows, without endpoints or anchors. */
+function locatorSummary(record: ResolvedService): LocatorInfo {
+  return {
+    eventId: record.eventId,
+    dTag: record.dTag,
+    updatedAt: record.updatedAt,
+    expiresAt: record.expiresAt,
+    stale: record.stale === true,
+    fallback: record.anchor?.fallback === true
+  }
 }
 
 function toBrowserResponse(

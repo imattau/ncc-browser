@@ -286,6 +286,13 @@ is CJS and the package is ESM-only.
   NIP-07 permission and never-save rule. NCC storage is keyed by identity; server cookies
   are cleared on the endpoint host that actually holds them. Settings → Security gains a
   **Cache** card with per-session sizes and a session-wide clear.
+- **M16 — Locator freshness:** ✅ The on-disk locator cache is now a hint instead of an
+  authority: entries carry `validatedAt`, are trusted for 60 s without a relay query, and
+  are served stale-while-revalidate after that. A dead endpoint invalidates the record
+  and retries resolution once. NCC-02 `u` fallbacks expire after 5 minutes, anchored mode
+  re-checks the anchor `exp` on cached records, and the padlock shows the record's `d`
+  tag, age, expiry, source and a **Re-resolve** action. Clear cache and force reload drop
+  resolved locators too.
 
 ---
 

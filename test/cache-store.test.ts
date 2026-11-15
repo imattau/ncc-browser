@@ -34,7 +34,7 @@ describe('LocatorCacheStore', () => {
     const store = new LocatorCacheStore(tempFile(), () => now)
     store.set(record())
 
-    expect(store.get('a'.repeat(64), 'web')?.eventId).toBe('event')
+    expect(store.get('a'.repeat(64), 'web')?.record.eventId).toBe('event')
     now = 2_000
     expect(store.get('a'.repeat(64), 'web')).toBeNull()
     expect(store.size()).toBe(0)
@@ -47,7 +47,7 @@ describe('LocatorCacheStore', () => {
     first.set(record({ service: 'old', expiresAt: 1_500 }))
 
     const second = new LocatorCacheStore(file, () => 1_800)
-    expect(second.get('a'.repeat(64), 'web')?.eventId).toBe('event')
+    expect(second.get('a'.repeat(64), 'web')?.record.eventId).toBe('event')
     expect(second.get('a'.repeat(64), 'old')).toBeNull()
   })
 
@@ -68,7 +68,7 @@ describe('LocatorCacheStore', () => {
 
     expect(store.size()).toBe(2)
     expect(store.get('a'.repeat(64), 'a')).toBeNull()
-    expect(store.get('a'.repeat(64), 'c')?.service).toBe('c')
+    expect(store.get('a'.repeat(64), 'c')?.record.service).toBe('c')
   })
 
   it('deletes entries and clears the file', () => {
@@ -91,9 +91,39 @@ describe('LocatorCacheStore', () => {
     const file = tempFile()
     writeFileSync(
       file,
-      JSON.stringify({ version: 1, entries: { 'x:y': { hexPubkey: 1 }, 'a:b': record() } })
+      JSON.stringify({
+        version: 2,
+        entries: {
+          'x:y': { record: { hexPubkey: 1 } },
+          'a:b': { record: record(), validatedAt: 900 }
+        }
+      })
     )
     const store = new LocatorCacheStore(file, () => 1_000)
     expect(store.size()).toBe(1)
+  })
+
+  it('records when a record was last confirmed against relays', () => {
+    const file = tempFile()
+    const store = new LocatorCacheStore(file, () => 1_000)
+    store.set(record())
+    expect(store.get('a'.repeat(64), 'web')?.validatedAt).toBe(1_000)
+
+    store.set(record(), 1_100)
+    expect(store.get('a'.repeat(64), 'web')?.validatedAt).toBe(1_000)
+
+    store.set(record(), 500)
+    expect(store.get('a'.repeat(64), 'web')?.validatedAt).toBe(500)
+  })
+
+  it('drops v1 files that carry no confirmation timestamp', () => {
+    const file = tempFile()
+    writeFileSync(
+      file,
+      JSON.stringify({ version: 1, entries: { [`${'a'.repeat(64)}:web`]: record() } })
+    )
+    const store = new LocatorCacheStore(file, () => 1_000)
+    expect(store.size()).toBe(0)
+    expect(store.get('a'.repeat(64), 'web')).toBeNull()
   })
 })

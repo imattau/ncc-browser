@@ -5,6 +5,12 @@
  * without a `#d` filter, keeps only the author's single freshest event across all
  * `d` tags, and returns expired payloads under `strict: false`. All three break a
  * browser that addresses individual services on a multi-service identity.
+ *
+ * Caching has two layers. The in-memory map answers repeated requests for a couple of
+ * minutes. The optional on-disk store survives restarts, but it is a hint: a record is
+ * only reused without a relay query while it is younger than `revalidateSeconds`.
+ * Older entries are served immediately and refreshed in the background, so a publisher
+ * can rotate its endpoint without the browser pinning the old one for the record's TTL.
  */
 
 import { SimplePool, getPublicKey, nip19, nip44, verifyEvent, type Event, type Filter } from 'nostr-tools'
@@ -52,9 +58,13 @@ export interface ResolverOptions {
   signer?: LocatorSigner | null
   /** Resolved lazily, so an identity imported after startup is picked up. */
   getSigner?: () => LocatorSigner | null
-  /** Upper bound on a positive cache entry, so rotations are noticed. */
+  /** Upper bound on a positive in-memory cache entry. */
   maxCacheSeconds?: number
   negativeCacheSeconds?: number
+  /** How long a persisted record may be reused before relays are asked again. */
+  revalidateSeconds?: number
+  /** Lifetime of a record synthesised from the NCC-02 `u` endpoint. */
+  fallbackSeconds?: number
   /** Follow the target identity's NIP-65 relay list (kind 10002). */
   gossip?: () => boolean
   /** Refuse services without a fresh NCC-02 anchor (kind 30059). */
@@ -81,6 +91,8 @@ interface Cached {
 const DEFAULT_TIMEOUT_MS = 8000
 const DEFAULT_MAX_CACHE_SECONDS = 120
 const DEFAULT_NEGATIVE_CACHE_SECONDS = 15
+const DEFAULT_REVALIDATE_SECONDS = 60
+const DEFAULT_FALLBACK_SECONDS = 300
 const MAX_EVENTS_PER_D = 10
 
 let sharedPool: SimplePool | null = null
@@ -124,6 +136,10 @@ function failure(code: ResolveFailure['code'], message: string, detail?: string)
   return { ok: false, code, message, detail }
 }
 
+function cacheKey(hex: string, service: string, mode: ResolveMode): string {
+  return `${hex}:${service}:${mode}`
+}
+
 interface Decoded {
   payload: NccPayload
   encrypted: boolean
@@ -139,6 +155,9 @@ export class NccResolver {
   private readonly now: () => number
   private readonly cache = new Map<string, Cached>()
   private readonly inflight = new Map<string, Promise<ResolveOutcome>>()
+  private readonly revalidating = new Map<string, Promise<void>>()
+  /** Incremented by `clearCache`, so a slow query cannot repopulate a cleared cache. */
+  private generation = 0
 
   constructor(options: ResolverOptions) {
     this.options = options
@@ -158,50 +177,115 @@ export class NccResolver {
 
     const mode: ResolveMode = options.mode === 'relay' ? 'relay' : 'web'
     const normalizedService = (service ?? '').trim() || DEFAULT_SERVICE
-    const key = `${hex}:${normalizedService}:${mode}`
+    const key = cacheKey(hex, normalizedService, mode)
 
+    const now = this.now()
     const cached = this.cache.get(key)
-    if (cached && cached.expiresAt > this.now()) return cached.outcome
+    if (cached && cached.expiresAt > now) return cached.outcome
     if (cached) this.cache.delete(key)
 
+    const requiresAnchor = this.shouldRequireAnchor()
     const persisted =
       mode === 'web' ? (this.options.cacheStore?.get(hex, normalizedService) ?? null) : null
-    const requiresAnchor = this.shouldRequireAnchor()
-    if (persisted && (!requiresAnchor || persisted.anchor?.status === 'anchored')) {
-      const ttl = Math.min(
-        persisted.expiresAt - this.now(),
-        this.options.maxCacheSeconds ?? DEFAULT_MAX_CACHE_SECONDS
-      )
-      if (ttl > 0) {
-        const record = persisted.anchor
-          ? { ...persisted, anchor: { ...persisted.anchor, required: requiresAnchor } }
-          : persisted
-        const outcome: ResolveOutcome = { ok: true, record }
-        this.cache.set(key, { outcome, expiresAt: this.now() + ttl })
+
+    if (persisted) {
+      const record = persisted.record
+      const anchored = !requiresAnchor || record.anchor?.status === 'anchored'
+      const anchorFresh = this.anchorIsFresh(record, now)
+
+      if (record.expiresAt <= now || !anchored || (requiresAnchor && !anchorFresh)) {
+        // Expired, written under a different anchoring policy, or backed by an anchor
+        // whose own `exp` has passed: ask relays rather than trust the copy.
+        this.options.cacheStore?.delete(hex, normalizedService)
+      } else {
+        const maxAge = this.options.revalidateSeconds ?? DEFAULT_REVALIDATE_SECONDS
+        const anchorStale = record.anchor?.record ? !anchorFresh : false
+        const stale = anchorStale || now - persisted.validatedAt > maxAge
+        const outcome = this.withStale(record, stale)
+        const ttl = Math.max(
+          1,
+          Math.min(record.expiresAt - now, this.options.maxCacheSeconds ?? DEFAULT_MAX_CACHE_SECONDS)
+        )
+        this.cache.set(key, { outcome, expiresAt: now + ttl })
+        // Serve the known-good endpoint now, and confirm it against relays in the
+        // background. The next request (or tab reload) sees any rotation.
+        if (stale) this.revalidateInBackground(pubkey, hex, normalizedService, mode)
         return outcome
       }
-      this.options.cacheStore?.delete(hex, normalizedService)
-    } else if (persisted) {
-      // An old cache entry may predate anchoring, or its anchor may have expired.
-      this.options.cacheStore?.delete(hex, normalizedService)
     }
 
+    return this.queryAndCache(pubkey, hex, normalizedService, mode, options.relays)
+  }
+
+  /**
+   * Drop one resolved service from both cache layers. Used when its endpoints stop
+   * accepting connections and by the site panel's "Re-resolve" action.
+   */
+  invalidate(pubkey: string, service?: string | null, mode: ResolveMode = 'web'): void {
+    const hex = toHexPubkey(pubkey)
+    if (!hex) return
+    const normalizedService = (service ?? '').trim() || DEFAULT_SERVICE
+    this.cache.delete(cacheKey(hex, normalizedService, mode))
+    if (mode === 'web') this.options.cacheStore?.delete(hex, normalizedService)
+  }
+
+  /** Drop all cached records (used after the relay list changes). */
+  clearCache(): void {
+    this.generation += 1
+    this.cache.clear()
+  }
+
+  /** Wait for background revalidations; used by tests and shutdown. */
+  async settle(): Promise<void> {
+    while (this.revalidating.size > 0) {
+      await Promise.allSettled([...this.revalidating.values()])
+    }
+  }
+
+  /**
+   * Query relays and cache the outcome. Failures are cached briefly, except during a
+   * background revalidation, where an existing copy must stay usable.
+   */
+  private queryAndCache(
+    pubkey: string,
+    hex: string,
+    service: string,
+    mode: ResolveMode,
+    relays?: string[],
+    keepOnFailure = false
+  ): Promise<ResolveOutcome> {
+    const key = cacheKey(hex, service, mode)
     const running = this.inflight.get(key)
     if (running) return running
 
-    const promise = this.resolveUncached(pubkey, hex, normalizedService, mode, options.relays)
+    const generation = this.generation
+    const promise = this.resolveUncached(pubkey, hex, service, mode, relays)
       .then((outcome) => {
-        const ttl = outcome.ok
-          ? Math.max(
-              5,
-              Math.min(
-                outcome.record.expiresAt - this.now(),
-                this.options.maxCacheSeconds ?? DEFAULT_MAX_CACHE_SECONDS
-              )
-            )
-          : (this.options.negativeCacheSeconds ?? DEFAULT_NEGATIVE_CACHE_SECONDS)
-        this.cache.set(key, { outcome, expiresAt: this.now() + ttl })
-        return outcome
+        if (outcome.ok && mode === 'web' && !outcome.record.encrypted) {
+          if (this.generation === generation) this.options.cacheStore?.set(outcome.record)
+        }
+
+        if (!outcome.ok && keepOnFailure) {
+          // Relays did not confirm the copy we already have. Keep serving it until it
+          // expires; the next request will try the relays again.
+          const previous = this.cache.get(key)
+          if (previous?.outcome.ok) {
+            this.cache.set(key, {
+              outcome: this.withStale(previous.outcome.record, true),
+              expiresAt: previous.expiresAt
+            })
+            return outcome
+          }
+        }
+
+        const normalized = outcome.ok ? this.withStale(outcome.record, false) : outcome
+        if (this.generation === generation) {
+          this.cache.set(key, {
+            outcome: normalized,
+            expiresAt: this.now() + this.ttlFor(normalized)
+          })
+        }
+        return normalized
       })
       .finally(() => {
         this.inflight.delete(key)
@@ -211,9 +295,57 @@ export class NccResolver {
     return promise
   }
 
-  /** Drop all cached records (used after the relay list changes). */
-  clearCache(): void {
-    this.cache.clear()
+  /** Confirm a persisted record against relays without blocking the caller. */
+  private revalidateInBackground(
+    pubkey: string,
+    hex: string,
+    service: string,
+    mode: ResolveMode
+  ): void {
+    const key = cacheKey(hex, service, mode)
+    if (this.revalidating.has(key)) return
+
+    const task = this.queryAndCache(pubkey, hex, service, mode, undefined, true)
+      .then(() => undefined)
+      .catch(() => undefined)
+      .finally(() => {
+        this.revalidating.delete(key)
+      })
+
+    this.revalidating.set(key, task)
+  }
+
+  private ttlFor(outcome: ResolveOutcome): number {
+    if (!outcome.ok) return this.options.negativeCacheSeconds ?? DEFAULT_NEGATIVE_CACHE_SECONDS
+    return Math.max(
+      1,
+      Math.min(
+        outcome.record.expiresAt - this.now(),
+        this.options.maxCacheSeconds ?? DEFAULT_MAX_CACHE_SECONDS
+      )
+    )
+  }
+
+  /** Copy a record for the caller, with the current anchoring policy and staleness. */
+  private withStale(record: ResolvedService, stale: boolean): ResolveOutcome {
+    const required = this.shouldRequireAnchor()
+    const anchor = record.anchor ? { ...record.anchor, required } : undefined
+    const { stale: _previous, ...rest } = record
+    return {
+      ok: true,
+      record: {
+        ...rest,
+        ...(anchor ? { anchor } : {}),
+        ...(stale ? { stale: true } : {})
+      }
+    }
+  }
+
+  /** True when the record's anchor carries no `exp`, or its `exp` is still ahead. */
+  private anchorIsFresh(record: ResolvedService, now: number): boolean {
+    const anchor = record.anchor?.record
+    if (!anchor) return false
+    return anchor.expiresAt === 0 || anchor.expiresAt > now
   }
 
   private async resolveUncached(
@@ -360,7 +492,6 @@ export class NccResolver {
 
       record.endpoints = applied.endpoints
       record.anchor = { ...baseAnchor, kMatch: applied.kMatch }
-      if (mode === 'web' && !record.encrypted) this.options.cacheStore?.set(record)
       return { ok: true, record }
     }
 
@@ -377,12 +508,9 @@ export class NccResolver {
         baseAnchor,
         anchorSelection.anchor,
         now,
-        this.options.maxCacheSeconds ?? DEFAULT_MAX_CACHE_SECONDS
+        this.options.fallbackSeconds ?? DEFAULT_FALLBACK_SECONDS
       )
-      if (fallback) {
-        this.options.cacheStore?.set(fallback)
-        return { ok: true, record: fallback }
-      }
+      if (fallback) return { ok: true, record: fallback }
     }
 
     if (sawUndecryptable) {

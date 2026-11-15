@@ -57,7 +57,14 @@ describe('site identity', () => {
 describe('cache helpers', () => {
   it('sums the per-session sizes', () => {
     expect(totalCacheBytes({ normal: 1, private: 2, tor: 3, extensions: 4 })).toBe(10)
-    expect(emptyCacheInfo()).toEqual({ normal: 0, private: 0, tor: 0, extensions: 0, total: 0 })
+    expect(emptyCacheInfo()).toEqual({
+      normal: 0,
+      private: 0,
+      tor: 0,
+      extensions: 0,
+      locators: 0,
+      total: 0
+    })
   })
 
   it('formats byte counts compactly', () => {

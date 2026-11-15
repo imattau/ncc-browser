@@ -363,17 +363,19 @@ async function startPublisher() {
   return { server, port: server.address().port }
 }
 
-function publishLocator(relay, d, endpoints) {
+function publishLocator(relay, d, endpoints, options = {}) {
+  // `at` lets a rotation land in a strictly newer second than the record it replaces.
+  const at = options.at ?? Math.floor(Date.now() / 1000)
   const content = JSON.stringify({
     v: 1,
-    ttl: 3600,
-    updated_at: Math.floor(Date.now() / 1000),
+    ttl: options.ttl ?? 3600,
+    updated_at: at,
     endpoints
   })
   const event = finalizeEvent(
     {
       kind: 30058,
-      created_at: Math.floor(Date.now() / 1000),
+      created_at: at,
       tags: [['d', d]],
       content
     },
@@ -844,7 +846,8 @@ async function main() {
         NCC_TOR_SOCKS: `socks5://127.0.0.1:${torProxy.port}`,
         NCC_PASSWORDS_IMPORT: passwordImportPath,
         NCC_PASSWORDS_EXPORT: passwordExportDir,
-        NCC_EXTENSION_DIR: join(ROOT, 'test/fixtures/hello-extension')
+        NCC_EXTENSION_DIR: join(ROOT, 'test/fixtures/hello-extension'),
+        NCC_REVALIDATE_SECONDS: '1'
       },
       stdio: ['ignore', 'pipe', 'pipe']
     }
@@ -860,6 +863,8 @@ async function main() {
 
   let bunker = null
   let restarted = null
+  // Services started part-way through the run must be closed, or Node stays alive.
+  const extraServices = []
 
   const cleanup = () => {
     bunker?.close()
@@ -868,6 +873,7 @@ async function main() {
     xvfb.proc.kill('SIGTERM')
     directService.server.close()
     onionService.server.close()
+    for (const service of extraServices) service.server.close()
     torProxy.close()
     publisher.server.close()
     secure.server.close()
@@ -1466,6 +1472,17 @@ async function main() {
         (await evaluate(chrome, 'Boolean(document.querySelector("[data-cache-clear]"))')) === true,
       JSON.stringify(cacheBefore)
     )
+    check(
+      'settings page counts resolved locators',
+      (cacheBefore?.locators ?? 0) >= 1 &&
+        String(
+          await evaluate(
+            chrome,
+            'document.querySelector(\'[data-cache-row="cache-locators"]\').textContent'
+          )
+        ).includes('record'),
+      JSON.stringify(cacheBefore)
+    )
     await evaluate(chrome, 'document.querySelector("[data-cache-clear]").click()')
     await sleep(800)
     const cacheAfter = await evaluate(chrome, 'window.ncc.cacheInfo()')
@@ -1473,6 +1490,11 @@ async function main() {
       'clearing the cache releases cached bytes',
       typeof cacheAfter?.total === 'number' &&
         (cacheBefore?.total === 0 || cacheAfter.total < cacheBefore.total),
+      JSON.stringify({ before: cacheBefore, after: cacheAfter })
+    )
+    check(
+      'clearing the cache also drops resolved locators',
+      cacheAfter?.locators === 0,
       JSON.stringify({ before: cacheBefore, after: cacheAfter })
     )
     await evaluate(chrome, 'document.querySelector(\'[data-settings-page] header button\').click()')
@@ -1671,6 +1693,76 @@ async function main() {
       (await waitForValue(cdp, 'window.__nip07AfterClear')) === signerPk
     )
     await sleep(200)
+
+    // A publisher can rotate its endpoint at any time. The cached record must not
+    // pin the old one: a dead endpoint triggers one re-resolution and retry.
+    const rotateOld = await startService(serviceNpub, { headline: 'ROTATE OLD' })
+    const rotateNew = await startService(serviceNpub, { headline: 'ROTATE NEW' })
+    extraServices.push(rotateOld, rotateNew)
+    publishLocator(relayA, 'rotating', [
+      { type: 'http', uri: `127.0.0.1:${rotateOld.port}`, priority: 1, family: 'ipv4' }
+    ])
+    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/rotating/` })
+    const rotatedFrom = await waitForText(cdp, 'ROTATE OLD', 80)
+    check('resolves the rotating service', rotatedFrom.includes('ROTATE OLD'))
+
+    const oldClosed = new Promise((resolve) => rotateOld.server.close(resolve))
+    rotateOld.server.closeAllConnections?.()
+    await oldClosed
+
+    publishLocator(
+      relayA,
+      'rotating',
+      [{ type: 'http', uri: `127.0.0.1:${rotateNew.port}`, priority: 1, family: 'ipv4' }],
+      { at: Math.floor(Date.now() / 1000) + 5 }
+    )
+    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/rotating/?r=1` })
+    const rotatedTo = await waitForText(cdp, 'ROTATE NEW', 80)
+    check('re-resolves a rotated endpoint without a restart', rotatedTo.includes('ROTATE NEW'))
+
+    await evaluate(
+      chrome,
+      `(() => {
+        const button = document.querySelector('[data-security-button]')
+        button.focus()
+        button.click()
+        return true
+      })()`
+    )
+    await waitForValue(chrome, 'document.querySelector("[data-locator]") ? "ready" : ""', 60)
+    check(
+      'site information names the locator record',
+      (await evaluate(chrome, 'document.querySelector("[data-locator-d-tag]").textContent')) ===
+        'rotating'
+    )
+    check(
+      'site information shows the record source',
+      String(await evaluate(chrome, 'document.querySelector("[data-locator-source]").textContent')) ===
+        'Relays',
+      String(await evaluate(chrome, 'document.querySelector("[data-locator-source]").textContent'))
+    )
+    await evaluate(
+      chrome,
+      'document.querySelector("[data-locator]").scrollIntoView({ block: "center" })'
+    )
+    await sleep(250)
+    const locatorShot = await chrome.send('Page.captureScreenshot', { format: 'png' })
+    writeFileSync(join(ARTIFACTS, 'locator.png'), Buffer.from(locatorShot.data, 'base64'))
+
+    // Re-resolve asks relays again even while the cached record is unexpired.
+    publishLocator(
+      relayA,
+      'rotating',
+      [{ type: 'http', uri: `127.0.0.1:${directService.port}`, priority: 1, family: 'ipv4' }],
+      { at: Math.floor(Date.now() / 1000) + 10 }
+    )
+    await evaluate(chrome, 'document.querySelector("[data-re-resolve]").click()')
+    const reResolved = await waitForText(cdp, 'NCC E2E OK', 80)
+    check('re-resolve refetches the locator', reResolved.includes('NCC E2E OK'))
+    await sleep(250)
+
+    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/web/` })
+    await waitForText(cdp, 'NCC E2E OK', 80)
 
     // NIP-46: a mock bunker over the same relay. First publish a locator encrypted to
     // the remote signer, so resolution itself must go through the remote signer.
@@ -3120,7 +3212,8 @@ async function main() {
           NCC_DOWNLOAD_DIR: join(configHome, 'downloads'),
           NCC_PASSWORDS_IMPORT: passwordImportPath,
           NCC_PASSWORDS_EXPORT: passwordExportDir,
-          NCC_EXTENSION_DIR: join(ROOT, 'test/fixtures/hello-extension')
+          NCC_EXTENSION_DIR: join(ROOT, 'test/fixtures/hello-extension'),
+          NCC_REVALIDATE_SECONDS: '1'
         },
         stdio: ['ignore', 'pipe', 'pipe']
       }

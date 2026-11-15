@@ -4,24 +4,40 @@
  * Records are public by construction: plaintext NCC-05 payloads. Encrypted records are
  * deliberately never persisted, so a decrypted private locator cannot be left behind
  * on disk.
+ *
+ * Entries also carry a `validatedAt` timestamp. A record's own `expiresAt` says how long
+ * the publisher vouches for it; `validatedAt` says when this browser last confirmed it
+ * against relays. The resolver uses the latter to re-check rotations instead of pinning
+ * an endpoint for the record's whole TTL.
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import type { ResolvedService } from '@shared/types'
 
+export interface LocatorCacheEntry {
+  record: ResolvedService
+  /** Unix seconds when a relay query last produced this record. */
+  validatedAt: number
+}
+
 export interface LocatorStore {
-  get(hexPubkey: string, service: string): ResolvedService | null
-  set(record: ResolvedService): void
+  get(hexPubkey: string, service: string): LocatorCacheEntry | null
+  /** Store a record; `validatedAt` defaults to now. */
+  set(record: ResolvedService, validatedAt?: number): void
   delete(hexPubkey: string, service: string): void
 }
 
 interface CacheFile {
-  version: 1
-  entries: Record<string, ResolvedService>
+  version: 2
+  entries: Record<string, LocatorCacheEntry>
 }
 
-const CACHE_VERSION = 1
+/**
+ * v1 stored bare records, with no way to tell a fresh confirmation from one written
+ * days ago. Those entries are dropped on upgrade so a stale endpoint cannot survive.
+ */
+const CACHE_VERSION = 2
 
 function keyOf(hexPubkey: string, service: string): string {
   return `${hexPubkey}:${service}`
@@ -38,8 +54,14 @@ function isResolvedService(value: unknown): value is ResolvedService {
   )
 }
 
+function isEntry(value: unknown): value is LocatorCacheEntry {
+  if (!value || typeof value !== 'object') return false
+  const entry = value as Partial<LocatorCacheEntry>
+  return isResolvedService(entry.record) && typeof entry.validatedAt === 'number'
+}
+
 export class LocatorCacheStore implements LocatorStore {
-  private entries = new Map<string, ResolvedService>()
+  private entries = new Map<string, LocatorCacheEntry>()
   private loaded = false
 
   constructor(
@@ -48,23 +70,28 @@ export class LocatorCacheStore implements LocatorStore {
     private readonly maxEntries = 500
   ) {}
 
-  get(hexPubkey: string, service: string): ResolvedService | null {
+  get(hexPubkey: string, service: string): LocatorCacheEntry | null {
     this.load()
     const key = keyOf(hexPubkey, service)
-    const record = this.entries.get(key)
-    if (!record) return null
-    if (record.expiresAt <= this.now()) {
+    const entry = this.entries.get(key)
+    if (!entry) return null
+    if (entry.record.expiresAt <= this.now()) {
       this.entries.delete(key)
       this.flush()
       return null
     }
-    return record
+    return entry
   }
 
-  set(record: ResolvedService): void {
+  set(record: ResolvedService, validatedAt = this.now()): void {
     if (record.encrypted) return
     this.load()
-    this.entries.set(keyOf(record.hexPubkey, record.service), record)
+    // A revalidation must never look older than the record it confirmed.
+    const stamp = Math.min(
+      Number.isFinite(validatedAt) && validatedAt > 0 ? validatedAt : this.now(),
+      this.now()
+    )
+    this.entries.set(keyOf(record.hexPubkey, record.service), { record, validatedAt: stamp })
     this.prune()
     this.flush()
   }
@@ -93,8 +120,8 @@ export class LocatorCacheStore implements LocatorStore {
       if (!existsSync(this.filePath)) return
       const parsed = JSON.parse(readFileSync(this.filePath, 'utf8')) as Partial<CacheFile>
       if (parsed.version !== CACHE_VERSION || !parsed.entries) return
-      for (const [key, record] of Object.entries(parsed.entries)) {
-        if (isResolvedService(record)) this.entries.set(key, record)
+      for (const [key, entry] of Object.entries(parsed.entries)) {
+        if (isEntry(entry)) this.entries.set(key, entry)
       }
       this.prune()
     } catch (error) {
@@ -104,12 +131,14 @@ export class LocatorCacheStore implements LocatorStore {
 
   private prune(): void {
     const now = this.now()
-    for (const [key, record] of this.entries) {
-      if (record.expiresAt <= now) this.entries.delete(key)
+    for (const [key, entry] of this.entries) {
+      if (entry.record.expiresAt <= now) this.entries.delete(key)
     }
     if (this.entries.size <= this.maxEntries) return
 
-    const sorted = [...this.entries.entries()].sort((a, b) => a[1].expiresAt - b[1].expiresAt)
+    const sorted = [...this.entries.entries()].sort(
+      (a, b) => a[1].record.expiresAt - b[1].record.expiresAt
+    )
     const excess = this.entries.size - this.maxEntries
     for (let index = 0; index < excess; index += 1) {
       this.entries.delete(sorted[index][0])

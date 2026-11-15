@@ -71,6 +71,8 @@ export interface ShellDeps {
   appearance: () => AppearanceConfig
   onContentWebContents?: (contents: WebContents) => void
   extensionContextItems?: (url: string) => Array<{ label: string; click: () => void }>
+  /** Drop a cached NCC locator before a forced reload. */
+  invalidateSite?: (url: string, kind: TabKind) => void
 }
 
 interface Tab {
@@ -582,6 +584,11 @@ export class BrowserShell {
     } catch (error) {
       console.warn('[shell] could not clear the content cache:', error)
     }
+    // A forced reload is the user saying "this endpoint is wrong": drop the cached
+    // locator too, so the handler asks relays instead of replaying the same record.
+    if (tab.mode === 'ncc' && tab.displayUrl) {
+      this.deps.invalidateSite?.(tab.displayUrl, tab.kind)
+    }
     if (contents.isDestroyed()) return
     contents.reloadIgnoringCache()
   }
@@ -800,7 +807,8 @@ export class BrowserShell {
           pinned: activity.pinned,
           viaTor: tab.kind === 'tor' || activity.viaTor === true,
           onion: activity.viaOnion === true,
-          anchor: activity.anchor ?? null
+          anchor: activity.anchor ?? null,
+          locator: activity.locator ?? null
         }
       }
     }

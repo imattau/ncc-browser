@@ -2,9 +2,11 @@ import { useEffect, useState } from 'react'
 import {
   AlertTriangle,
   Anchor as AnchorIcon,
+  Clock,
   Cookie,
   Globe,
   Lock,
+  RefreshCw,
   ShieldAlert,
   ShieldCheck,
   ShieldQuestion,
@@ -13,7 +15,7 @@ import {
 } from 'lucide-react'
 import { ERROR_COPY } from '@shared/types'
 import type { SiteDataInfo } from '@shared/site-data'
-import type { AnchorInfo, NavState, TransportSecurity } from '@shared/types'
+import type { AnchorInfo, LocatorInfo, NavState, TransportSecurity } from '@shared/types'
 import { clearnetState } from '../lib/clearnet'
 import { cn } from '../lib/cn'
 import { Popover, type PopoverAnchor } from './Popover'
@@ -106,6 +108,10 @@ export function SiteInfoPanel({
 
         {!web && security ? (
           <AnchorBlock anchor={anchor} />
+        ) : null}
+
+        {!web && security?.locator ? (
+          <LocatorBlock locator={security.locator} onClose={onClose} />
         ) : null}
 
         {!web ? (
@@ -289,6 +295,130 @@ function TorBlock({
       </p>
     </div>
   )
+}
+
+function LocatorBlock({
+  locator,
+  onClose
+}: {
+  locator: LocatorInfo
+  onClose: () => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const reResolve = async (): Promise<void> => {
+    setBusy(true)
+    setError(null)
+    try {
+      const ok = await window.ncc.reResolveSite()
+      if (!ok) {
+        setError('This page has no locator to refresh')
+        return
+      }
+      onClose()
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const source = locator.fallback ? 'NCC-02 anchor' : locator.stale ? 'Cached copy' : 'Relays'
+  const expired = locator.expiresAt <= Math.floor(Date.now() / 1000)
+
+  return (
+    <div
+      data-locator
+      className="rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-field)] p-3"
+    >
+      <p className="flex items-center gap-1.5 text-ui-115 font-medium text-[color:var(--color-text-strong)]">
+        <Clock className="h-3.5 w-3.5 text-[color:var(--color-muted)]" />
+        Locator record
+      </p>
+      <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-ui-11">
+        <div>
+          <dt className="text-[color:var(--color-faint)]">d tag</dt>
+          <dd className="truncate font-mono text-ui-105 text-[color:var(--color-text-soft)]" data-locator-d-tag>
+            {locator.dTag}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-[color:var(--color-faint)]">Published</dt>
+          <dd className="text-[color:var(--color-text-soft)]" data-locator-age>
+            {timeAgo(locator.updatedAt)}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-[color:var(--color-faint)]">Expires</dt>
+          <dd
+            className={
+              expired
+                ? 'text-[color:var(--color-danger)]'
+                : 'text-[color:var(--color-text-soft)]'
+            }
+          >
+            {timeLeft(locator.expiresAt)}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-[color:var(--color-faint)]">Source</dt>
+          <dd className="text-[color:var(--color-text-soft)]" data-locator-source>
+            {source}
+          </dd>
+        </div>
+      </dl>
+
+      {locator.fallback ? (
+        <p className="mt-2 text-ui-105 leading-relaxed text-[color:var(--color-muted)]">
+          No usable NCC-05 locator was found, so this endpoint comes from the NCC-02
+          anchor. The browser keeps checking for a real locator in the background.
+        </p>
+      ) : locator.stale ? (
+        <p className="mt-2 text-ui-105 leading-relaxed text-[color:var(--color-muted)]">
+          Using the cached record. Relays have not confirmed it since the last check, so a
+          rotation may not be visible yet.
+        </p>
+      ) : null}
+
+      <div className="mt-2 flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          data-re-resolve
+          disabled={busy}
+          onClick={() => void reResolve()}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-[color:var(--color-line)] px-2.5 py-1 text-ui-11 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)] hover:text-[color:var(--color-text-strong)] disabled:opacity-40"
+        >
+          <RefreshCw className={cn('h-3 w-3', busy && 'animate-spin')} />
+          {busy ? 'Re-resolving…' : 'Re-resolve'}
+        </button>
+        <span className="text-ui-105 text-[color:var(--color-faint)]">
+          Asks relays for this service again.
+        </span>
+      </div>
+      {error ? (
+        <p className="mt-1.5 text-ui-105 leading-relaxed text-[color:var(--color-danger)]">{error}</p>
+      ) : null}
+    </div>
+  )
+}
+
+function timeAgo(unix: number): string {
+  const seconds = Math.floor(Date.now() / 1000) - unix
+  if (!Number.isFinite(seconds) || seconds <= 0) return 'just now'
+  if (seconds < 60) return `${seconds}s ago`
+  if (seconds < 3600) return `${Math.round(seconds / 60)} min ago`
+  if (seconds < 86_400) return `${Math.round(seconds / 3600)} h ago`
+  return `${Math.round(seconds / 86_400)} d ago`
+}
+
+function timeLeft(unix: number): string {
+  const seconds = unix - Math.floor(Date.now() / 1000)
+  if (seconds <= 0) return 'expired'
+  if (seconds < 60) return `in ${seconds}s`
+  if (seconds < 3600) return `in ${Math.round(seconds / 60)} min`
+  if (seconds < 86_400) return `in ${Math.round(seconds / 3600)} h`
+  return `in ${Math.round(seconds / 86_400)} d`
 }
 
 function SiteDataBlock() {

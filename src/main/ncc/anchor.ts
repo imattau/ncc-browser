@@ -215,7 +215,7 @@ export function anchorFallbackRecord(
   info: AnchorInfo,
   anchor: ServiceAnchor,
   now: number,
-  maxCacheSeconds: number
+  fallbackSeconds: number
 ): ResolvedService | null {
   if (!anchor.endpoint) return null
   const secure = anchor.endpoint.startsWith('https:')
@@ -223,6 +223,11 @@ export function anchorFallbackRecord(
     { url: anchor.endpoint, k: secure ? (anchor.k ?? undefined) : undefined }
   ])
   if (endpoints.length === 0) return null
+
+  // The anchor's `exp` can be weeks away, but the fallback is a guess: a real NCC-05
+  // locator may appear at any time. Keep it short so resolution is re-checked soon.
+  const ceiling = now + Math.max(1, fallbackSeconds)
+  const expiresAt = anchor.expiresAt > now ? Math.min(anchor.expiresAt, ceiling) : ceiling
 
   return {
     ...base,
@@ -237,7 +242,7 @@ export function anchorFallbackRecord(
       ...endpoint,
       kSource: endpoint.k ? 'ncc-02' : null
     })),
-    expiresAt: anchor.expiresAt > now ? anchor.expiresAt : now + maxCacheSeconds,
+    expiresAt,
     updatedAt: anchor.updatedAt,
     eventId: anchor.eventId,
     encrypted: false,

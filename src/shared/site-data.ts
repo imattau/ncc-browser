@@ -58,6 +58,9 @@ export interface CacheInfo {
   private: number
   tor: number
   extensions: number
+  /** Resolved NCC locators kept on disk; counted as entries, not bytes. */
+  locators: number
+  /** Total of the HTTP/network caches, excluding locators. */
   total: number
 }
 
@@ -116,10 +119,10 @@ export function isSameSite(candidate: string, origin: string): boolean {
 }
 
 export function emptyCacheInfo(): CacheInfo {
-  return { normal: 0, private: 0, tor: 0, extensions: 0, total: 0 }
+  return { normal: 0, private: 0, tor: 0, extensions: 0, locators: 0, total: 0 }
 }
 
-export function totalCacheBytes(info: Omit<CacheInfo, 'total'>): number {
+export function totalCacheBytes(info: Omit<CacheInfo, 'total' | 'locators'>): number {
   return info.normal + info.private + info.tor + info.extensions
 }
 

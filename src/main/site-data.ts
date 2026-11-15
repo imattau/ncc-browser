@@ -30,6 +30,12 @@ export interface SiteDataDeps {
   permissions: PermissionStore
   sessions: Record<TabKind, Session>
   extensionSession: Session
+  /** Resolved NCC-05 records that survive restarts. */
+  locators: {
+    count(): number
+    clear(): void
+    invalidate(kind: TabKind, pubkey: string, service: string | null): void
+  }
 }
 
 const STORAGE_TYPES = [
@@ -174,7 +180,11 @@ export class SiteDataService {
       this.size(this.deps.extensionSession)
     ])
     const sizes = { normal, private: privateBytes, tor, extensions }
-    return { ...sizes, total: totalCacheBytes(sizes) }
+    return {
+      ...sizes,
+      locators: this.deps.locators.count(),
+      total: totalCacheBytes(sizes)
+    }
   }
 
   async clearCache(): Promise<CacheInfo> {
@@ -184,7 +194,23 @@ export class SiteDataService {
       this.clearSessionCache(this.deps.sessions.tor),
       this.clearSessionCache(this.deps.extensionSession)
     ])
+    // The locator cache lives outside Chromium's caches, so clearing the network
+    // cache alone would leave a rotated endpoint pinned. Drop both together.
+    this.deps.locators.clear()
     return this.cacheInfo()
+  }
+
+  /**
+   * Forget the locator behind the active page and reload it, so relays are asked
+   * again even while the cached record is still unexpired.
+   */
+  revalidateActiveSite(): boolean {
+    const page = this.deps.host.activePage()
+    const identity = page ? siteIdentityForUrl(page.url) : null
+    if (!page || !identity || page.mode === 'blank') return false
+    this.deps.locators.invalidate(page.kind, identity.host, identity.service)
+    this.deps.host.reloadTab(page.tabId)
+    return true
   }
 
   private sessionFor(kind: TabKind): Session {

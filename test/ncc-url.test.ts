@@ -136,6 +136,13 @@ describe('routeNccPath', () => {
     })
   })
 
+  it('routes a new document to its requested service, not the previous page service', () => {
+    expect(routeNccPath('/npanel/', 'ditto', 'ditto', true)).toEqual({
+      service: 'npanel',
+      path: '/'
+    })
+  })
+
   it('rejects an empty or invalid explicit service', () => {
     expect(routeNccPath('/_/', null)).toBeNull()
     expect(routeNccPath('/_/bad%2Fname', null)).toBeNull()

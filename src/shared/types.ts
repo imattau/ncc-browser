@@ -425,6 +425,8 @@ export interface ResolvedService {
   updatedAt: number
   eventId: string
   encrypted: boolean
+  /** Served from the cached copy; relays have not confirmed it yet. */
+  stale?: boolean
   /** NCC-02 trust anchor, when one was found. */
   anchor?: AnchorInfo
 }
@@ -468,6 +470,23 @@ export interface SecurityInfo {
   onion: boolean
   /** NCC-02 trust anchor attached to the locator that served this page. */
   anchor: AnchorInfo | null
+  /** The NCC-05 record that produced the endpoint, for the site panel. */
+  locator: LocatorInfo | null
+}
+
+/** How old the record behind the current page is, and where it came from. */
+export interface LocatorInfo {
+  eventId: string
+  /** The `d` tag that matched, which may differ from the requested service. */
+  dTag: string
+  /** Unix seconds when the publisher last refreshed the payload. */
+  updatedAt: number
+  /** Unix seconds after which the record may not be used. */
+  expiresAt: number
+  /** Served from the cached copy; relays have not confirmed it yet. */
+  stale: boolean
+  /** Synthesised from the NCC-02 `u` endpoint because no NCC-05 record was usable. */
+  fallback: boolean
 }
 
 export type PageMode = 'blank' | 'ncc' | 'web' | 'error'

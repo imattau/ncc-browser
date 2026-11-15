@@ -93,12 +93,12 @@ function anchorEvent(options: AnchorOptions = {}): Event {
 }
 
 function memoryStore() {
-  const map = new Map<string, ResolvedService>()
+  const map = new Map<string, { record: ResolvedService; validatedAt: number }>()
   return {
     map,
     get: (hex: string, service: string) => map.get(`${hex}:${service}`) ?? null,
-    set: (record: ResolvedService) => {
-      map.set(`${record.hexPubkey}:${record.service}`, record)
+    set: (record: ResolvedService, validatedAt = NOW) => {
+      map.set(`${record.hexPubkey}:${record.service}`, { record, validatedAt })
     },
     delete: (hex: string, service: string) => {
       map.delete(`${hex}:${service}`)
@@ -423,6 +423,212 @@ describe('NccResolver', () => {
     if (!initial.ok || !outcome.ok) return
     expect(outcome.record.eventId).toBe(initial.record.eventId)
     expect(query).not.toHaveBeenCalled()
+  })
+
+  it('revalidates a persisted record once it is older than the window', async () => {
+    const store = memoryStore()
+    const rotated = locatorEvent({
+      createdAt: NOW + 10,
+      payload: { ttl: 600, updated_at: NOW, endpoints: [{ uri: '10.0.0.9:9090' }] }
+    })
+    const query = vi.fn<QueryFn>(async () => [rotated])
+    const resolver = new NccResolver({
+      relays: () => ['wss://relay.test'],
+      query,
+      now: () => NOW,
+      cacheStore: store,
+      revalidateSeconds: 30
+    })
+
+    store.set(
+      {
+        pubkey: NPUB,
+        hexPubkey: AUTHOR_PK,
+        service: 'addr',
+        dTag: 'addr',
+        dTagSource: 'exact',
+        endpoints: [
+          { url: 'http://10.0.0.1:8080/', protocol: 'http', priority: 1, family: 'ipv4', k: null }
+        ],
+        expiresAt: NOW + 600,
+        updatedAt: NOW - 300,
+        eventId: 'old-event',
+        encrypted: false
+      },
+      NOW - 120
+    )
+
+    const stale = await resolver.resolve(NPUB)
+    expect(stale.ok).toBe(true)
+    if (!stale.ok) return
+    expect(stale.record.eventId).toBe('old-event')
+    expect(stale.record.stale).toBe(true)
+
+    // The cached endpoint is served immediately; the query runs behind it.
+    await resolver.settle()
+    expect(query).toHaveBeenCalledTimes(1)
+    expect(store.map.get(`${AUTHOR_PK}:addr`)?.record.eventId).toBe(rotated.id)
+
+    const fresh = await resolver.resolve(NPUB)
+    expect(fresh.ok).toBe(true)
+    if (!fresh.ok) return
+    expect(fresh.record.endpoints[0].url).toBe('http://10.0.0.9:9090/')
+    expect(fresh.record.stale).toBeUndefined()
+  })
+
+  it('serves a persisted record without a query while it is still fresh', async () => {
+    const store = memoryStore()
+    const query = vi.fn<QueryFn>(async () => {
+      throw new Error('should not query relays')
+    })
+    store.set(
+      {
+        pubkey: NPUB,
+        hexPubkey: AUTHOR_PK,
+        service: 'addr',
+        dTag: 'addr',
+        dTagSource: 'exact',
+        endpoints: [
+          { url: 'http://10.0.0.1:8080/', protocol: 'http', priority: 1, family: 'ipv4', k: null }
+        ],
+        expiresAt: NOW + 600,
+        updatedAt: NOW,
+        eventId: 'fresh-event',
+        encrypted: false
+      },
+      NOW - 5
+    )
+
+    const resolver = new NccResolver({
+      relays: () => ['wss://relay.test'],
+      query,
+      now: () => NOW,
+      cacheStore: store,
+      revalidateSeconds: 60
+    })
+    const outcome = await resolver.resolve(NPUB)
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+    expect(outcome.record.eventId).toBe('fresh-event')
+    expect(outcome.record.stale).toBeUndefined()
+    expect(query).not.toHaveBeenCalled()
+  })
+
+  it('keeps the cached record when a background revalidation fails', async () => {
+    const store = memoryStore()
+    const query = vi.fn<QueryFn>(async () => {
+      throw new Error('relay down')
+    })
+    store.set(
+      {
+        pubkey: NPUB,
+        hexPubkey: AUTHOR_PK,
+        service: 'addr',
+        dTag: 'addr',
+        dTagSource: 'exact',
+        endpoints: [
+          { url: 'http://10.0.0.1:8080/', protocol: 'http', priority: 1, family: 'ipv4', k: null }
+        ],
+        expiresAt: NOW + 600,
+        updatedAt: NOW,
+        eventId: 'cached-event',
+        encrypted: false
+      },
+      NOW - 300
+    )
+
+    const resolver = new NccResolver({
+      relays: () => ['wss://relay.test'],
+      query,
+      now: () => NOW,
+      cacheStore: store,
+      revalidateSeconds: 30
+    })
+    const first = await resolver.resolve(NPUB)
+    await resolver.settle()
+    const second = await resolver.resolve(NPUB)
+
+    expect(first.ok && second.ok).toBe(true)
+    if (!first.ok || !second.ok) return
+    expect(second.record.eventId).toBe('cached-event')
+    expect(second.record.stale).toBe(true)
+    expect(query).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not trust a persisted anchor whose exp has passed', async () => {
+    const store = memoryStore()
+    const anchor = anchorEvent({ d: 'addr', exp: NOW - 1 })
+    const query = vi.fn<QueryFn>(async () => [anchor])
+    store.set(
+      {
+        pubkey: NPUB,
+        hexPubkey: AUTHOR_PK,
+        service: 'addr',
+        dTag: 'addr',
+        dTagSource: 'exact',
+        endpoints: [
+          { url: 'http://10.0.0.1:8080/', protocol: 'http', priority: 1, family: 'ipv4', k: null }
+        ],
+        expiresAt: NOW + 600,
+        updatedAt: NOW,
+        eventId: 'stale-anchor-event',
+        encrypted: false,
+        anchor: {
+          status: 'anchored',
+          record: {
+            eventId: anchor.id,
+            dTag: 'addr',
+            endpoint: null,
+            rawEndpoint: null,
+            k: null,
+            expiresAt: NOW - 1,
+            updatedAt: NOW - 100
+          },
+          fallback: false,
+          kMatch: 'none',
+          required: true
+        }
+      },
+      NOW
+    )
+
+    const resolver = new NccResolver({
+      relays: () => ['wss://relay.test'],
+      query,
+      now: () => NOW,
+      cacheStore: store,
+      anchorRequired: () => true
+    })
+    const outcome = await resolver.resolve(NPUB)
+    expect(query).toHaveBeenCalledTimes(1)
+    expect(outcome.ok).toBe(false)
+    if (outcome.ok) return
+    expect(outcome.code).toBe('anchor-expired')
+  })
+
+  it('caps a synthesised NCC-02 fallback to a short lifetime', async () => {
+    const anchor = anchorEvent({ d: 'web', u: 'http://10.0.0.9:8080', exp: NOW + 14 * 86_400 })
+    const store = memoryStore()
+    const resolver = resolverWith([anchor], { cacheStore: store, fallbackSeconds: 120 }).resolver
+    const outcome = await resolver.resolve(NPUB, 'web')
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+    expect(outcome.record.expiresAt).toBe(NOW + 120)
+    expect(store.map.get(`${AUTHOR_PK}:web`)?.record.expiresAt).toBe(NOW + 120)
+  })
+
+  it('invalidate drops both cache layers', async () => {
+    const store = memoryStore()
+    const { resolver, query } = resolverWith([locatorEvent()], { cacheStore: store })
+
+    await resolver.resolve(NPUB)
+    expect(store.map.size).toBe(1)
+
+    resolver.invalidate(NPUB, 'addr')
+    expect(store.map.size).toBe(0)
+
+    await resolver.resolve(NPUB)
+    expect((query as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(2)
   })
 
   it('never persists an encrypted record', async () => {

@@ -196,7 +196,8 @@ export function toDisplayUrl(url: string): string {
 export function routeNccPath(
   pathname: string,
   activeService: string | null,
-  refererService: string | null = null
+  refererService: string | null = null,
+  isDocumentRequest = false
 ): { service: string; path: string } | null {
   const raw = pathname.replace(/^\/+/, '')
 
@@ -211,11 +212,14 @@ export function routeNccPath(
     return { service, path: tail ? `/${tail}` : '/' }
   }
 
-  if (refererService) {
+  // A new document navigation names its own service in the URL. The referer
+  // namespace is only a hint for absolute-path subresources such as /assets/app.js;
+  // allowing it to win for a document makes a link to /npanel/ from Ditto load Ditto.
+  if (!isDocumentRequest && refererService) {
     return { service: refererService, path: pathname || '/' }
   }
 
-  if (activeService) {
+  if (!isDocumentRequest && activeService) {
     return { service: activeService, path: pathname || '/' }
   }
 

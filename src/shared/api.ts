@@ -119,6 +119,7 @@ export interface NccApi {
   clearSiteData(options: SiteDataClearOptions): Promise<SiteDataClearResult>
   cacheInfo(): Promise<CacheInfo>
   clearCache(): Promise<CacheInfo>
+  reResolveSite(): Promise<boolean>
   setSearchConfig(config: {
     engine: SearchEngineId
     custom: string

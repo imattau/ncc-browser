@@ -53,6 +53,7 @@ function security(overrides: Partial<SecurityInfo> = {}): SecurityInfo {
     viaTor: false,
     onion: false,
     anchor: anchor('anchored'),
+    locator: null,
     ...overrides
   }
 }
