@@ -187,6 +187,12 @@ async function startService(npub, options = {}) {
       response.end('<!doctype html><title>Second</title><h1 id="second">SECOND PAGE</h1>')
       return
     }
+    if (request.url.startsWith('/search')) {
+      const query = new URL(request.url, 'http://127.0.0.1').searchParams.get('q') ?? ''
+      response.writeHead(200, { 'content-type': 'text/html' })
+      response.end(`<!doctype html><title>Search</title><h1 id="search">SEARCH ${query}</h1>`)
+      return
+    }
     if (request.url === '/hinted') {
       response.writeHead(200, { 'content-type': 'text/html' })
       response.end('<!doctype html><title>Hinted</title><h1 id="hinted">HINTED OK</h1>')
@@ -953,6 +959,155 @@ async function main() {
       String(favicon).slice(0, 40)
     )
 
+    // --- Address bar: scheme inference, suggestions and search ---------------
+    const typeAddress = async (text) => {
+      await evaluate(
+        chrome,
+        `(() => {
+          const input = document.querySelector('input[aria-label="Address"]')
+          input.focus()
+          input.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+          const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
+          setter.call(input, ${JSON.stringify(text)})
+          input.dispatchEvent(new Event('input', { bubbles: true }))
+        })()`
+      )
+    }
+    const pressKey = async (key) => {
+      await evaluate(
+        chrome,
+        `(() => {
+          const input = document.querySelector('input[aria-label="Address"]')
+          input.dispatchEvent(
+            new KeyboardEvent('keydown', { key: ${JSON.stringify(key)}, bubbles: true })
+          )
+        })()`
+      )
+    }
+
+    // A bare npub is an NCC address, and a bare loopback host gets a scheme.
+    await evaluate(chrome, `window.ncc.navigate(${JSON.stringify(`${serviceNpub}/web/`)})`)
+    await waitForText(cdp, 'NCC E2E OK', 80)
+    check(
+      'infers ncc:// for a bare npub',
+      (await evaluate(chrome, 'window.ncc.getState().then((s) => s.displayUrl)')) ===
+        `ncc://${serviceNpub}/web/`,
+      String(await evaluate(chrome, 'window.ncc.getState().then((s) => s.displayUrl)'))
+    )
+
+    await evaluate(
+      chrome,
+      `window.ncc.navigate(${JSON.stringify(`127.0.0.1:${servicePort}/second`)})`
+    )
+    await waitForText(cdp, 'SECOND PAGE', 80)
+    check(
+      'infers http:// for a bare loopback host',
+      String(
+        await evaluate(chrome, 'window.ncc.getState().then((s) => s.displayUrl)')
+      ).startsWith(`http://127.0.0.1:${servicePort}/second`),
+      String(await evaluate(chrome, 'window.ncc.getState().then((s) => s.displayUrl)'))
+    )
+
+    const searchTemplate = `http://127.0.0.1:${servicePort}/search?q=%s`
+    const searchConfig = await evaluate(
+      chrome,
+      `window.ncc.setSearchConfig({ engine: 'custom', custom: ${JSON.stringify(searchTemplate)}, useOnionSearch: true })`
+    )
+    check('saves a custom search engine', searchConfig?.ok === true, JSON.stringify(searchConfig))
+
+    await typeAddress('nostr relays')
+    await sleep(300)
+    const actionRow = await evaluate(
+      chrome,
+      'document.querySelector("[data-omnibox-suggestion=action]")?.textContent ?? ""'
+    )
+    check(
+      'labels the search action before pressing Enter',
+      String(actionRow).includes('nostr relays') && String(actionRow).includes('Search'),
+      String(actionRow)
+    )
+    await pressKey('Enter')
+    await waitForText(cdp, 'SEARCH nostr relays', 100)
+    check(
+      'searches with the configured engine',
+      (await waitForText(cdp, 'SEARCH nostr relays', 40)).includes('SEARCH nostr relays')
+    )
+
+    // History contributes suggestions, and the arrow keys pick a row.
+    await typeAddress('second')
+    await sleep(300)
+    const suggestionKinds = await evaluate(
+      chrome,
+      '[...document.querySelectorAll("[data-omnibox-suggestion]")].map((el) => el.getAttribute("data-omnibox-suggestion"))'
+    )
+    check(
+      'offers both the search action and a history entry',
+      suggestionKinds.includes('action') && suggestionKinds.includes('history'),
+      JSON.stringify(suggestionKinds)
+    )
+    const suggestionShot = await chrome.send('Page.captureScreenshot', { format: 'png' })
+    writeFileSync(
+      join(ARTIFACTS, 'omnibox.png'),
+      Buffer.from(suggestionShot.data, 'base64')
+    )
+    await pressKey('ArrowDown')
+    await pressKey('ArrowDown')
+    const activeUrl = await evaluate(
+      chrome,
+      'document.querySelector("[data-omnibox-active=true]")?.getAttribute("data-omnibox-url") ?? ""'
+    )
+    check('arrow keys select a suggestion', String(activeUrl).includes('/second'), String(activeUrl))
+    await pressKey('Enter')
+    await waitForText(cdp, 'SECOND PAGE', 80)
+    check(
+      'opens the selected suggestion',
+      String(await evaluate(chrome, 'window.ncc.getState().then((s) => s.displayUrl)')).includes(
+        '/second'
+      )
+    )
+
+    // Tab completes the highlighted row without navigating.
+    await typeAddress('127.0.0.1')
+    await sleep(300)
+    await pressKey('ArrowDown')
+    await pressKey('Tab')
+    const completed = await evaluate(
+      chrome,
+      'document.querySelector(\'input[aria-label="Address"]\').value'
+    )
+    check(
+      'Tab completes the selected suggestion',
+      String(completed).startsWith('http://127.0.0.1'),
+      String(completed)
+    )
+    await evaluate(chrome, 'document.querySelector(\'input[aria-label="Address"]\').blur()')
+    await sleep(200)
+
+    // A pasted private key is refused locally and never searched.
+    await evaluate(chrome, `window.ncc.navigate(${JSON.stringify(`nsec1${'q'.repeat(58)}`)})`)
+    await sleep(300)
+    const secretFailure = await evaluate(chrome, 'window.ncc.getState().then((s) => s.failure)')
+    check(
+      'refuses a private key typed in the address bar',
+      secretFailure?.code === 'secret-key',
+      JSON.stringify(secretFailure)
+    )
+
+    // The history file is local, includes ncc:// pages and is written atomically.
+    const recorded = JSON.parse(readFileSync(join(userData, 'history.json'), 'utf8'))
+    check(
+      'writes normal-tab history',
+      Array.isArray(recorded.entries) &&
+        recorded.entries.some((entry) => String(entry.url).includes('/second')) &&
+        recorded.entries.some((entry) =>
+          String(entry.url).startsWith(`ncc://${serviceNpub}/`)
+        ),
+      JSON.stringify(recorded.entries.slice(0, 5).map((entry) => entry.url))
+    )
+
+    await evaluate(chrome, `window.ncc.navigate(${JSON.stringify(`ncc://${serviceNpub}/web/`)})`)
+    await waitForText(cdp, 'NCC E2E OK', 80)
+
     // Private tabs use their own in-memory session. Cookies survive between
     // private tabs but are cleared when the last one closes.
     const normalTabId = await evaluate(
@@ -1050,6 +1205,15 @@ async function main() {
     await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}/_/web/` })
     await waitForText(cdp, 'NCC E2E OK', 80)
 
+    // Private tabs never touch the suggestion history file.
+    const historyAfterPrivate = JSON.parse(readFileSync(join(userData, 'history.json'), 'utf8'))
+    check(
+      'never records private tabs in history',
+      !JSON.stringify(historyAfterPrivate.entries).includes('private=') &&
+        historyAfterPrivate.entries.some((entry) => String(entry.url).includes('cookie-read')),
+      JSON.stringify(historyAfterPrivate.entries.slice(0, 6).map((entry) => entry.url))
+    )
+
     // Settings is a page in the chrome, not a modal dialog.
     await evaluate(chrome, 'document.querySelector(\'button[data-signer-button]\').click()')
     await waitForText(chrome, 'Remote signer', 60)
@@ -1072,6 +1236,14 @@ async function main() {
     check(
       'settings page exposes NCC-02 anchoring',
       (await evaluate(chrome, 'Boolean(document.querySelector("#anchor-required"))')) === true
+    )
+    check(
+      'settings page exposes the search engine',
+      (await evaluate(chrome, 'Boolean(document.querySelector("#search-engine"))')) === true &&
+        (await evaluate(
+          chrome,
+          'document.querySelector("#search-engine").value'
+        )) === 'custom'
     )
     const generalShot = await chrome.send('Page.captureScreenshot', { format: 'png' })
     writeFileSync(join(ARTIFACTS, 'settings-general.png'), Buffer.from(generalShot.data, 'base64'))
@@ -2249,6 +2421,16 @@ async function main() {
       'does not save private tabs in the session',
       !JSON.stringify(savedForRestart.tabs).includes('private-restore'),
       JSON.stringify(savedForRestart.tabs)
+    )
+
+    // The privacy control removes the history file's contents.
+    await evaluate(chrome, 'window.ncc.clearBrowsingHistory()')
+    await sleep(200)
+    const clearedHistory = JSON.parse(readFileSync(join(userData, 'history.json'), 'utf8'))
+    check(
+      'clears browsing history from settings',
+      Array.isArray(clearedHistory.entries) && clearedHistory.entries.length === 0,
+      JSON.stringify(clearedHistory.entries.length)
     )
 
     // Restart with the same profile and no command-line address: the session file

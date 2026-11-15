@@ -1,10 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { EyeOff, Lock, Star } from 'lucide-react'
-import type { TabKind, TorState } from '@shared/types'
+import type { OmniboxSuggestion, TabKind, TorState } from '@shared/types'
 import type { SecuritySummary } from '../lib/security'
 import type { PopoverAnchor } from './Popover'
+import { Omnibox } from './Omnibox'
 import { OnionIcon } from './TransportIcons'
 import { cn } from '../lib/cn'
+
+const SUGGEST_DEBOUNCE_MS = 70
+const OMNI_ID = 'ncc-omnibox'
 
 interface AddressBarProps {
   value: string
@@ -38,6 +42,11 @@ export function AddressBar({
   const inputRef = useRef<HTMLInputElement>(null)
   const [draft, setDraft] = useState(value)
   const [focused, setFocused] = useState(false)
+  const [suggestions, setSuggestions] = useState<OmniboxSuggestion[]>([])
+  const [activeIndex, setActiveIndex] = useState(-1)
+  const seqRef = useRef(0)
+  const committedRef = useRef(false)
+  const suppressRef = useRef(false)
 
   useEffect(() => {
     if (!focused) setDraft(value)
@@ -55,6 +64,83 @@ export function AddressBar({
       unsubscribe()
     }
   }, [])
+
+  // Local suggestions only; a stale response is dropped through the sequence guard.
+  useEffect(() => {
+    const seq = (seqRef.current += 1)
+    if (!focused) {
+      setSuggestions([])
+      setActiveIndex(-1)
+      return
+    }
+    if (suppressRef.current) {
+      // Tab completion updates the draft; keep the dropdown closed until the next edit.
+      suppressRef.current = false
+      setSuggestions([])
+      setActiveIndex(-1)
+      return
+    }
+
+    const timer = window.setTimeout(() => {
+      void window.ncc
+        .omniboxSuggest(draft)
+        .then((next) => {
+          if (seqRef.current !== seq) return
+          setSuggestions(next)
+          setActiveIndex(-1)
+        })
+        .catch(() => {
+          if (seqRef.current === seq) setSuggestions([])
+        })
+    }, SUGGEST_DEBOUNCE_MS)
+
+    return () => window.clearTimeout(timer)
+  }, [draft, focused, tabKind])
+
+  const clearSuggestions = (): void => {
+    setSuggestions([])
+    setActiveIndex(-1)
+  }
+
+  const openSuggestion = (suggestion: OmniboxSuggestion, newTab = false): void => {
+    clearSuggestions()
+    if (!suggestion.url) return
+
+    committedRef.current = true
+    setDraft(suggestion.url)
+    inputRef.current?.blur()
+
+    if (newTab) {
+      if (tabKind === 'private') void window.ncc.newPrivateTab(suggestion.url)
+      else if (tabKind === 'tor') void window.ncc.newTorTab(suggestion.url)
+      else void window.ncc.newTab(suggestion.url)
+      return
+    }
+
+    if (suggestion.tabId) {
+      void window.ncc.selectTab(suggestion.tabId)
+      return
+    }
+
+    onNavigate(suggestion.url)
+  }
+
+  const moveSelection = (direction: 1 | -1): void => {
+    if (suggestions.length === 0) return
+    setActiveIndex((current) => {
+      if (direction === 1) return current >= suggestions.length - 1 ? 0 : current + 1
+      return current <= 0 ? suggestions.length - 1 : current - 1
+    })
+  }
+
+  const completeInline = (): void => {
+    if (suggestions.length === 0) return
+    const suggestion = suggestions[activeIndex] ?? suggestions[0]
+    if (!suggestion?.url) return
+    suppressRef.current = true
+    setDraft(suggestion.url)
+    clearSuggestions()
+  }
 
   return (
     <div className="relative flex-1">
@@ -127,26 +213,59 @@ export function AddressBar({
           onBlur={() => {
             setFocused(false)
             onFocusChange?.(false)
-            setDraft(value)
+            clearSuggestions()
+            if (committedRef.current) committedRef.current = false
+            else setDraft(value)
           }}
           onKeyDown={(event) => {
+            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+              if (suggestions.length === 0) return
+              event.preventDefault()
+              moveSelection(event.key === 'ArrowDown' ? 1 : -1)
+              return
+            }
+            if (event.key === 'Tab' && suggestions.length > 0) {
+              event.preventDefault()
+              completeInline()
+              return
+            }
             if (event.key === 'Enter') {
               event.preventDefault()
+              const suggestion = activeIndex >= 0 ? suggestions[activeIndex] : undefined
+              if (suggestion) {
+                openSuggestion(suggestion, event.altKey)
+                return
+              }
               const next = draft.trim()
               if (!next) return
+              committedRef.current = true
+              clearSuggestions()
               onNavigate(next)
               inputRef.current?.blur()
+              return
             }
             if (event.key === 'Escape') {
+              if (suggestions.length > 0) {
+                event.preventDefault()
+                clearSuggestions()
+                return
+              }
               setDraft(value)
               inputRef.current?.blur()
             }
           }}
+          role="combobox"
+          aria-expanded={suggestions.length > 0}
+          aria-controls={OMNI_ID}
+          aria-autocomplete="list"
+          aria-activedescendant={
+            activeIndex >= 0 ? `${OMNI_ID}-option-${activeIndex}` : undefined
+          }
           spellCheck={false}
           autoComplete="off"
           autoCorrect="off"
           autoCapitalize="off"
-          placeholder="ncc://npub1…/service"
+          placeholder="Search or enter an address"
           aria-label="Address"
           className="h-full flex-1 bg-transparent font-mono text-[13px] text-[#e7e9ef] placeholder:text-[#5d6575] focus:outline-none"
         />
@@ -196,7 +315,18 @@ export function AddressBar({
           </button>
         )}
       </div>
-      {hint ? (
+
+      <Omnibox
+        id={OMNI_ID}
+        suggestions={suggestions}
+        activeIndex={activeIndex}
+        query={draft}
+        hint={suggestions.length > 0 ? hint : null}
+        onHover={setActiveIndex}
+        onPick={(suggestion) => openSuggestion(suggestion)}
+      />
+
+      {hint && suggestions.length === 0 ? (
         <p className="absolute left-3 top-full mt-1.5 text-[11.5px] text-[color:var(--color-danger)]">
           {hint}
         </p>

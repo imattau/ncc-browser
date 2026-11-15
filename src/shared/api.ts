@@ -1,10 +1,12 @@
 import type { CommandId } from './commands'
+import type { SearchEngineId } from './search'
 import type {
   AppConfig,
   Bookmark,
   DownloadNotice,
   IdentityStatus,
   NavState,
+  OmniboxSuggestion,
   OverlayReason,
   HttpsMode,
   SignerPermission,
@@ -78,6 +80,13 @@ export interface NccApi {
   }): Promise<SetRelaysResult>
   removeHttpException(key: string): Promise<AppConfig>
   clearHttpExceptions(): Promise<AppConfig>
+  omniboxSuggest(input: string): Promise<OmniboxSuggestion[]>
+  clearBrowsingHistory(): Promise<void>
+  setSearchConfig(config: {
+    engine: SearchEngineId
+    custom: string
+    useOnionSearch: boolean
+  }): Promise<SetRelaysResult>
   torStatus(): Promise<TorStatus>
   torTest(): Promise<TorStatus>
   torRestart(): Promise<TorStatus>

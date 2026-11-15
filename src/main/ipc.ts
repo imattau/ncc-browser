@@ -8,6 +8,7 @@ import type { EndpointHealth } from './ncc/health'
 import type { NccResolver } from './ncc/resolver'
 import type { TransportPolicy } from './ncc/transport'
 import { normalizeTorProxy } from './tor/proxy'
+import { isSearchEngineId, searxTemplate, validateSearchTemplate } from '@shared/search'
 import type { TorManager } from './tor/manager'
 import type { PinStore } from './pins'
 import type { ApprovalBroker } from './approval'
@@ -120,6 +121,44 @@ export function registerIpc(deps: IpcDeps): void {
 
   ipcMain.handle('ncc:get-state', () => deps.shell.getState())
   ipcMain.handle('ncc:get-config', () => deps.config.get())
+
+  ipcMain.handle('ncc:omnibox-suggest', (event, input: unknown) => {
+    if (!fromChrome(event)) return []
+    return deps.shell.suggest(typeof input === 'string' ? input : '')
+  })
+
+  ipcMain.handle('ncc:clear-browsing-history', (event) => {
+    if (!fromChrome(event)) return
+    deps.shell.clearBrowsingHistory()
+  })
+
+  ipcMain.handle('ncc:set-search-config', (_event, payload: unknown) => {
+    try {
+      if (!payload || typeof payload !== 'object') {
+        return { ok: false, error: 'Invalid search settings' }
+      }
+      const { engine, custom, useOnionSearch } = payload as {
+        engine?: unknown
+        custom?: unknown
+        useOnionSearch?: unknown
+      }
+      if (!isSearchEngineId(engine)) {
+        return { ok: false, error: 'Choose a search engine' }
+      }
+      const template = typeof custom === 'string' ? custom : ''
+      if (engine === 'searx') {
+        const result = searxTemplate(template)
+        if (!result.ok) return { ok: false, error: result.error }
+      } else if (engine === 'custom') {
+        const result = validateSearchTemplate(template)
+        if (!result.ok) return { ok: false, error: result.error }
+      }
+      const config = deps.config.setSearchConfig({ engine, custom: template, useOnionSearch })
+      return { ok: true, config }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
 
   ipcMain.handle('ncc:set-relays', (_event, relays: unknown) => {
     try {

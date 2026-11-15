@@ -3,6 +3,8 @@
  * the renderer, so it must not depend on Node or Electron APIs.
  */
 
+import type { SearchEngineId } from './search'
+
 export const DEFAULT_SERVICE = 'addr'
 
 /** Content isolation for a tab. */
@@ -269,6 +271,28 @@ export interface AppConfig {
   warnInsecure: boolean
   /** Origins/keys the user has allowed over HTTP. */
   httpExceptions: string[]
+  /** Search engine used when the address bar input is not a URL. */
+  searchEngine: SearchEngineId
+  /** SearXNG instance URL, or a full `%s` template for the custom engine. */
+  searchEngineCustom: string
+  /** Use an engine's onion endpoint inside full Tor tabs. */
+  useOnionSearch: boolean
+}
+
+export type OmniboxSuggestionKind = 'action' | 'bookmark' | 'history' | 'tab' | 'service'
+
+export type OmniboxSuggestionIcon = 'search' | 'web' | 'ncc' | 'star' | 'clock' | 'tab'
+
+export interface OmniboxSuggestion {
+  id: string
+  kind: OmniboxSuggestionKind
+  icon: OmniboxSuggestionIcon
+  title: string
+  detail: string
+  /** The URL to open. Empty when a suggestion only switches tabs. */
+  url: string
+  /** Tab suggestions switch to this tab instead of navigating. */
+  tabId?: string
 }
 
 export type IdentitySource = 'none' | 'env' | 'file' | 'session'

@@ -10,11 +10,12 @@ Built with Electron 45, React 19, and Vite. The resolver is a spec-correct
 implementation on top of `nostr-tools`, not a wrapper around `ncc-05-js` (see
 [Why not `ncc-05-js`](#why-not-ncc-05-js)).
 
-**Status:** M0–M9 are implemented. That includes the resolver, proxy and pinning, the
+**Status:** M0–M10 are implemented. That includes the resolver, proxy and pinning, the
 browser chrome and signer, NCC-02 anchoring with a trust panel, the separate publisher
 app in [`publisher/`](./publisher/) (a NIP-07 flow for NCC-05 locators and NCC-02 service
 records), bundled Tor with the onion preference/toggle and full Tor tabs, private tabs,
-HTTPS policy and HTTP warnings, and packaged Linux, macOS and Windows releases.
+HTTPS policy and HTTP warnings, an address bar with local suggestions, scheme inference
+and search engines, and packaged Linux, macOS and Windows releases.
 
 ![Start screen](./docs/welcome.png)
 
@@ -29,6 +30,8 @@ HTTPS policy and HTTP warnings, and packaged Linux, macOS and Windows releases.
 | Browser menu | Settings: relays & anchoring | Publisher |
 | --- | --- | --- |
 | ![Hamburger menu with grouped commands](./docs/menu.png) | ![Relays and NCC-02 anchoring settings](./docs/settings-general.png) | ![NCC Publisher with signer and result](./docs/publisher.png) |
+
+![Address bar with a local search action, highlighted match and a history suggestion](./docs/omnibox.png)
 
 ---
 
@@ -106,9 +109,9 @@ working while the remote page has focus.
   relay lookups through Tor, disables WebRTC leaking, and is always ephemeral. It is
   separate from the per-locator onion preference.
 - **Toolbar** — back/forward (right-click or hold for a jump list), reload/stop
-  (the refresh button bypasses the HTTP cache), history, address bar with a
-  colour-coded padlock and bookmark star, downloads with progress, identity key,
-  hamburger menu.
+  (the refresh button bypasses the HTTP cache), history, an address bar with local
+  suggestions, search, scheme inference, a colour-coded padlock and bookmark star,
+  downloads with progress, identity key, hamburger menu.
 - **Tor** — release builds bundle Tor; Settings → General has **Prefer Tor connections**
   and an automatic/local SOCKS proxy choice. With the preference off, a locator that
   publishes an onion endpoint gets an onion button in the address bar; clicking it
@@ -116,8 +119,9 @@ working while the remote page has focus.
   work too.
 - **Settings** is a page, not a modal: `General`, `Security`, `Identity & signer`,
   `Trusted services` and `About`, with a back-to-browsing button. `Esc` also leaves it.
+  **General** also picks the search engine and the Tor onion search preference.
   **Security** controls Off / Prefer HTTPS / HTTPS only, the optional HTTP interstitial,
-  and the list of persisted HTTP exceptions.
+  the list of persisted HTTP exceptions, and clearing browsing history.
 - **Shortcuts** (also shown in the menu): `Ctrl+T`, `Ctrl+W`, `Ctrl+Tab` /
   `Ctrl+Shift+Tab`, `Ctrl+Shift+N` (private tab), `Ctrl+Shift+O` (Tor tab), `Ctrl+L`,
   `Ctrl+R`, `Ctrl+Shift+R`, `Ctrl+.`, `Ctrl+D` (bookmark), `Ctrl+H` (history),
@@ -138,6 +142,39 @@ working while the remote page has focus.
   `userData/session.json` and restored on the next launch. Private and Tor tabs are never
   restored; only addresses are stored.
 - **Window title** follows the active page.
+
+---
+
+## Address bar and search
+
+The address bar classifies input locally before anything is sent anywhere, and the
+dropdown always states what Enter will do:
+
+| Input | Result |
+| --- | --- |
+| `ncc://npub1…/web`, `npub1…`, `npub1…/web`, 64-hex | `ncc://…` (default service `addr`) |
+| `https://…`, `http://…` | as typed, subject to the HTTPS policy |
+| `example.com`, `sub.example.com:8443` | `https://…` |
+| `localhost:5173`, `127.0.0.1`, `[::1]`, `*.local` | `http://…` |
+| `abc.onion/path` | `http://abc.onion/path` over Tor |
+| words, phrases, a single label, leading `?` | search |
+| any other `scheme:` | local error |
+| `nsec1…` / `ncryptsec1…` | refused locally; never searched, stored or logged |
+
+- **Suggestions are local** — bookmarks, normal-tab history, tabs of the same kind and
+  NCC services already seen for a typed npub. Focusing an empty address bar shows recent
+  sites and bookmarks. Nothing is fetched from the search engine as you type.
+- **Keyboard** — `↑`/`↓` select, `Enter` opens the highlighted row, `Tab` completes the
+  URL, `Esc` closes the dropdown (a second `Esc` restores the draft), `Alt+Enter` opens
+  the row in a new tab of the same kind.
+- **Search engines** — DuckDuckGo (default), Brave, Startpage, Google, Bing, SearXNG and
+  a custom `%s` template. HTTPS is required except for loopback and `.onion` hosts; a
+  misconfigured engine falls back to DuckDuckGo and Settings shows the error.
+- **Tor** — full Tor tabs use DuckDuckGo's onion endpoint when **Use onion search in Tor
+  tabs** is on, otherwise the engine's normal URL over the tab's fixed proxy.
+- **History** lives in `userData/history.json`: normal tabs only, deduplicated with visit
+  counts, capped at 3000 entries and 180 days. Private and Tor tabs are never recorded,
+  and Settings → Security clears it.
 
 ---
 
@@ -466,6 +503,8 @@ src/main
   tor/guard.ts       strict per-tab allowlist for resources loaded over Tor
   cache-store.ts     on-disk locator cache (public records only)
   bookmarks.ts       local bookmarks, persisted to userData
+  history.ts         local normal-tab history for address-bar suggestions
+  omnibox.ts         suggestion ranking and aggregation (pure over its sources)
   session-store.ts   saved tabs + window geometry for session restore
   downloads.ts       download manager: sanitised names, progress, cancel, reveal
   favicon.ts         fetch page icons, convert to bounded data URLs
@@ -493,10 +532,10 @@ src/main
 src/preload
   index.ts           contextBridge → window.ncc (chrome only)
   content.ts         contextBridge → window.nostr (top-level page frames only)
-src/renderer         React chrome: tabs, toolbar, menu, downloads, history, settings,
-                     security banner/interstitial, signer sheet, welcome
-src/shared           ncc:// parser, types, relay validation, commands, tab order,
-                     download formatting (no Node imports)
+src/renderer         React chrome: tabs, toolbar, omnibox, menu, downloads, history,
+                     settings, security banner/interstitial, signer sheet, welcome
+src/shared           ncc:// parser, omnibox classifier, search engines, types, relay
+                     validation, commands, tab order, download formatting (no Node imports)
 publisher/           separate Vite/React/Tailwind app: NIP-07 locator + NCC-02 publisher
 ```
 
@@ -509,12 +548,14 @@ general IPC bridge.
 ## Testing
 
 ```bash
-npm test       # 263 unit tests: URL parser, locator rules, resolver, routing, pins,
+npm test       # 293 unit tests: URL parser, locator rules, resolver, routing, pins,
                # signer crypto, identity storage, NIP-46, approvals, permissions,
                # ephemeral signer permissions, shortcuts, context menus, relays,
                # downloads, tab order, bookmarks, favicons, session storage, NCC-02
                # anchoring, Tor transport selection, proxy/PAC validation, Tor manager
-               # fallback, HTTPS policy/exceptions, clearnet lock state, publisher events
+               # fallback, HTTPS policy/exceptions, address-bar classification, search
+               # templates, suggestion ranking, browsing history, clearnet lock state,
+               # publisher events
 npm run e2e    # real Electron window against a mock relay and local HTTP services
 ```
 
@@ -537,7 +578,10 @@ navigation, onion-only and Tor-unavailable failures against a fake SOCKS5 proxy)
 **full Tor tab** whose page, endpoint and relay lookups all hit the fake SOCKS proxy,
 **private tab cookie isolation and clearing**, private-tab session-restore exclusion,
 HTTPS endpoint preference, the HTTP warning banner, clearnet and NCC HTTP
-interstitials/exceptions, the hamburger menu, **real global shortcuts sent through X**
+interstitials/exceptions, address-bar inference (bare npub → `ncc://`, bare loopback →
+`http://`), local suggestions with arrow-key selection and Tab completion, search
+against a local mock engine, the private-key refusal, browsing-history privacy, the
+hamburger menu, **real global shortcuts sent through X**
 (Ctrl+T/W/L while the page is focused), a **real NIP-46 round-trip against a mock
 bunker** — connect, remote signing, remote decryption of a targeted locator, and
 disconnect — and the **publisher app publishing through the built-in signer and being
@@ -598,8 +642,8 @@ The release job also uploads `SHA256SUMS.txt`. Pushing a tag is the whole releas
 
 ```bash
 npm version patch --no-git-tag-version   # or edit package.json
-git commit -am "Release v0.2.1"
-git tag -a v0.2.1 -m "Nostr Navigator v0.2.1"
+git commit -am "Release v0.3.1"
+git tag -a v0.3.1 -m "Nostr Navigator v0.3.1"
 git push origin main --follow-tags
 ```
 
@@ -626,7 +670,7 @@ or SmartScreen prompts. The Flatpak bundle declares the flathub
 
 ---
 
-## Known limitations (v0.2)
+## Known limitations (v0.3)
 
 - **Absolute-path subresources** (`/style.css`) are attributed to the page's service via
   the `Referer` header, falling back to the active service for that npub. A page-authored
@@ -679,6 +723,9 @@ or SmartScreen prompts. The Flatpak bundle declares the flathub
 - **HTTPS policy is not HSTS.** “Prefer HTTPS” and “HTTPS only” apply to navigation and
   NCC endpoint selection; a page can still request plaintext subresources that Chromium
   does not already block as mixed content. HTTP exceptions are local to this profile.
+- **Suggestions never come from the search engine.** There are no live autocomplete
+  requests, by design; typing sends nothing until Enter is pressed. Only normal-tab
+  history feeds suggestions, so a fresh profile starts with bookmarks and open tabs.
 - **Clearnet pages** load directly, with normal Chromium error handling.
 
 ---

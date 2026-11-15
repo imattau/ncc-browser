@@ -5,6 +5,8 @@ import { nip19 } from 'nostr-tools'
 import type { TabKind } from '@shared/types'
 import { ApprovalBroker } from './approval'
 import { BookmarkStore } from './bookmarks'
+import { HistoryStore } from './history'
+import { OmniboxService } from './omnibox'
 import { LocatorCacheStore } from './cache-store'
 import { ConfigStore } from './config'
 import { DownloadManager } from './downloads'
@@ -209,6 +211,11 @@ app.whenReady().then(async () => {
   })
 
   const bookmarks = new BookmarkStore(join(app.getPath('userData'), 'bookmarks.json'))
+  const omnibox = new OmniboxService({
+    history: new HistoryStore(join(app.getPath('userData'), 'history.json')),
+    bookmarks,
+    config: () => config.get()
+  })
   const sessionStore = new SessionStore(join(app.getPath('userData'), 'session.json'))
   const initialSession = sessionStore.load()
 
@@ -219,6 +226,7 @@ app.whenReady().then(async () => {
     rendererFile: join(__dirname, '../renderer/index.html'),
     activeServices,
     httpPolicies,
+    omnibox,
     partitionFor,
     releaseSession,
     bookmarks,

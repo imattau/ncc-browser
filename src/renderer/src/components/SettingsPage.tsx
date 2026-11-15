@@ -6,6 +6,7 @@ import {
   Globe,
   KeyRound,
   RotateCcw,
+  Search,
   Shield,
   ShieldCheck,
   SlidersHorizontal,
@@ -13,6 +14,7 @@ import {
   Trash2
 } from 'lucide-react'
 import { DEFAULT_RELAYS, DEFAULT_TOR_SOCKS } from '@shared/types'
+import { SEARCH_ENGINES, type SearchEngineId } from '@shared/search'
 import type {
   HttpsMode,
   IdentityStatus,
@@ -70,6 +72,10 @@ export function SettingsPage({
   const [httpsMode, setHttpsMode] = useState<HttpsMode>('prefer')
   const [warnInsecure, setWarnInsecure] = useState(false)
   const [httpExceptions, setHttpExceptions] = useState<string[]>([])
+  const [searchEngine, setSearchEngine] = useState<SearchEngineId>('duckduckgo')
+  const [searchCustom, setSearchCustom] = useState('')
+  const [useOnionSearch, setUseOnionSearch] = useState(true)
+  const [historyCleared, setHistoryCleared] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -94,6 +100,7 @@ export function SettingsPage({
     setBunker('')
     setRemoteError(null)
     setConnectBusy(false)
+    setHistoryCleared(false)
     void Promise.all([
       window.ncc.getConfig(),
       window.ncc.identity(),
@@ -110,6 +117,9 @@ export function SettingsPage({
       setHttpsMode(config.httpsMode)
       setWarnInsecure(config.warnInsecure)
       setHttpExceptions(config.httpExceptions ?? [])
+      setSearchEngine(config.searchEngine)
+      setSearchCustom(config.searchEngineCustom)
+      setUseOnionSearch(config.useOnionSearch)
       setIdentity(status)
       setPermissions(trusted)
     })
@@ -183,13 +193,25 @@ export function SettingsPage({
     }
 
     const securityResult = await window.ncc.setSecurityConfig({ httpsMode, warnInsecure })
-    setLoading(false)
     if (!securityResult.ok) {
+      setLoading(false)
       setError(securityResult.error ?? 'Could not save security settings')
       return
     }
 
+    const searchResult = await window.ncc.setSearchConfig({
+      engine: searchEngine,
+      custom: searchCustom,
+      useOnionSearch
+    })
+    setLoading(false)
+    if (!searchResult.ok) {
+      setError(searchResult.error ?? 'Could not save search settings')
+      return
+    }
+
     const config =
+      searchResult.config ??
       securityResult.config ??
       torResult.config ??
       anchorResult.config ??
@@ -205,6 +227,9 @@ export function SettingsPage({
       setHttpsMode(config.httpsMode)
       setWarnInsecure(config.warnInsecure)
       setHttpExceptions(config.httpExceptions ?? [])
+      setSearchEngine(config.searchEngine)
+      setSearchCustom(config.searchEngineCustom)
+      setUseOnionSearch(config.useOnionSearch)
     }
     setTorStatus(await window.ncc.torStatus())
     setSaved(true)
@@ -235,6 +260,11 @@ export function SettingsPage({
   const clearHttpExceptions = async (): Promise<void> => {
     const config = await window.ncc.clearHttpExceptions()
     setHttpExceptions(config.httpExceptions ?? [])
+  }
+
+  const clearBrowsingHistory = async (): Promise<void> => {
+    await window.ncc.clearBrowsingHistory()
+    setHistoryCleared(true)
   }
 
   const testTor = async (): Promise<void> => {
@@ -559,6 +589,97 @@ export function SettingsPage({
                   </div>
                 </div>
 
+                <div className="mt-4 border-t border-[color:var(--color-line)] pt-4">
+                  <div className="flex items-center gap-2">
+                    <Search className="h-3.5 w-3.5 text-[color:var(--color-accent)]" />
+                    <h3 className="text-[12px] font-semibold text-[#e7e9ef]">Search</h3>
+                  </div>
+
+                  <label
+                    htmlFor="search-engine"
+                    className="mb-1.5 mt-3 block text-[10.5px] font-semibold uppercase tracking-wide text-[color:var(--color-muted)]"
+                  >
+                    Search engine
+                  </label>
+                  <select
+                    id="search-engine"
+                    value={searchEngine}
+                    onChange={(event) => {
+                      setSearchEngine(event.target.value as SearchEngineId)
+                      setSaved(false)
+                    }}
+                    className="w-full rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] px-3 py-2 text-[12px] text-[#dfe3ea] outline-none focus:border-[color:var(--color-accent)]/60"
+                  >
+                    {SEARCH_ENGINES.map((engine) => (
+                      <option key={engine.id} value={engine.id}>
+                        {engine.label}
+                      </option>
+                    ))}
+                  </select>
+
+                  {searchEngine === 'searx' ? (
+                    <input
+                      id="searx-url"
+                      value={searchCustom}
+                      onChange={(event) => {
+                        setSearchCustom(event.target.value)
+                        setSaved(false)
+                      }}
+                      placeholder="https://searx.example"
+                      spellCheck={false}
+                      autoComplete="off"
+                      aria-label="SearXNG instance URL"
+                      className="mt-2 w-full rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] px-3 py-2 font-mono text-[12px] text-[#dfe3ea] outline-none focus:border-[color:var(--color-accent)]/60"
+                    />
+                  ) : null}
+
+                  {searchEngine === 'custom' ? (
+                    <input
+                      id="search-custom"
+                      value={searchCustom}
+                      onChange={(event) => {
+                        setSearchCustom(event.target.value)
+                        setSaved(false)
+                      }}
+                      placeholder="https://example.com/search?q=%s"
+                      spellCheck={false}
+                      autoComplete="off"
+                      aria-label="Custom search URL"
+                      className="mt-2 w-full rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] px-3 py-2 font-mono text-[12px] text-[#dfe3ea] outline-none focus:border-[color:var(--color-accent)]/60"
+                    />
+                  ) : null}
+
+                  <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-xl border border-[color:var(--color-line)] bg-[#0e1016] p-3.5">
+                    <input
+                      type="checkbox"
+                      id="search-onion"
+                      checked={useOnionSearch}
+                      onChange={(event) => {
+                        setUseOnionSearch(event.target.checked)
+                        setSaved(false)
+                      }}
+                      className="mt-0.5 h-4 w-4 accent-[color:var(--color-accent)]"
+                    />
+                    <span>
+                      <span className="block text-[12px] font-medium text-[#e7e9ef]">
+                        Use onion search in Tor tabs
+                      </span>
+                      <span className="mt-0.5 block text-[11.5px] leading-relaxed text-[color:var(--color-muted)]">
+                        DuckDuckGo publishes an onion endpoint; full Tor tabs use it so the
+                        search query never leaves the Tor network. Other engines use their
+                        normal URL over Tor.
+                      </span>
+                    </span>
+                  </label>
+
+                  <p className="mt-3 text-[11px] leading-relaxed text-[color:var(--color-muted)]">
+                    Suggestions come from bookmarks, open tabs and normal-tab history. The
+                    browser never asks the engine for suggestions as you type: the query is
+                    sent only when you press Enter. Plaintext HTTP search URLs are allowed
+                    only for loopback and .onion hosts.
+                  </p>
+                </div>
+
                 <div className="mt-3 flex items-center justify-between gap-2">
                   <button
                     type="button"
@@ -568,6 +689,9 @@ export function SettingsPage({
                       setPreferTor(false)
                       setTorMode('auto')
                       setTorSocks(DEFAULT_TOR_SOCKS)
+                      setSearchEngine('duckduckgo')
+                      setSearchCustom('')
+                      setUseOnionSearch(true)
                       setSaved(false)
                     }}
                     className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[11.5px] text-[color:var(--color-muted)] hover:bg-white/5 hover:text-white"
@@ -709,6 +833,28 @@ export function SettingsPage({
                     Clear all exceptions
                   </button>
                 ) : null}
+              </div>
+
+              <div className="rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-4">
+                <h3 className="text-[12px] font-semibold text-[#e7e9ef]">Browsing history</h3>
+                <p className="mt-1 text-[11.5px] leading-relaxed text-[color:var(--color-muted)]">
+                  Address-bar suggestions use local bookmarks and normal-tab history. Private
+                  and Tor tabs are never recorded. Clearing removes the history file now.
+                </p>
+                <div className="mt-3 flex items-center gap-3">
+                  <button
+                    type="button"
+                    data-clear-history
+                    onClick={() => void clearBrowsingHistory()}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-[color:var(--color-danger)]/30 px-2.5 py-1 text-[11px] text-[color:var(--color-danger)] hover:bg-[color:var(--color-danger)]/10"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                    Clear browsing history
+                  </button>
+                  {historyCleared ? (
+                    <span className="text-[11px] text-[color:var(--color-ok)]">Cleared.</span>
+                  ) : null}
+                </div>
               </div>
             </>
           ) : null}

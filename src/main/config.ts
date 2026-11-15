@@ -3,6 +3,11 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { dirname, join } from 'node:path'
 import { normalizeRelays, defaultRelays } from '@shared/relays'
 import {
+  DEFAULT_SEARCH_ENGINE,
+  isSearchEngineId,
+  type SearchEngineId
+} from '@shared/search'
+import {
   DEFAULT_HTTPS_MODE,
   DEFAULT_TOR_SOCKS,
   type AppConfig,
@@ -107,6 +112,24 @@ export class ConfigStore {
     return this.get()
   }
 
+  setSearchConfig(input: {
+    engine?: unknown
+    custom?: unknown
+    useOnionSearch?: unknown
+  }): AppConfig {
+    const current = this.get()
+    const engine: SearchEngineId = isSearchEngineId(input.engine)
+      ? input.engine
+      : current.searchEngine
+    const custom =
+      typeof input.custom === 'string' ? input.custom.trim().slice(0, 2048) : current.searchEngineCustom
+    const useOnionSearch =
+      typeof input.useOnionSearch === 'boolean' ? input.useOnionSearch : current.useOnionSearch
+    this.config = { ...current, searchEngine: engine, searchEngineCustom: custom, useOnionSearch }
+    this.write()
+    return this.get()
+  }
+
   private read(): AppConfig {
     try {
       if (existsSync(this.path)) {
@@ -127,8 +150,18 @@ export class ConfigStore {
               : DEFAULT_HTTPS_MODE,
           warnInsecure: parsed.warnInsecure === true,
           httpExceptions: Array.isArray(parsed.httpExceptions)
-            ? parsed.httpExceptions.filter((entry): entry is string => typeof entry === 'string').slice(-200)
-            : []
+            ? parsed.httpExceptions
+                .filter((entry): entry is string => typeof entry === 'string')
+                .slice(-200)
+            : [],
+          searchEngine: isSearchEngineId(parsed.searchEngine)
+            ? parsed.searchEngine
+            : DEFAULT_SEARCH_ENGINE,
+          searchEngineCustom:
+            typeof parsed.searchEngineCustom === 'string'
+              ? parsed.searchEngineCustom.trim().slice(0, 2048)
+              : '',
+          useOnionSearch: parsed.useOnionSearch !== false
         }
       }
     } catch (error) {
@@ -143,7 +176,10 @@ export class ConfigStore {
       torSocks: DEFAULT_TOR_SOCKS,
       httpsMode: DEFAULT_HTTPS_MODE,
       warnInsecure: false,
-      httpExceptions: []
+      httpExceptions: [],
+      searchEngine: DEFAULT_SEARCH_ENGINE,
+      searchEngineCustom: '',
+      useOnionSearch: true
     }
   }
 

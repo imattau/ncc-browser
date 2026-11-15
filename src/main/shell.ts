@@ -26,6 +26,7 @@ import type {
   Bookmark,
   DownloadNotice,
   NavState,
+  OmniboxSuggestion,
   PageMode,
   SecurityInfo,
   TabHistory,
@@ -35,6 +36,7 @@ import type {
 import type { ProtocolActivity } from './protocol'
 import type { EndpointHealth } from './ncc/health'
 import type { TransportPolicy } from './ncc/transport'
+import type { OmniboxService, OmniboxTab } from './omnibox'
 import {
   isHttpExemptUrl,
   shouldUpgradeHttp,
@@ -52,6 +54,7 @@ export interface ShellDeps {
   rendererFile: string
   activeServices: Record<TabKind, Map<string, string>>
   httpPolicies: Record<TabKind, HttpPolicy>
+  omnibox: OmniboxService
   partitionFor: (kind: TabKind) => string
   releaseSession: (kind: TabKind) => void
   bookmarks: BookmarkStore
@@ -632,6 +635,25 @@ export class BrowserShell {
     return { url: tab.displayUrl, title: tabTitle(tab) }
   }
 
+  /** Address-bar suggestions for the active tab; local sources only. */
+  suggest(input: string): OmniboxSuggestion[] {
+    const kind = this.activeTab()?.kind ?? 'normal'
+    const tabs: OmniboxTab[] = this.tabs
+      .filter((tab) => tab.mode !== 'blank' && tab.displayUrl && !tab.view.webContents.isDestroyed())
+      .map((tab) => ({
+        id: tab.id,
+        kind: tab.kind,
+        title: tabTitle(tab),
+        url: tab.displayUrl
+      }))
+    return this.deps.omnibox.suggest(input, kind, tabs)
+  }
+
+  clearBrowsingHistory(): void {
+    this.deps.omnibox.clearHistory()
+    this.syncState()
+  }
+
   /** Flush tabs and geometry immediately (quit path). */
   saveSessionNow(): void {
     if (this.saveTimer) {
@@ -763,32 +785,21 @@ export class BrowserShell {
       }
     }
 
-    if (/^https?:\/\//i.test(text)) {
-      const policy = this.deps.httpPolicies[tab.kind]
-      const key = webHttpKey(text)
-      const mode = policy.mode()
-      const http = /^http:\/\//i.test(text)
-      const exempt = isHttpExemptUrl(text)
+    const target = this.deps.omnibox.classify(text, tab.kind)
+    if (target.kind === 'invalid') {
+      tab.failure = { code: target.code, message: target.message }
+      this.syncState()
+      return
+    }
 
-      if (http && key && !exempt && !policy.isAllowed(key)) {
-        if (shouldUpgradeHttp(text, mode)) {
-          const httpsUrl = upgradeToHttps(text)
-          await this.loadWebTarget(tab, httpsUrl, { original: text, key, httpsUrl })
-          return
-        }
-        if (policy.warn()) {
-          this.showInsecurePrompt(tab, text, key)
-          return
-        }
-      }
-
-      await this.loadWebTarget(tab, text)
+    if (target.kind === 'web' || target.kind === 'search') {
+      await this.openWebUrl(tab, target.url)
       return
     }
 
     let address: NccAddress
     try {
-      address = parseNccAddress(text)
+      address = parseNccAddress(target.url)
     } catch (error) {
       tab.failure = {
         code: 'invalid-address',
@@ -808,6 +819,28 @@ export class BrowserShell {
     tab.failure = null
     this.showOnly(tab.id)
     await this.load(tab, internal)
+  }
+
+  /** Open a web or search URL, applying the same HTTPS policy as typed addresses. */
+  private async openWebUrl(tab: Tab, text: string): Promise<void> {
+    const policy = this.deps.httpPolicies[tab.kind]
+    const key = webHttpKey(text)
+    const http = /^http:\/\//i.test(text)
+    const exempt = isHttpExemptUrl(text)
+
+    if (http && key && !exempt && !policy.isAllowed(key)) {
+      if (shouldUpgradeHttp(text, policy.mode())) {
+        const httpsUrl = upgradeToHttps(text)
+        await this.loadWebTarget(tab, httpsUrl, { original: text, key, httpsUrl })
+        return
+      }
+      if (policy.warn()) {
+        this.showInsecurePrompt(tab, text, key)
+        return
+      }
+    }
+
+    await this.loadWebTarget(tab, text)
   }
 
   private async loadWebTarget(
@@ -1028,6 +1061,10 @@ export class BrowserShell {
     contents.on('did-navigate', (_event, url) => {
       tab.displayUrl = formatDisplayUrl(url)
       this.applyUrlToTab(tab, url)
+      // Only normal tabs contribute to address-bar suggestions.
+      if (tab.kind === 'normal' && /^(ncc:\/\/|https?:\/\/)/i.test(url)) {
+        this.deps.omnibox.recordVisit(tab.displayUrl, tabTitle(tab), 'normal')
+      }
       this.scheduleSessionSave()
       this.syncState()
     })
@@ -1039,7 +1076,13 @@ export class BrowserShell {
       this.syncState()
     })
 
-    contents.on('page-title-updated', () => this.syncState())
+    contents.on('page-title-updated', () => {
+      if (tab.kind === 'normal' && tab.displayUrl) {
+        const title = contents.isDestroyed() ? '' : contents.getTitle()
+        if (title) this.deps.omnibox.updateTitle(tab.displayUrl, title, 'normal')
+      }
+      this.syncState()
+    })
 
     contents.on('page-favicon-updated', (_event, favicons) => {
       const candidate = favicons.find((favicon) => /^(https?|ncc|data:image\/)/i.test(favicon))

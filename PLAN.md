@@ -246,6 +246,12 @@ is CJS and the package is ESM-only.
 - **M9 — Security policy:** ✅ Off/Prefer/HTTPS-only modes, published-HTTPS endpoint
   preference, loopback and onion exemptions, a persistent HTTP warning banner, optional
   clearnet and NCC HTTP interstitials, and persisted/session HTTP exceptions.
+- **M10 — Address bar and search:** ✅ local classifier for `ncc://`/npub, clearnet hosts,
+  loopback, onion and search text; DuckDuckGo/Brave/Startpage/Google/Bing/SearXNG/custom
+  engines with onion search in Tor tabs; bookmark, history, open-tab and NCC-service
+  suggestions with keyboard navigation and Tab completion; persisted normal-tab history
+  that excludes private/Tor sessions; private-key refusal. Live engine suggestions are
+  deliberately out of scope.
 
 ---
 
@@ -286,6 +292,11 @@ These are bugs in the reference implementation, found while building this:
 - **Security:** HTTPS upgrade decisions, loopback/onion exemptions, published HTTPS
   endpoint ordering, banner/interstitial rendering, NCC warning tokens, persisted vs
   session HTTP exceptions.
+- **Address bar:** input classification (npub/hex/`ncc:`, domains and ports, loopback,
+  IP literals, onion, search phrases, unknown schemes, private keys), search template
+  validation and SearXNG expansion, onion substitution, suggestion ranking/merging and
+  per-tab-kind privacy, history retention/caps, and end-to-end typing, arrow-key
+  selection, Tab completion, search and history privacy.
 - **Manual:** sidecar publisher on machine A → `ncc://<npub>/<service>` on machine B;
   self-signed HTTPS with matching `k`; mismatched `k`; `http` endpoint; dead endpoint;
   bundled Tor bootstrap in the packaged deb/Flatpak.
