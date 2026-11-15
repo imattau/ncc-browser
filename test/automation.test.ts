@@ -77,6 +77,47 @@ describe('McpHandler', () => {
     expect(Buffer.from(content[0]!.data, 'base64').toString()).toBe('png')
   })
 
+  it('returns console diagnostics for the granted site only', async () => {
+    const base = fakeHost()
+    const contents = base.host.contents('t1')!
+    const host: AutomationHost = {
+      ...base.host,
+      contents: (id) =>
+        id === 't1'
+          ? {
+              ...contents,
+              diagnostics: () => [
+                { time: 't', kind: 'console', level: 'error', message: 'own', url: '', line: 1 },
+                {
+                  time: 't',
+                  kind: 'console',
+                  level: 'error',
+                  message: 'same',
+                  url: 'https://example.com/app.js',
+                  line: 2
+                },
+                {
+                  time: 't',
+                  kind: 'console',
+                  level: 'error',
+                  message: 'other',
+                  url: 'https://other.example/x.js',
+                  line: 3
+                }
+              ]
+            }
+          : null
+    }
+    const handler = new McpHandler(host, allowAll, info)
+    const reply = await handler.handle(
+      rpc('tools/call', { name: 'get_console_logs', arguments: { limit: 10 } })
+    )
+    const text = (reply?.result as { content: Array<{ text: string }> }).content[0]!.text
+    expect(text).toContain('own')
+    expect(text).toContain('same')
+    expect(text).not.toContain('other')
+  })
+
   it('refuses unknown tabs and unknown tools', async () => {
     const handler = new McpHandler(fakeHost().host, allowAll, info)
     const bad = await handler.handle(
@@ -122,12 +163,27 @@ describe('AutomationServer', () => {
   })
 })
 
+const NPUB = 'npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqhs2n3v'
+
 describe('siteOf', () => {
   it('reduces addresses to the unit a user grants', () => {
     expect(siteOf('https://example.com/a/b?q=1')).toBe('https://example.com')
     expect(siteOf('example.com/x')).toBe('https://example.com')
-    expect(siteOf('ncc://npub1abc/web/docs')).toBe('ncc://npub1abc/web')
-    expect(siteOf('nsite://npub1abc/')).toBe('nsite://npub1abc')
+    expect(siteOf(`ncc://${NPUB}/web/docs`)).toBe(`ncc://${NPUB}/web`)
+    expect(siteOf(`nsite://${NPUB}/`)).toBe(`nsite://${NPUB}`)
+  })
+
+  it('reduces the host form the content view loads to the same service', () => {
+    expect(siteOf(`ncc://${NPUB}.web/assets/app.js`)).toBe(`ncc://${NPUB}/web`)
+    expect(siteOf(`ncc://${NPUB}.web/`)).toBe(`ncc://${NPUB}/web`)
+    expect(siteOf(`ncc://${NPUB}.other/docs`)).toBe(`ncc://${NPUB}/other`)
+    expect(siteOf(`nsite://${NPUB}.blog/assets/app.js`)).toBe(`nsite://${NPUB}/blog`)
+    expect(siteOf(`nsite://${NPUB}.blog/`)).toBe(`nsite://${NPUB}/blog`)
+  })
+
+  it('keeps one service on either form comparable', () => {
+    expect(siteOf(`ncc://${NPUB}.web/assets/x.js`)).toBe(siteOf(`ncc://${NPUB}/web/`))
+    expect(siteOf(`nsite://${NPUB}.blog/index.html`)).toBe(siteOf(`nsite://${NPUB}/blog/`))
   })
 })
 

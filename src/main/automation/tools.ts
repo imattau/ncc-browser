@@ -191,7 +191,9 @@ export const TOOLS: ToolDefinition[] = [
       // site whose access the user granted for this call.
       const entries = t.contents
         .diagnostics()
-        .filter((entry) => siteOf(entry.url) === site)
+        // `executeJavaScript` and some inline scripts report an empty sourceId; those
+        // entries came from this tab's own context, so they belong to its site.
+        .filter((entry) => !entry.url || siteOf(entry.url) === site)
         .slice(-limit)
       return json({ url: page?.url, entries })
     }

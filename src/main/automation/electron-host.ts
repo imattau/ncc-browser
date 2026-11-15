@@ -147,7 +147,7 @@ export function createElectronHost(shell: BrowserShell): AutomationHost {
       return shell
         .extensionPages()
         .filter((page) => page.kind === 'normal')
-        .map(({ tabId, url, title, active }) => ({ tabId, url, title, active })),
+        .map(({ tabId, url, title, active }) => ({ tabId, url, title, active }))
     },
     newTab: (url) => {
       const tabId = shell.newTab(url)

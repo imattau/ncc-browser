@@ -659,6 +659,40 @@ class Cdp {
   }
 }
 
+async function mcpRequest(endpoint, body) {
+  const response = await fetch(endpoint.url, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      accept: 'application/json, text/event-stream',
+      authorization: `Bearer ${endpoint.token}`
+    },
+    body: JSON.stringify(body)
+  })
+  const text = await response.text()
+  if (!text.trim()) return {}
+  const line = text.split('\n').find((entry) => entry.startsWith('data: '))
+  try {
+    return JSON.parse(line ? line.slice(6) : text)
+  } catch {
+    return {}
+  }
+}
+
+async function mcpTool(endpoint, name, args = {}) {
+  const out = await mcpRequest(endpoint, {
+    jsonrpc: '2.0',
+    id: 9,
+    method: 'tools/call',
+    params: { name, arguments: args }
+  })
+  const content = out.result?.content ?? []
+  return {
+    isError: out.result?.isError === true,
+    text: content.map((entry) => entry.text ?? `[${entry.type}]`).join('\n')
+  }
+}
+
 async function waitForTarget(predicate, attempts = 80, port = 9333) {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const targets = await fetchJson(`http://127.0.0.1:${port}/json/list`)
@@ -886,7 +920,10 @@ async function main() {
         NCC_PASSWORDS_IMPORT: passwordImportPath,
         NCC_PASSWORDS_EXPORT: passwordExportDir,
         NCC_EXTENSION_DIR: join(ROOT, 'test/fixtures/hello-extension'),
-        NCC_REVALIDATE_SECONDS: '1'
+        NCC_REVALIDATE_SECONDS: '1',
+        NCC_AUTOMATION: '1',
+        NCC_AUTOMATION_PORT: '47825',
+        NCC_AUTOMATION_AUTO_APPROVE: '1'
       },
       stdio: ['ignore', 'pipe', 'pipe']
     }
@@ -997,6 +1034,50 @@ async function main() {
       'ncc pages can fetch their own origin',
       ownFetch.status === 200 && ownFetch.bytes > 0,
       JSON.stringify(ownFetch)
+    )
+
+    // Agent control: the built-in MCP server must list its tools and return renderer
+    // diagnostics for the service the user granted.
+    let automation = null
+    for (let attempt = 0; attempt < 100 && !automation; attempt += 1) {
+      try {
+        const parsed = JSON.parse(readFileSync(join(userData, 'automation.json'), 'utf8'))
+        if (parsed?.url && parsed?.token) automation = parsed
+      } catch {
+        await sleep(100)
+      }
+    }
+    check('automation publishes a loopback endpoint', Boolean(automation?.url), String(automation?.url))
+
+    const mcpInit = await mcpRequest(automation, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: {
+        protocolVersion: '2025-06-18',
+        capabilities: {},
+        clientInfo: { name: 'e2e', version: '1' }
+      }
+    })
+    check(
+      'automation speaks MCP',
+      mcpInit.result?.serverInfo?.name === 'nostr-navigator',
+      JSON.stringify(mcpInit.result?.serverInfo ?? null)
+    )
+    const mcpTools = await mcpRequest(automation, { jsonrpc: '2.0', id: 2, method: 'tools/list' })
+    const toolNames = (mcpTools.result?.tools ?? []).map((entry) => entry.name)
+    check('automation lists the console-log tool', toolNames.includes('get_console_logs'), toolNames.join(','))
+
+    const mcpTabs = await mcpTool(automation, 'tabs_list')
+    check('automation lists open tabs', mcpTabs.text.includes('"tabId"'), mcpTabs.text.slice(0, 80))
+
+    await mcpTool(automation, 'evaluate', { expression: "console.error('mcp-console-marker')" })
+    await sleep(400)
+    const mcpLogs = await mcpTool(automation, 'get_console_logs', { limit: 50 })
+    check(
+      'console logs capture renderer messages for the granted service',
+      mcpLogs.text.includes('mcp-console-marker'),
+      mcpLogs.text.slice(0, 120)
     )
 
     const screenshot = await cdp.send('Page.captureScreenshot', { format: 'png' })
