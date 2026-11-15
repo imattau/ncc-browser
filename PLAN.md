@@ -214,7 +214,8 @@ endpoint without invalidating the record (NCC-05 §7).
   re-prompting for the same request for 30 s. Pending requests are replayed to the
   chrome renderer on mount, so a request raised while content is still loading cannot
   sit invisible until its timeout. The padlock's site panel shows and toggles trust for
-  the current origin alongside Settings → Signer permissions.
+  the current origin alongside Settings → Signer permissions. Session grants are scoped
+  to the current identity; persistent trust is origin-only — see §11.
 - **Renderer isolation:** content view uses `sandbox: true`, `contextIsolation: true`,
   no Node, its own `persist:ncc-content` partition. The chrome UI never shares a
   session or origin with remote content.
@@ -466,3 +467,34 @@ button.
 - BLE availability/permissions inside the Flatpak; QR v2 uses the tunnel, but Chromium
   may still ask for adapter power/permission.
 - Privacy: the tunnel server is Google's, as in Chrome.
+
+---
+
+## 11. Future work: identity-scoped signer trust
+
+Persistent NIP-07 trust is keyed by origin alone (`signer-permissions.json` →
+`ncc://<npub>/<service>`, or a web origin). Session grants from 0.9.0 are stricter: they
+are keyed `identity | origin | tab kind`, so changing identity drops them immediately.
+
+The asymmetry is deliberate but arguable. Trusting a publisher is a judgement about the
+service, not the key, and an origin that has been vetted once is usually the same site
+under a different account. The counter-argument is that a key change is a fresh consent
+boundary: after importing or connecting a different identity, an origin trusted for the
+old one can sign as the new one without asking.
+
+Options if this is revisited:
+
+1. **Namespace the file.** Store `<npub>|<origin>` (and web origins the same way), bump
+   `version` to 2, and on load either drop v1 entries (re-prompt everything once) or
+   attribute them to the identity that was active at migration time. Revoking from the
+   site panel or Settings then removes only the current identity's entry, and a
+   "revoke everywhere" action is needed to keep the old affordance.
+2. **Leave the store alone and make the boundary visible.** Keep origin-scoped trust but
+   state the current identity in the sheet (already shown) and in the site panel row, so
+   the widening is at least legible. No migration.
+
+Cost is small either way — the store is 100 lines and the file is versioned — but option
+1 means every trusted site is re-approved once per identity switch, which is the kind of
+friction that trains people to tick "Always allow" without reading. Not scheduled; worth
+doing only if identity switching becomes common or a report shows the widening being
+abused.
