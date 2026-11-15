@@ -6,11 +6,18 @@ import type { PermissionStore } from '../src/main/signer/permissions'
 import { Nip07Service, type Caller } from '../src/main/signer/service'
 
 function harness(
-  options: { remember?: boolean; trusted?: boolean; defer?: boolean } = {}
+  options: {
+    remember?: boolean
+    trusted?: boolean
+    defer?: boolean
+    ephemeralSigner?: boolean
+    configured?: boolean
+  } = {}
 ) {
   const requests: Array<Omit<SignerRequest, 'id'>> = []
   const resolvers: Array<(decision: { allow: boolean; remember: boolean }) => void> = []
   const provider = {
+    status: () => ({ configured: true, mode: 'local', npub: 'npub1test', source: 'file' }),
     getPublicKey: vi.fn(async () => 'npub1test'),
     signEvent: vi.fn(async (event: { kind: number }) => ({ ...event, id: 'signed', sig: 'sig' })),
     nip04Encrypt: vi.fn(),
@@ -19,7 +26,7 @@ function harness(
     nip44Decrypt: vi.fn()
   }
   const identity = {
-    provider: () => provider,
+    provider: () => (options.configured === false ? null : provider),
     status: () => ({ configured: true, mode: 'local', npub: 'npub1test', source: 'file' })
   } as unknown as IdentityManager
   const permissions = {
@@ -46,7 +53,8 @@ function harness(
     permissions,
     approvals,
     getRelays: () => [],
-    autoApprove: false
+    autoApprove: false,
+    useEphemeralSigner: () => options.ephemeralSigner === true
   })
   return { service, provider, permissions, approvals, requests, resolvers }
 }
@@ -203,5 +211,31 @@ describe('Nip07Service approval ergonomics', () => {
     const { service, approvals } = harness({ trusted: true })
     await expect(service.getPublicKey(caller())).resolves.toBe('npub1test')
     expect(approvals.request).not.toHaveBeenCalled()
+  })
+})
+
+describe('Nip07Service ephemeral signers', () => {
+  it('gives private tabs a generated identity when none is configured', async () => {
+    const { service } = harness({ ephemeralSigner: true, configured: false })
+    const key = await service.getPublicKey(caller('private'))
+    expect(key).toMatch(/^[0-9a-f]{64}$/)
+    expect(await service.getPublicKey(caller('private'))).toBe(key)
+  })
+
+  it('keeps private and Tor identities separate and rotates on release', async () => {
+    const { service } = harness({ ephemeralSigner: true, configured: false })
+    const first = await service.getPublicKey(caller('private'))
+    const tor = await service.getPublicKey(caller('tor'))
+    expect(tor).not.toBe(first)
+
+    service.clearEphemeral('private')
+    const rotated = await service.getPublicKey(caller('private'))
+    expect(rotated).not.toBe(first)
+    expect(await service.getPublicKey(caller('tor'))).toBe(tor)
+  })
+
+  it('never hands a generated identity to a normal tab', async () => {
+    const { service } = harness({ ephemeralSigner: true, configured: false })
+    await expect(service.getPublicKey(caller('normal'))).rejects.toThrow(/No Nostr identity/)
   })
 })
