@@ -306,3 +306,83 @@ These are bugs in the reference implementation, found while building this:
 - **Manual:** sidecar publisher on machine A → `ncc://<npub>/<service>` on machine B;
   self-signed HTTPS with matching `k`; mismatched `k`; `http` endpoint; dead endpoint;
   bundled Tor bootstrap in the packaged deb/Flatpak.
+
+---
+
+## 10. Future work: Web-page passkeys (QR / hybrid)
+
+**Status:** researched, not implemented. Scrapped for now because the phone/QR flow
+requires an Electron change, not an app change.
+
+**Goal.** A site loaded over HTTPS calls `navigator.credentials.get()` and the browser
+offers "use your phone" with a QR, exactly as Chrome/Edge do. This is for clearnet
+`https://` pages only. `ncc://` pages cannot participate: an RP ID must be a registrable
+domain, so passkeys are incompatible with a DNS-free origin.
+
+### What works and what does not (Electron 45.3.2 / Chromium 156)
+
+- **No hybrid transport.** `ElectronAuthenticatorRequestClientDelegate` does not override
+  `ConfigureDiscoveries`, so `FidoDiscoveryFactory::set_cable_data` is never called and
+  Chromium never generates a `FIDO:/` QR. The caBLE code is compiled in; only the
+  embedder wiring is missing.
+- **No account picker.** Electron emits `select-webauthn-account` when a discoverable
+  credential needs choosing, but ncc-browser registers no listener. With no listener
+  Chromium cancels the request with `NotAllowedError`, so passkey sign-in fails even when
+  an authenticator is present.
+- **Linux** has no platform authenticator. Only USB FIDO2 keys; Electron has no PIN prompt
+  and no hybrid UI. The Flatpak exposes no USB devices (`finishArgs` only has
+  `--device=dri`).
+- **macOS** Touch ID requires `app.configureWebAuthn({ touchID })`, a signed app and a
+  keychain-access-group entitlement. Apple platform passkeys require an Associated
+  Domains entry + AASA per relying party, which a browser cannot provide for arbitrary
+  sites, and they ignore PRF.
+- **Windows** delegates to the Windows WebAuthn API, whose system dialog may already show
+  "Use another device"; this is unverified.
+- Third-party passkey providers (1Password, Bitwarden, KeePassXC) are unavailable because
+  Electron cannot run their browser extensions.
+- Phone/QR is tracked upstream in
+  [electron/electron#24573](https://github.com/electron/electron/issues/24573); still
+  missing in Electron 45.
+
+### Patch shape, when picked up
+
+All of this lives in `shell/browser/webauthn/`, so no Chromium patch is needed:
+
+1. Override `ConfigureDiscoveries(...)` on
+   `ElectronAuthenticatorRequestClientDelegate`. It receives the request type and a
+   `device::FidoDiscoveryFactory*`.
+2. Generate `std::array<uint8_t, device::cablev2::kQRKeySize>` with `crypto::RandBytes`,
+   call `factory->set_cable_data(request_type, key)`, and compute the QR string with
+   `device::cablev2::qr::Encode(key, request_type)`.
+3. Set a network context factory from the requesting tab's browser context
+   (`GetDefaultStoragePartition()->GetNetworkContext()`) so the tunnel follows the tab's
+   proxy settings, including Tor.
+4. Store the BLE power/permission callbacks that `RegisterActionCallbacks` currently
+   discards, and forward `set_cable_event_callback` states (phone connected, ready).
+5. Emit session events, chrome-only: `webauthn-hybrid-qr` with
+   `{ relyingPartyId, origin, requestType, qrCode, frame }`, and a state/close event.
+6. In ncc-browser, render the QR locally in a chrome overlay (no remote QR service), show
+   the RP ID and requesting origin, and hide it on completion/close.
+
+Cancellation, PIN entry and the account picker are separate gaps. A tab reload currently
+cancels a pending request; a session-level cancel API is needed for a proper Cancel
+button.
+
+### Spike plan (not started)
+
+1. Post a design comment on #24573 with the event/API proposal before building.
+2. Build Electron v45.3.2 on a remote Linux box (250–300 GB free, 32 GB+ RAM); the local
+   machine is too tight on disk and free memory.
+3. Patch, then test with `https://webauthn.io` and an Android phone plus an iPhone:
+   create a passkey via QR, then authenticate via QR.
+4. Verify USB security keys still work and `ncc://` pages still reject WebAuthn.
+5. Upstream the patch; until it lands, a fork/patched Electron would have to be shipped
+   via `electronDist`/`ELECTRON_OVERRIDE_DIST_PATH`.
+
+### Open risks
+
+- Upstream API review and timing; the issue has been open since 2020.
+- Build cost and fork maintenance if upstream is slow.
+- BLE availability/permissions inside the Flatpak; QR v2 uses the tunnel, but Chromium
+  may still ask for adapter power/permission.
+- Privacy: the tunnel server is Google's, as in Chrome.

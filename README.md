@@ -754,6 +754,11 @@ or SmartScreen prompts. The Flatpak bundle declares the flathub
   `ncc://<npub>/<service>` (or per web origin). A compromised service on a trusted origin
   can sign anything, so revoke trust when a service changes hands. With a NIP-46 signer
   the device also confirms each signature.
+- **Web-page passkeys are not supported yet.** Chromium exposes WebAuthn, but Electron does
+  not implement the phone/QR hybrid transport, and the browser does not listen for the
+  discoverable-credential account picker, so passkey sign-in on HTTPS sites fails.
+  `ncc://` pages cannot have passkeys at all, because an RP ID must be a registrable
+  domain. The investigated Electron patch and upstream path are in `PLAN.md` §10.
 - **NIP-46 coverage depends on the signer.** Private locators need `nip44_decrypt`, and
   some signers only implement signing. Without `safeStorage` the session is not persisted
   and must be reconnected after a restart. A bunker's relay list can only be changed by
