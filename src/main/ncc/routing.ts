@@ -16,7 +16,7 @@ export interface RewriteContext {
   endpointOwners: Map<string, { pubkey: string; service: string }>
 }
 
-/** Build an endpoint request and attach routing identity for NCC-aware gateways. */
+/** Build an endpoint request and attach canonical (hex) identity for NCC gateways. */
 export function upstreamRequestInit(
   request: Request,
   target: URL,

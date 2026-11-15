@@ -9,7 +9,7 @@ import type { AnchorInfo, TransportSecurity } from '@shared/types'
 import { renderErrorPage, renderHttpWarningPage, renderPlainFailure } from './error-page'
 import { orderByHealth, type EndpointHealth } from './ncc/health'
 import { joinPaths, rewriteLocation, upstreamRequestInit } from './ncc/routing'
-import type { NccResolver } from './ncc/resolver'
+import { toHexPubkey, type NccResolver } from './ncc/resolver'
 import {
   hasOnionEndpoint,
   selectTransportEndpoints,
@@ -348,7 +348,7 @@ async function handleNccRequest(request: Request, deps: ProtocolDeps): Promise<R
     try {
       response = await deps.session.fetch(
         target.toString(),
-        upstreamRequestInit(request, target, pubkey, service)
+        upstreamRequestInit(request, target, toHexPubkey(pubkey) ?? pubkey, service)
       )
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
