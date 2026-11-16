@@ -141,8 +141,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          VERSION=$(node -p "require('./package.json').version")
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 ||
-            gh release create "$GITHUB_REF_NAME" --generate-notes --title "$GITHUB_REF_NAME"
+            gh release create "$GITHUB_REF_NAME" \
+              --title "Android ${VERSION} (alpha)" \
+              --notes-file docs/android-release-notes.md
           gh release upload "$GITHUB_REF_NAME" release/android/ncc-browser-android-arm64.apk release/android/SHA256SUMS.txt --clobber
 
       # `zsp publish` never reads the keystore: it signs the listing and release with

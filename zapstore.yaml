@@ -7,7 +7,30 @@
 # CI only replaces the file at `release_source` and runs `zsp publish`, so this path
 # is a contract: keep it stable. The catalog relay reads the APK itself for the
 # package id, certificate, ABI and versionCode, so the filename carries no meaning.
+#
+# The Android build is alpha. That has to be visible before anyone installs it, so it
+# is in the name, the summary and the release notes rather than only in the body.
 
 repository: https://github.com/imattau/ncc-browser
 release_source: ./release/android/ncc-browser-android-arm64.apk
 channel: main
+
+name: Nostr Navigator (alpha)
+summary: Alpha Android build of the NCC browser. Not a daily driver.
+description: |
+  **Alpha software.** This build exists to test the Android port of Nostr Navigator,
+  the browser that resolves services by Nostr identity instead of DNS.
+
+  What works: NCC-05 resolution from relays, SPKI pinning of endpoints, pages served
+  over a loopback proxy so each service keeps its own origin, and a NIP-07 shim
+  injected into documents.
+
+  What is missing: identity and signer approvals (every signer call fails), tabs,
+  history, bookmarks, downloads, settings, and the real browser chrome. Extensions,
+  private tabs and Tor are desktop-only.
+
+  The desktop build is unaffected and remains the supported one.
+website: https://github.com/imattau/ncc-browser
+license: MIT
+tags: [nostr, browser, ncc, alpha]
+release_notes: docs/android-release-notes.md
