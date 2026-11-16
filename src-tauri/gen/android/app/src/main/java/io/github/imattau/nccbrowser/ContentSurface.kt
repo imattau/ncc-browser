@@ -41,6 +41,8 @@ import java.net.URLEncoder
  */
 class ContentSurface(
   val id: String,
+  /** A private tab: it loads through the listener that keeps nothing. */
+  val isPrivate: Boolean = false,
   private val container: ViewGroup,
   private val proxyPort: () -> Int,
   private val report: (JSONObject) -> Unit,

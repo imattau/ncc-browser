@@ -19,8 +19,17 @@ struct SignerState {
 /// The loopback port the NCC proxy is listening on, once it started.
 struct ProxyPort(Option<u16>);
 
+/// The second listener private tabs use. Separate on purpose: it is a different origin,
+/// so its storage is separate, and it is built without any of the on-disk caches.
+struct PrivateProxyPort(Option<u16>);
+
 #[tauri::command]
 fn proxy_port(state: tauri::State<'_, ProxyPort>) -> Option<u16> {
+    state.0
+}
+
+#[tauri::command]
+fn private_proxy_port(state: tauri::State<'_, PrivateProxyPort>) -> Option<u16> {
     state.0
 }
 
@@ -364,6 +373,7 @@ pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             proxy_port,
+            private_proxy_port,
             bunker_connect,
             bunker_status,
             bunker_disconnect,
@@ -441,7 +451,27 @@ pub fn run() {
                 }
             };
 
+            // Private tabs: the same proxy, minus every cache and with a key that exists
+            // only in memory. Nothing a private tab does is written down.
+            let private_proxy = Arc::new(
+                ProxyState::new(&proxy_config(None, Some(settings.clone()))).with_signer(
+                    Arc::new(IdentityStore::ephemeral()),
+                    approvals.clone(),
+                ),
+            );
+            let private_port = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                start_proxy(private_proxy.clone())
+            }))
+            .ok()
+            .and_then(Result::ok);
+
+            match private_port {
+                Some(port) => println!("[proxy] private listener on 127.0.0.1:{port}"),
+                None => eprintln!("[proxy] could not start the private listener"),
+            }
+
             app.manage(ProxyPort(port));
+            app.manage(PrivateProxyPort(private_port));
             app.manage(SignerState {
                 identity,
                 approvals,

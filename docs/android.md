@@ -264,6 +264,12 @@ passphrase and rewritten with the device envelope.
       port from the shell instead of reading it off the page URL.
 - [x] Signer approvals show a countdown and trusted services can be revoked.
 - [x] History and bookmarks, kept in the shell's storage (200 entries).
+- [x] Private tabs: a second proxy listener with no cache directory and a key that
+      exists only in memory, so no record, manifest, blob or signature is written down.
+      The separate port is also a separate origin, so private tabs have their own
+      storage. Two limits worth knowing: cookies are scoped by host in Chromium and
+      cannot be isolated per tab, and the ephemeral key lasts for the app run rather
+      than for the private session.
 - [x] Storage: clear cache drops locator records, site manifests, verified blobs in
       memory and on disk, and the WebView page cache.
 - [x] A cold load asks for several files at once, so a lookup is gated per site: one

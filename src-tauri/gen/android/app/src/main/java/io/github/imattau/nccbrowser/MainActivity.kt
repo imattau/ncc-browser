@@ -58,6 +58,10 @@ class MainActivity : TauriActivity() {
 
   /** The proxy's port, as reported by the shell. Clearnet pages cannot reveal it. */
   private var proxyPortNumber = 0
+
+  /** The private listener's port. A different port is a different origin, so private
+   * tabs get their own storage instead of sharing the normal one. */
+  private var privatePortNumber = 0
   private var pendingDownload: Pair<File, String>? = null
   private lateinit var downloads: Downloads
 
@@ -291,10 +295,10 @@ class MainActivity : TauriActivity() {
     }
   }
 
-  private fun openTab(url: String, reuseActive: Boolean): Boolean {
+  private fun openTab(url: String, reuseActive: Boolean, isPrivate: Boolean = false): Boolean {
     if (reuseActive) {
       val current = active()
-      if (current != null && current.open(url)) {
+      if (current != null && current.isPrivate == isPrivate && current.open(url)) {
         setExpanded(false)
         emitTabs(false)
         return true
@@ -304,8 +308,9 @@ class MainActivity : TauriActivity() {
     captureActive {
       val tab = ContentSurface(
         "tab-${nextTabId++}",
+        isPrivate,
         contentHost ?: return@captureActive,
-        { proxyPortNumber },
+        { if (isPrivate) privatePortNumber else proxyPortNumber },
         ::onTabEvent,
         ::startDownload,
       )
@@ -369,9 +374,15 @@ class MainActivity : TauriActivity() {
    * open it directly.
    */
   private fun startDownload(url: String, mimeType: String?, contentDisposition: String?) {
-    val host = Uri.parse(url).host?.lowercase() ?: ""
+    val parsed = Uri.parse(url)
+    val host = parsed.host?.lowercase() ?: ""
     val throughProxy = host.endsWith(".localhost")
-    val port = proxyPortNumber.takeIf { it > 0 } ?: Uri.parse(url).port
+    // The vhost URL already names the listener that served it, which is how a private
+    // tab's download comes from the private listener.
+    val port = if (throughProxy) parsed.port else proxyPortNumber
+    // A private tab's download keeps its name but not its address: the list is a file
+    // on disk, and what a private tab fetched is not something to leave in it.
+    val fromPrivateTab = throughProxy && privatePortNumber > 0 && parsed.port == privatePortNumber
 
     if (throughProxy && port <= 0) {
       toast("Download failed: the proxy port is unknown")
@@ -383,7 +394,7 @@ class MainActivity : TauriActivity() {
 
     Thread {
       val temp = File(cacheDir, "download-${System.currentTimeMillis()}")
-      val id = downloads.start(name, url, -1)
+      val id = downloads.start(name, if (fromPrivateTab) "" else url, -1)
 
       val fetched = try {
         val source = if (throughProxy) {
@@ -490,6 +501,7 @@ class MainActivity : TauriActivity() {
         .put("canGoBack", tab.canGoBack())
         .put("canGoForward", tab.canGoForward())
         .put("desktop", tab.desktopMode)
+        .put("kind", if (tab.isPrivate) "private" else "normal")
       tab.thumbnail?.let { entry.put("thumbnail", it) }
       array.put(entry)
     }
@@ -534,6 +546,18 @@ class MainActivity : TauriActivity() {
     fun openNew(url: String?) {
       val target = url ?: return
       runOnUiThread { openTab(target, reuseActive = false) }
+    }
+
+    @JavascriptInterface
+    fun openPrivate(url: String?) {
+      val target = url ?: return
+      runOnUiThread { openTab(target, reuseActive = true, isPrivate = true) }
+    }
+
+    @JavascriptInterface
+    fun openNewPrivate(url: String?) {
+      val target = url ?: return
+      runOnUiThread { openTab(target, reuseActive = false, isPrivate = true) }
     }
 
     @JavascriptInterface
@@ -586,6 +610,12 @@ class MainActivity : TauriActivity() {
     fun setProxyPort(port: Int?) {
       val value = port ?: return
       runOnUiThread { proxyPortNumber = value }
+    }
+
+    @JavascriptInterface
+    fun setPrivateProxyPort(port: Int?) {
+      val value = port ?: return
+      runOnUiThread { privatePortNumber = value }
     }
 
     /** The strip's arrow: same path as the system gesture, so the two cannot drift. */

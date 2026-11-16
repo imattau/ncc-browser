@@ -47,6 +47,7 @@ let tabs = []
 let activeTabId = ''
 let panel = 'home'
 let proxyPort = null
+let privatePort = null
 let activeUrl = ''
 let activeTitle = ''
 let browserSettings = null
@@ -54,6 +55,7 @@ let signerTimer = null
 let signerDeadline = 0
 let signerRequest = null
 let newTabMode = false
+let privateMode = false
 let pendingFocus = null
 let findOpen = false
 let findTimer = null
@@ -451,7 +453,9 @@ globalThis.__nccContent = (state) => {
 
   if (state.type === 'loaded') {
     delete progressByTab[id]
-    recordVisit(state.url, state.title)
+    // A private tab leaves no history, and no icon either: what it browsed is the
+    // user's business, not this device's.
+    if (!isPrivateTab(id)) recordVisit(state.url, state.title)
   }
 
   if (state.type === 'failed' || state.type === 'blocked' || state.type === 'rejected') {
@@ -459,7 +463,7 @@ globalThis.__nccContent = (state) => {
   }
 
   if (state.type === 'icon') {
-    if (state.url && state.icon) saveIcon(displayAddress(state.url), state.icon)
+    if (state.url && state.icon && !isPrivateTab(id)) saveIcon(displayAddress(state.url), state.icon)
     if (panel === 'home') renderHome()
     if (panel === 'switcher') renderTabGrid()
     return
@@ -801,9 +805,10 @@ function renderHome() {
 
 /* ───────────────────────────── Omnibox ───────────────────────────── */
 
-function openOmnibox({ newTab = false } = {}) {
+function openOmnibox({ newTab = false, private: isPrivate = false } = {}) {
   if (!content) return
   newTabMode = newTab
+  privateMode = isPrivate
   panel = 'omnibox'
   pendingFocus = 'omnibox'
   byId('address').value = newTab || !activeUrl ? '' : displayAddress(activeUrl)
@@ -909,12 +914,12 @@ function renderSuggestions(query) {
 }
 
 async function submitOmnibox() {
-  await submit(byId('address').value, { newTab: newTabMode })
+  await submit(byId('address').value, { newTab: newTabMode, private: privateMode })
 }
 
 /** Open whatever was typed or tapped. Errors surface under the field. */
-async function submit(text, { newTab = false } = {}) {
-  const result = await navigate(text, { newTab })
+async function submit(text, { newTab = false, private: isPrivate = false } = {}) {
+  const result = await navigate(text, { newTab, private: isPrivate })
   if (result?.error) {
     const error = byId('omni-error')
     error.textContent = result.error
@@ -926,6 +931,7 @@ async function submit(text, { newTab = false } = {}) {
   if (result?.ok) {
     panel = 'home'
     newTabMode = false
+    privateMode = false
   }
 }
 
@@ -1024,7 +1030,7 @@ function targetUrl(input, port) {
 }
 
 /** Resolve and open. Returns `{ ok }` or `{ error }`. */
-async function navigate(text, { newTab = false } = {}) {
+async function navigate(text, { newTab = false, private: isPrivate = false } = {}) {
   const input = text.trim()
   if (!input) return { error: 'Enter an address or a search.' }
 
@@ -1039,24 +1045,31 @@ async function navigate(text, { newTab = false } = {}) {
     // Clearnet is a page like any other: it loads in a tab instead of punting to the
     // system browser, which is what the desktop build has always done.
     if (content) {
-      if (newTab && tabs.length > 0) content.openNew(url)
-      else content.open(url)
+      if (isPrivate) {
+        if (newTab && tabs.length > 0) content.openNewPrivate(url)
+        else content.openPrivate(url)
+      } else if (newTab && tabs.length > 0) {
+        content.openNew(url)
+      } else {
+        content.open(url)
+      }
     } else {
       globalThis.open?.(url, '_blank', 'noopener')
     }
     return { ok: true }
   }
 
-  if (!proxyPort) return { error: 'The local proxy is not running.' }
+  const port = isPrivate ? privatePort : proxyPort
+  if (!port) return { error: 'The local proxy is not running.' }
 
-  let target = targetUrl(input, proxyPort)
+  let target = targetUrl(input, port)
 
   // For a site, whether a `d`-like segment is a name or a path depends on what is
   // published, so ask the proxy instead of guessing here.
   if (/^nsite:/i.test(input) && !target.error) {
     try {
       const response = await fetch(
-        `http://127.0.0.1:${proxyPort}/__ncc/route?u=${encodeURIComponent(input)}`
+        `http://127.0.0.1:${port}/__ncc/route?u=${encodeURIComponent(input)}`
       )
       if (response.ok) target = await response.json()
     } catch {
@@ -1067,8 +1080,14 @@ async function navigate(text, { newTab = false } = {}) {
   if (target.error) return { error: target.error }
 
   if (content) {
-    if (newTab && tabs.length > 0) content.openNew(target.url)
-    else content.open(target.url)
+    if (isPrivate) {
+      if (newTab && tabs.length > 0) content.openNewPrivate(target.url)
+      else content.openPrivate(target.url)
+    } else if (newTab && tabs.length > 0) {
+      content.openNew(target.url)
+    } else {
+      content.open(target.url)
+    }
     return { ok: true }
   }
 
@@ -1091,6 +1110,10 @@ async function probe(url) {
 
 /* ───────────────────────────── Tab switcher ───────────────────────────── */
 
+function isPrivateTab(id) {
+  return tabs.find((tab) => tab.id === id)?.kind === 'private'
+}
+
 function renderTabGrid() {
   const grid = byId('tab-grid')
   grid.textContent = ''
@@ -1107,7 +1130,7 @@ function renderTabGrid() {
     head.className = 'tab-head'
     head.appendChild(avatar(label, 'xs', displayAddress(tab.url || '')))
     const title = document.createElement('span')
-    title.textContent = label
+    title.textContent = tab.kind === 'private' ? `${label} · private` : label
     head.appendChild(title)
 
     const close = document.createElement('button')
@@ -1205,6 +1228,7 @@ function wireMenu() {
     closePanel()
   })
   act('menu-new', () => openOmnibox({ newTab: true }))
+  act('menu-private', () => openOmnibox({ newTab: true, private: true }))
   act('menu-find', () => {
     closePanel()
     openFind()
@@ -2236,6 +2260,15 @@ async function main() {
   // cannot tell them the port.
   if (proxyPort && content && typeof content.setProxyPort === 'function') {
     content.setProxyPort(proxyPort)
+  }
+
+  try {
+    privatePort = await tauri.core.invoke('private_proxy_port')
+    if (privatePort && content && typeof content.setPrivateProxyPort === 'function') {
+      content.setPrivateProxyPort(privatePort)
+    }
+  } catch {
+    // Without a private listener there are no private tabs, which is not an error.
   }
 
   try {
