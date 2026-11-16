@@ -40,6 +40,9 @@ pub struct ProxyConfig {
     pub relays: Vec<String>,
     pub request_timeout: Duration,
     pub max_body_bytes: usize,
+    /// Origins allowed to read responses with CORS. The shell's own webview is the
+    /// only one that needs it (a page fetching a vhost from its own origin does not).
+    pub allowed_origins: Vec<String>,
 }
 
 impl Default for ProxyConfig {
@@ -48,6 +51,7 @@ impl Default for ProxyConfig {
             relays: Vec::new(),
             request_timeout: Duration::from_secs(20),
             max_body_bytes: 10 * 1024 * 1024,
+            allowed_origins: Vec::new(),
         }
     }
 }
@@ -58,6 +62,7 @@ pub struct ProxyState {
     pinned_client: reqwest::Client,
     pins: Arc<PinStore>,
     max_body_bytes: usize,
+    allowed_origins: Vec<String>,
 }
 
 impl ProxyState {
@@ -91,6 +96,7 @@ impl ProxyState {
             pinned_client,
             pins,
             max_body_bytes: config.max_body_bytes,
+            allowed_origins: config.allowed_origins.clone(),
         }
     }
 
@@ -114,7 +120,38 @@ pub async fn serve(
     axum::serve(listener, app(state)).await
 }
 
+/// Adds CORS only for origins the shell registered, so a random web page cannot read
+/// NCC content through the loopback proxy.
 async fn handle(State(state): State<Arc<ProxyState>>, request: Request) -> Response {
+    let origin = request
+        .headers()
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+
+    let mut response = handle_inner(&state, request).await;
+
+    if let Some(origin) = origin {
+        if state
+            .allowed_origins
+            .iter()
+            .any(|allowed| allowed.eq_ignore_ascii_case(&origin))
+        {
+            if let Ok(value) = HeaderValue::from_str(&origin) {
+                response
+                    .headers_mut()
+                    .insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, value);
+                response
+                    .headers_mut()
+                    .insert(header::VARY, HeaderValue::from_static("origin"));
+            }
+        }
+    }
+
+    response
+}
+
+async fn handle_inner(state: &ProxyState, request: Request) -> Response {
     let authority = request
         .headers()
         .get(header::HOST)
@@ -154,7 +191,7 @@ async fn handle(State(state): State<Arc<ProxyState>>, request: Request) -> Respo
     let mut failures = Vec::new();
     for endpoint in &selection.candidates {
         match forward(
-            &state, endpoint, &method, &headers, &body, &path, &query, &authority, document,
+            state, endpoint, &method, &headers, &body, &path, &query, &authority, document,
         )
         .await
         {
