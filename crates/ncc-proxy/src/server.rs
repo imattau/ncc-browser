@@ -1,0 +1,431 @@
+//! The HTTP server the content WebView loads.
+//!
+//! Every request carries the service in the `Host` header, so the service is part of
+//! the origin exactly as it is under `ncc://`. Requests are resolved, matched to an
+//! endpoint, fetched and rewritten back into the same namespace.
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use axum::body::Body;
+use axum::extract::{Request, State};
+use axum::http::{header, HeaderMap, HeaderName, HeaderValue, StatusCode};
+use axum::response::{Html, IntoResponse, Response};
+use axum::Router;
+use url::Url;
+
+use ncc_core::{
+    http_origin, join_paths, parse_ncc_address, select_transport_endpoints, upstream_headers,
+    Endpoint,
+};
+
+use crate::pins::{pinned_tls_config, PinStore};
+use crate::resolve::{ResolveError, ResolvedService, Resolver};
+use crate::vhost::{parse_vhost, Vhost};
+
+/// Headers that describe one hop and must not be forwarded either way.
+const HOP_BY_HOP: &[&str] = &[
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+];
+
+#[derive(Debug, Clone)]
+pub struct ProxyConfig {
+    pub relays: Vec<String>,
+    pub request_timeout: Duration,
+    pub max_body_bytes: usize,
+}
+
+impl Default for ProxyConfig {
+    fn default() -> Self {
+        Self {
+            relays: Vec::new(),
+            request_timeout: Duration::from_secs(20),
+            max_body_bytes: 10 * 1024 * 1024,
+        }
+    }
+}
+
+pub struct ProxyState {
+    resolver: Resolver,
+    client: reqwest::Client,
+    pinned_client: reqwest::Client,
+    pins: Arc<PinStore>,
+    max_body_bytes: usize,
+}
+
+impl ProxyState {
+    pub fn new(config: &ProxyConfig) -> Self {
+        let pins = Arc::new(PinStore::new());
+
+        let build = |client: reqwest::ClientBuilder| {
+            client
+                .redirect(reqwest::redirect::Policy::none())
+                .timeout(config.request_timeout)
+                .user_agent(concat!("NostrNavigator/", env!("CARGO_PKG_VERSION")))
+                .build()
+                .expect("HTTP client")
+        };
+
+        let client = build(reqwest::Client::builder());
+
+        // Endpoints that publish `k` present a self-signed certificate; ordinary PKI
+        // verification would reject them, and accepting everything would be worse.
+        let pinned_client = match pinned_tls_config(pins.clone()) {
+            Ok(tls) => build(reqwest::Client::builder().use_preconfigured_tls(tls)),
+            Err(error) => {
+                tracing::error!(target: "ncc_proxy::pins", "could not build the pinned TLS client: {error}");
+                client.clone()
+            }
+        };
+
+        Self {
+            resolver: Resolver::new(config.relays.clone()),
+            client,
+            pinned_client,
+            pins,
+            max_body_bytes: config.max_body_bytes,
+        }
+    }
+
+    pub fn resolver(&self) -> &Resolver {
+        &self.resolver
+    }
+
+    pub fn pins(&self) -> &PinStore {
+        &self.pins
+    }
+}
+
+pub fn app(state: Arc<ProxyState>) -> Router {
+    Router::new().fallback(handle).with_state(state)
+}
+
+pub async fn serve(
+    listener: tokio::net::TcpListener,
+    state: Arc<ProxyState>,
+) -> std::io::Result<()> {
+    axum::serve(listener, app(state)).await
+}
+
+async fn handle(State(state): State<Arc<ProxyState>>, request: Request) -> Response {
+    let authority = request
+        .headers()
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+
+    let Some(vhost) = parse_vhost(&authority) else {
+        return help_page(&authority);
+    };
+
+    if request.method() == axum::http::Method::CONNECT {
+        return text(StatusCode::METHOD_NOT_ALLOWED, "CONNECT is not proxied");
+    }
+
+    let resolved = match state.resolver.resolve(&vhost.pubkey, &vhost.service).await {
+        Ok(resolved) => resolved,
+        Err(error) => return error_page(&error, &vhost),
+    };
+
+    let selection = select_transport_endpoints(&resolved.endpoints, false);
+    if selection.candidates.is_empty() {
+        return error_page(&ResolveError::NoEndpoint, &vhost);
+    }
+
+    let path = request.uri().path().to_string();
+    let query = request.uri().query().unwrap_or_default().to_string();
+    let method = request.method().clone();
+    let headers = request.headers().clone();
+    let document = is_document_request(&headers);
+
+    let body = match axum::body::to_bytes(request.into_body(), state.max_body_bytes).await {
+        Ok(body) => body,
+        Err(_) => return text(StatusCode::PAYLOAD_TOO_LARGE, "Request body too large"),
+    };
+
+    let mut failures = Vec::new();
+    for endpoint in &selection.candidates {
+        match forward(
+            &state, endpoint, &method, &headers, &body, &path, &query, &authority, document,
+        )
+        .await
+        {
+            Ok(response) => return response,
+            // A wrong key is not a reason to try somewhere else: someone answered for
+            // this service with a certificate the record does not name.
+            Err(ForwardError::Fatal(detail)) => {
+                return failure_page(
+                    StatusCode::BAD_GATEWAY,
+                    "Certificate does not match the locator",
+                    &detail,
+                    &vhost,
+                )
+            }
+            Err(ForwardError::Retry(detail)) => failures.push(detail),
+        }
+    }
+
+    failure_page(
+        StatusCode::BAD_GATEWAY,
+        "Every endpoint refused the connection",
+        &failures.join("; "),
+        &vhost,
+    )
+}
+
+enum ForwardError {
+    /// Another endpoint may work.
+    Retry(String),
+    /// Stop: the answer was authenticated and wrong.
+    Fatal(String),
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn forward(
+    state: &ProxyState,
+    endpoint: &Endpoint,
+    method: &axum::http::Method,
+    headers: &HeaderMap,
+    body: &[u8],
+    path: &str,
+    query: &str,
+    authority: &str,
+    document: bool,
+) -> Result<Response, ForwardError> {
+    let base = Url::parse(&endpoint.url)
+        .map_err(|error| ForwardError::Retry(format!("{}: {error}", endpoint.url)))?;
+
+    let mut target = base.clone();
+    target.set_path(&join_paths(base.path(), path));
+    target.set_query(if query.is_empty() { None } else { Some(query) });
+
+    let upstream_headers = request_headers(headers, &target);
+
+    let pinned = endpoint.k.clone();
+    let client = if pinned.is_some() {
+        &state.pinned_client
+    } else {
+        &state.client
+    };
+    let host = target.host_str().unwrap_or_default().to_string();
+    if let Some(fingerprint) = &pinned {
+        state.pins.set(&host, fingerprint);
+    }
+
+    let mut request = client
+        .request(method.clone(), target.clone())
+        .headers(upstream_headers);
+
+    if !matches!(*method, axum::http::Method::GET | axum::http::Method::HEAD) && !body.is_empty() {
+        request = request.body(body.to_vec());
+    }
+
+    let response = request.send().await.map_err(|error| match &pinned {
+        Some(fingerprint) => {
+            let reason = state
+                .pins
+                .take_failure(&host)
+                .unwrap_or_else(|| "the TLS handshake failed".to_string());
+            ForwardError::Fatal(format!(
+                "{host} presented {reason} (locator k={fingerprint})"
+            ))
+        }
+        None => ForwardError::Retry(format!("{host}: {error}")),
+    })?;
+
+    let status = response.status();
+    let mut response_headers = HeaderMap::new();
+
+    for (name, value) in response.headers() {
+        let name_text = name.as_str().to_ascii_lowercase();
+        if HOP_BY_HOP.contains(&name_text.as_str()) {
+            continue;
+        }
+        if name_text == "location" {
+            let Ok(location) = value.to_str() else {
+                continue;
+            };
+            let rewritten = rewrite_location(location, &target, authority);
+            if let Ok(value) = HeaderValue::from_str(&rewritten) {
+                response_headers.insert(header::LOCATION, value);
+            }
+            continue;
+        }
+        response_headers.append(name.clone(), value.clone());
+    }
+
+    // A top-level NCC document is a live view of a locator-bound endpoint; a stale
+    // cached copy would outlive a publisher's rotation.
+    if document {
+        response_headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+        response_headers.remove(header::ETAG);
+        response_headers.remove(header::LAST_MODIFIED);
+    }
+
+    let stream = response.bytes_stream();
+    let mut builder = Response::builder().status(status);
+    if let Some(out) = builder.headers_mut() {
+        *out = response_headers;
+    }
+    builder
+        .body(Body::from_stream(stream))
+        .map_err(|error| ForwardError::Retry(error.to_string()))
+}
+
+fn request_headers(headers: &HeaderMap, target: &Url) -> HeaderMap {
+    let pairs: Vec<(String, String)> = headers
+        .iter()
+        .filter_map(|(name, value)| {
+            value
+                .to_str()
+                .ok()
+                .map(|value| (name.as_str().to_string(), value.to_string()))
+        })
+        .collect();
+
+    let mut out = HeaderMap::new();
+    for (name, value) in upstream_headers(&pairs, target) {
+        let lower = name.to_ascii_lowercase();
+        if HOP_BY_HOP.contains(&lower.as_str()) {
+            continue;
+        }
+        let (Ok(name), Ok(value)) = (
+            HeaderName::from_bytes(name.as_bytes()),
+            HeaderValue::from_str(&value),
+        ) else {
+            continue;
+        };
+        out.append(name, value);
+    }
+    out
+}
+
+/// Keep redirects inside the NCC namespace.
+///
+/// A relative `Location` is already correct: the browser resolves it against the
+/// virtual host, which is where the page came from. An absolute URL to the endpoint
+/// itself must become relative again, otherwise the browser would follow it to the
+/// endpoint origin.
+fn rewrite_location(location: &str, target: &Url, authority: &str) -> String {
+    let Ok(resolved) = Url::parse(location) else {
+        return location.to_string();
+    };
+
+    if resolved.scheme() == "ncc" {
+        if let Ok(address) = parse_ncc_address(resolved.as_str()) {
+            let port = authority.rsplit_once(':').map(|(_, port)| port);
+            let host = crate::vhost::host_for(&address.pubkey, &address.service);
+            let host = match port {
+                Some(port) => format!("{host}:{port}"),
+                None => host,
+            };
+            return format!(
+                "http://{host}{}{}{}",
+                address.path, address.search, address.hash
+            );
+        }
+        return location.to_string();
+    }
+
+    if !matches!(resolved.scheme(), "http" | "https") {
+        return location.to_string();
+    }
+    if http_origin(&resolved) != http_origin(target) {
+        return location.to_string();
+    }
+
+    let mut relative = resolved.path().to_string();
+    if let Some(query) = resolved.query() {
+        relative.push('?');
+        relative.push_str(query);
+    }
+    if let Some(fragment) = resolved.fragment() {
+        relative.push('#');
+        relative.push_str(fragment);
+    }
+    relative
+}
+
+fn is_document_request(headers: &HeaderMap) -> bool {
+    if let Some(destination) = headers.get("sec-fetch-dest").and_then(|v| v.to_str().ok()) {
+        return destination == "document";
+    }
+    headers
+        .get(header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .map(|accept| accept.contains("text/html"))
+        .unwrap_or(false)
+}
+
+fn text(status: StatusCode, message: &str) -> Response {
+    (
+        status,
+        [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+        message.to_string(),
+    )
+        .into_response()
+}
+
+fn help_page(authority: &str) -> Response {
+    let body = format!(
+        "<!doctype html><meta charset=\"utf-8\"><title>NCC proxy</title>\
+         <style>body{{font:15px system-ui;margin:2rem;max-width:40rem}}\
+         code{{background:#eee;padding:.1rem .3rem;border-radius:3px}}</style>\
+         <h1>NCC proxy</h1>\
+         <p>This server speaks NCC over virtual hosts. It was asked for \
+         <code>{authority}</code>, which is not an NCC address.</p>\
+         <p>Load <code>http://&lt;npub&gt;.&lt;service&gt;.localhost:PORT/</code> instead, \
+         or <code>http://&lt;npub&gt;.localhost:PORT/</code> for the default service.</p>"
+    );
+    (StatusCode::NOT_FOUND, Html(body)).into_response()
+}
+
+fn error_page(error: &ResolveError, vhost: &Vhost) -> Response {
+    let status = match error {
+        ResolveError::InvalidPubkey => StatusCode::BAD_REQUEST,
+        ResolveError::NoRecord => StatusCode::NOT_FOUND,
+        ResolveError::Expired => StatusCode::GONE,
+        ResolveError::NoEndpoint => StatusCode::BAD_GATEWAY,
+        ResolveError::InvalidPayload => StatusCode::BAD_GATEWAY,
+        ResolveError::RelayError(_) => StatusCode::SERVICE_UNAVAILABLE,
+    };
+    failure_page(status, &error.to_string(), "", vhost)
+}
+
+fn failure_page(status: StatusCode, title: &str, detail: &str, vhost: &Vhost) -> Response {
+    let detail = if detail.is_empty() {
+        String::new()
+    } else {
+        format!("<p class=\"detail\"><code>{detail}</code></p>")
+    };
+    let body = format!(
+        "<!doctype html><meta charset=\"utf-8\"><title>NCC error</title>\
+         <style>body{{font:15px system-ui;margin:2rem;max-width:40rem}}\
+         code{{background:#eee;padding:.1rem .3rem;border-radius:3px}}\
+         .detail{{word-break:break-word}}</style>\
+         <h1>{status}</h1>\
+         <p>{title}</p>{detail}\
+         <p><code>{pubkey}/{service}</code></p>",
+        pubkey = vhost.pubkey,
+        service = vhost.service
+    );
+
+    (status, Html(body)).into_response()
+}
+
+/// Resolve one address to its endpoints. Exposed for tests and the CLI.
+pub async fn resolve_address(
+    state: &ProxyState,
+    pubkey: &str,
+    service: &str,
+) -> Result<ResolvedService, ResolveError> {
+    state.resolver.resolve(pubkey, service).await
+}

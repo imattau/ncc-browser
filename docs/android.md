@@ -1,7 +1,7 @@
 # Android build
 
-Status: **M0 shell builds and signs in CI**. The Tauri shell installs and reaches
-Rust; the content surface and the React chrome are not written yet.
+Status: **shell builds and signs in CI; the NCC proxy serves live records**. The
+content WebView and the React chrome are not written yet.
 
 ## Verified
 
@@ -11,21 +11,40 @@ The `Android` workflow was run end to end on `ubuntu-latest`:
 platform:    platforms;android-37.2   (resolved from compileSdk = 37)
 build-tools: build-tools;37.0.0
 ndk:         27.2.12479018
-apk:         11 MB, armeabi payload lib/arm64-v8a/libncc_navigator_lib.so
+apk:         11 MB, payload lib/arm64-v8a/libncc_navigator_lib.so
 signature:   V2 signer, certificate SHA-256 547edf7693c054d753355488f10f991578ab8da22cd6104cc157e5b98816c1f6
 build time:  ~10 min cold (Rust dominates), ~1 min for the Gradle half
 ```
 
+The proxy was then run against a live locator on `wss://relay.primal.net`:
+
+```
+$ ncc-proxy --resolve <hex>/web
+service   web (d=web-locator, locator-suffix)
+endpoint  https://1.43.63.94:8443/ [https ipv4] k=wLnkGhcpexUmHmMMAzQ0CPD6sA2tN2h2SAFoMBdg66A
+endpoint  http://e5vexru63….onion/ [http onion]
+
+$ curl -H 'Host: <hex>.web.localhost:47832' http://127.0.0.1:47832/
+HTTP/1.1 200 OK
+content-type: text/html; charset=utf-8
+```
+
+That endpoint presents a self-signed certificate, so the successful fetch is also the
+proof that `k` pinning works: the certificate was accepted because its SPKI hash
+matched the locator, not because a CA signed it.
+
 That fingerprint is the certificate Zapstore's claim will pin. If it ever changes
 without an APK Signature Scheme v3 lineage, existing installs cannot update.
 
-Two things that are easy to trip over again:
+Three things that are easy to trip over again:
 
 - `package.json` must keep a `"tauri": "tauri"` script. Tauri's Android Gradle plugin
   shells out to `npm run tauri` while building the Rust library.
 - The SDK script probes `platforms;android-<n>.0/.1/.2` before the bare level,
   because Android ships minor API levels now and `platforms;android-37` does not
   exist.
+- `android-actions/setup-android@v3` is unusable: it runs `sdkmanager tools`, which
+  Google removed.
 
 ## Decisions
 
@@ -40,23 +59,39 @@ Two things that are easy to trip over again:
 
 ## Architecture
 
-Three layers, in the order they should be built:
+Four layers, in the order they are being built:
 
 1. **`crates/ncc-core`** — every rule that must have the same answer on every shell:
    the `ncc://` address model, `d` tag candidates, payload validation, endpoint
    normalisation and selection, transport choice, redirect rewriting. No I/O, no
    runtime. `cargo test -p ncc-core` runs on a plain Linux runner.
-2. **Tauri shell (`src-tauri`)** — the React chrome, talking to Rust commands behind
+2. **`crates/ncc-proxy`** — the socket half: relay queries, NCC-05 resolution with a
+   stale-while-revalidate cache, SPKI pinning, upstream fetch and an HTTP server whose
+   virtual hosts *are* the NCC namespace. Runs standalone, so it can be exercised
+   without a phone:
+   ```bash
+   cargo run -p ncc-proxy -- --port 47832 --relay wss://relay.primal.net
+   cargo run -p ncc-proxy -- --resolve <npub>/web
+   curl -H 'Host: <npub>.web.localhost:47832' http://127.0.0.1:47832/
+   ```
+3. **Tauri shell (`src-tauri`)** — the React chrome, talking to Rust commands behind
    the existing `NccApi` seam. This is the only part that resembles Capacitor.
-3. **Kotlin content surface (inside `src-tauri/gen/android`)** — one
+4. **Kotlin content surface (inside `src-tauri/gen/android`)** — one
    `android.webkit.WebView` added to the activity layout under the toolbar strip,
    plus the loopback proxy's TLS exception. Tauri does not expose the view
    hierarchy, so this glue is Kotlin regardless of shell.
 
 The content WebView never sees `ncc://`. It loads
-`https://<npub>.<service>.localhost:<port>/…`; the proxy maps that back onto the
+`http://<npub>.<service>.localhost:<port>/…`; the proxy maps that back onto the
 endpoint and rewrites redirects into the same host form. `to_display_url` (already in
 `ncc-core`) is what the address bar renders, so the user-facing address is unchanged.
+
+Pinning deserves a note because it is the reason the core is Rust: an endpoint that
+publishes `k` usually presents a self-signed certificate. The proxy routes those
+requests through a client whose verifier accepts a certificate only when its
+`base64url(sha256(SPKI))` matches the locator and it is unexpired. A mismatch ends the
+request — it never falls through to another endpoint, because that would hide someone
+answering with the wrong key.
 
 ## Secrets
 
@@ -128,9 +163,12 @@ Device-free (any Linux box with Rust):
 
 - [x] `crates/ncc-core` with the address, locator, transport and routing rules ported
       and unit-tested against the TypeScript cases.
-- [ ] `ncc-core` binary: `ncc-core fetch ncc://<npub>/<service>` resolving through
-      relays and printing the document, so the core can be exercised without a phone.
+- [x] `crates/ncc-proxy` resolving live locators, pinning `k` endpoints and serving
+      them over virtual hosts.
 - [ ] A conformance fixture set consumed by both the TS and Rust suites.
+- [ ] NIP-44 decryption for encrypted locator payloads (the desktop build has it).
+- [ ] A per-service health/fallback record, so a dead endpoint is skipped on the next
+      request instead of every request.
 
 Build pipeline:
 
@@ -142,13 +180,13 @@ Build pipeline:
 
 Still to build:
 
+- [ ] Start the proxy from the Tauri app and expose its port to the shell.
 - [ ] `vite.mobile.config.ts` + an `NccApi` adapter over Tauri commands, replacing
       `mobile/` with the React chrome.
 - [ ] Kotlin content WebView under the toolbar, per-tab lifecycle, tab thumbnails.
-- [ ] Loopback proxy (`hyper` + `rustls`) and `onReceivedSslError` TLS exception.
 - [ ] `*.localhost` resolution, secure context, `Secure` cookie behaviour — **the
-      go/no-go test**. If `Secure` cookies fail, switch the vhost to `https://` with
-      the proxy's own certificate.
+      go/no-go test**. If `Secure` cookies fail, add a TLS listener and accept its
+      own certificate through `onReceivedSslError`.
 - [ ] NIP-07 injection by rewriting the top document in the proxy, with a per-load
       nonce so a subframe cannot call the bridge.
 - [ ] Emulator run of the built APK.
