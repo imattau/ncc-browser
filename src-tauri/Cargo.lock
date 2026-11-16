@@ -3627,7 +3627,7 @@ dependencies = [
 
 [[package]]
 name = "ncc-navigator"
-version = "0.29.6"
+version = "0.29.7"
 dependencies = [
  "log",
  "ncc-core",
@@ -3641,6 +3641,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-log",
  "tokio",
+ "tokio-tungstenite",
 ]
 
 [[package]]

@@ -26,6 +26,9 @@ tracing = "0.1.44"
 url = "2"
 
 [dev-dependencies]
+# The shell installs aws-lc-rs as the process default before Tor starts; the live test
+# does the same so it exercises arti the way the app does.
+rustls = { version = "0.23", default-features = false, features = ["std", "aws_lc_rs"] }
 tokio = { version = "1.53.3", features = ["rt-multi-thread", "macros", "net", "sync", "time", "io-util"] }
 
 [features]

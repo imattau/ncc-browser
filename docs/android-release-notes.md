@@ -5,6 +5,11 @@ is not a daily driver.
 
 ## New in this build
 
+- Fixes NCC pages failing with "Could not automatically determine the process-level
+  CryptoProvider", most often after coming back from the background or restarting. The
+  secure connection to relays had no TLS provider chosen once Tor support was added to
+  the app, so a lookup that opened a relay connection failed. It is now chosen when the
+  app starts.
 - Private and Tor tabs now have a browsing session of their own. Their cookies, site
   data and cache are kept apart from normal tabs, so a private tab no longer shares or
   leaves cookies on a site you also use normally. They are discarded when the last tab

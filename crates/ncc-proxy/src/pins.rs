@@ -177,6 +177,20 @@ impl ServerCertVerifier for PinningVerifier {
 /// first HTTPS request panicked with "Expect rustls-platform-verifier to be initialised".
 /// Naming the roots avoids the platform store entirely and matches the pinned client
 /// and the relay sockets, which already trust webpki roots.
+/// Choose the process-wide TLS back-end, once, before anything needs one.
+///
+/// The app links two rustls back-ends: aws-lc-rs for this crate's own TLS and ring for
+/// the bundled Tor client. With both present rustls cannot pick a default itself, and
+/// the first code that asks for one panics ("Could not automatically determine the
+/// process-level CryptoProvider"). Relay connections do exactly that: tokio-tungstenite
+/// builds its TLS config from the default. This crate names its provider explicitly
+/// everywhere else, so the default only has to exist, and it is the same one.
+///
+/// Idempotent: a default installed earlier is left alone.
+pub fn install_crypto_provider() {
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+}
+
 pub fn webpki_tls_config() -> Result<rustls::ClientConfig, TlsError> {
     let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
     let mut roots = rustls::RootCertStore::empty();

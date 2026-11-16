@@ -621,6 +621,9 @@ mod tests {
     #[test]
     #[ignore = "bootstraps a real Tor circuit"]
     fn bundled_client_bootstraps_from_a_thread_with_no_runtime() {
+        // As in the app: the proxy installs aws-lc-rs as the default first, so arti runs
+        // on that rather than on ring.
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
         let dir = std::env::temp_dir().join(format!("ncc-tor-live-{}", std::process::id()));
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()

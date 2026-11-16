@@ -126,6 +126,8 @@ pub struct ProxyState {
 
 impl ProxyState {
     pub fn new(config: &ProxyConfig) -> Self {
+        // Before any client, relay or TLS config below can ask for a default.
+        crate::pins::install_crypto_provider();
         let settings = config.settings.clone().unwrap_or_else(|| {
             Arc::new(crate::settings::SettingsStore::in_memory(
                 crate::settings::Settings {

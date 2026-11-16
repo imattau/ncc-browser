@@ -33,7 +33,7 @@ pub mod vhost;
 
 pub use approvals::{ApprovalRequest, Approvals};
 pub use inject::{Injection, TokenStore};
-pub use pins::PinStore;
+pub use pins::{install_crypto_provider, PinStore};
 pub use resolve::{DiscoveredService, ResolveError, ResolvedService, Resolver};
 pub use server::{serve, ProxyConfig, ProxyState, TorProgress, TorProgressSource};
 pub use settings::{HttpsMode, Settings, SettingsStore};

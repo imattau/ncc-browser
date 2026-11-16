@@ -660,6 +660,10 @@ fn start_proxy(proxy: Arc<ProxyState>, preferred: Option<u16>) -> Result<u16, St
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // First of all: relay connections need a process-wide TLS default, and with arti linked
+    // beside the proxy rustls cannot choose one itself.
+    ncc_proxy::install_crypto_provider();
+
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             proxy_port,
@@ -901,5 +905,33 @@ mod tests {
         assert_eq!(remembered_port(&file), None);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Both TLS back-ends are linked (aws-lc-rs for the proxy, ring for arti), so rustls
+    /// has no default of its own and anything that asks for one panics. A relay
+    /// connection is the first such thing to run when the app returns from the
+    /// background. Building the proxy state, as the app does first, must be enough.
+    #[tokio::test]
+    async fn relay_tls_survives_two_linked_back_ends() {
+        let _state = ncc_proxy::ProxyState::new(&ncc_proxy::ProxyConfig::default());
+
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            // Accept and say nothing: the TLS config is built once the TCP side is up.
+            let _held = listener.accept().await;
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        });
+
+        // The handshake cannot succeed against a silent socket. What matters is that
+        // building the TLS config did not panic.
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            tokio_tungstenite::connect_async(format!("wss://127.0.0.1:{port}/")),
+        )
+        .await;
+        assert!(result.is_err() || result.unwrap().is_err());
     }
 }
