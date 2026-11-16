@@ -6,6 +6,9 @@ name: Android
 on:
   push:
     tags: ['android-v*']
+    # Temporary: the workflow is not on the default branch yet, so dispatch cannot
+    # find it. Removed once this branch lands.
+    branches: [chore/android-shell]
   workflow_dispatch:
     inputs:
       publish:

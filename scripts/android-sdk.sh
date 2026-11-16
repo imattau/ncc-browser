@@ -26,11 +26,21 @@ fi
 
 NDK_VERSION="${NDK_VERSION:-27.2.12479018}"
 
+# Tauri pins `compileSdk` in the generated project; install whatever it asks for
+# rather than a hardcoded level that goes stale on the next Tauri bump.
+ANDROID_PLATFORM="${ANDROID_PLATFORM:-}"
+if [ -z "$ANDROID_PLATFORM" ] && [ -f src-tauri/gen/android/app/build.gradle.kts ]; then
+  SDK_LEVEL=$(sed -n 's/.*compileSdk = \([0-9][0-9]*\).*/\1/p' src-tauri/gen/android/app/build.gradle.kts | head -1)
+  if [ -n "$SDK_LEVEL" ]; then
+    ANDROID_PLATFORM="platforms;android-${SDK_LEVEL}"
+  fi
+fi
+ANDROID_PLATFORM="${ANDROID_PLATFORM:-platforms;android-35}"
+
 yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
 "$SDKMANAGER" --install \
   "platform-tools" \
-  "platforms;android-35" \
-  "build-tools;35.0.0" \
+  "$ANDROID_PLATFORM" \
   "ndk;$NDK_VERSION"
 
 {
@@ -40,4 +50,5 @@ yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
 } >> "${GITHUB_ENV:-/dev/null}"
 
 echo "sdkmanager: $SDKMANAGER"
+echo "platform: $ANDROID_PLATFORM"
 echo "ndk: $SDK/ndk/$NDK_VERSION"
