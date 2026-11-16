@@ -51,8 +51,9 @@ pub struct ProxyConfig {
     /// Origins allowed to read responses with CORS. The shell's own webview is the
     /// only one that needs it (a page fetching a vhost from its own origin does not).
     pub allowed_origins: Vec<String>,
-    /// Where verified site blobs survive a restart; `None` keeps them in memory only.
-    pub blob_directory: Option<std::path::PathBuf>,
+    /// Root of the on-disk cache: manifests, locator records and verified site files.
+    /// `None` keeps all three in memory only.
+    pub cache_directory: Option<std::path::PathBuf>,
     /// Persisted settings. When absent, an in-memory store is built from `relays`.
     pub settings: Option<Arc<crate::settings::SettingsStore>>,
 }
@@ -64,7 +65,7 @@ impl Default for ProxyConfig {
             request_timeout: Duration::from_secs(20),
             max_body_bytes: 10 * 1024 * 1024,
             allowed_origins: Vec::new(),
-            blob_directory: None,
+            cache_directory: None,
             settings: None,
         }
     }
@@ -120,7 +121,8 @@ impl ProxyState {
         };
 
         Self {
-            resolver: Resolver::new(settings.clone()),
+            resolver: Resolver::new(settings.clone())
+                .with_directory(pointer_directory(&config.cache_directory, "records")),
             client,
             pinned_client,
             pins,
@@ -130,9 +132,13 @@ impl ProxyState {
             identity: None,
             approvals: None,
             trusted: Mutex::new(HashSet::new()),
-            nsite: NsiteResolver::new(settings.clone()),
+            nsite: NsiteResolver::new(settings.clone())
+                .with_directory(pointer_directory(&config.cache_directory, "manifests")),
             settings,
-            blobs: Blobs::new(config.request_timeout, config.blob_directory.clone()),
+            blobs: Blobs::new(
+                config.request_timeout,
+                pointer_directory(&config.cache_directory, "nsite-blobs"),
+            ),
         }
     }
 
@@ -209,6 +215,11 @@ pub async fn serve(
     state: Arc<ProxyState>,
 ) -> std::io::Result<()> {
     axum::serve(listener, app(state)).await
+}
+
+/// A named directory inside the cache root, if there is a root at all.
+fn pointer_directory(root: &Option<std::path::PathBuf>, name: &str) -> Option<std::path::PathBuf> {
+    root.as_ref().map(|root| root.join(name))
 }
 
 fn panic_detail(panic: &(dyn std::any::Any + Send)) -> String {

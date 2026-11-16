@@ -44,7 +44,7 @@ impl std::fmt::Display for NsiteError {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Manifest {
     pub event_id: String,
     pub updated_at: i64,
@@ -53,11 +53,21 @@ pub struct Manifest {
     pub paths: BTreeMap<String, String>,
 }
 
+/// One manifest on disk, with the moment it stops being trusted.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct StoredManifest {
+    expires_at: i64,
+    manifest: Manifest,
+}
+
 pub struct NsiteResolver {
     settings: Arc<crate::settings::SettingsStore>,
     timeout: Duration,
     cache: Mutex<HashMap<String, (i64, Manifest)>>,
     misses: Mutex<HashMap<String, i64>>,
+    flights: Arc<crate::cache::Flights>,
+    /// Where manifests survive a restart; `None` keeps them in memory only.
+    directory: Option<PathBuf>,
 }
 
 impl NsiteResolver {
@@ -67,7 +77,14 @@ impl NsiteResolver {
             timeout: Duration::from_secs(8),
             cache: Mutex::new(HashMap::new()),
             misses: Mutex::new(HashMap::new()),
+            flights: Arc::default(),
+            directory: None,
         }
+    }
+
+    pub fn with_directory(mut self, directory: Option<PathBuf>) -> Self {
+        self.directory = directory;
+        self
     }
 
     pub async fn resolve(
@@ -79,16 +96,23 @@ impl NsiteResolver {
         let hex = key.to_hex();
         let cache_key = format!("{hex}:{}", site.unwrap_or(""));
         let now = crate::resolve::unix_now();
-
-        if let Some(until) = crate::lock(&self.misses).get(&cache_key) {
-            if *until > now {
-                return Err(NsiteError::NoManifest);
-            }
+        if self.recently_missed(&cache_key, now) {
+            return Err(NsiteError::NoManifest);
         }
-        if let Some((expires, manifest)) = crate::lock(&self.cache).get(&cache_key) {
-            if *expires > now {
-                return Ok(manifest.clone());
-            }
+        if let Some(manifest) = self.fresh(&cache_key, now) {
+            return Ok(manifest);
+        }
+
+        // A cold page load asks for several files at once. The first request looks the
+        // manifest up; the rest wait here and then find it in the cache.
+        let _flight = self.flights.board(&cache_key).await;
+
+        let now = crate::resolve::unix_now();
+        if self.recently_missed(&cache_key, now) {
+            return Err(NsiteError::NoManifest);
+        }
+        if let Some(manifest) = self.fresh(&cache_key, now) {
+            return Ok(manifest);
         }
 
         let outcome = self.query(key, &hex, site, now).await;
@@ -96,7 +120,15 @@ impl NsiteResolver {
         match &outcome {
             Ok((manifest, expires)) => {
                 let until = (*expires).min(now + CACHE_SECONDS);
-                crate::lock(&self.cache).insert(cache_key, (until, manifest.clone()));
+                crate::lock(&self.cache).insert(cache_key.clone(), (until, manifest.clone()));
+                crate::cache::save(
+                    self.directory.as_deref(),
+                    &cache_key,
+                    &StoredManifest {
+                        expires_at: until,
+                        manifest: manifest.clone(),
+                    },
+                );
             }
             Err(_) => {
                 crate::lock(&self.misses).insert(cache_key, now + NEGATIVE_SECONDS);
@@ -106,10 +138,51 @@ impl NsiteResolver {
         outcome.map(|(manifest, _)| manifest)
     }
 
-    /// Drop cached manifests and misses.
+    /// A manifest this session already has, or the copy an earlier one left on disk.
+    fn fresh(&self, cache_key: &str, now: i64) -> Option<Manifest> {
+        if let Some((expires, manifest)) = crate::lock(&self.cache).get(cache_key) {
+            if *expires > now {
+                return Some(manifest.clone());
+            }
+        }
+
+        let stored: StoredManifest = crate::cache::load(self.directory.as_deref(), cache_key)?;
+        if stored.expires_at <= now {
+            return None;
+        }
+
+        crate::lock(&self.cache).insert(
+            cache_key.to_string(),
+            (stored.expires_at, stored.manifest.clone()),
+        );
+        Some(stored.manifest)
+    }
+
+    fn recently_missed(&self, cache_key: &str, now: i64) -> bool {
+        crate::lock(&self.misses)
+            .get(cache_key)
+            .map(|until| *until > now)
+            .unwrap_or(false)
+    }
+
+    /// Drop cached manifests and misses, in memory and on disk.
     pub fn clear(&self) {
         crate::lock(&self.cache).clear();
         crate::lock(&self.misses).clear();
+        crate::cache::forget(self.directory.clone());
+    }
+
+    /// The manifest as stored by an earlier session, tested through `resolve`.
+    #[cfg(test)]
+    fn store_for_test(&self, cache_key: &str, until: i64, manifest: &Manifest) {
+        crate::cache::save(
+            self.directory.as_deref(),
+            cache_key,
+            &StoredManifest {
+                expires_at: until,
+                manifest: manifest.clone(),
+            },
+        );
     }
 
     async fn query(
@@ -579,4 +652,75 @@ fn page(status: StatusCode, detail: &str) -> Response {
 /// Advertising a site's own host, used by the link router.
 pub fn host_for(pubkey: &str, site: Option<&str>) -> String {
     nsite_host(pubkey, site)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn resolver(directory: Option<PathBuf>) -> NsiteResolver {
+        // No relays: anything that returns a manifest returned it from disk.
+        let settings = crate::settings::SettingsStore::in_memory(crate::settings::Settings {
+            relays: Vec::new(),
+            ..Default::default()
+        });
+        NsiteResolver::new(Arc::new(settings)).with_directory(directory)
+    }
+
+    /// A directory no other test can delete: tests run in parallel.
+    fn directory() -> PathBuf {
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let id = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!("ncc-manifests-{}-{id}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        path
+    }
+
+    fn manifest() -> Manifest {
+        Manifest {
+            event_id: "ab".repeat(32),
+            updated_at: 1_700_000_000,
+            title: Some("kept".into()),
+            servers: vec!["https://blossom.example".into()],
+            paths: BTreeMap::from([("/index.html".to_string(), "cd".repeat(32))]),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_manifest_survives_a_restart() {
+        let directory = directory();
+        let hex = nostr::Keys::generate().public_key().to_hex();
+        let key = format!("{hex}:");
+
+        let first = resolver(Some(directory.clone()));
+        first.store_for_test(&key, crate::resolve::unix_now() + 30, &manifest());
+
+        // A new resolver stands in for the next launch: memory is empty, the disk copy
+        // is not, and there are no relays to fall back on.
+        let second = resolver(Some(directory.clone()));
+        let resolved = second.resolve(&hex, None).await.expect("from disk");
+
+        assert_eq!(resolved.title.as_deref(), Some("kept"));
+        assert_eq!(resolved.event_id, manifest().event_id);
+
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    #[tokio::test]
+    async fn an_expired_manifest_is_not_used() {
+        let directory = directory();
+        let hex = nostr::Keys::generate().public_key().to_hex();
+
+        let first = resolver(Some(directory.clone()));
+        first.store_for_test(
+            &format!("{hex}:"),
+            crate::resolve::unix_now() - 1,
+            &manifest(),
+        );
+
+        let second = resolver(Some(directory.clone()));
+        assert!(second.resolve(&hex, None).await.is_err());
+
+        let _ = std::fs::remove_dir_all(&directory);
+    }
 }

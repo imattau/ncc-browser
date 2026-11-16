@@ -24,7 +24,7 @@ const WEB_SCHEME_ALIASES: &[(&str, &str)] = &[
     ("wss", "wss"),
 ];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum EndpointFamily {
     Onion,
     Ipv6,
@@ -53,7 +53,7 @@ impl EndpointFamily {
 }
 
 /// A normalised endpoint from a locator payload.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Endpoint {
     /// Absolute http(s)/ws(s) URL, normalised so it can be handed straight to a fetch.
     pub url: String,
@@ -95,7 +95,7 @@ pub fn candidate_d_tags(service: Option<&str>) -> Vec<String> {
     candidates
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum DTagSource {
     Exact,
     LocatorSuffix,

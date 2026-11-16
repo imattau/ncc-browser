@@ -266,6 +266,10 @@ passphrase and rewritten with the device envelope.
 - [x] History and bookmarks, kept in the shell's storage (200 entries).
 - [x] Storage: clear cache drops locator records, site manifests, verified blobs in
       memory and on disk, and the WebView page cache.
+- [x] A cold load asks for several files at once, so a lookup is gated per site: one
+      relay query answers all of them instead of one each. Manifests and locator
+      records are written to `<data>/manifests` and `<data>/records` and expire on the
+      same clock as their memory copies, so a restart no longer starts from nothing.
 - [x] Cleartext warning: when the setting is on and the endpoint is plain HTTP, a page
       explains it and a one-shot token records the exception, so it is asked once.
 - [x] Downloads: the content view hands a file to the app, which fetches it through
