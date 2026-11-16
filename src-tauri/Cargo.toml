@@ -1,7 +1,7 @@
 [package]
 name = "ncc-navigator"
 description = "Nostr Navigator shell for Android"
-version = "0.28.3"
+version = "0.29.0"
 authors = ["imattau"]
 license = "MIT"
 edition = "2024"
@@ -21,6 +21,7 @@ ncc-core = { path = "../crates/ncc-core" }
 ncc-identity = { path = "../crates/ncc-identity" }
 ncc-proxy = { path = "../crates/ncc-proxy" }
 ncc-tor = { path = "../crates/ncc-tor", features = ["bundled"] }
+ncc-vault = { path = "../crates/ncc-vault" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 log = "0.4"

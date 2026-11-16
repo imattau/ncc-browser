@@ -1,0 +1,21 @@
+[package]
+name = "ncc-vault"
+description = "The shared password vault format: entries, merge rules, TOTP and generator"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+hmac = "0.12.1"
+ncc-core = { path = "../ncc-core" }
+nostr = "0.44.8"
+rand = "0.8"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha1 = "0.10.6"
+sha2 = "0.10.9"
+url = "2"
+
+[lints.rust]
+unsafe_code = "forbid"

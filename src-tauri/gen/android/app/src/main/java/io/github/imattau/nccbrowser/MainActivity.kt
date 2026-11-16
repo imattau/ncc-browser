@@ -1,11 +1,13 @@
 package io.github.imattau.nccbrowser
 
 import android.app.Activity
+import android.app.KeyguardManager
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -100,6 +102,18 @@ class MainActivity : TauriActivity() {
       } finally {
         file.delete()
       }
+    }
+  /**
+   * The vault's unlock prompt. Android's own device-credential screen is used rather
+   * than a biometric library: one prompt, nothing new to ship, and it falls back to
+   * the PIN or pattern the device already trusts.
+   */
+  private val confirmDevice =
+    registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+      emitToShellRaw(
+        "window.__nccDeviceCredential",
+        if (result.resultCode == Activity.RESULT_OK) "true" else "false",
+      )
     }
   private var activeId: String? = null
   private var nextTabId = 1
@@ -728,6 +742,61 @@ class MainActivity : TauriActivity() {
           startActivity(Intent.createChooser(send, null))
         } catch (error: Exception) {
           // No share target installed.
+        }
+      }
+    }
+
+    @JavascriptInterface
+    fun fillLogin(tabId: String?, username: String?, password: String?) {
+      val id = tabId ?: return
+      val secret = password ?: return
+      val user = username ?: ""
+      runOnUiThread { tabs.firstOrNull { it.id == id }?.fillLogin(user, secret) }
+    }
+
+    /** Write-only: the page-triggered path must never be able to read a password. */
+    @JavascriptInterface
+    fun copySecret(text: String?, label: String?) {
+      val value = text ?: return
+      runOnUiThread {
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText(label ?: "password", value))
+        toast(label ?: "Copied")
+        // Best effort: Android 10+ may ignore a background clipboard write, which is
+        // also why the copy is only made while the app is in front.
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val current = clipboard.primaryClip?.getItemAt(0)?.text?.toString()
+            if (current == value) {
+              clipboard.clearPrimaryClip()
+            }
+          }
+        }, 30_000)
+      }
+    }
+
+    @JavascriptInterface
+    fun unlockWithDeviceCredential() {
+      runOnUiThread {
+        val keyguard = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+        if (!keyguard.isDeviceSecure) {
+          // No lock to confirm against; the app itself is the only barrier, and the
+          // vault screen says so.
+          emitToShellRaw("window.__nccDeviceCredential", "true")
+          return@runOnUiThread
+        }
+        val intent = keyguard.createConfirmDeviceCredentialIntent(
+          "Unlock passwords",
+          "Confirm it is you to open the vault.",
+        )
+        if (intent == null) {
+          emitToShellRaw("window.__nccDeviceCredential", "false")
+          return@runOnUiThread
+        }
+        try {
+          confirmDevice.launch(intent)
+        } catch (error: Exception) {
+          emitToShellRaw("window.__nccDeviceCredential", "false")
         }
       }
     }

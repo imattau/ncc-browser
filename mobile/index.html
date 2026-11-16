@@ -256,6 +256,11 @@
             <span class="row-text"><b>Signer permissions</b><small>Services you stopped asking about</small></span>
             <svg class="i chev"><use href="#i-chevron" /></svg>
           </button>
+          <button class="row" type="button" data-panel="passwords">
+            <span class="row-icon"><svg class="i"><use href="#i-key" /></svg></span>
+            <span class="row-text"><b>Passwords</b><small id="sub-passwords">Saved logins</small></span>
+            <svg class="i chev"><use href="#i-chevron" /></svg>
+          </button>
         </div>
 
         <p class="section-label">Data</p>
@@ -456,6 +461,122 @@
       </div>
     </section>
 
+    <section id="passwords" class="screen" hidden>
+      <header class="appbar">
+        <button class="ib" type="button" data-back aria-label="Back"><svg class="i"><use href="#i-back" /></svg></button>
+        <h2>Passwords</h2>
+      </header>
+      <div class="body">
+        <p id="vault-state" class="hint">Checking…</p>
+        <div class="card">
+          <button id="vault-unlock" class="row" type="button">
+            <span class="row-icon"><svg class="i"><use href="#i-unlock" /></svg></span>
+            <span class="row-text"><b>Unlock</b><small>Confirm with your device lock</small></span>
+          </button>
+          <button id="vault-lock" class="row" type="button">
+            <span class="row-icon"><svg class="i"><use href="#i-lock" /></svg></span>
+            <span class="row-text"><b>Lock now</b><small>Forget the decrypted vault</small></span>
+          </button>
+        </div>
+
+        <label class="field">
+          <span>Search</span>
+          <input id="vault-search" type="search" autocomplete="off" placeholder="Title, username or site" />
+        </label>
+        <div id="vault-list" class="card"></div>
+        <button id="vault-add" class="btn block" type="button">Add login</button>
+
+        <p class="section-label">Vault</p>
+        <label class="field">
+          <span>Auto-lock (minutes, 0 = never)</span>
+          <input id="vault-lock-minutes" type="number" min="0" max="1440" inputmode="numeric" />
+        </label>
+        <label class="switch-row">
+          <span>Offer to save new logins</span>
+          <input id="vault-offer-save" class="switch" type="checkbox" role="switch" />
+        </label>
+        <label class="field">
+          <span>Vault relay (optional)</span>
+          <input id="vault-relay" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="wss://relay.example" />
+        </label>
+        <button id="vault-save-config" class="btn block" type="button">Save settings</button>
+        <p id="vault-note" class="status" role="status"></p>
+
+        <p class="section-label">Never save</p>
+        <div id="vault-never" class="card"></div>
+        <p class="hint">
+          The vault is one NIP-78 event, encrypted to your own key on this device and
+          synced through your relays. The desktop build reads the same event, so the
+          same logins appear here when both use the same npub.
+        </p>
+      </div>
+    </section>
+
+    <section id="password-fill" class="screen" hidden>
+      <header class="appbar">
+        <button class="ib" type="button" data-back aria-label="Back"><svg class="i"><use href="#i-back" /></svg></button>
+        <h2>Passwords</h2>
+      </header>
+      <div class="body">
+        <p id="fill-origin" class="hint"></p>
+        <div id="fill-list" class="card"></div>
+        <p id="fill-note" class="status" role="status"></p>
+        <button id="fill-add" class="btn tonal block" type="button">Add a login for this page</button>
+        <button id="fill-manage" class="btn tonal block" type="button">Manage passwords</button>
+      </div>
+    </section>
+
+    <section id="password-save" class="screen" hidden>
+      <header class="appbar">
+        <h2>Save this login?</h2>
+      </header>
+      <div class="body">
+        <p id="save-origin" class="hint"></p>
+        <p id="save-username" class="hint"></p>
+        <button id="save-accept" class="btn block" type="button">Save login</button>
+        <button id="save-never" class="btn tonal block" type="button">Never for this site</button>
+        <button id="save-dismiss" class="btn tonal block" type="button">Not now</button>
+        <p id="save-note" class="status" role="status"></p>
+      </div>
+    </section>
+
+    <section id="password-edit" class="screen" hidden>
+      <header class="appbar">
+        <button class="ib" type="button" data-back aria-label="Back"><svg class="i"><use href="#i-back" /></svg></button>
+        <h2 id="edit-heading">Add login</h2>
+      </header>
+      <div class="body">
+        <label class="field">
+          <span>Site</span>
+          <input id="edit-origin" type="text" autocomplete="off" spellcheck="false" placeholder="example.com or ncc://npub…/web" />
+        </label>
+        <label class="field">
+          <span>Title</span>
+          <input id="edit-title" type="text" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>Username</span>
+          <input id="edit-username" type="text" autocomplete="off" spellcheck="false" />
+        </label>
+        <label class="field">
+          <span>Password</span>
+          <input id="edit-password" type="password" autocomplete="new-password" spellcheck="false" />
+        </label>
+        <button id="edit-generate" class="btn tonal block" type="button">Generate a password</button>
+        <label class="field">
+          <span>Notes</span>
+          <textarea id="edit-notes" rows="2"></textarea>
+        </label>
+        <label class="field">
+          <span>2FA secret (otpauth:// or Base32)</span>
+          <input id="edit-totp" type="text" autocomplete="off" spellcheck="false" />
+        </label>
+        <button id="edit-save" class="btn block" type="button">Save login</button>
+        <button id="edit-delete" class="btn tonal block" type="button">Delete login</button>
+        <p id="edit-note" class="status" role="status"></p>
+      </div>
+    </section>
+
     <section id="storage" class="screen" hidden>
       <header class="appbar">
         <button class="ib" type="button" data-back aria-label="Back"><svg class="i"><use href="#i-back" /></svg></button>
@@ -612,6 +733,9 @@
           </button>
           <button id="menu-private" class="row" type="button">
             <svg class="i"><use href="#i-eye-off" /></svg><span class="row-text"><b>New private tab</b></span>
+          </button>
+          <button id="menu-passwords" class="row" type="button">
+            <svg class="i"><use href="#i-key" /></svg><span class="row-text"><b>Passwords</b></span>
           </button>
           <button id="menu-tor" class="row" type="button">
             <svg class="i"><use href="#i-onion" /></svg><span class="row-text"><b>New Tor tab</b></span>

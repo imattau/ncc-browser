@@ -35,6 +35,30 @@ pub enum HttpsMode {
     Only,
 }
 
+/// Password manager settings. Defaults mirror the desktop build.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PasswordSettings {
+    /// `0` disables the idle lock for the session.
+    pub auto_lock_minutes: u32,
+    pub offer_save: bool,
+    /// When set, the vault uses only this relay and skips the browser's list.
+    pub vault_relay: String,
+    /// Origins the user chose never to save for.
+    pub never_save: Vec<String>,
+}
+
+impl Default for PasswordSettings {
+    fn default() -> Self {
+        Self {
+            auto_lock_minutes: 15,
+            offer_save: true,
+            vault_relay: String::new(),
+            never_save: Vec::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
@@ -62,6 +86,8 @@ pub struct Settings {
     /// The SOCKS endpoint for `local` mode. Validated on the way in, because a proxy
     /// URL that does not parse would leave Tor tabs with no route and no reason.
     pub tor_socks: String,
+    /// The password manager. The vault's data lives elsewhere; these are its rules.
+    pub passwords: PasswordSettings,
 }
 
 impl Default for Settings {
@@ -81,6 +107,7 @@ impl Default for Settings {
             search_engine_custom: String::new(),
             tor_mode: TorMode::default(),
             tor_socks: "socks5h://127.0.0.1:9050".to_string(),
+            passwords: PasswordSettings::default(),
         }
     }
 }
@@ -105,6 +132,24 @@ impl Settings {
         self.search_engine_custom = custom.clone();
 
         self.tor_socks = ncc_tor::socks::normalize_proxy(&self.tor_socks)?;
+
+        self.passwords.auto_lock_minutes = self.passwords.auto_lock_minutes.min(24 * 60);
+        let relay = self.passwords.vault_relay.trim().to_string();
+        self.passwords.vault_relay = if relay.is_empty() {
+            String::new()
+        } else if relay.starts_with("ws://") || relay.starts_with("wss://") {
+            relay
+        } else {
+            return Err("The vault relay must start with ws:// or wss://".to_string());
+        };
+        self.passwords.never_save = self
+            .passwords
+            .never_save
+            .iter()
+            .map(|origin| origin.trim().to_string())
+            .filter(|origin| !origin.is_empty())
+            .collect();
+        self.passwords.never_save.dedup();
 
         if self.search_engine == "custom" && !custom.contains("%s") {
             return Err("A custom engine needs a %s placeholder".to_string());
@@ -281,6 +326,34 @@ impl SettingsStore {
         let mut settings = self.get();
         settings.tor_mode = mode;
         settings.tor_socks = socks;
+        self.apply(settings)
+    }
+
+    pub fn set_passwords(&self, passwords: PasswordSettings) -> Result<Settings, String> {
+        let mut settings = self.get();
+        settings.passwords = passwords;
+        self.apply(settings)
+    }
+
+    pub fn add_never_save(&self, origin: &str) -> Result<Settings, String> {
+        let mut settings = self.get();
+        if !settings
+            .passwords
+            .never_save
+            .iter()
+            .any(|entry| entry == origin)
+        {
+            settings.passwords.never_save.push(origin.to_string());
+        }
+        self.apply(settings)
+    }
+
+    pub fn remove_never_save(&self, origin: &str) -> Result<Settings, String> {
+        let mut settings = self.get();
+        settings
+            .passwords
+            .never_save
+            .retain(|entry| entry != origin);
         self.apply(settings)
     }
 
