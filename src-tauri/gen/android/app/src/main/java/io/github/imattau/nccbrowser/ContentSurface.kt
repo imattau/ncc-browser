@@ -167,7 +167,9 @@ class ContentSurface(
     webView = null
     web.stopLoading()
     (web.parent as? ViewGroup)?.removeView(web)
-    web.destroy()
+    // One tab's teardown must not take the browser with it: a WebView that is unhappy
+    // throws from here, and that is a leak, not a reason to kill the process.
+    runCatching { web.destroy() }
   }
 
   /**
@@ -342,6 +344,21 @@ class ContentSurface(
             .put("canGoBack", view.canGoBack())
             .put("canGoForward", view.canGoForward()),
         )
+      }
+
+      /**
+       * The renderer is a separate process. Letting its death through kills the whole
+       * app, which is not what one broken page should be able to do.
+       */
+      override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+        if (!destroyed) {
+          showFailure(
+            view,
+            currentUrl ?: "",
+            if (detail.didCrash()) "This page's renderer crashed." else "The system reclaimed this page's renderer.",
+          )
+        }
+        return true
       }
 
       override fun onReceivedError(

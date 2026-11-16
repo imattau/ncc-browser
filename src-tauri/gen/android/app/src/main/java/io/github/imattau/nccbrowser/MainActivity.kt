@@ -100,6 +100,8 @@ class MainActivity : TauriActivity() {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
 
+    installCrashReporter()
+
     barHeight = (56 * resources.displayMetrics.density).toInt()
     downloads = Downloads(this).also { store ->
       store.onChange = { json -> emitToShellRaw("window.__nccDownloads", json) }
@@ -178,6 +180,39 @@ class MainActivity : TauriActivity() {
     chromeView.addJavascriptInterface(Bridge(), "NccContent")
 
     chromeView.evaluateJavascript("window.__nccContentReady && window.__nccContentReady()", null)
+  }
+
+  /**
+   * Keep the last crash where it can be read.
+   *
+   * Alpha builds crash in ways that only show up on a device, and asking someone to
+   * attach a debugger mid-session is not a workflow. The trace is written to the app's
+   * own files directory and its first line is shown on the next launch, which is
+   * enough to know what to look at.
+   */
+  private fun installCrashReporter() {
+    val previous = File(filesDir, "last-crash.txt")
+    if (previous.exists()) {
+      val first = previous.readLines().firstOrNull { it.isNotBlank() }
+      toast("Last crash: ${first ?: "unknown"}")
+      previous.delete()
+    }
+
+    val system = Thread.getDefaultUncaughtExceptionHandler()
+    Thread.setDefaultUncaughtExceptionHandler { thread, error ->
+      try {
+        File(filesDir, "last-crash.txt").writeText(
+          buildString {
+            appendLine(error.toString())
+            appendLine("thread: ${thread.name}")
+            appendLine(error.stackTraceToString())
+          },
+        )
+      } catch {
+        // Reporting a crash must not become a second one.
+      }
+      system?.uncaughtException(thread, error)
+    }
   }
 
   private fun active(): ContentSurface? = tabs.firstOrNull { it.id == activeId }
@@ -490,22 +525,25 @@ class MainActivity : TauriActivity() {
 
   inner class Bridge {
     @JavascriptInterface
-    fun open(url: String) {
+    fun open(url: String?) {
+      if (url == null) return
       runOnUiThread { openTab(url, reuseActive = true) }
     }
 
     @JavascriptInterface
-    fun openNew(url: String) {
+    fun openNew(url: String?) {
+      if (url == null) return
       runOnUiThread { openTab(url, reuseActive = false) }
     }
 
     @JavascriptInterface
-    fun select(id: String) {
+    fun select(id: String?) {
+      if (id == null) return
       runOnUiThread { selectTab(id) }
     }
 
     @JavascriptInterface
-    fun closeTab(id: String) {
+    fun closeTab(id: String?) {
       runOnUiThread { closeTab(id) }
     }
 
@@ -543,7 +581,8 @@ class MainActivity : TauriActivity() {
     /** The shell learns the port from the Rust side; the tabs need it for links and
      * downloads from pages that do not carry it in their URL. */
     @JavascriptInterface
-    fun setProxyPort(port: Int) {
+    fun setProxyPort(port: Int?) {
+      if (port == null) return
       runOnUiThread { proxyPortNumber = port }
     }
 
@@ -576,7 +615,8 @@ class MainActivity : TauriActivity() {
     }
 
     @JavascriptInterface
-    fun find(query: String) {
+    fun find(query: String?) {
+      if (query == null) return
       runOnUiThread { active()?.find(query) }
     }
 
@@ -599,7 +639,8 @@ class MainActivity : TauriActivity() {
     }
 
     @JavascriptInterface
-    fun share(text: String) {
+    fun share(text: String?) {
+      if (text == null) return
       runOnUiThread {
         val send = Intent(Intent.ACTION_SEND)
           .setType("text/plain")
@@ -613,7 +654,8 @@ class MainActivity : TauriActivity() {
     }
 
     @JavascriptInterface
-    fun copy(text: String) {
+    fun copy(text: String?) {
+      if (text == null) return
       runOnUiThread {
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         clipboard.setPrimaryClip(ClipData.newPlainText("address", text))
@@ -629,7 +671,8 @@ class MainActivity : TauriActivity() {
     }
 
     @JavascriptInterface
-    fun openExternal(url: String) {
+    fun openExternal(url: String?) {
+      if (url == null) return
       runOnUiThread {
         try {
           startActivity(
@@ -647,7 +690,8 @@ class MainActivity : TauriActivity() {
     }
 
     @JavascriptInterface
-    fun setBarPosition(position: String) {
+    fun setBarPosition(position: String?) {
+      if (position == null) return
       runOnUiThread { applyBarPosition(position) }
     }
   }
