@@ -3,24 +3,27 @@
  * React chrome can take over later without a visual reset.
  */
 
+/*
+ * Tokens are pairs: `light-dark()` picks one from the used colour scheme, so forcing
+ * `color-scheme` on the root flips the whole palette without duplicating values.
+ */
 :root {
-  --ink: #f2f4f8;
-  --panel: #ffffff;
-  --line: #d7dce7;
-  --text: #1b2130;
-  --muted: #5a6475;
-  --accent: #2563eb;
+  color-scheme: light dark;
+
+  --ink: light-dark(#f2f4f8, #0b0c10);
+  --panel: light-dark(#ffffff, #12141a);
+  --line: light-dark(#d7dce7, #262a35);
+  --text: light-dark(#1b2130, #dfe3ea);
+  --muted: light-dark(#5a6475, #9aa3b2);
+  --accent: light-dark(#2563eb, #8ab4ff);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --ink: #0b0c10;
-    --panel: #12141a;
-    --line: #262a35;
-    --text: #dfe3ea;
-    --muted: #9aa3b2;
-    --accent: #8ab4ff;
-  }
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
 }
 
 * {

@@ -677,6 +677,8 @@ async function main() {
     })
     byId('bar-position').addEventListener('change', (event) => applyBarPosition(event.target.value))
     applyBarPosition(globalThis.localStorage?.getItem('ncc.bar') || 'bottom')
+    byId('theme').addEventListener('change', (event) => applyTheme(event.target.value))
+    applyTheme(globalThis.localStorage?.getItem('ncc.theme') || 'system')
     window.addEventListener('resize', applyLayout)
     applyLayout()
   }
@@ -844,6 +846,16 @@ function applyLayout() {
   }
 
   if (!compact && contentOpen) byId('collapse').hidden = false
+}
+
+/** Theme is a shell setting: it only changes this document's colour scheme. */
+function applyTheme(value) {
+  const root = document.documentElement
+  if (value === 'light' || value === 'dark') root.dataset.theme = value
+  else delete root.dataset.theme
+
+  globalThis.localStorage?.setItem('ncc.theme', value)
+  byId('theme').value = value
 }
 
 /** Toolbar position is a user setting; the default matches Firefox and Brave. */
