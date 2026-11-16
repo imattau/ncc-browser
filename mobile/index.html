@@ -16,10 +16,34 @@
     <!-- The chrome strip. Only visible when the shell is resized to one row. -->
     <header id="bar" class="strip" hidden>
       <button id="bar-back" class="icon" type="button" aria-label="Back">&#8592;</button>
+      <button id="bar-info" class="icon lock" type="button" aria-label="Site information">&#128274;</button>
       <button id="bar-address" class="strip-address" type="button">no page</button>
       <button id="bar-tabs" class="count" type="button" aria-label="Tabs">1</button>
       <button id="bar-reload" class="icon" type="button" aria-label="Reload">&#8635;</button>
+      <button id="bar-menu" class="icon" type="button" aria-label="Menu">&#8942;</button>
     </header>
+
+    <section id="info" class="sheet" hidden>
+      <header class="sheet-head">
+        <h2>Site</h2>
+        <button id="info-done" type="button" class="secondary">Done</button>
+      </header>
+      <div id="info-body" class="info-body"></div>
+    </section>
+
+    <section id="menu" class="sheet" hidden>
+      <header class="sheet-head">
+        <h2>Menu</h2>
+        <button id="menu-done" type="button" class="secondary">Done</button>
+      </header>
+      <div class="menu-list">
+        <button id="menu-new" type="button">New tab</button>
+        <button id="menu-reload" type="button">Reload</button>
+        <button id="menu-copy" type="button">Copy address</button>
+        <button id="menu-close" type="button">Close tab</button>
+        <button id="menu-settings" type="button">Settings</button>
+      </div>
+    </section>
 
     <section id="switcher" class="sheet" hidden>
       <header class="sheet-head">

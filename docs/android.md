@@ -242,6 +242,9 @@ Still to build:
       `<npub>.<d>.nsite.localhost` and `<npub>.nsite.localhost` for the root site.
 - [x] Link routing: an in-page `ncc://` or `nsite://` link is mapped to its host by
       `GET /__ncc/route` and loaded in place, so pages can link across services.
+- [x] Site panel fed by `GET /__ncc/info`: record, d tag, endpoints with pin state,
+      Blossom servers and file count — the same record that is serving the page.
+- [x] Menu sheet: new tab, reload, copy address, close tab, settings.
 - [ ] Per-tab lifecycle and tab thumbnails.
 - [ ] File chooser and download handling in the content view.
 - [ ] `*.localhost` resolution, secure context, `Secure` cookie behaviour — **the
