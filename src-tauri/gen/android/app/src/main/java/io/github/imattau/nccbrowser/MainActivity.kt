@@ -8,6 +8,8 @@ import android.webkit.WebView
 import android.widget.LinearLayout
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import org.json.JSONObject
 
 /**
@@ -75,6 +77,18 @@ class MainActivity : TauriActivity() {
 
     column = columnView
     shell = chromeView
+
+    // The window is edge-to-edge, so the strip would sit under the status bar and the
+    // camera cutout, and the page under the gesture bar. Inset the column once and
+    // both halves stay clear.
+    ViewCompat.setOnApplyWindowInsetsListener(columnView) { view, insets ->
+      val bars = insets.getInsets(
+        WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout(),
+      )
+      view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+      WindowInsetsCompat.CONSUMED
+    }
+    ViewCompat.requestApplyInsets(columnView)
 
     val contentSurface = ContentSurface(columnView) { payload -> postToShell(payload) }
     surface = contentSurface
