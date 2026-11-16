@@ -16,12 +16,14 @@
 //! the HTTP server. Everything that decides *what* to fetch lives in `ncc-core`, so
 //! the two implementations can be checked against the same rules.
 
+pub mod inject;
 pub mod pins;
 pub mod relay;
 pub mod resolve;
 pub mod server;
 pub mod vhost;
 
+pub use inject::{Injection, TokenStore};
 pub use pins::PinStore;
 pub use resolve::{ResolveError, ResolvedService, Resolver};
 pub use server::{serve, ProxyConfig, ProxyState};
