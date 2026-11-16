@@ -92,24 +92,18 @@ The content WebView never sees `ncc://`. It loads
 endpoint and rewrites redirects into the same host form. `to_display_url` (already in
 `ncc-core`) is what the address bar renders, so the user-facing address is unchanged.
 
-Android's resolver does not map `*.localhost` to loopback (`net::ERR_NAME_NOT_RESOLVED`),
-so the content surface intercepts those requests in `shouldInterceptRequest` and
-replays them against `127.0.0.1:<port>` with the vhost in `x-ncc-vhost`. The document
-URL — and therefore the origin, cookies, storage and service-worker scope — stays the
-vhost, so interception preserves the origin model rather than bypassing it.
+Chromium resolves `*.localhost` to loopback on Android, so the page is loaded straight
+from its virtual host and the proxy is reached natively — no interception, no DNS. The
+document keeps that origin, and cookies, storage, service workers, request bodies and
+multiple `Set-Cookie` headers all behave as they do on any other site.
 
-Three gaps come with interception, all because the WebView hands over a request
-without its body: submitted form bodies are dropped, only the last `Set-Cookie`
-survives, and service-worker/WebSocket traffic is not intercepted.
+That was verified on-device: `ditto` and `search` on an identity served from an
+IPv4 endpoint rendered in the app before any interception existed. If a future WebView
+stops resolving `*.localhost`, the fallback is to intercept in
+`shouldInterceptRequest` and replay against `127.0.0.1` with the vhost in a header —
+which costs request bodies and multiple `Set-Cookie` headers, so it is not the default.
 
-`ncc://<npub>/` asks for the `addr` service, and the resolver's `d`-tag ladder only
-ever falls back *to* `addr`, never from it. An identity that publishes `web` and
-nothing else would therefore be unreachable at its bare address, on every shell. The
-proxy answers that case from the identity's other records: it follows the only
-page-capable service if there is exactly one, otherwise it renders a chooser marking
-the records that cannot carry a page (relay, manager).
-
-### NIP-07
+## NIP-07
 
 Electron gets `window.nostr` from a preload in an isolated world at document start.
 Android has no preload, so the proxy rewrites the document on the way through: the

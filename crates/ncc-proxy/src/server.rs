@@ -155,13 +155,9 @@ async fn handle(State(state): State<Arc<ProxyState>>, request: Request) -> Respo
 }
 
 async fn handle_inner(state: &ProxyState, request: Request) -> Response {
-    // The Android WebView cannot resolve `*.localhost`, so it replays the request
-    // against 127.0.0.1 and carries the real vhost here. Everything else still uses
-    // `Host`, which is the only one a real browser sends.
     let authority = request
         .headers()
-        .get("x-ncc-vhost")
-        .or_else(|| request.headers().get(header::HOST))
+        .get(header::HOST)
         .and_then(|value| value.to_str().ok())
         .unwrap_or_default()
         .to_string();

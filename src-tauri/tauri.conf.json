@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Nostr Navigator",
-  "version": "0.12.6",
+  "version": "0.12.7",
   "identifier": "io.github.imattau.nccbrowser",
   "build": {
     "frontendDist": "../mobile",
@@ -34,7 +34,7 @@
     ],
     "android": {
       "minSdkVersion": 26,
-      "versionCode": 12006,
+      "versionCode": 12007,
       "debugApplicationIdSuffix": ".debug"
     }
   }
