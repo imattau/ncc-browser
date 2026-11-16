@@ -25,6 +25,6 @@ pub mod vhost;
 
 pub use inject::{Injection, TokenStore};
 pub use pins::PinStore;
-pub use resolve::{ResolveError, ResolvedService, Resolver};
+pub use resolve::{DiscoveredService, ResolveError, ResolvedService, Resolver};
 pub use server::{serve, ProxyConfig, ProxyState};
 pub use vhost::{host_for, parse_vhost, Vhost};

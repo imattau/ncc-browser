@@ -39,6 +39,14 @@ impl std::fmt::Display for ResolveError {
 
 impl std::error::Error for ResolveError {}
 
+/// One service an identity publishes, as seen by discovery.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiscoveredService {
+    pub name: String,
+    /// The record offers at least one http(s) endpoint, so it can carry a page.
+    pub page: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct ResolvedService {
     /// The pubkey exactly as it was addressed (npub or hex).
@@ -121,6 +129,68 @@ impl Resolver {
         );
 
         result
+    }
+
+    /// Every service this identity publishes, for when the requested one is missing.
+    ///
+    /// Costs one relay query, only on the failure path. Each entry also says whether
+    /// the record offers an http(s) endpoint, so a caller can tell a page service
+    /// from a relay one instead of guessing from the name.
+    pub async fn discover_services(&self, pubkey_input: &str) -> Vec<DiscoveredService> {
+        let Ok(key) = PublicKey::parse(pubkey_input.trim()) else {
+            return Vec::new();
+        };
+        let filter = Filter::new()
+            .kinds([Kind::Custom(LOCATOR_KIND)])
+            .author(key)
+            .limit(50);
+        let Ok(filter) = serde_json::to_value(&filter) else {
+            return Vec::new();
+        };
+
+        let budget = self.timeout.min(Duration::from_secs(5));
+        let events = crate::relay::query_all(&self.relays, &filter, budget).await;
+
+        let mut found: std::collections::BTreeMap<String, (i64, bool)> =
+            std::collections::BTreeMap::new();
+
+        for event in &events {
+            let Some(d_tag) = identifier(event) else {
+                continue;
+            };
+            let service = d_tag
+                .strip_suffix("-locator")
+                .map(str::to_string)
+                .unwrap_or(d_tag);
+
+            let page = serde_json::from_str::<Value>(&event.content)
+                .ok()
+                .and_then(|value| parse_payload(&value))
+                .map(|payload| {
+                    normalize_endpoints(
+                        payload.fields.get("endpoints").unwrap_or(&Value::Null),
+                        false,
+                    )
+                    .iter()
+                    .any(|endpoint| endpoint.protocol == "http" || endpoint.protocol == "https")
+                })
+                .unwrap_or(false);
+
+            let created = event.created_at.as_secs() as i64;
+            found
+                .entry(service)
+                .and_modify(|entry| {
+                    if created > entry.0 {
+                        *entry = (created, page);
+                    }
+                })
+                .or_insert((created, page));
+        }
+
+        found
+            .into_iter()
+            .map(|(name, (_, page))| DiscoveredService { name, page })
+            .collect()
     }
 
     pub fn invalidate(&self, pubkey: &str, service: &str) {

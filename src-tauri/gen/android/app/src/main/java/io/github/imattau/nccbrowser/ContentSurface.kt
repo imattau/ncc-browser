@@ -258,7 +258,10 @@ class ContentSurface(
   private fun toResponse(response: okhttp3.Response): WebResourceResponse {
     val mime = response.header("Content-Type")?.substringBefore(';') ?: "application/octet-stream"
     val headers = mutableMapOf<String, String>()
-    response.headers.forEach { name, value ->
+    val source = response.headers
+    for (index in 0 until source.size) {
+      val name = source.name(index)
+      val value = source.value(index)
       when (name.lowercase()) {
         "content-type", "content-length", "content-encoding", "transfer-encoding" -> Unit
         else -> headers[name] = value

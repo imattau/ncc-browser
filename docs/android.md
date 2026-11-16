@@ -102,6 +102,13 @@ Three gaps come with interception, all because the WebView hands over a request
 without its body: submitted form bodies are dropped, only the last `Set-Cookie`
 survives, and service-worker/WebSocket traffic is not intercepted.
 
+`ncc://<npub>/` asks for the `addr` service, and the resolver's `d`-tag ladder only
+ever falls back *to* `addr`, never from it. An identity that publishes `web` and
+nothing else would therefore be unreachable at its bare address, on every shell. The
+proxy answers that case from the identity's other records: it follows the only
+page-capable service if there is exactly one, otherwise it renders a chooser marking
+the records that cannot carry a page (relay, manager).
+
 ### NIP-07
 
 Electron gets `window.nostr` from a preload in an isolated world at document start.
