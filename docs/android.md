@@ -1,7 +1,31 @@
 # Android build
 
-Status: **M0 scaffolding**. The Rust core exists and is tested; the Tauri shell and
-the Kotlin content surface are not written yet. Nothing here is a supported artifact.
+Status: **M0 shell builds and signs in CI**. The Tauri shell installs and reaches
+Rust; the content surface and the React chrome are not written yet.
+
+## Verified
+
+The `Android` workflow was run end to end on `ubuntu-latest`:
+
+```
+platform:    platforms;android-37.2   (resolved from compileSdk = 37)
+build-tools: build-tools;37.0.0
+ndk:         27.2.12479018
+apk:         11 MB, armeabi payload lib/arm64-v8a/libncc_navigator_lib.so
+signature:   V2 signer, certificate SHA-256 547edf7693c054d753355488f10f991578ab8da22cd6104cc157e5b98816c1f6
+build time:  ~10 min cold (Rust dominates), ~1 min for the Gradle half
+```
+
+That fingerprint is the certificate Zapstore's claim will pin. If it ever changes
+without an APK Signature Scheme v3 lineage, existing installs cannot update.
+
+Two things that are easy to trip over again:
+
+- `package.json` must keep a `"tauri": "tauri"` script. Tauri's Android Gradle plugin
+  shells out to `npm run tauri` while building the Rust library.
+- The SDK script probes `platforms;android-<n>.0/.1/.2` before the bare level,
+  because Android ships minor API levels now and `platforms;android-37` does not
+  exist.
 
 ## Decisions
 
@@ -108,11 +132,18 @@ Device-free (any Linux box with Rust):
       relays and printing the document, so the core can be exercised without a phone.
 - [ ] A conformance fixture set consumed by both the TS and Rust suites.
 
-Needs the Android toolchain (Java 21, SDK, NDK), none of which is installed here yet:
+Build pipeline:
 
-- [ ] `npm create tauri-app` / `npx tauri android init`, committed as `src-tauri`.
-- [ ] `vite.mobile.config.ts` + `NccApi` adapter over Tauri commands.
-- [ ] `build.gradle.kts` reading `keystore.properties` for the release signing config.
+- [x] `src-tauri` shell with the package id, minSdk 26 and arm64 target.
+- [x] `src-tauri/gen/android` generated on a runner and committed.
+- [x] Release signing from `keystore.properties`, verified with `apksigner`.
+- [x] APK built, verified and attached to a release.
+- [x] `mobile/` status page so the shell can be proven on a device.
+
+Still to build:
+
+- [ ] `vite.mobile.config.ts` + an `NccApi` adapter over Tauri commands, replacing
+      `mobile/` with the React chrome.
 - [ ] Kotlin content WebView under the toolbar, per-tab lifecycle, tab thumbnails.
 - [ ] Loopback proxy (`hyper` + `rustls`) and `onReceivedSslError` TLS exception.
 - [ ] `*.localhost` resolution, secure context, `Secure` cookie behaviour — **the
@@ -120,6 +151,7 @@ Needs the Android toolchain (Java 21, SDK, NDK), none of which is installed here
       the proxy's own certificate.
 - [ ] NIP-07 injection by rewriting the top document in the proxy, with a per-load
       nonce so a subframe cannot call the bridge.
+- [ ] Emulator run of the built APK.
 
 ## What does not carry over
 
