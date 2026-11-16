@@ -34,3 +34,19 @@ export function mimeForPath(path: string): string {
   if (dot === -1) return 'application/octet-stream'
   return TYPES[path.slice(dot).toLowerCase()] ?? 'application/octet-stream'
 }
+
+/**
+ * Pick the type to serve a site file with.
+ *
+ * A Blossom server is a content-addressed file store: many answer `text/plain` (or
+ * `application/octet-stream`) for everything they hold. Trusting that would render an
+ * index page as source text and break `<script type="module">`, which enforces the
+ * type. The path extension is authoritative when we know it; the upstream header only
+ * decides for extensionless paths.
+ */
+export function contentTypeFor(path: string, upstream?: string | null): string {
+  const guessed = mimeForPath(path)
+  if (guessed !== 'application/octet-stream') return guessed
+  const fallback = upstream?.trim()
+  return fallback ? fallback : guessed
+}

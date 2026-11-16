@@ -15,10 +15,20 @@ describe('NsiteBlobs', () => {
     const blobs = new NsiteBlobs({ fetch, directory: null })
 
     const first = await blobs.get(HASH, ['https://blossom.example'], '/hello.txt')
-    expect(first).toMatchObject({ ok: true, type: 'text/plain', cached: false })
+    expect(first).toMatchObject({ ok: true, type: 'text/plain; charset=utf-8', cached: false })
     const second = await blobs.get(HASH, ['https://blossom.example'], '/hello.txt')
     expect(second).toMatchObject({ ok: true, cached: true })
     expect(fetch).toHaveBeenCalledOnce()
+  })
+
+  it('derives the type from the path when the store reports text/plain', async () => {
+    const blobs = new NsiteBlobs({
+      fetch: async () => response(bytes, 'text/plain'),
+      directory: null
+    })
+    await expect(
+      blobs.get(HASH, ['https://blossom.example'], '/index.html')
+    ).resolves.toMatchObject({ ok: true, type: 'text/html; charset=utf-8' })
   })
 
   it('rejects bytes that do not match the hash', async () => {

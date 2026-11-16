@@ -9,7 +9,7 @@
 import { createHash } from 'node:crypto'
 import { mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { mimeForPath } from './mime'
+import { contentTypeFor } from './mime'
 
 export const DEFAULT_MAX_FILE_BYTES = 25 * 1024 * 1024
 export const DEFAULT_MAX_TOTAL_BYTES = 512 * 1024 * 1024
@@ -82,7 +82,7 @@ export class NsiteBlobs {
         continue
       }
 
-      const type = response.headers.get('content-type') || mimeForPath(hintPath)
+      const type = contentTypeFor(hintPath, response.headers.get('content-type'))
       let bytes: Buffer
       try {
         bytes = await readCapped(response, this.maxFileBytes())

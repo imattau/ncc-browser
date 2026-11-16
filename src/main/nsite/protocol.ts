@@ -17,6 +17,7 @@ import {
 } from '@shared/nsite-url'
 import type { NsiteInfo } from '@shared/types'
 import type { NsiteBlobs } from './blob'
+import { contentTypeFor } from './mime'
 import { matchPath, type NsiteManifest } from './manifest'
 import type { NsiteResolver } from './resolver'
 
@@ -154,7 +155,9 @@ async function handle(request: Request, deps: NsiteDeps): Promise<Response> {
   }
 
   const headers: Record<string, string> = {
-    'content-type': blob.type,
+    // Derive from the served path, not the cached blob type: a blob store can report
+    // `text/plain` for an .html or .js file, and older caches kept that answer.
+    'content-type': contentTypeFor(servedPath, blob.type),
     'content-length': String(blob.bytes.length),
     'x-content-type-options': 'nosniff',
     // The manifest can rotate at any time; the file behind a path may change with it.

@@ -809,7 +809,7 @@ general IPC bridge.
 ## Testing
 
 ```bash
-npm test       # 470 unit tests: URL parser, locator rules, resolver, routing, pins,
+npm test       # 475 unit tests: URL parser, locator rules, resolver, routing, pins,
                # signer crypto, identity storage, NIP-46, approvals, permissions,
                # ephemeral signer permissions, shortcuts, context menus, relays,
                # downloads, tab order, bookmarks, favicons, session storage, NCC-02

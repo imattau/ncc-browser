@@ -3444,8 +3444,10 @@ async function main() {
     const armadaBytes = Buffer.from('<h1>ARMADA ROOT</h1>')
     const armadaHash = createHash('sha256').update(armadaBytes).digest('hex')
     const tamperedHash = createHash('sha256').update('expected bytes').digest('hex')
+    // A Blossom server is a dumb file store; real ones often answer `text/plain` for
+    // everything. HTML must still parse and scripts must still execute.
     const blossomFiles = new Map([
-      [indexHash, { bytes: indexBytes, type: 'text/html; charset=utf-8' }],
+      [indexHash, { bytes: indexBytes, type: 'text/plain' }],
       [notFoundHash, { bytes: notFoundBytes, type: 'text/html; charset=utf-8' }],
       [tamperedHash, { bytes: Buffer.from('tampered'), type: 'text/plain' }],
       [armadaHash, { bytes: armadaBytes, type: 'text/html; charset=utf-8' }]
@@ -3477,10 +3479,10 @@ async function main() {
     const assetHash = createHash('sha256').update(assetBytes).digest('hex')
     if (true) {
       // Named site: same relay, different manifest kind and d tag.
-      blossomFiles.set(blogHash, { bytes: blogBytes, type: 'text/html; charset=utf-8' })
+      blossomFiles.set(blogHash, { bytes: blogBytes, type: 'text/plain' })
       blossomFiles.set(assetHash, {
         bytes: assetBytes,
-        type: 'text/javascript; charset=utf-8'
+        type: 'text/plain'
       })
       blossomFiles.set(dirHash, { bytes: dirBytes, type: 'text/html; charset=utf-8' })
       publishNsite(relayA, {
@@ -3497,6 +3499,15 @@ async function main() {
     await evaluate(chrome, `window.ncc.navigate(${JSON.stringify(`nsite://${serviceNpub}/`)})`)
     await waitForText(cdp, 'Hello from Nostr', 120)
     check('serves a NIP-5A site over nsite://', true)
+    const nsiteDocument = await evaluate(
+      cdp,
+      `({ type: document.contentType, headings: document.querySelectorAll('h1').length })`
+    )
+    check(
+      'parses a site served as text/plain as HTML',
+      nsiteDocument?.type === 'text/html' && nsiteDocument.headings === 1,
+      JSON.stringify(nsiteDocument)
+    )
     const rootOrigin = await evaluate(cdp, 'location.origin')
     check(
       'the root site is its own origin',
