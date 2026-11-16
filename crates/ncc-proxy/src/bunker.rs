@@ -23,7 +23,7 @@ use std::time::Duration;
 use futures_util::stream::FuturesUnordered;
 use futures_util::{SinkExt, StreamExt};
 use nostr::nips::nip44::{self, Version};
-use nostr::{Event, EventBuilder, JsonUtil, Keys, Kind, PublicKey, Tag};
+use nostr::{Event, EventBuilder, JsonUtil, Keys, Kind, PublicKey, Tag, ToBech32};
 use serde_json::{json, Value};
 use tokio::time::{timeout_at, Instant};
 use tokio_tungstenite::connect_async;
@@ -120,6 +120,11 @@ impl Bunker {
         }
     }
 
+    /// A session with a key of its own, which is the normal way to start one.
+    pub fn generate(target: BunkerTarget) -> Self {
+        Self::new(target, Keys::generate())
+    }
+
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
@@ -170,6 +175,22 @@ impl Bunker {
     /// The key this session signs with, once `connect` has found it.
     pub fn user_pubkey(&self) -> Option<String> {
         crate::lock(&self.user).clone()
+    }
+
+    /// The connected identity as an npub, for display.
+    pub fn user_npub(&self) -> Option<String> {
+        let user = self.user_pubkey()?;
+        PublicKey::parse(&user)
+            .ok()
+            .and_then(|key| key.to_bech32().ok())
+    }
+
+    /// The user's key, connecting first if this session has not yet.
+    pub async fn ensure_user(&self) -> Result<String, String> {
+        match self.user_pubkey() {
+            Some(user) => Ok(user),
+            None => self.connect().await,
+        }
     }
 
     pub async fn sign_event(&self, template: &Value) -> Result<Event, String> {
@@ -492,6 +513,51 @@ mod tests {
         assert!(challenge.contains("https://signer.example/auth"));
     }
 
+    /// Stands in for the keystore: the point of the test is the file, not the seal.
+    struct Plain;
+
+    impl ncc_identity::KeyEnvelope for Plain {
+        fn kind(&self) -> &'static str {
+            "plain"
+        }
+        fn seal(&self, plaintext: &str) -> Result<String, ncc_identity::IdentityError> {
+            Ok(plaintext.to_string())
+        }
+        fn open(&self, sealed: &str) -> Result<String, ncc_identity::IdentityError> {
+            Ok(sealed.to_string())
+        }
+    }
+
+    #[test]
+    fn a_session_survives_and_keeps_its_client_key() {
+        let path = std::env::temp_dir().join(format!(
+            "ncc-bunker-{}-{}.json",
+            std::process::id(),
+            rand::random::<u16>()
+        ));
+        let sessions = Sessions::open(&path);
+
+        let target = parse_bunker(&format!(
+            "bunker://{SIGNER}?relay=wss%3A%2F%2Fa.example&secret=s3cret"
+        ))
+        .unwrap();
+        let client = Keys::generate();
+        sessions.save(&target, &client, &Plain).expect("saved");
+
+        let (stored_target, stored_client) = sessions.load(&Plain).expect("loaded");
+        assert_eq!(stored_target, target);
+        assert_eq!(
+            stored_client.public_key().to_hex(),
+            client.public_key().to_hex()
+        );
+
+        // Forgetting is what a disconnect does, and it has to stick.
+        sessions.forget();
+        assert!(sessions.load(&Plain).is_none());
+
+        let _ = std::fs::remove_file(&path);
+    }
+
     #[test]
     fn a_new_bunker_starts_out_unknown() {
         let target =
@@ -501,5 +567,95 @@ mod tests {
         assert_eq!(bunker.user_pubkey(), None);
         assert_eq!(bunker.relays(), vec!["wss://a.example"]);
         assert_eq!(bunker.client_pubkey().len(), 64);
+    }
+}
+
+/// The connection that outlives the app.
+///
+/// The remote pubkey and relays are public. The client's own key is not: it is what
+/// proves the next launch is the same client, so it is sealed with the same envelope
+/// as the identity rather than written out.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SessionFile {
+    version: u32,
+    remote_pubkey: String,
+    relays: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    secret: Option<String>,
+    sealed_client_secret: String,
+    created_at: i64,
+}
+
+pub struct Sessions {
+    path: std::path::PathBuf,
+}
+
+impl Sessions {
+    pub fn open(path: impl Into<std::path::PathBuf>) -> Self {
+        Self { path: path.into() }
+    }
+
+    /// Store the live session, client key included.
+    pub fn save_for(
+        &self,
+        bunker: &Bunker,
+        envelope: &dyn ncc_identity::KeyEnvelope,
+    ) -> Result<(), String> {
+        self.save(&bunker.target(), &bunker.client, envelope)
+    }
+
+    pub fn save(
+        &self,
+        target: &BunkerTarget,
+        client: &Keys,
+        envelope: &dyn ncc_identity::KeyEnvelope,
+    ) -> Result<(), String> {
+        let sealed = envelope
+            .seal(&client.secret_key().to_secret_hex())
+            .map_err(|error| error.to_string())?;
+
+        let file = SessionFile {
+            version: 1,
+            remote_pubkey: target.remote_pubkey.clone(),
+            relays: target.relays.clone(),
+            secret: target.secret.clone(),
+            sealed_client_secret: sealed,
+            created_at: crate::resolve::unix_now(),
+        };
+
+        let encoded = serde_json::to_vec_pretty(&file).map_err(|error| error.to_string())?;
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+
+        // Beside the target, then rename: a crash cannot leave a half session.
+        let temporary = self.path.with_extension("tmp");
+        std::fs::write(&temporary, encoded).map_err(|error| error.to_string())?;
+        std::fs::rename(&temporary, &self.path).map_err(|error| error.to_string())
+    }
+
+    /// The stored session, or `None` when there is none or it cannot be opened.
+    pub fn load(&self, envelope: &dyn ncc_identity::KeyEnvelope) -> Option<(BunkerTarget, Keys)> {
+        let bytes = std::fs::read(&self.path).ok()?;
+        let file: SessionFile = serde_json::from_slice(&bytes).ok()?;
+        if file.version != 1 || file.relays.is_empty() {
+            return None;
+        }
+
+        let secret = envelope.open(&file.sealed_client_secret).ok()?;
+        let client = Keys::parse(secret.trim()).ok()?;
+
+        Some((
+            BunkerTarget {
+                remote_pubkey: file.remote_pubkey,
+                relays: file.relays,
+                secret: file.secret,
+            },
+            client,
+        ))
+    }
+
+    pub fn forget(&self) {
+        let _ = std::fs::remove_file(&self.path);
     }
 }

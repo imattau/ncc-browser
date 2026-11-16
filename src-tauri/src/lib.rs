@@ -12,6 +12,8 @@ struct SignerState {
     identity: Arc<IdentityStore>,
     approvals: Arc<Approvals>,
     proxy: Arc<ProxyState>,
+    /// The session file for a remote signer, when one has been connected.
+    sessions: ncc_proxy::bunker::Sessions,
 }
 
 /// The loopback port the NCC proxy is listening on, once it started.
@@ -71,6 +73,79 @@ fn settings_set_gossip(
 fn clear_cache(state: tauri::State<'_, SignerState>) -> bool {
     state.proxy.clear_caches();
     true
+}
+
+#[derive(serde::Serialize)]
+struct BunkerInfo {
+    configured: bool,
+    npub: Option<String>,
+    relays: Vec<String>,
+}
+
+fn bunker_info(remote: Option<&ncc_proxy::bunker::Bunker>) -> BunkerInfo {
+    let Some(bunker) = remote else {
+        return BunkerInfo {
+            configured: false,
+            npub: None,
+            relays: Vec::new(),
+        };
+    };
+
+    BunkerInfo {
+        configured: true,
+        npub: bunker.user_npub(),
+        relays: bunker.relays(),
+    }
+}
+
+/// Connect a remote signer. The link carries everything: the signer's key, its relays
+/// and the optional single-use secret.
+///
+/// It connects immediately, so a link the signer refuses fails here, in front of the
+/// person who pasted it, rather than on the first signature a page asks for.
+#[tauri::command]
+async fn bunker_connect(
+    state: tauri::State<'_, SignerState>,
+    url: String,
+) -> Result<BunkerInfo, String> {
+    let target = ncc_proxy::bunker::parse_bunker(&url)?;
+    let bunker = Arc::new(ncc_proxy::bunker::Bunker::generate(target));
+
+    bunker.connect().await?;
+
+    let envelope = envelope(None);
+    state.sessions.save_for(&bunker, envelope.as_ref())?;
+
+    state.proxy.set_remote(Some(bunker));
+    Ok(bunker_info(state.proxy.remote().as_deref()))
+}
+
+/// A stored session is reused here rather than at startup, so launching the app never
+/// waits on a relay.
+#[tauri::command]
+fn bunker_status(state: tauri::State<'_, SignerState>) -> BunkerInfo {
+    if state.proxy.remote().is_none() {
+        let envelope = envelope(None);
+        if let Some((target, client)) = state.sessions.load(envelope.as_ref()) {
+            state
+                .proxy
+                .set_remote(Some(Arc::new(ncc_proxy::bunker::Bunker::new(target, client))));
+        }
+    }
+
+    bunker_info(state.proxy.remote().as_deref())
+}
+
+#[tauri::command]
+async fn bunker_disconnect(state: tauri::State<'_, SignerState>) -> Result<BunkerInfo, String> {
+    if let Some(bunker) = state.proxy.remote() {
+        // A courtesy: the session is forgotten here either way.
+        let _ = bunker.logout().await;
+    }
+
+    state.sessions.forget();
+    state.proxy.set_remote(None);
+    Ok(bunker_info(None))
 }
 
 #[tauri::command]
@@ -262,6 +337,9 @@ pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             proxy_port,
+            bunker_connect,
+            bunker_status,
+            bunker_disconnect,
             identity_status,
             identity_create,
             identity_import,
@@ -330,6 +408,7 @@ pub fn run() {
                 identity,
                 approvals,
                 proxy,
+                sessions: ncc_proxy::bunker::Sessions::open(data_dir.join("nip46-session.json")),
             });
 
             Ok(())
