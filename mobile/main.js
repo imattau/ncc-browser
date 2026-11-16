@@ -1,12 +1,11 @@
 /**
- * M0 smoke test for the Tauri shell.
+ * M0 shell.
  *
- * Three questions, in order of how much they would hurt to get wrong:
- *
- *  1. did the shell load our bundle and reach Rust (`window.__TAURI__`);
- *  2. did the NCC proxy start, and on which loopback port;
- *  3. does the WebView resolve `*.localhost` and reach that proxy — the addressing
- *     model the whole Android build depends on.
+ * The address field asks the platform to open a virtual host. On Android that goes
+ * through `window.NccContent` — a `@JavascriptInterface` on the shell's WebView — and
+ * the page appears in a real content WebView on top of the shell. In a browser or on
+ * desktop, where that bridge does not exist, the same button falls back to a fetch,
+ * which still proves the proxy and the `*.localhost` mapping.
  */
 
 const byId = (id) => document.getElementById(id)
@@ -25,6 +24,30 @@ function summarise(text) {
     .slice(0, 400)
 }
 
+const content = globalThis.NccContent
+
+/** Events from the native content surface. */
+globalThis.__nccContent = (state) => {
+  const lines = [
+    `${state.type}${state.title ? ` · ${state.title}` : ''}`,
+    state.url ? `url: ${state.url}` : null,
+    state.reason ? `reason: ${state.reason}` : null
+  ].filter(Boolean)
+
+  byId('result').textContent = lines.join('\n')
+
+  if (state.type === 'loaded' || state.type === 'blocked' || state.type === 'failed') {
+    byId('close').hidden = false
+  }
+  if (state.type === 'closed') {
+    byId('close').hidden = true
+  }
+}
+
+globalThis.__nccContentReady = () => {
+  set('bridge', 'ok (content bridge)')
+}
+
 async function main() {
   const tauri = globalThis.__TAURI__
 
@@ -40,13 +63,11 @@ async function main() {
   set('secure', globalThis.isSecureContext ? 'yes' : 'no')
   set('sw', 'serviceWorker' in navigator ? 'available' : 'absent')
 
-  let version = 'unknown'
   try {
-    version = await tauri.app.getVersion()
+    set('version', await tauri.app.getVersion())
   } catch {
-    // Keep the placeholder; the version is informational.
+    // Informational only.
   }
-  set('version', version)
 
   let port = null
   try {
@@ -63,14 +84,30 @@ async function main() {
   }
 
   set('proxy', `127.0.0.1:${port}`)
-  byId('go').addEventListener('click', () => probe(port))
+  byId('go').textContent = content
+    ? 'Open in the content view'
+    : 'Fetch through the proxy'
+  byId('go').addEventListener('click', () => open(port))
+  byId('close').addEventListener('click', () => content?.close())
 }
 
-async function probe(port) {
+function targetUrl(port) {
   const value = byId('address').value.trim()
   const [pubkey, service = 'addr'] = value.split('/')
-  const url = `http://${pubkey}.${service}.localhost:${port}/`
+  return `http://${pubkey}.${service}.localhost:${port}/`
+}
 
+function open(port) {
+  const url = targetUrl(port)
+  if (content) {
+    byId('result').textContent = `opening ${url}`
+    content.open(url)
+    return
+  }
+  void probe(url)
+}
+
+async function probe(url) {
   byId('result').textContent = `GET ${url}\n…`
   const started = performance.now()
 
