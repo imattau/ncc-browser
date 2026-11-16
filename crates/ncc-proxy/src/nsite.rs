@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::body::Body;
-use axum::http::{header, Method, StatusCode};
+use axum::http::{header, HeaderValue, Method, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
 use nostr::{Alphabet, Event, Filter, Kind, PublicKey, SingleLetterTag};
 
@@ -80,14 +80,12 @@ impl NsiteResolver {
         let cache_key = format!("{hex}:{}", site.unwrap_or(""));
         let now = crate::resolve::unix_now();
 
-        if let Some(until) = self.misses.lock().expect("nsite miss lock").get(&cache_key) {
+        if let Some(until) = crate::lock(&self.misses).get(&cache_key) {
             if *until > now {
                 return Err(NsiteError::NoManifest);
             }
         }
-        if let Some((expires, manifest)) =
-            self.cache.lock().expect("nsite cache lock").get(&cache_key)
-        {
+        if let Some((expires, manifest)) = crate::lock(&self.cache).get(&cache_key) {
             if *expires > now {
                 return Ok(manifest.clone());
             }
@@ -98,16 +96,10 @@ impl NsiteResolver {
         match &outcome {
             Ok((manifest, expires)) => {
                 let until = (*expires).min(now + CACHE_SECONDS);
-                self.cache
-                    .lock()
-                    .expect("nsite cache lock")
-                    .insert(cache_key, (until, manifest.clone()));
+                crate::lock(&self.cache).insert(cache_key, (until, manifest.clone()));
             }
             Err(_) => {
-                self.misses
-                    .lock()
-                    .expect("nsite miss lock")
-                    .insert(cache_key, now + NEGATIVE_SECONDS);
+                crate::lock(&self.misses).insert(cache_key, now + NEGATIVE_SECONDS);
             }
         }
 
@@ -116,8 +108,8 @@ impl NsiteResolver {
 
     /// Drop cached manifests and misses.
     pub fn clear(&self) {
-        self.cache.lock().expect("nsite cache lock").clear();
-        self.misses.lock().expect("nsite miss lock").clear();
+        crate::lock(&self.cache).clear();
+        crate::lock(&self.misses).clear();
     }
 
     async fn query(
@@ -289,14 +281,7 @@ impl Blobs {
     /// Fetch by hash from the manifest's servers and refuse anything that does not
     /// hash back to it.
     pub async fn get(&self, hash: &str, servers: &[String]) -> Result<Vec<u8>, String> {
-        if let Some(bytes) = self
-            .cache
-            .lock()
-            .expect("blob lock")
-            .entries
-            .get(hash)
-            .cloned()
-        {
+        if let Some(bytes) = crate::lock(&self.cache).entries.get(hash).cloned() {
             return Ok(bytes);
         }
 
@@ -345,7 +330,7 @@ impl Blobs {
     }
 
     fn remember(&self, hash: &str, bytes: Vec<u8>) {
-        let mut cache = self.cache.lock().expect("blob lock");
+        let mut cache = crate::lock(&self.cache);
         if cache.entries.contains_key(hash) {
             return;
         }
@@ -363,14 +348,14 @@ impl Blobs {
     }
 
     pub fn cached_bytes(&self) -> usize {
-        self.cache.lock().expect("blob lock").total
+        crate::lock(&self.cache).total
     }
 
     /// Forget every blob, in memory and on disk. Verified bytes are safe to keep, but
     /// a user asking for a clean slate should get one.
     pub fn clear(&self) {
         {
-            let mut cache = self.cache.lock().expect("blob lock");
+            let mut cache = crate::lock(&self.cache);
             cache.entries.clear();
             cache.order.clear();
             cache.total = 0;
@@ -477,12 +462,23 @@ pub async fn serve(
     let matched = match_path(&manifest.paths, path, search);
 
     match matched {
-        PathMatch::Redirect { location } => Response::builder()
-            .status(StatusCode::FOUND)
-            .header(header::LOCATION, location)
-            .header(header::CACHE_CONTROL, "no-store")
-            .body(Body::empty())
-            .expect("redirect"),
+        // A manifest can hold any string here, and `header()` panics on one it cannot
+        // encode; a malformed redirect must not take the whole connection down.
+        PathMatch::Redirect { location } => match HeaderValue::from_str(&location) {
+            Ok(value) => Response::builder()
+                .status(StatusCode::FOUND)
+                .header(header::LOCATION, value)
+                .header(header::CACHE_CONTROL, "no-store")
+                .body(Body::empty())
+                .unwrap_or_else(|_| page(StatusCode::INTERNAL_SERVER_ERROR, "Could not redirect")),
+            Err(_) => page(
+                StatusCode::BAD_GATEWAY,
+                &format!(
+                    "The manifest of {} redirects to a location a browser cannot follow: {location}",
+                    display(vhost)
+                ),
+            ),
+        },
 
         PathMatch::File { path, hash } => match state.blobs().get(&hash, &manifest.servers).await {
             Ok(bytes) => response_for(state, vhost, path, bytes, StatusCode::OK, method, document),

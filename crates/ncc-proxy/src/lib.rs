@@ -34,3 +34,16 @@ pub use resolve::{DiscoveredService, ResolveError, ResolvedService, Resolver};
 pub use server::{serve, ProxyConfig, ProxyState};
 pub use settings::{HttpsMode, Settings, SettingsStore};
 pub use vhost::{host_for, parse_vhost, Vhost};
+
+use std::sync::{Mutex, MutexGuard};
+
+/// Lock a mutex, recovering from poisoning.
+///
+/// This process lives as long as the app and serves every tab. If a request panics
+/// while holding one of these locks, the next request must not panic on the poisoned
+/// lock as well: one bad page would otherwise break the proxy until the app restarts.
+pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}

@@ -47,20 +47,14 @@ impl Approvals {
         request.id = format!("req-{}", self.counter.fetch_add(1, Ordering::Relaxed));
 
         let (sender, receiver) = oneshot::channel();
-        self.pending
-            .lock()
-            .expect("approval lock")
-            .insert(request.id.clone(), sender);
+        crate::lock(&self.pending).insert(request.id.clone(), sender);
 
         (self.notify)(request.clone());
 
         match tokio::time::timeout(timeout, receiver).await {
             Ok(Ok(allowed)) => allowed,
             _ => {
-                self.pending
-                    .lock()
-                    .expect("approval lock")
-                    .remove(&request.id);
+                crate::lock(&self.pending).remove(&request.id);
                 false
             }
         }
@@ -68,7 +62,7 @@ impl Approvals {
 
     /// Answer a parked request. False when the id is unknown or already answered.
     pub fn resolve(&self, id: &str, allow: bool) -> bool {
-        match self.pending.lock().expect("approval lock").remove(id) {
+        match crate::lock(&self.pending).remove(id) {
             Some(sender) => sender.send(allow).is_ok(),
             None => false,
         }
@@ -76,7 +70,7 @@ impl Approvals {
 
     /// How many prompts are waiting; the shell uses it to know whether to show itself.
     pub fn pending(&self) -> usize {
-        self.pending.lock().expect("approval lock").len()
+        crate::lock(&self.pending).len()
     }
 }
 

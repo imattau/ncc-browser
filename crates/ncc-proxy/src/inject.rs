@@ -115,7 +115,7 @@ impl TokenStore {
     }
 
     pub fn remember(&self, token: &str, host_key: &str) {
-        let mut tokens = self.tokens.lock().expect("token lock");
+        let mut tokens = crate::lock(&self.tokens);
         // A document load can never outlive the process, so a simple bound is enough.
         if tokens.len() > 512 {
             tokens.clear();
@@ -127,9 +127,7 @@ impl TokenStore {
         if token.is_empty() {
             return false;
         }
-        self.tokens
-            .lock()
-            .expect("token lock")
+        crate::lock(&self.tokens)
             .get(token)
             .map(|stored| stored == host_key)
             .unwrap_or(false)

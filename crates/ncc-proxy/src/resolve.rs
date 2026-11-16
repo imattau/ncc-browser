@@ -106,7 +106,7 @@ impl Resolver {
         let cache_key = format!("{hex}:{service}");
         let now = unix_now();
 
-        if let Some(entry) = self.cache.lock().expect("cache lock").get(&cache_key) {
+        if let Some(entry) = crate::lock(&self.cache).get(&cache_key) {
             if entry.expires_at > now {
                 return entry.result.clone();
             }
@@ -120,7 +120,7 @@ impl Resolver {
             Ok(resolved) => (resolved.expires_at - now).clamp(1, self.max_cache_seconds),
             Err(_) => self.negative_cache_seconds,
         };
-        self.cache.lock().expect("cache lock").insert(
+        crate::lock(&self.cache).insert(
             cache_key,
             CacheEntry {
                 expires_at: now + cached_for,
@@ -236,17 +236,14 @@ impl Resolver {
 
     /// Drop every cached record and miss. Used by "clear cache".
     pub fn clear(&self) {
-        self.cache.lock().expect("cache lock").clear();
+        crate::lock(&self.cache).clear();
     }
 
     pub fn invalidate(&self, pubkey: &str, service: &str) {
         let Ok(key) = PublicKey::parse(pubkey.trim()) else {
             return;
         };
-        self.cache
-            .lock()
-            .expect("cache lock")
-            .remove(&format!("{}:{service}", key.to_hex()));
+        crate::lock(&self.cache).remove(&format!("{}:{service}", key.to_hex()));
     }
 
     async fn query(
