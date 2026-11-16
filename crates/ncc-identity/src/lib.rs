@@ -202,23 +202,44 @@ pub struct Status {
 }
 
 pub struct IdentityStore {
-    path: PathBuf,
+    /// `None` for a session key: it exists in memory only, which is what a private tab
+    /// signs with. Nothing is written, so there is nothing to leave behind.
+    path: Option<PathBuf>,
     keys: Mutex<Option<Keys>>,
 }
 
 impl IdentityStore {
     pub fn open(path: impl Into<PathBuf>) -> Self {
         Self {
-            path: path.into(),
+            path: Some(path.into()),
             keys: Mutex::new(None),
         }
     }
 
-    pub fn path(&self) -> &Path {
-        &self.path
+    /// A key that lives only as long as this object does, unlocked from the start.
+    pub fn ephemeral() -> Self {
+        Self {
+            path: None,
+            keys: Mutex::new(Some(Keys::generate())),
+        }
+    }
+
+    /// `None` for a session key.
+    pub fn path(&self) -> Option<&Path> {
+        self.path.as_deref()
     }
 
     pub fn status(&self) -> Status {
+        if self.path.is_none() {
+            let keys = self.keys.lock().expect("identity lock");
+            return Status {
+                initialised: keys.is_some(),
+                npub: keys.as_ref().and_then(|keys| npub_of(keys).ok()),
+                unlocked: keys.is_some(),
+                envelope: Some("ephemeral".to_string()),
+            };
+        }
+
         let file = self.read().ok();
         let unlocked = self.keys.lock().expect("identity lock").is_some();
 
@@ -242,11 +263,13 @@ impl IdentityStore {
 
     /// Generate a new key, seal it with `envelope`, and leave the store unlocked.
     pub fn create(&self, envelope: &dyn KeyEnvelope) -> Result<String, IdentityError> {
-        if self.path.exists() {
+        if self.is_initialised() {
             return Err(IdentityError::AlreadyInitialised);
         }
         let keys = Keys::generate();
-        self.write_sealed(&keys, envelope)?;
+        if self.path.is_some() {
+            self.write_sealed(&keys, envelope)?;
+        }
         let npub = npub_of(&keys)?;
         *self.keys.lock().expect("identity lock") = Some(keys);
         Ok(npub)
@@ -258,12 +281,14 @@ impl IdentityStore {
         envelope: &dyn KeyEnvelope,
         secret: &str,
     ) -> Result<String, IdentityError> {
-        if self.path.exists() {
+        if self.is_initialised() {
             return Err(IdentityError::AlreadyInitialised);
         }
         let keys = Keys::parse(secret.trim())
             .map_err(|error| IdentityError::InvalidSecret(error.to_string()))?;
-        self.write_sealed(&keys, envelope)?;
+        if self.path.is_some() {
+            self.write_sealed(&keys, envelope)?;
+        }
         let npub = npub_of(&keys)?;
         *self.keys.lock().expect("identity lock") = Some(keys);
         Ok(npub)
@@ -275,7 +300,10 @@ impl IdentityStore {
     /// then re-sealed with the current envelope, so the old format disappears the
     /// first time a user opens it.
     pub fn unlock(&self, envelope: &dyn KeyEnvelope) -> Result<String, IdentityError> {
-        if !self.path.exists() {
+        if self.path.is_none() {
+            return self.with_keys(npub_of);
+        }
+        if !self.is_initialised() {
             return Err(IdentityError::NotInitialised);
         }
         let file = self.read()?;
@@ -391,8 +419,16 @@ impl IdentityStore {
         action(keys)
     }
 
+    fn is_initialised(&self) -> bool {
+        match &self.path {
+            Some(path) => path.exists(),
+            None => self.keys.lock().expect("identity lock").is_some(),
+        }
+    }
+
     fn read(&self) -> Result<File, IdentityError> {
-        let bytes = fs::read(&self.path).map_err(|error| IdentityError::Io(error.to_string()))?;
+        let path = self.path.as_ref().ok_or(IdentityError::NotInitialised)?;
+        let bytes = fs::read(path).map_err(|error| IdentityError::Io(error.to_string()))?;
 
         if let Ok(sealed) = serde_json::from_slice::<SealedFile>(&bytes) {
             if sealed.version == VERSION_SEALED {
@@ -410,6 +446,11 @@ impl IdentityStore {
     }
 
     fn write_sealed(&self, keys: &Keys, envelope: &dyn KeyEnvelope) -> Result<(), IdentityError> {
+        // A session key is never written; the caller has already checked for a path.
+        let Some(path) = self.path.clone() else {
+            return Ok(());
+        };
+
         let secret = hex_encode(&keys.secret_key().secret_bytes());
         let sealed = envelope.seal(&secret)?;
 
@@ -423,15 +464,15 @@ impl IdentityStore {
         let encoded = serde_json::to_vec_pretty(&file)
             .map_err(|error| IdentityError::Codec(error.to_string()))?;
 
-        if let Some(parent) = self.path.parent() {
+        if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|error| IdentityError::Io(error.to_string()))?;
         }
         // Write beside the target and rename, so a crash cannot leave a half file.
-        let temporary = self.path.with_extension("tmp");
+        let temporary = path.with_extension("tmp");
         fs::write(&temporary, &encoded).map_err(|error| IdentityError::Io(error.to_string()))?;
         restrict(&temporary);
-        fs::rename(&temporary, &self.path).map_err(|error| IdentityError::Io(error.to_string()))?;
-        restrict(&self.path);
+        fs::rename(&temporary, &path).map_err(|error| IdentityError::Io(error.to_string()))?;
+        restrict(&path);
 
         Ok(())
     }
@@ -514,10 +555,10 @@ mod tests {
         assert_eq!(status.npub.as_deref(), Some(npub.as_str()));
         assert_eq!(status.envelope.as_deref(), Some("passphrase"));
 
-        let raw = fs::read_to_string(dir.path()).expect("read");
+        let raw = fs::read_to_string(dir.path().expect("path")).expect("read");
         assert!(!raw.contains("nsec"), "the file must not hold plaintext");
 
-        let reopened = IdentityStore::open(dir.path());
+        let reopened = IdentityStore::open(dir.path().expect("path"));
         assert!(!reopened.status().unlocked);
         assert_eq!(
             reopened
@@ -530,7 +571,7 @@ mod tests {
             reopened.unlock(&PassphraseEnvelope::new("wrong")),
             Err(IdentityError::WrongPassphrase)
         ));
-        let _ = fs::remove_file(dir.path());
+        let _ = fs::remove_file(dir.path().expect("path"));
     }
 
     #[test]
@@ -557,7 +598,7 @@ mod tests {
         assert_eq!(event.pubkey, generated.public_key());
         event.verify().expect("signature must verify");
 
-        let _ = fs::remove_file(dir.path());
+        let _ = fs::remove_file(dir.path().expect("path"));
     }
 
     #[test]
@@ -584,7 +625,11 @@ mod tests {
             "nonce": nonce,
             "ciphertext": ciphertext,
         });
-        fs::write(dir.path(), serde_json::to_vec(&file).unwrap()).unwrap();
+        fs::write(
+            dir.path().expect("path"),
+            serde_json::to_vec(&file).unwrap(),
+        )
+        .unwrap();
 
         assert_eq!(dir.status().envelope.as_deref(), Some("legacy"));
 
@@ -603,22 +648,24 @@ mod tests {
         }
 
         assert!(matches!(
-            IdentityStore::open(dir.path()).unlock(&NoPassphrase),
+            IdentityStore::open(dir.path().expect("path")).unlock(&NoPassphrase),
             Err(IdentityError::PassphraseRequired)
         ));
 
         // ...but with one it opens and is rewritten in the current format.
-        let reopened = IdentityStore::open(dir.path());
+        let reopened = IdentityStore::open(dir.path().expect("path"));
         let unlocked = reopened
             .unlock(&PassphraseEnvelope::new("old passphrase"))
             .expect("migrate");
         assert_eq!(unlocked, keys.public_key().to_bech32().unwrap());
 
-        let migrated = IdentityStore::open(dir.path());
+        let migrated = IdentityStore::open(dir.path().expect("path"));
         assert_eq!(migrated.status().envelope.as_deref(), Some("passphrase"));
-        assert!(!fs::read_to_string(dir.path()).unwrap().contains("\"salt\""));
+        assert!(!fs::read_to_string(dir.path().expect("path"))
+            .unwrap()
+            .contains("\"salt\""));
 
-        let _ = fs::remove_file(dir.path());
+        let _ = fs::remove_file(dir.path().expect("path"));
     }
 
     #[test]
@@ -629,18 +676,22 @@ mod tests {
         dir.lock();
 
         let mut sealed: SealedFile =
-            serde_json::from_slice(&fs::read(dir.path()).unwrap()).unwrap();
+            serde_json::from_slice(&fs::read(dir.path().expect("path")).unwrap()).unwrap();
         let mut parts: Vec<String> = sealed.sealed.split('.').map(str::to_string).collect();
         let mut bytes = b64().decode(&parts[2]).unwrap();
         bytes[0] ^= 0x01;
         parts[2] = b64().encode(bytes);
         sealed.sealed = parts.join(".");
-        fs::write(dir.path(), serde_json::to_vec(&sealed).unwrap()).unwrap();
+        fs::write(
+            dir.path().expect("path"),
+            serde_json::to_vec(&sealed).unwrap(),
+        )
+        .unwrap();
 
         assert!(matches!(
             dir.unlock(&PassphraseEnvelope::new("pass")),
             Err(IdentityError::WrongPassphrase)
         ));
-        let _ = fs::remove_file(dir.path());
+        let _ = fs::remove_file(dir.path().expect("path"));
     }
 }
