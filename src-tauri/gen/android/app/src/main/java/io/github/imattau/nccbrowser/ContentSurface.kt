@@ -14,6 +14,7 @@ import android.view.PixelCopy
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.SslErrorHandler
+import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
@@ -39,7 +40,7 @@ class ContentSurface(
   val id: String,
   private val container: ViewGroup,
   private val report: (JSONObject) -> Unit,
-  private val onDownload: (String, String?) -> Unit,
+  private val onDownload: (String, String?, String?) -> Unit,
 ) {
   private var webView: WebView? = null
   private var showingError = false
@@ -50,6 +51,10 @@ class ContentSurface(
     private set
   var thumbnail: String? = null
   var lastUsed: Long = System.currentTimeMillis()
+
+  var desktopMode = false
+    private set
+  private var mobileAgent: String? = null
 
   val isOpen: Boolean
     get() = webView?.visibility == View.VISIBLE
@@ -90,6 +95,52 @@ class ContentSurface(
   }
 
   fun canGoBack(): Boolean = webView?.canGoBack() == true
+
+  fun canGoForward(): Boolean = webView?.canGoForward() == true
+
+  fun forward() {
+    webView?.takeIf { it.canGoForward() }?.goForward()
+  }
+
+  fun stop() {
+    webView?.stopLoading()
+  }
+
+  /** Find in page: results arrive through the find listener as `find` events. */
+  fun find(query: String) {
+    webView?.findAllAsync(query)
+  }
+
+  fun findNext(forward: Boolean) {
+    webView?.findNext(forward)
+  }
+
+  fun clearFind() {
+    webView?.clearMatches()
+  }
+
+  /**
+   * Ask for the desktop layout: a desktop user agent and a wide viewport, then reload.
+   * The mobile agent is remembered so switching back restores exactly what the device
+   * reported, including the NostrNavigator suffix.
+   */
+  fun setDesktopMode(enabled: Boolean) {
+    val web = webView ?: return
+    if (enabled == desktopMode) return
+    desktopMode = enabled
+
+    if (enabled) {
+      val chrome = Regex("Chrome/([0-9.]+)").find(web.settings.userAgentString)?.groupValues?.get(1) ?: "120.0.0.0"
+      web.settings.userAgentString =
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) " +
+          "Chrome/$chrome Safari/537.36 NostrNavigator/${BuildConfig.VERSION_NAME}"
+    } else {
+      web.settings.userAgentString = mobileAgent
+    }
+    web.settings.useWideViewPort = enabled
+    web.settings.loadWithOverviewMode = enabled
+    web.reload()
+  }
 
   fun show() {
     webView?.visibility = View.VISIBLE
@@ -167,11 +218,27 @@ class ContentSurface(
       mediaPlaybackRequiresUserGesture = false
       mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
       userAgentString = "$userAgentString NostrNavigator/${BuildConfig.VERSION_NAME}"
+      mobileAgent = userAgentString
+      setSupportZoom(true)
+      builtInZoomControls = true
+      displayZoomControls = false
+    }
+
+    web.setFindListener { active, total, _ ->
+      emit(JSONObject().put("type", "find").put("current", if (total == 0) 0 else active + 1).put("total", total))
+    }
+
+    web.webChromeClient = object : WebChromeClient() {
+      override fun onProgressChanged(view: WebView, newProgress: Int) {
+        emit(JSONObject().put("type", "progress").put("value", newProgress))
+      }
     }
 
     // A file the WebView will not render becomes a download through the proxy, because
     // this process cannot resolve the virtual host itself.
-    web.setDownloadListener { url, _, _, mimeType, _ -> onDownload(url, mimeType) }
+    web.setDownloadListener { url, _, contentDisposition, mimeType, _ ->
+      onDownload(url, mimeType, contentDisposition)
+    }
 
     web.webViewClient = object : WebViewClient() {
       override fun shouldOverrideUrlLoading(
@@ -237,7 +304,8 @@ class ContentSurface(
             .put("type", "loaded")
             .put("url", url ?: "")
             .put("title", view.title ?: "")
-            .put("canGoBack", view.canGoBack()),
+            .put("canGoBack", view.canGoBack())
+            .put("canGoForward", view.canGoForward()),
         )
       }
 
@@ -317,18 +385,33 @@ class ContentSurface(
 
   private fun showFailure(view: WebView, url: String, detail: String) {
     showingError = true
+    val safeUrl = escapeHtml(url)
     val html = """
       <!doctype html><meta charset="utf-8">
       <meta name="viewport" content="width=device-width, initial-scale=1">
-      <style>body{font:15px system-ui;margin:2rem;max-width:40rem;color:#111}
-      code{background:#eee;padding:.1rem .3rem;border-radius:3px;word-break:break-all}</style>
+      <meta name="color-scheme" content="light dark">
+      <style>
+        body{font:16px/1.5 system-ui,sans-serif;margin:0;padding:12vh 24px 24px;
+          max-width:34rem;margin-inline:auto}
+        h1{font-size:1.4rem;margin:0 0 .5rem}
+        p{color:CanvasText;opacity:.75;margin:.25rem 0 1rem}
+        code{display:block;padding:.6rem .8rem;border-radius:10px;font-size:.8rem;
+          background:color-mix(in srgb,CanvasText 8%,transparent);word-break:break-all}
+        a.retry{display:inline-block;margin-top:1.25rem;padding:.8rem 1.6rem;
+          border-radius:999px;background:#2457e6;color:#fff;font-weight:600;
+          text-decoration:none}
+      </style>
       <h1>This page did not load</h1>
-      <p><code>$detail</code></p>
-      <p>Address: <code>$url</code></p>
-      <p>If the address above is right, the proxy answered with an error or refused
-      the connection.</p>
+      <p>The proxy answered with an error or refused the connection. If the address
+      below is right, try again in a moment.</p>
+      <code>$safeUrl</code>
+      <p><small>${escapeHtml(detail)}</small></p>
+      <a class="retry" href="$safeUrl">Try again</a>
     """.trimIndent()
 
     view.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
   }
+
+  private fun escapeHtml(text: String): String =
+    text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
 }
