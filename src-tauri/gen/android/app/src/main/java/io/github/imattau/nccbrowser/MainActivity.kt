@@ -1,6 +1,9 @@
 package io.github.imattau.nccbrowser
 
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -11,6 +14,7 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
 import androidx.core.view.ViewCompat
@@ -28,8 +32,11 @@ import java.net.URLEncoder
  *
  *   shell → tabs   `window.NccContent.open(url)`, `.openNew(url)`, `.select(id)`,
  *                  `.closeTab(id)`, `.next()`, `.prev()`, `.tabs()`, `.capture()`,
- *                  `.back()`, `.reload()`, `.expand(bool)`, `.setBarPosition(…)`
+ *                  `.back()`, `.forward()`, `.reload()`, `.stop()`, `.expand(bool)`,
+ *                  `.find(q)`, `.findNext(bool)`, `.clearFind()`, `.share(text)`,
+ *                  `.copy(text)`, `.setDesktopMode(bool)`, `.setBarPosition(…)`
  *   tabs → shell   `window.__nccContent({...})`, `window.__nccTabs({...})`
+ *   back → shell   `window.__nccBack()` — `true` when the shell consumed the gesture
  *
  * The strip is the shell's own WebView resized to one row, so the chrome stays ours
  * and the React build can take it over without changing the layout. Expanding gives
@@ -49,7 +56,8 @@ class MainActivity : TauriActivity() {
   private var barAtBottom = true
 
   private val tabs = mutableListOf<ContentSurface>()
-  private var pendingDownload: File? = null
+  private var pendingDownload: Pair<File, String>? = null
+  private lateinit var downloads: Downloads
 
   /**
    * Saving goes through the system picker: no storage permission, and the user chooses
@@ -57,12 +65,16 @@ class MainActivity : TauriActivity() {
    */
   private val saveDownload =
     registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-      val file = pendingDownload
+      val pending = pendingDownload
       pendingDownload = null
       val target = result.data?.data
 
-      if (result.resultCode != Activity.RESULT_OK || target == null || file == null) {
-        file?.delete()
+      if (pending == null) return@registerForActivityResult
+
+      val (file, id) = pending
+      if (result.resultCode != Activity.RESULT_OK || target == null) {
+        downloads.finish(id, "cancelled")
+        file.delete()
         return@registerForActivityResult
       }
 
@@ -70,8 +82,10 @@ class MainActivity : TauriActivity() {
         file.inputStream().use { input ->
           contentResolver.openOutputStream(target)?.use { output -> input.copyTo(output) }
         }
+        downloads.finish(id, "saved")
         toast("Saved")
       } catch (error: Exception) {
+        downloads.finish(id, "failed")
         toast("Could not save: ${error.message}")
       } finally {
         file.delete()
@@ -85,6 +99,9 @@ class MainActivity : TauriActivity() {
     super.onCreate(savedInstanceState)
 
     barHeight = (56 * resources.displayMetrics.density).toInt()
+    downloads = Downloads(this).also { store ->
+      store.onChange = { json -> emitToShellRaw("window.__nccDownloads", json) }
+    }
 
     val root = findViewById<ViewGroup>(android.R.id.content)
     root.post { install(root) }
@@ -131,20 +148,26 @@ class MainActivity : TauriActivity() {
       val bars = insets.getInsets(
         WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout(),
       )
-      view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+      // The keyboard lifts the whole column, so a bottom strip (find in page) and the
+      // address field stay above it instead of being covered.
+      val keyboard = insets.getInsets(WindowInsetsCompat.Type.ime())
+      view.setPadding(bars.left, bars.top, bars.right, maxOf(bars.bottom, keyboard.bottom))
       WindowInsetsCompat.CONSUMED
     }
     ViewCompat.requestApplyInsets(columnView)
 
     val callback = object : OnBackPressedCallback(true) {
       override fun handleOnBackPressed() {
-        if (active()?.back() == true) return
-        if (tabs.isNotEmpty()) {
-          closeTab(activeId)
+        // Panels, find-in-page and the signer prompt belong to the shell; ask it first
+        // so back closes the sheet in front instead of navigating the page behind it.
+        val view = shell
+        if (view == null) {
+          leave()
           return
         }
-        isEnabled = false
-        onBackPressedDispatcher.onBackPressed()
+        view.evaluateJavascript("window.__nccBack ? window.__nccBack() : false") { handled ->
+          if (handled != "true") navigateBack()
+        }
       }
     }
     backCallback = callback
@@ -157,7 +180,37 @@ class MainActivity : TauriActivity() {
 
   private fun active(): ContentSurface? = tabs.firstOrNull { it.id == activeId }
 
+  /** Page history, then close the tab, then leave the app. */
+  private fun navigateBack() {
+    if (active()?.back() == true) return
+    if (tabs.isNotEmpty()) {
+      closeTab(activeId)
+      return
+    }
+    leave()
+  }
+
+  private fun leave() {
+    backCallback?.isEnabled = false
+    onBackPressedDispatcher.onBackPressed()
+  }
+
   private fun setExpanded(value: Boolean) {
+    // A tab can only be captured while it is still on screen, and the switcher and the
+    // blurred sheet backdrop both want a fresh capture of it. Hiding it first would
+    // copy the shell's own pixels instead.
+    val current = active()
+    if (value && !expanded && current != null && current.isOpen) {
+      captureActive {
+        applyExpanded(true)
+        emitTabs(false)
+      }
+      return
+    }
+    applyExpanded(value)
+  }
+
+  private fun applyExpanded(value: Boolean) {
     expanded = value
     val chromeView = shell ?: return
     val params = chromeView.layoutParams as? LinearLayout.LayoutParams ?: return
@@ -276,27 +329,47 @@ class MainActivity : TauriActivity() {
    * The content view resolves `.localhost` internally, so this process asks for the
    * same URL by name (`/__ncc/fetch?u=…`) rather than trying to resolve it.
    */
-  private fun startDownload(vhostUrl: String, mimeType: String?) {
+  private fun startDownload(vhostUrl: String, mimeType: String?, contentDisposition: String?) {
     val port = Uri.parse(vhostUrl).port
     if (port <= 0) {
       toast("Download failed: the proxy port is unknown")
       return
     }
 
-    val name = vhostUrl.substringAfterLast('/').substringBefore('?').ifEmpty { "download" }
+    val name = filenameFor(contentDisposition, vhostUrl, mimeType)
     toast("Downloading $name…")
 
     Thread {
       val temp = File(cacheDir, "download-${System.currentTimeMillis()}")
+      val id = downloads.start(name, vhostUrl, -1)
+
       val fetched = try {
         val encoded = URLEncoder.encode(vhostUrl, "UTF-8")
         val connection =
           URL("http://127.0.0.1:$port/__ncc/fetch?u=$encoded").openConnection() as HttpURLConnection
         connection.connectTimeout = 15_000
         connection.readTimeout = 60_000
+
+        var read = 0L
         connection.inputStream.use { input ->
-          temp.outputStream().use { output -> input.copyTo(output) }
+          temp.outputStream().use { output ->
+            val buffer = ByteArray(64 * 1024)
+            var lastReport = 0L
+            while (true) {
+              val count = input.read(buffer)
+              if (count <= 0) break
+              output.write(buffer, 0, count)
+              read += count
+              // Report at most a few times a second; the list does not need more.
+              val now = System.currentTimeMillis()
+              if (now - lastReport > 250) {
+                lastReport = now
+                downloads.progress(id, read)
+              }
+            }
+          }
         }
+        downloads.progress(id, read)
         connection.disconnect()
         true
       } catch (error: Exception) {
@@ -306,11 +379,12 @@ class MainActivity : TauriActivity() {
 
       runOnUiThread {
         if (!fetched) {
+          downloads.finish(id, "failed")
           toast("Download failed")
           return@runOnUiThread
         }
 
-        pendingDownload = temp
+        pendingDownload = temp to id
         val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
           addCategory(Intent.CATEGORY_OPENABLE)
           type = mimeType ?: "application/octet-stream"
@@ -319,6 +393,27 @@ class MainActivity : TauriActivity() {
         saveDownload.launch(intent)
       }
     }.apply { isDaemon = true }.start()
+  }
+
+  /** `Content-Disposition` when the server names the file, otherwise the URL's last segment. */
+  private fun filenameFor(disposition: String?, url: String, mimeType: String?): String {
+    val candidate = disposition?.let { value ->
+      val encoded = Regex("filename\\*=UTF-8''([^;]+)", RegexOption.IGNORE_CASE).find(value)
+      val quoted = Regex("filename=\"?([^\";]+)\"?", RegexOption.IGNORE_CASE).find(value)
+      (encoded ?: quoted)?.groupValues?.getOrNull(1)?.trim()?.trim('"')
+    }
+
+    val raw = candidate?.takeIf { it.isNotBlank() }
+      ?: Uri.parse(url).lastPathSegment?.substringBefore('?')?.takeIf { it.isNotBlank() }
+      ?: "download"
+
+    // Whatever the server says, a filename is one path segment.
+    val safe = raw.replace(Regex("[\\\\/:*?\"<>|]"), "-").trim()
+    return if (safe.isEmpty()) {
+      mimeType?.substringAfterLast('/')?.let { "download.$it" } ?: "download"
+    } else {
+      safe
+    }
   }
 
   private fun toast(message: String) {
@@ -346,6 +441,9 @@ class MainActivity : TauriActivity() {
         .put("title", tab.title ?: "")
         .put("url", tab.currentUrl ?: "")
         .put("active", tab.id == activeId)
+        .put("canGoBack", tab.canGoBack())
+        .put("canGoForward", tab.canGoForward())
+        .put("desktop", tab.desktopMode)
       tab.thumbnail?.let { entry.put("thumbnail", it) }
       array.put(entry)
     }
@@ -355,8 +453,11 @@ class MainActivity : TauriActivity() {
   }
 
   private fun emitToShell(function: String, payload: JSONObject) {
+    emitToShellRaw(function, payload.toString())
+  }
+
+  private fun emitToShellRaw(function: String, json: String) {
     val view = shell ?: return
-    val json = payload.toString()
     view.post {
       view.evaluateJavascript("$function && $function($json)", null)
     }
@@ -416,6 +517,14 @@ class MainActivity : TauriActivity() {
     fun tabs(): String = tabsJson()
 
     @JavascriptInterface
+    fun downloads(): String = downloads.json()
+
+    @JavascriptInterface
+    fun clearDownloads() {
+      runOnUiThread { downloads.clear() }
+    }
+
+    @JavascriptInterface
     fun capture() {
       runOnUiThread { emitTabs(true) }
     }
@@ -426,8 +535,66 @@ class MainActivity : TauriActivity() {
     }
 
     @JavascriptInterface
+    fun forward() {
+      runOnUiThread {
+        active()?.forward()
+      }
+    }
+
+    @JavascriptInterface
     fun reload() {
       runOnUiThread { active()?.reload() }
+    }
+
+    @JavascriptInterface
+    fun stop() {
+      runOnUiThread { active()?.stop() }
+    }
+
+    @JavascriptInterface
+    fun find(query: String) {
+      runOnUiThread { active()?.find(query) }
+    }
+
+    @JavascriptInterface
+    fun findNext(forward: Boolean) {
+      runOnUiThread { active()?.findNext(forward) }
+    }
+
+    @JavascriptInterface
+    fun clearFind() {
+      runOnUiThread { active()?.clearFind() }
+    }
+
+    @JavascriptInterface
+    fun setDesktopMode(enabled: Boolean) {
+      runOnUiThread {
+        active()?.setDesktopMode(enabled)
+        emitTabs(false)
+      }
+    }
+
+    @JavascriptInterface
+    fun share(text: String) {
+      runOnUiThread {
+        val send = Intent(Intent.ACTION_SEND)
+          .setType("text/plain")
+          .putExtra(Intent.EXTRA_TEXT, text)
+        try {
+          startActivity(Intent.createChooser(send, null))
+        } catch (error: Exception) {
+          // No share target installed.
+        }
+      }
+    }
+
+    @JavascriptInterface
+    fun copy(text: String) {
+      runOnUiThread {
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("address", text))
+        Toast.makeText(this@MainActivity, "Address copied", Toast.LENGTH_SHORT).show()
+      }
     }
 
     @JavascriptInterface
