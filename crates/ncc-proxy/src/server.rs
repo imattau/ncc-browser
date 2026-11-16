@@ -114,7 +114,16 @@ impl ProxyState {
                 .expect("HTTP client")
         };
 
-        let client = build(reqwest::Client::builder());
+        // A named root set rather than reqwest's platform verifier, which panics on
+        // Android unless something initialises it with a JVM context.
+        let roots = crate::pins::webpki_tls_config();
+        let client = match &roots {
+            Ok(tls) => build(reqwest::Client::builder().use_preconfigured_tls(tls.clone())),
+            Err(error) => {
+                tracing::error!(target: "ncc_proxy::pins", "could not build the TLS client: {error}");
+                build(reqwest::Client::builder())
+            }
+        };
 
         // Endpoints that publish `k` present a self-signed certificate; ordinary PKI
         // verification would reject them, and accepting everything would be worse.
@@ -145,6 +154,7 @@ impl ProxyState {
             blobs: Blobs::new(
                 config.request_timeout,
                 pointer_directory(&config.cache_directory, "nsite-blobs"),
+                roots.ok(),
             ),
         }
     }

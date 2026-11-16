@@ -331,13 +331,20 @@ pub struct Blobs {
 }
 
 impl Blobs {
-    pub fn new(timeout: Duration, directory: Option<PathBuf>) -> Self {
-        let client = reqwest::Client::builder()
+    pub fn new(
+        timeout: Duration,
+        directory: Option<PathBuf>,
+        tls: Option<rustls::ClientConfig>,
+    ) -> Self {
+        let mut builder = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::limited(3))
             .timeout(timeout)
-            .user_agent(concat!("NostrNavigator/", env!("CARGO_PKG_VERSION")))
-            .build()
-            .expect("blossom client");
+            .user_agent(concat!("NostrNavigator/", env!("CARGO_PKG_VERSION")));
+        if let Some(tls) = tls {
+            builder = builder.use_preconfigured_tls(tls);
+        }
+
+        let client = builder.build().expect("blossom client");
 
         Self {
             client,
