@@ -233,6 +233,8 @@ Still to build:
       `mobile/` with the React chrome.
 - [x] Chrome strip: a 56 dp bar above the content surface, holding back, the address
       and reload; tapping the address expands the shell over the page to edit it.
+- [x] Window insets: the strip and the page are inset for the status bar, the camera
+      cutout and the gesture bar.
 - [ ] Per-tab lifecycle and tab thumbnails.
 - [ ] File chooser and download handling in the content view.
 - [ ] `*.localhost` resolution, secure context, `Secure` cookie behaviour — **the
