@@ -21,6 +21,7 @@ pub mod bunker;
 pub mod cache;
 pub mod inject;
 pub mod nsite;
+pub mod onion;
 pub mod pins;
 pub mod relay;
 pub mod resolve;

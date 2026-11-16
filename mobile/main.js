@@ -48,6 +48,7 @@ let activeTabId = ''
 let panel = 'home'
 let proxyPort = null
 let privatePort = null
+let torPort = null
 let activeUrl = ''
 let activeTitle = ''
 let browserSettings = null
@@ -56,6 +57,7 @@ let signerDeadline = 0
 let signerRequest = null
 let newTabMode = false
 let privateMode = false
+let torMode = false
 let pendingFocus = null
 let findOpen = false
 let findTimer = null
@@ -76,6 +78,7 @@ const PANELS = [
   'relays',
   'search',
   'security',
+  'tor',
   'storage',
   'identity',
   'signer-settings',
@@ -91,6 +94,7 @@ const PANEL_PARENT = {
   relays: 'settings',
   search: 'settings',
   security: 'settings',
+  tor: 'settings',
   storage: 'settings',
   identity: 'settings',
   'signer-settings': 'settings',
@@ -155,6 +159,13 @@ function toggleBookmark(address, title) {
 function displayAddress(url) {
   try {
     const parsed = new URL(url)
+
+    if (parsed.hostname.endsWith('.onion.localhost')) {
+      // The vhost is this listener's spelling; the address the user typed is the
+      // onion, with its `.localhost` suffix removed.
+      const host = parsed.hostname.slice(0, -'.localhost'.length)
+      return `http://${host}${parsed.pathname}${parsed.search}`
+    }
 
     if (parsed.hostname.endsWith('.nsite.localhost')) {
       // pubkey.site.nsite.localhost, or pubkey.nsite.localhost for the root site.
@@ -462,6 +473,13 @@ globalThis.__nccContent = (state) => {
     delete progressByTab[id]
   }
 
+  // An onion link followed from a normal tab: the shell picks the kind of tab that
+  // can actually load it.
+  if (state.type === 'onion' && state.url) {
+    void navigate(state.url, { newTab: true })
+    return
+  }
+
   if (state.type === 'icon') {
     if (state.url && state.icon && !isPrivateTab(id)) saveIcon(displayAddress(state.url), state.icon)
     if (panel === 'home') renderHome()
@@ -518,6 +536,7 @@ function showPanel(name) {
   if (name === 'relays') void loadRelays()
   if (name === 'search') void loadSearch()
   if (name === 'security') void loadSecurity()
+  if (name === 'tor') void loadTor()
   if (name === 'appearance') renderAppearanceSub()
   if (name === 'history') renderHistory()
   if (name === 'bookmarks') renderBookmarks()
@@ -805,10 +824,11 @@ function renderHome() {
 
 /* ───────────────────────────── Omnibox ───────────────────────────── */
 
-function openOmnibox({ newTab = false, private: isPrivate = false } = {}) {
+function openOmnibox({ newTab = false, private: isPrivate = false, tor = false } = {}) {
   if (!content) return
   newTabMode = newTab
   privateMode = isPrivate
+  torMode = tor
   panel = 'omnibox'
   pendingFocus = 'omnibox'
   byId('address').value = newTab || !activeUrl ? '' : displayAddress(activeUrl)
@@ -914,17 +934,21 @@ function renderSuggestions(query) {
 }
 
 async function submitOmnibox() {
-  await submit(byId('address').value, { newTab: newTabMode, private: privateMode })
+  await submit(byId('address').value, {
+    newTab: newTabMode,
+    private: privateMode,
+    tor: torMode
+  })
 }
 
 /** Open whatever was typed or tapped. Errors surface under the field. */
-async function submit(text, { newTab = false, private: isPrivate = false } = {}) {
-  const result = await navigate(text, { newTab, private: isPrivate })
+async function submit(text, { newTab = false, private: isPrivate = false, tor = false } = {}) {
+  const result = await navigate(text, { newTab, private: isPrivate, tor })
   if (result?.error) {
     const error = byId('omni-error')
     error.textContent = result.error
     error.hidden = false
-    if (panel !== 'omnibox') openOmnibox({ newTab })
+    if (panel !== 'omnibox') openOmnibox({ newTab, private: isPrivate, tor })
     byId('address').value = text
     return
   }
@@ -932,6 +956,7 @@ async function submit(text, { newTab = false, private: isPrivate = false } = {})
     panel = 'home'
     newTabMode = false
     privateMode = false
+    torMode = false
   }
 }
 
@@ -1030,9 +1055,46 @@ function targetUrl(input, port) {
 }
 
 /** Resolve and open. Returns `{ ok }` or `{ error }`. */
-async function navigate(text, { newTab = false, private: isPrivate = false } = {}) {
+async function navigate(text, { newTab = false, private: isPrivate = false, tor = false } = {}) {
   const input = text.trim()
   if (!input) return { error: 'Enter an address or a search.' }
+
+  // An onion address always belongs in a Tor tab, whether it was typed there or in
+  // a normal one. Turning the current tab into a Tor tab is not possible: the kind is
+  // fixed when the tab is built, and its listener decides what it may fetch.
+  const onion = onionUrl(input)
+  if (onion) {
+    if (!torPort) return { error: 'Tor is not available in this build.' }
+
+    let target = onionTarget(onion, torPort)
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:${torPort}/__ncc/route?u=${encodeURIComponent(onion.href)}`
+      )
+      if (response.ok) {
+        target = await response.json()
+      } else {
+        const problem = await response.json().catch(() => null)
+        return { error: problem?.detail || 'Could not open that onion address.' }
+      }
+    } catch {
+      // Fall back to the local shape; the listener answers or refuses it.
+    }
+
+    if (content) {
+      if (newTab && tabs.length > 0) content.openNewTor(target.url)
+      else content.openTor(target.url)
+      return { ok: true }
+    }
+
+    void probe(target.url)
+    return { ok: true }
+  }
+
+  // A Tor tab is onion-only, so refusing here is clearer than an empty page. The
+  // refusal is not a preference: fetching clearnet from a Tor tab would reveal the
+  // reader's address, which is what the tab exists to avoid.
+  if (tor) return { error: 'A Tor tab loads .onion addresses only.' }
 
   const kind = classifyInput(input)
   if (kind !== 'address') {
@@ -1110,6 +1172,26 @@ async function probe(url) {
 
 /* ───────────────────────────── Tab switcher ───────────────────────────── */
 
+/** The onion URL a string names, or null. A bare host is accepted; people paste those. */
+function onionUrl(value) {
+  const candidate = /^[a-z][a-z0-9+.-]*:\/\//i.test(value) ? value : `http://${value}`
+  try {
+    const url = new URL(candidate)
+    const host = url.hostname.toLowerCase()
+    if (!host.endsWith('.onion')) return null
+    if (host.length !== 62) return null
+    return url
+  } catch {
+    return null
+  }
+}
+
+/** The virtual host for an onion URL, when the proxy cannot be asked. */
+function onionTarget(url, port) {
+  const host = url.hostname.toLowerCase()
+  return { url: `http://${host}.localhost:${port}${url.pathname}${url.search}${url.hash}` }
+}
+
 function isPrivateTab(id) {
   return tabs.find((tab) => tab.id === id)?.kind === 'private'
 }
@@ -1130,7 +1212,12 @@ function renderTabGrid() {
     head.className = 'tab-head'
     head.appendChild(avatar(label, 'xs', displayAddress(tab.url || '')))
     const title = document.createElement('span')
-    title.textContent = tab.kind === 'private' ? `${label} · private` : label
+    title.textContent =
+      tab.kind === 'private'
+        ? `${label} · private`
+        : tab.kind === 'tor'
+          ? `${label} · tor`
+          : label
     head.appendChild(title)
 
     const close = document.createElement('button')
@@ -1229,6 +1316,7 @@ function wireMenu() {
   })
   act('menu-new', () => openOmnibox({ newTab: true }))
   act('menu-private', () => openOmnibox({ newTab: true, private: true }))
+  act('menu-tor', () => openOmnibox({ newTab: true, tor: true }))
   act('menu-find', () => {
     closePanel()
     openFind()
@@ -1734,6 +1822,56 @@ async function loadSecurity() {
   }
 }
 
+function torStateText(status) {
+  if (!status) return 'Tor is not available in this build.'
+  if (status.state === 'ready') {
+    return status.kind === 'bundled'
+      ? 'Tor is ready, using the bundled client.'
+      : `Tor is ready through ${status.proxy || 'a local SOCKS proxy'}.`
+  }
+  if (status.state === 'starting') {
+    return `Connecting to Tor… ${status.percent || 0}%`
+  }
+  if (status.state === 'failed') {
+    return `Tor is not running: ${status.error || 'no reason was reported'}`
+  }
+  return 'Tor has not started yet.'
+}
+
+async function refreshTorState() {
+  const line = byId('tor-state')
+  try {
+    const status = await invoke('tor_status')
+    line.textContent = torStateText(status)
+  } catch (error) {
+    line.textContent = `Tor status is unavailable: ${error}`
+  }
+}
+
+async function loadTor() {
+  try {
+    browserSettings = await invoke('browser_settings')
+    byId('tor-mode').value = browserSettings.torMode === 'local' ? 'local' : 'auto'
+    byId('tor-socks').value = browserSettings.torSocks
+  } catch (error) {
+    byId('tor-note').textContent = String(error)
+  }
+  await refreshTorState()
+}
+
+async function saveTor() {
+  try {
+    browserSettings = await invoke('settings_set_tor', {
+      mode: byId('tor-mode').value,
+      socks: byId('tor-socks').value.trim()
+    })
+    byId('tor-note').textContent = 'Saved. The new route is used once it is ready.'
+    await refreshTorState()
+  } catch (error) {
+    byId('tor-note').textContent = String(error)
+  }
+}
+
 async function saveSecurity() {
   try {
     browserSettings = await invoke('settings_set_https', {
@@ -2174,6 +2312,8 @@ function wireChrome() {
       byId('search-engine').value === 'custom' ? 'Template with %s' : 'SearXNG instance'
   })
   byId('security-save').addEventListener('click', () => void saveSecurity())
+  byId('tor-save').addEventListener('click', () => void saveTor())
+  byId('tor-refresh').addEventListener('click', () => void refreshTorState())
   byId('clear-cache').addEventListener('click', async () => {
     byId('storage-note').textContent = 'Clearing…'
     try {
@@ -2269,6 +2409,15 @@ async function main() {
     }
   } catch {
     // Without a private listener there are no private tabs, which is not an error.
+  }
+
+  try {
+    torPort = await tauri.core.invoke('tor_proxy_port')
+    if (torPort && content && typeof content.setTorProxyPort === 'function') {
+      content.setTorProxyPort(torPort)
+    }
+  } catch {
+    // Without the onion listener there are no Tor tabs; the settings page says so.
   }
 
   try {

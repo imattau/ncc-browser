@@ -1,0 +1,35 @@
+[package]
+name = "ncc-tor"
+description = "Local Tor transport: a SOCKS5 endpoint backed by arti or an external daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+# arti sets the floor for the bundled client; the SOCKS types alone would build on
+# anything the rest of the workspace does.
+rust-version = "1.92"
+
+[dependencies]
+# The bundled client. Optional so a build that only needs the SOCKS types does not
+# pay for arti's dependency tree; the Android shell enables it.
+#
+# `static-sqlite` is not an optimisation: without it rusqlite links the platform's
+# sqlite, which is not in the NDK sysroot, so the Android link would fail. Bundling it
+# compiles sqlite with the NDK toolchain like any other native dependency.
+arti-client = { version = "0.48", default-features = false, features = ["tokio", "rustls", "onion-service-client", "static-sqlite"], optional = true }
+serde = { version = "1.0.229", features = ["derive"] }
+# arti's runtime abstraction; named because the client type is parameterised by it.
+tor-rtcompat = { version = "0.48", default-features = false, features = ["tokio", "rustls"], optional = true }
+tokio = { version = "1.53.3", features = ["rt", "net", "sync", "time", "io-util", "macros"] }
+tracing = "0.1.44"
+url = "2"
+
+[dev-dependencies]
+tokio = { version = "1.53.3", features = ["rt-multi-thread", "macros", "net", "sync", "time", "io-util"] }
+
+[features]
+default = []
+# arti, compiled into the app. Without it `auto` mode can only find a daemon.
+bundled = ["dep:arti-client", "dep:tor-rtcompat"]
+
+[lints.rust]
+unsafe_code = "forbid"

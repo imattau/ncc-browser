@@ -17,10 +17,12 @@ import android.webkit.RenderProcessGoneDetail
 import android.webkit.SslErrorHandler
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import org.json.JSONObject
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
@@ -43,6 +45,8 @@ class ContentSurface(
   val id: String,
   /** A private tab: it loads through the listener that keeps nothing. */
   val isPrivate: Boolean = false,
+  /** A Tor tab: onion sites only, fetched through Tor by the third listener. */
+  val isTor: Boolean = false,
   private val container: ViewGroup,
   private val proxyPort: () -> Int,
   private val report: (JSONObject) -> Unit,
@@ -71,6 +75,9 @@ class ContentSurface(
     val scheme = Uri.parse(url).scheme?.lowercase()
     return scheme == "http" || scheme == "https"
   }
+
+  private fun emptyResponse(): WebResourceResponse =
+    WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
 
   fun open(url: String): Boolean {
     if (!accepts(url)) {
@@ -287,6 +294,32 @@ class ContentSurface(
     }
 
     web.webViewClient = object : WebViewClient() {
+      /**
+       * Tor tabs must not reach the clearnet. A document the proxy rewrote is
+       * confined by its policy, but a page can still ask for something the rewriter
+       * never saw, so the request itself is refused here.
+       */
+      override fun shouldInterceptRequest(
+        view: WebView,
+        request: WebResourceRequest,
+      ): WebResourceResponse? {
+        if (!isTor) return null
+        val url = request.url
+        return when (url.scheme?.lowercase()) {
+          "http", "https" -> {
+            // Every document and subresource of a Tor tab is served by this tab's
+            // own listener, so the host is a virtual host under `.localhost` and the
+            // port is the one the tab was built with. Checking the port matters: the
+            // normal listener would fetch NCC content off the clearnet.
+            val host = url.host?.lowercase() ?: ""
+            val allowed = host.endsWith(".localhost") && url.port == proxyPort()
+            if (allowed) null else emptyResponse()
+          }
+          "data", "blob", "about", "javascript" -> null
+          else -> emptyResponse()
+        }
+      }
+
       override fun shouldOverrideUrlLoading(
         view: WebView,
         request: WebResourceRequest,
@@ -299,6 +332,32 @@ class ContentSurface(
         if (scheme == "ncc" || scheme == "nsite") {
           routeLink(view, url)
           return true
+        }
+
+        // In a Tor tab, following a clearnet link would be the leak the whole mode
+        // exists to avoid. Refusing it is also what the desktop does.
+        if (isTor && (scheme == "http" || scheme == "https")) {
+          val host = request.url.host?.lowercase() ?: ""
+          val throughThisTab = host.endsWith(".localhost") && request.url.port == proxyPort()
+          if (!throughThisTab) {
+            emit(
+              JSONObject()
+                .put("type", "blocked")
+                .put("url", url)
+                .put("reason", "clearnet"),
+            )
+            return true
+          }
+        }
+
+        // An onion link in a normal tab cannot be loaded here: this WebView has no
+        // Tor. Hand it to the shell, which opens a Tor tab.
+        if (!isTor && (scheme == "http" || scheme == "https")) {
+          val host = request.url.host?.lowercase() ?: ""
+          if (host.endsWith(".onion")) {
+            emit(JSONObject().put("type", "onion").put("url", url))
+            return true
+          }
         }
 
         if (accepts(url)) return false

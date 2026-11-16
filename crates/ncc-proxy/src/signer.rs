@@ -312,6 +312,7 @@ mod tests {
             pubkey: "npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqhs2n3v".to_string(),
             service: "web".to_string(),
             site: None,
+            onion: None,
             kind: crate::vhost::HostKind::Ncc,
         };
         state.tokens.remember("token", &host_key(&vhost));

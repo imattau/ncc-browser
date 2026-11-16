@@ -8,6 +8,22 @@ use url::Url;
 
 use crate::address::{build_internal_url, parse_ncc_address, BuildAddress};
 
+/// Whether `host` is a Tor v3 onion address.
+///
+/// v3 is 56 base32 characters plus `.onion`; v2 was removed from Tor, so an old
+/// sixteen-character address is rejected here and the shell can say why instead of
+/// opening a tab that can never load.
+pub fn is_onion_host(host: &str) -> bool {
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    let Some(label) = host.strip_suffix(".onion") else {
+        return false;
+    };
+    label.len() == 56
+        && label
+            .bytes()
+            .all(|byte| matches!(byte, b'a'..=b'z' | b'2'..=b'7'))
+}
+
 /// The `scheme://host[:port]` of an http(s) URL, with default ports dropped.
 pub fn http_origin(url: &Url) -> Option<String> {
     if !matches!(url.scheme(), "http" | "https") {
