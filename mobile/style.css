@@ -197,3 +197,11 @@ button:disabled {
   word-break: break-word;
   min-height: 96px;
 }
+
+button.secondary {
+  margin-top: 8px;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  font-weight: 500;
+}
