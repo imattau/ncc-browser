@@ -11,7 +11,7 @@ The `Android` workflow was run end to end on `ubuntu-latest`:
 platform:    platforms;android-37.2   (resolved from compileSdk = 37)
 build-tools: build-tools;37.0.0
 ndk:         27.2.12479018
-apk:         11 MB, payload lib/arm64-v8a/libncc_navigator_lib.so
+apk:         21 MB, payload lib/arm64-v8a/libncc_navigator_lib.so (proxy + rustls)
 signature:   V2 signer, certificate SHA-256 547edf7693c054d753355488f10f991578ab8da22cd6104cc157e5b98816c1f6
 build time:  ~10 min cold (Rust dominates), ~1 min for the Gradle half
 ```
@@ -180,7 +180,8 @@ Build pipeline:
 
 Still to build:
 
-- [ ] Start the proxy from the Tauri app and expose its port to the shell.
+- [x] Start the proxy from the Tauri app and expose its port to the shell.
+- [x] A status page that fetches a live service through a `*.localhost` vhost.
 - [ ] `vite.mobile.config.ts` + an `NccApi` adapter over Tauri commands, replacing
       `mobile/` with the React chrome.
 - [ ] Kotlin content WebView under the toolbar, per-tab lifecycle, tab thumbnails.
