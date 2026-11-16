@@ -40,6 +40,10 @@ pub struct Settings {
     /// Follow the target identity's NIP-65 relay list. Stored now, honoured once the
     /// resolver learns to gossip.
     pub gossip: bool,
+    /// Unlock the identity at startup instead of waiting for a tap. Only works where
+    /// the storage envelope needs no input, which is the case with the device
+    /// keystore; a passphrase identity stays locked and says why.
+    pub keep_unlocked: bool,
     /// Refuse services without a fresh NCC-02 anchor.
     pub anchor_required: bool,
     pub https_mode: HttpsMode,
@@ -61,6 +65,7 @@ impl Default for Settings {
                 .map(|relay| relay.to_string())
                 .collect(),
             gossip: true,
+            keep_unlocked: false,
             anchor_required: false,
             https_mode: HttpsMode::default(),
             warn_insecure: false,
@@ -228,6 +233,12 @@ impl SettingsStore {
         }
         let mut settings = self.get();
         settings.relays = sanitized;
+        self.apply(settings)
+    }
+
+    pub fn set_keep_unlocked(&self, value: bool) -> Result<Settings, String> {
+        let mut settings = self.get();
+        settings.keep_unlocked = value;
         self.apply(settings)
     }
 
