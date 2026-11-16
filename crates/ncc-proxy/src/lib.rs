@@ -17,6 +17,7 @@
 //! the two implementations can be checked against the same rules.
 
 pub mod approvals;
+pub mod cache;
 pub mod inject;
 pub mod nsite;
 pub mod pins;

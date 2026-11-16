@@ -1,6 +1,7 @@
 //! NCC-05 resolution: turn `(npub, service)` into fetchable endpoints.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -47,7 +48,7 @@ pub struct DiscoveredService {
     pub page: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ResolvedService {
     /// The pubkey exactly as it was addressed (npub or hex).
     pub pubkey: String,
@@ -68,12 +69,22 @@ struct CacheEntry {
     result: Result<ResolvedService, ResolveError>,
 }
 
+/// One record on disk, with the moment it stops being trusted.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct StoredRecord {
+    expires_at: i64,
+    resolved: ResolvedService,
+}
+
 pub struct Resolver {
     settings: Arc<crate::settings::SettingsStore>,
     timeout: Duration,
     max_cache_seconds: i64,
     negative_cache_seconds: i64,
     cache: Mutex<HashMap<String, CacheEntry>>,
+    flights: Arc<crate::cache::Flights>,
+    /// Where records survive a restart; `None` keeps them in memory only.
+    directory: Option<PathBuf>,
 }
 
 impl Resolver {
@@ -84,7 +95,14 @@ impl Resolver {
             max_cache_seconds: 60,
             negative_cache_seconds: 15,
             cache: Mutex::new(HashMap::new()),
+            flights: Arc::default(),
+            directory: None,
         }
+    }
+
+    pub fn with_directory(mut self, directory: Option<PathBuf>) -> Self {
+        self.directory = directory;
+        self
     }
 
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
@@ -105,11 +123,17 @@ impl Resolver {
         let hex = key.to_hex();
         let cache_key = format!("{hex}:{service}");
         let now = unix_now();
+        if let Some(entry) = self.cached(&cache_key, now) {
+            return entry;
+        }
 
-        if let Some(entry) = crate::lock(&self.cache).get(&cache_key) {
-            if entry.expires_at > now {
-                return entry.result.clone();
-            }
+        // Several tabs can ask for the same service at once. One relay query answers
+        // all of them; the rest wait here and then find it in the cache.
+        let _flight = self.flights.board(&cache_key).await;
+
+        let now = unix_now();
+        if let Some(entry) = self.cached(&cache_key, now) {
+            return entry;
         }
 
         let result = self
@@ -120,15 +144,48 @@ impl Resolver {
             Ok(resolved) => (resolved.expires_at - now).clamp(1, self.max_cache_seconds),
             Err(_) => self.negative_cache_seconds,
         };
-        crate::lock(&self.cache).insert(
-            cache_key,
-            CacheEntry {
-                expires_at: now + cached_for,
-                result: result.clone(),
-            },
-        );
+
+        let entry = CacheEntry {
+            expires_at: now + cached_for,
+            result: result.clone(),
+        };
+        crate::lock(&self.cache).insert(cache_key.clone(), entry);
+
+        if let Ok(resolved) = &result {
+            crate::cache::save(
+                self.directory.as_deref(),
+                &cache_key,
+                &StoredRecord {
+                    expires_at: now + cached_for,
+                    resolved: resolved.clone(),
+                },
+            );
+        }
 
         result
+    }
+
+    /// A record this session already has, or the copy an earlier one left on disk.
+    fn cached(&self, cache_key: &str, now: i64) -> Option<Result<ResolvedService, ResolveError>> {
+        if let Some(entry) = crate::lock(&self.cache).get(cache_key) {
+            if entry.expires_at > now {
+                return Some(entry.result.clone());
+            }
+        }
+
+        let stored: StoredRecord = crate::cache::load(self.directory.as_deref(), cache_key)?;
+        if stored.expires_at <= now {
+            return None;
+        }
+
+        crate::lock(&self.cache).insert(
+            cache_key.to_string(),
+            CacheEntry {
+                expires_at: stored.expires_at,
+                result: Ok(stored.resolved.clone()),
+            },
+        );
+        Some(Ok(stored.resolved))
     }
 
     /// The target identity's NIP-65 read relays, when gossip is on.
@@ -237,6 +294,7 @@ impl Resolver {
     /// Drop every cached record and miss. Used by "clear cache".
     pub fn clear(&self) {
         crate::lock(&self.cache).clear();
+        crate::cache::forget(self.directory.clone());
     }
 
     pub fn invalidate(&self, pubkey: &str, service: &str) {
@@ -368,4 +426,89 @@ pub fn unix_now() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs() as i64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A directory no other test can delete: tests run in parallel.
+    fn directory() -> PathBuf {
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let id = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!("ncc-records-{}-{id}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        path
+    }
+
+    fn resolver(directory: Option<PathBuf>) -> Resolver {
+        // No relays: anything that resolves came from disk.
+        let settings = crate::settings::SettingsStore::in_memory(crate::settings::Settings {
+            relays: Vec::new(),
+            ..Default::default()
+        });
+        Resolver::new(Arc::new(settings)).with_directory(directory)
+    }
+
+    fn record(hex: &str) -> ResolvedService {
+        ResolvedService {
+            pubkey: hex.to_string(),
+            hex_pubkey: hex.to_string(),
+            service: "web".into(),
+            d_tag: "web".into(),
+            d_tag_source: DTagSource::Exact,
+            event_id: "ab".repeat(32),
+            updated_at: 1_700_000_000,
+            expires_at: unix_now() + 600,
+            endpoints: vec![Endpoint {
+                url: "https://example.com/".into(),
+                protocol: "https".into(),
+                priority: 0,
+                family: ncc_core::EndpointFamily::Ipv4,
+                k: None,
+            }],
+        }
+    }
+
+    fn store(directory: &std::path::Path, key: &str, expires_at: i64, resolved: &ResolvedService) {
+        crate::cache::save(
+            Some(directory),
+            key,
+            &StoredRecord {
+                expires_at,
+                resolved: resolved.clone(),
+            },
+        );
+    }
+
+    #[tokio::test]
+    async fn a_record_survives_a_restart() {
+        let directory = directory();
+        let hex = nostr::Keys::generate().public_key().to_hex();
+        let key = format!("{hex}:web");
+
+        store(&directory, &key, unix_now() + 30, &record(&hex));
+
+        let reopened = resolver(Some(directory.clone()));
+        let resolved = reopened.resolve(&hex, "web").await.expect("from disk");
+
+        assert_eq!(resolved.event_id, record(&hex).event_id);
+        assert_eq!(resolved.endpoints, record(&hex).endpoints);
+
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    #[tokio::test]
+    async fn an_expired_record_is_not_used() {
+        let directory = directory();
+        let hex = nostr::Keys::generate().public_key().to_hex();
+        let key = format!("{hex}:web");
+
+        store(&directory, &key, unix_now() - 1, &record(&hex));
+
+        let reopened = resolver(Some(directory.clone()));
+        assert!(reopened.resolve(&hex, "web").await.is_err());
+
+        let _ = std::fs::remove_dir_all(&directory);
+    }
 }

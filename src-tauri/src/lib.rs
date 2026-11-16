@@ -207,8 +207,9 @@ fn proxy_config(
     ProxyConfig {
         relays: default_relays(),
         settings,
-        // Verified site blobs survive a restart; the hash is re-checked on read.
-        blob_directory: data_dir.map(|dir| dir.join("nsite-blobs")),
+        // Manifests, records and verified site files survive a restart; site files are
+        // hash-checked when read back.
+        cache_directory: data_dir,
         // Only the shell's own bundle may read responses across origins. A page
         // served from a vhost does not need CORS at all.
         allowed_origins: vec![
