@@ -729,21 +729,34 @@ input.switch:checked::after {
 }
 
 .brand-mark {
-  width: 68px;
-  height: 68px;
-  display: grid;
-  place-items: center;
+  width: 80px;
+  height: 80px;
   margin-bottom: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.35);
-  border-radius: 22px;
-  background: rgba(255, 255, 255, 0.18);
-  backdrop-filter: blur(10px);
-  box-shadow: 0 8px 24px rgba(40, 0, 80, 0.3);
+  border-radius: 24%;
+  box-shadow: 0 10px 28px rgba(30, 0, 70, 0.4);
+  transition: border-radius 0.3s var(--ease);
 }
 
-.brand-mark .i {
-  width: 34px;
-  height: 34px;
+.brand-mark img,
+.brand-mark .avatar {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
+  font-size: 34px;
+}
+
+/* Signed in: the app icon gives way to the person's own avatar. */
+.brand-mark.is-avatar {
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 3px rgba(255, 255, 255, 0.9),
+    0 10px 28px rgba(30, 0, 70, 0.4);
+}
+
+.brand-mark.is-avatar .avatar {
+  border-radius: 50%;
 }
 
 .id-chip {
