@@ -68,6 +68,17 @@ fn identity_lock(state: tauri::State<'_, SignerState>) -> Status {
     state.identity.status()
 }
 
+#[tauri::command]
+fn signer_permissions(state: tauri::State<'_, SignerState>) -> Vec<String> {
+    state.proxy.trusted_keys()
+}
+
+#[tauri::command]
+fn signer_revoke(state: tauri::State<'_, SignerState>, service: String) -> Vec<String> {
+    state.proxy.untrust(&service);
+    state.proxy.trusted_keys()
+}
+
 /// Answer a parked signer request. `remember` grants the whole service, so the shell
 /// stops asking until the app restarts.
 #[tauri::command]
@@ -169,6 +180,8 @@ pub fn run() {
             identity_import,
             identity_unlock,
             identity_lock,
+            signer_permissions,
+            signer_revoke,
             signer_respond
         ])
         .setup(|app| {

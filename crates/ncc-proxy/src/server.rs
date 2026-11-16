@@ -149,6 +149,23 @@ impl ProxyState {
         self.trusted.lock().expect("trust lock").contains(key)
     }
 
+    /// Services the user stopped being asked about, for the permissions screen.
+    pub fn trusted_keys(&self) -> Vec<String> {
+        let mut keys: Vec<String> = self
+            .trusted
+            .lock()
+            .expect("trust lock")
+            .iter()
+            .cloned()
+            .collect();
+        keys.sort();
+        keys
+    }
+
+    pub fn untrust(&self, key: &str) {
+        self.trusted.lock().expect("trust lock").remove(key);
+    }
+
     pub fn trust(&self, key: &str) {
         self.trusted
             .lock()
