@@ -1161,6 +1161,7 @@ dependencies = [
  "ncc-core",
  "ncc-identity",
  "nostr",
+ "rand 0.8.8",
  "reqwest",
  "rustls",
  "serde",
