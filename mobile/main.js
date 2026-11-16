@@ -1566,6 +1566,21 @@ function renderIdentity(status) {
     set('sub-identity', `Locked · ${shortId(status.npub)}`)
   }
 
+  // The keystore holds the key, so there is nothing to type. Only a file from before
+  // the keystore still needs its passphrase, and only once.
+  const legacy = status.envelope === 'legacy'
+  for (const id of ['passphrase', 'unlock-passphrase']) {
+    const input = byId(id)
+    const label = input?.closest('label')
+    if (label) label.hidden = !legacy
+  }
+  set(
+    'identity-store',
+    legacy
+      ? 'This identity is stored with a passphrase. Enter it once and it moves to the device keystore.'
+      : 'Your key is wrapped by the device keystore; there is no passphrase to remember.'
+  )
+
   byId('identity-setup').hidden = status.initialised
   byId('identity-locked').hidden = !status.initialised || status.unlocked
   byId('identity-lock').hidden = !status.unlocked
@@ -1586,13 +1601,8 @@ function identityFailure(error) {
 
 async function setupIdentity(tauri) {
   byId('identity-create').addEventListener('click', async () => {
-    const passphrase = byId('passphrase').value
-    if (passphrase.length < 8) {
-      identityFailure('Use at least 8 characters.')
-      return
-    }
     try {
-      renderIdentity(await invoke('identity_create', { passphrase }))
+      renderIdentity(await invoke('identity_create'))
       byId('identity-error').textContent = ''
     } catch (error) {
       identityFailure(error)
@@ -1600,14 +1610,13 @@ async function setupIdentity(tauri) {
   })
 
   byId('identity-import').addEventListener('click', async () => {
-    const passphrase = byId('passphrase').value
     const secret = byId('nsec').value.trim()
-    if (passphrase.length < 8 || !secret) {
-      identityFailure('A passphrase of at least 8 characters and an nsec are required.')
+    if (!secret) {
+      identityFailure('Paste an nsec first.')
       return
     }
     try {
-      renderIdentity(await invoke('identity_import', { passphrase, secret }))
+      renderIdentity(await invoke('identity_import', { secret }))
       byId('identity-error').textContent = ''
     } catch (error) {
       identityFailure(error)
@@ -1615,8 +1624,14 @@ async function setupIdentity(tauri) {
   })
 
   byId('identity-unlock').addEventListener('click', async () => {
+    const legacy = identity?.envelope === 'legacy'
     try {
-      renderIdentity(await invoke('identity_unlock', { passphrase: byId('unlock-passphrase').value }))
+      renderIdentity(
+        await invoke(
+          'identity_unlock',
+          legacy ? { passphrase: byId('unlock-passphrase').value } : {}
+        )
+      )
       byId('identity-error').textContent = ''
     } catch (error) {
       identityFailure(error)

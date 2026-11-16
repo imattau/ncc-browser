@@ -248,7 +248,12 @@ Still to build:
       settings.
 - [x] Settings as a list of sections: address bar, relays, identity, signer
       permissions, history, bookmarks, about.
-- [x] `config.json` next to the identity, owned by the proxy: validated on load and on
+- [x] Identity: the secret is sealed by a key held in the Android keystore
+(`IdentityKey.kt`, called from `crates/ncc-identity/src/device.rs` over JNI), so there
+is no passphrase to remember. Files written before that are opened once with their
+passphrase and rewritten with the device envelope.
+
+`config.json` next to the identity, owned by the proxy: validated on load and on
       write, persisted through a temp file, and read live so a relay change applies to
       the next lookup without a restart.
 - [x] Settings that change behaviour, not just persist: gossip (NIP-65 read relays are
