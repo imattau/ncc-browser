@@ -275,7 +275,7 @@ async fn handle_inner(state: &ProxyState, request: Request) -> Response {
     let (vhost, path, query) = if path == "/__ncc/fetch" {
         match fetch_target(&query) {
             Ok(parts) => parts,
-            Err(response) => return response,
+            Err(detail) => return json_error(StatusCode::BAD_REQUEST, "invalid-download", &detail),
         }
     } else {
         let Some(vhost) = parse_vhost(&authority) else {
@@ -878,20 +878,13 @@ async fn route(state: &ProxyState, authority: &str, query: &str) -> Response {
 }
 
 /// Resolve `?u=<vhost URL>` into the parts the normal request path needs.
-fn fetch_target(query: &str) -> Result<(Vhost, String, String), Response> {
+fn fetch_target(query: &str) -> Result<(Vhost, String, String), String> {
     let target = url::form_urlencoded::parse(query.as_bytes())
         .find(|(name, _)| name == "u")
         .map(|(_, value)| value.into_owned())
-        .ok_or_else(|| {
-            json_error(
-                StatusCode::BAD_REQUEST,
-                "missing-url",
-                "Pass ?u=<vhost url>",
-            )
-        })?;
+        .ok_or_else(|| "Pass the file as ?u=<vhost url>".to_string())?;
 
-    let parsed = url::Url::parse(&target)
-        .map_err(|_| json_error(StatusCode::BAD_REQUEST, "invalid-url", "Not a URL"))?;
+    let parsed = url::Url::parse(&target).map_err(|_| "Not a URL".to_string())?;
 
     let host = parsed.host_str().unwrap_or_default();
     let authority = match parsed.port() {
@@ -899,13 +892,8 @@ fn fetch_target(query: &str) -> Result<(Vhost, String, String), Response> {
         None => host.to_string(),
     };
 
-    let vhost = parse_vhost(&authority).ok_or_else(|| {
-        json_error(
-            StatusCode::BAD_REQUEST,
-            "unknown-host",
-            "Only NCC and site hosts can be fetched here",
-        )
-    })?;
+    let vhost = parse_vhost(&authority)
+        .ok_or_else(|| "Only NCC and site hosts can be fetched here".to_string())?;
 
     let path = if parsed.path().is_empty() {
         "/".to_string()
