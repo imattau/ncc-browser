@@ -29,6 +29,19 @@
   );
   --shadow-up: light-dark(0 -8px 32px rgba(60, 30, 110, 0.18), 0 -8px 32px rgba(0, 0, 0, 0.5));
 
+  /*
+   * Private and Tor tabs get their own hues, matching the desktop: private is a cool
+   * indigo-blue, Tor is the onion's purple-magenta. They do not follow the accent.
+   */
+  --private: light-dark(#3f55d9, #8b9bff);
+  --private-text: light-dark(#2f40b0, #b9c2ff);
+  --private-soft: light-dark(#e8ebff, #12172f);
+  --private-chrome: light-dark(#dde2fb, #1a2046);
+  --tor: light-dark(#9333c7, #c985ec);
+  --tor-text: light-dark(#7a27a8, #e5baf8);
+  --tor-soft: light-dark(#f5e8fb, #1f1030);
+  --tor-chrome: light-dark(#ecd9f7, #2b1544);
+
   --bar: 56px;
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
   --spring: cubic-bezier(0.25, 1.1, 0.4, 1);
@@ -1592,4 +1605,286 @@ body[data-bar='top'] .home-bar {
   height: 68%;
   object-fit: contain;
   image-rendering: auto;
+}
+
+/* ─────────────────── Normal / Private / Tor: a cue you cannot miss ─────────────────── */
+
+/* The strip takes the active tab's hue, so which kind you are typing into is visible. */
+body[data-kind='private'] .strip {
+  background: var(--private-chrome);
+  border-color: color-mix(in srgb, var(--private) 45%, transparent);
+}
+
+body[data-kind='tor'] .strip {
+  background: var(--tor-chrome);
+  border-color: color-mix(in srgb, var(--tor) 50%, transparent);
+}
+
+body[data-kind='private'] .pill {
+  background: color-mix(in srgb, var(--private) 16%, var(--surface));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--private) 40%, transparent);
+}
+
+body[data-kind='tor'] .pill {
+  background: color-mix(in srgb, var(--tor) 16%, var(--surface));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tor) 40%, transparent);
+}
+
+body[data-kind='private'] #progress {
+  background: var(--private);
+}
+
+body[data-kind='tor'] #progress {
+  background: var(--tor);
+}
+
+body[data-kind='private'] .sheet-card {
+  box-shadow:
+    inset 0 3px 0 var(--private),
+    var(--shadow-up);
+}
+
+body[data-kind='tor'] .sheet-card {
+  box-shadow:
+    inset 0 3px 0 var(--tor),
+    var(--shadow-up);
+}
+
+.pill-kind {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  margin-left: 2px;
+  border-radius: 50%;
+}
+
+.pill-kind .i {
+  width: 16px;
+  height: 16px;
+}
+
+body[data-kind='private'] .pill-kind {
+  background: var(--private);
+  color: #fff;
+}
+
+body[data-kind='tor'] .pill-kind {
+  background: var(--tor);
+  color: #fff;
+}
+
+#menu-private > .i:first-child {
+  color: var(--private-text);
+}
+
+#menu-tor > .i:first-child {
+  color: var(--tor-text);
+}
+
+/* Whole screens tint too: the switcher and the address screen. */
+.screen[data-kind='private'] {
+  background: linear-gradient(var(--private-soft), var(--bg) 70%);
+}
+
+.screen[data-kind='tor'] {
+  background: linear-gradient(var(--tor-soft), var(--bg) 70%);
+}
+
+.kind-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  flex: none;
+  margin: 2px 12px 10px;
+  padding: 4px;
+  border-radius: 22px;
+  background: var(--surface-2);
+}
+
+.kind-tab {
+  min-height: 44px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 6px;
+  border-radius: 18px;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 600;
+  transition:
+    background 0.18s,
+    color 0.18s;
+}
+
+.kind-tab .i {
+  width: 18px;
+  height: 18px;
+}
+
+.kind-tab b {
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: var(--surface-3);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.kind-tab[aria-selected='true'] {
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  color: var(--accent);
+}
+
+.kind-tab.kind-private[aria-selected='true'] {
+  background: var(--private);
+  color: #fff;
+}
+
+.kind-tab.kind-tor[aria-selected='true'] {
+  background: var(--tor);
+  color: #fff;
+}
+
+.kind-tab[aria-selected='true'] b {
+  background: color-mix(in srgb, currentColor 22%, transparent);
+}
+
+.tab-card.kind-private {
+  background: var(--private-soft);
+  border-color: color-mix(in srgb, var(--private) 45%, transparent);
+}
+
+.tab-card.kind-tor {
+  background: var(--tor-soft);
+  border-color: color-mix(in srgb, var(--tor) 50%, transparent);
+}
+
+.tab-card.kind-private.active {
+  background: var(--private-soft);
+  border-color: var(--private);
+}
+
+.tab-card.kind-tor.active {
+  background: var(--tor-soft);
+  border-color: var(--tor);
+}
+
+.tab-card.kind-private .tab-blank,
+.tab-card.kind-tor .tab-blank {
+  background: transparent;
+}
+
+.tab-card.kind-private .tab-blank {
+  color: var(--private-text);
+}
+
+.tab-card.kind-tor .tab-blank {
+  color: var(--tor-text);
+}
+
+.tab-kind {
+  flex: none;
+  display: grid;
+  place-items: center;
+}
+
+.tab-kind .i {
+  width: 16px;
+  height: 16px;
+}
+
+.tab-card.kind-private .tab-kind {
+  color: var(--private-text);
+}
+
+.tab-card.kind-tor .tab-kind {
+  color: var(--tor-text);
+}
+
+.kind-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 48px 28px;
+  color: var(--muted);
+  text-align: center;
+  font-size: 14px;
+}
+
+.kind-empty-mark {
+  width: 64px;
+  height: 64px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--surface-2);
+}
+
+.kind-empty-mark .i {
+  width: 30px;
+  height: 30px;
+}
+
+#switcher[data-kind='private'] .kind-empty-mark {
+  background: color-mix(in srgb, var(--private) 18%, transparent);
+  color: var(--private-text);
+}
+
+#switcher[data-kind='tor'] .kind-empty-mark {
+  background: color-mix(in srgb, var(--tor) 18%, transparent);
+  color: var(--tor-text);
+}
+
+#switcher[data-kind='private'] .switcher-bar .btn:not(.tonal) {
+  background: var(--private);
+  box-shadow: none;
+}
+
+#switcher[data-kind='tor'] .switcher-bar .btn:not(.tonal) {
+  background: var(--tor);
+  box-shadow: none;
+}
+
+.kind-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 4px 16px 4px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.kind-note .i {
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+}
+
+#omnibox[data-kind='private'] .kind-note {
+  background: color-mix(in srgb, var(--private) 14%, transparent);
+  color: var(--private-text);
+}
+
+#omnibox[data-kind='tor'] .kind-note {
+  background: color-mix(in srgb, var(--tor) 14%, transparent);
+  color: var(--tor-text);
+}
+
+#omnibox[data-kind='private'] .omni-field {
+  background: color-mix(in srgb, var(--private) 16%, var(--surface));
+  box-shadow: inset 0 0 0 1.5px var(--private);
+}
+
+#omnibox[data-kind='tor'] .omni-field {
+  background: color-mix(in srgb, var(--tor) 16%, var(--surface));
+  box-shadow: inset 0 0 0 1.5px var(--tor);
 }

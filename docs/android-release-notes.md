@@ -5,6 +5,11 @@ is not a daily driver.
 
 ## New in this build
 
+- Normal, private and Tor tabs are now clearly separate. The tab switcher has a
+  Normal / Private / Tor switch with a count for each, and "Close all" and "New tab"
+  act on the kind on screen. Private and Tor tabs have their own colours (indigo and
+  purple) on the toolbar, address pill, address screen and switcher, a badge on the
+  pill, and no page previews. Tor tab visits no longer reach the history.
 - Appearance settings now include text size, four accent colours, compact spacing and
   reduced motion, alongside theme and toolbar position. Settings apply immediately and
   persist across launches.

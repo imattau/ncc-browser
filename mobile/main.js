@@ -43,6 +43,34 @@ function setIcon(svg, name) {
   svg.querySelector('use')?.setAttribute('href', `#i-${name}`)
 }
 
+/** Normal, private and Tor tabs never share a list, a colour or a close-all. */
+const KINDS = ['normal', 'private', 'tor']
+
+const KIND_INFO = {
+  normal: { label: 'Normal', icon: 'tab', one: 'tab', newLabel: 'New tab', short: 'New tab', note: '' },
+  private: {
+    label: 'Private',
+    icon: 'eye-off',
+    one: 'private tab',
+    newLabel: 'New private tab',
+    short: 'New private',
+    note: 'Nothing from private tabs is saved: no history, icons or cookies. Your connection is not hidden.'
+  },
+  tor: {
+    label: 'Tor',
+    icon: 'onion',
+    one: 'Tor tab',
+    newLabel: 'New Tor tab',
+    short: 'New Tor',
+    note: 'Tor tabs open .onion addresses only, through Tor, in their own session.'
+  }
+}
+
+const kindOf = (tab) => (tab && KINDS.includes(tab.kind) ? tab.kind : 'normal')
+
+/** Which kind the tab switcher is showing. */
+let switcherKind = 'normal'
+
 let tabs = []
 let activeTabId = ''
 let panel = 'home'
@@ -347,7 +375,10 @@ function renderPill() {
     const parts = addressParts(activeUrl)
     const id = document.createElement('span')
     id.className = 'pill-id'
-    id.textContent = parts.id
+    // The kind chip takes room in the pill, so the identity gives up a few characters
+    // rather than the service name.
+    const tight = kindOf(tabs.find((tab) => tab.id === activeTabId)) !== 'normal'
+    id.textContent = tight ? parts.id.replace(/^(.{6}).*…(.{3})$/, '$1…$2') : parts.id
     const rest = document.createElement('span')
     rest.className = 'pill-rest'
     rest.textContent = parts.rest
@@ -357,6 +388,17 @@ function renderPill() {
     placeholder.className = 'pill-placeholder'
     placeholder.textContent = 'Search or enter address'
     address.appendChild(placeholder)
+  }
+
+  const active = tabs.find((tab) => tab.id === activeTabId)
+  const kind = kindOf(active)
+  document.body.dataset.kind = kind
+  const chip = byId('pill-kind')
+  chip.hidden = kind === 'normal'
+  if (kind !== 'normal') {
+    setIcon(chip.querySelector('svg'), KIND_INFO[kind].icon)
+    chip.setAttribute('aria-label', `${KIND_INFO[kind].label} tab`)
+    chip.title = KIND_INFO[kind].note
   }
 
   const lock = byId('bar-info')
@@ -407,7 +449,7 @@ function renderCounts() {
     }
   }
   lastTabCount = tabs.length
-  set('switcher-title', tabs.length === 1 ? '1 tab' : `${tabs.length} tabs`)
+  if (panel === 'switcher') renderKindTabs()
 }
 
 /** The blurred backdrop behind bottom sheets is the last capture of the active tab. */
@@ -529,7 +571,10 @@ function showPanel(name) {
   pendingFocus = null
   content.expand(true)
 
-  if (name === 'switcher') renderTabGrid()
+  if (name === 'switcher') {
+    switcherKind = kindOf(tabs.find((tab) => tab.id === activeTabId))
+    renderTabGrid()
+  }
   if (name === 'menu') renderMenu()
   if (name === 'info') void loadInfo()
   if (name === 'signer-settings') void loadPermissions()
@@ -834,6 +879,19 @@ function openOmnibox({ newTab = false, private: isPrivate = false, tor = false }
   byId('address').value = newTab || !activeUrl ? '' : displayAddress(activeUrl)
   byId('omni-error').hidden = true
   byId('omni-clear').hidden = byId('address').value === ''
+  const kind = tor ? 'tor' : isPrivate ? 'private' : 'normal'
+  byId('omnibox').dataset.kind = kind
+  const note = byId('omni-kind')
+  note.hidden = kind === 'normal'
+  note.textContent = ''
+  if (kind !== 'normal') {
+    const strong = document.createElement('strong')
+    strong.textContent = KIND_INFO[kind].newLabel
+    const text = document.createElement('span')
+    text.append(strong, document.createTextNode(` — ${KIND_INFO[kind].note}`))
+    note.append(icon(KIND_INFO[kind].icon), text)
+  }
+  byId('address').placeholder = tor ? 'Enter a .onion address' : 'Search or enter address'
   renderSuggestions('')
   content.expand(true)
   applyLayout()
@@ -1200,33 +1258,76 @@ function onionTarget(url, port) {
   return { url: `http://${host}.localhost:${port}${url.pathname}${url.search}${url.hash}` }
 }
 
+/** Private and Tor tabs both leave nothing behind: no history entry, no saved icon. */
 function isPrivateTab(id) {
-  return tabs.find((tab) => tab.id === id)?.kind === 'private'
+  const kind = tabs.find((tab) => tab.id === id)?.kind
+  return kind === 'private' || kind === 'tor'
+}
+
+/** The Normal / Private / Tor switch at the top of the tab switcher. */
+function renderKindTabs() {
+  const bar = byId('kind-tabs')
+  bar.textContent = ''
+  const screen = byId('switcher')
+  screen.dataset.kind = switcherKind
+
+  for (const kind of KINDS) {
+    const count = tabs.filter((tab) => kindOf(tab) === kind).length
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = `kind-tab kind-${kind}`
+    button.setAttribute('role', 'tab')
+    button.setAttribute('aria-selected', String(kind === switcherKind))
+    button.dataset.kind = kind
+    const label = document.createElement('span')
+    label.textContent = KIND_INFO[kind].label
+    const badge = document.createElement('b')
+    badge.textContent = String(count)
+    button.append(icon(KIND_INFO[kind].icon), label, badge)
+    button.addEventListener('click', () => {
+      switcherKind = kind
+      renderTabGrid()
+    })
+    bar.appendChild(button)
+  }
+
+  const shown = tabs.filter((tab) => kindOf(tab) === switcherKind).length
+  set('switcher-title', `${shown} ${shown === 1 ? KIND_INFO[switcherKind].one : `${KIND_INFO[switcherKind].one}s`}`)
+  set('switcher-new-label', KIND_INFO[switcherKind].short)
+  byId('switcher-close-all').textContent = 'Close all'
+  byId('switcher-close-all').disabled = shown === 0
 }
 
 function renderTabGrid() {
   const grid = byId('tab-grid')
   grid.textContent = ''
+  renderKindTabs()
 
-  for (const tab of tabs) {
+  const visible = tabs.filter((tab) => kindOf(tab) === switcherKind)
+
+  for (const tab of visible) {
+    const kind = kindOf(tab)
     const label = tab.title || labelFor({ address: displayAddress(tab.url || ''), title: '' }) || 'New tab'
 
     const card = document.createElement('div')
-    card.className = tab.active ? 'tab-card active' : 'tab-card'
+    card.className = `${tab.active ? 'tab-card active' : 'tab-card'} kind-${kind}`
     card.setAttribute('role', 'button')
+    card.setAttribute('aria-label', kind === 'normal' ? label : `${label} — ${KIND_INFO[kind].label} tab`)
     card.tabIndex = 0
 
     const head = document.createElement('div')
     head.className = 'tab-head'
-    head.appendChild(avatar(label, 'xs', displayAddress(tab.url || '')))
+    head.appendChild(avatar(label, 'xs', kind === 'normal' ? displayAddress(tab.url || '') : ''))
     const title = document.createElement('span')
-    title.textContent =
-      tab.kind === 'private'
-        ? `${label} · private`
-        : tab.kind === 'tor'
-          ? `${label} · tor`
-          : label
+    title.textContent = label
     head.appendChild(title)
+    if (kind !== 'normal') {
+      const mark = document.createElement('span')
+      mark.className = 'tab-kind'
+      mark.title = `${KIND_INFO[kind].label} tab`
+      mark.appendChild(icon(KIND_INFO[kind].icon))
+      head.appendChild(mark)
+    }
 
     const close = document.createElement('button')
     close.type = 'button'
@@ -1240,16 +1341,18 @@ function renderTabGrid() {
     head.appendChild(close)
     card.appendChild(head)
 
-    if (tab.thumbnail) {
+    if (tab.thumbnail && kind === 'normal') {
       const image = document.createElement('img')
       image.className = 'tab-thumb'
       image.src = tab.thumbnail
       image.alt = ''
       card.appendChild(image)
     } else {
+      // A private or Tor page is never previewed: the switcher is easy to shoulder-surf
+      // and a thumbnail would outlive the tab in the capture cache.
       const blank = document.createElement('div')
       blank.className = 'tab-thumb tab-blank'
-      blank.appendChild(icon('globe'))
+      blank.appendChild(icon(kind === 'normal' ? 'globe' : KIND_INFO[kind].icon))
       card.appendChild(blank)
     }
 
@@ -1268,11 +1371,19 @@ function renderTabGrid() {
     grid.appendChild(card)
   }
 
-  if (tabs.length === 0) {
-    const empty = document.createElement('p')
-    empty.className = 'empty'
+  if (visible.length === 0) {
+    const empty = document.createElement('div')
+    empty.className = 'kind-empty'
     empty.style.gridColumn = '1 / -1'
-    empty.textContent = 'No open tabs.'
+    const mark = document.createElement('span')
+    mark.className = 'kind-empty-mark'
+    mark.appendChild(icon(KIND_INFO[switcherKind].icon))
+    const text = document.createElement('p')
+    text.textContent =
+      switcherKind === 'normal'
+        ? 'No open tabs.'
+        : `No ${KIND_INFO[switcherKind].one}s open. ${KIND_INFO[switcherKind].note}`
+    empty.append(mark, text)
     grid.appendChild(empty)
   }
 }
@@ -2307,12 +2418,21 @@ function wireChrome() {
     byId('address').focus()
   })
 
-  byId('switcher-new').addEventListener('click', () => openOmnibox({ newTab: true }))
+  byId('switcher-new').addEventListener('click', () =>
+    openOmnibox({ newTab: true, private: switcherKind === 'private', tor: switcherKind === 'tor' })
+  )
   byId('switcher-close-all').addEventListener('click', () => {
-    for (const tab of [...tabs]) content.closeTab(tab.id)
-    // Native collapses nothing here: closing the last tab expands the shell itself.
-    panel = 'home'
-    applyLayout()
+    // Only the tabs of the kind on screen: closing private tabs must never take
+    // normal ones with them, or the other way round.
+    const closing = tabs.filter((tab) => kindOf(tab) === switcherKind)
+    for (const tab of closing) content.closeTab(tab.id)
+    if (closing.length === tabs.length) {
+      // Native expands the shell itself when the last tab goes.
+      panel = 'home'
+      applyLayout()
+    } else {
+      renderTabGrid()
+    }
   })
 
   wireMenu()

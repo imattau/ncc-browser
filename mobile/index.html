@@ -38,6 +38,8 @@
         <symbol id="i-shield-check" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" /><path d="m9 12 2 2 4-4" /></symbol>
         <symbol id="i-shield-alert" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" /><path d="M12 8v4" /><path d="M12 16h.01" /></symbol>
         <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5" /></symbol>
+        <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49" /><path d="M14.084 14.158a3 3 0 0 1-4.242-4.242" /><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143" /><path d="m2 2 20 20" /></symbol>
+        <symbol id="i-onion" viewBox="0 0 24 24"><path d="M12 21c4.7 0 8.2-3.7 8.2-8.2C20.2 7.4 16.5 3 12 3S3.8 7.4 3.8 12.8C3.8 17.3 7.3 21 12 21Z" /><path d="M12 18.2c2.9 0 5.1-2.4 5.1-5.5 0-3.2-1.9-5.7-5.1-5.7s-5.1 2.5-5.1 5.7c0 3.1 2.2 5.5 5.1 5.5Z" /><path d="M12 15.3c1.3 0 2.2-1.1 2.2-2.7 0-1.6-.9-2.7-2.2-2.7s-2.2 1.1-2.2 2.7c0 1.6.9 2.7 2.2 2.7Z" /><path d="M12 3c0-1 .6-1.7 1.6-2" /></symbol>
         <symbol id="i-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" /></symbol>
         <symbol id="i-key" viewBox="0 0 24 24"><path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z" /><circle cx="16.5" cy="7.5" r=".5" /></symbol>
         <symbol id="i-radio" viewBox="0 0 24 24"><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9" /><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5" /><circle cx="12" cy="12" r="2" /><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5" /><path d="M19.1 4.9C23 8.8 23 15.2 19.1 19.1" /></symbol>
@@ -67,6 +69,9 @@
           <button id="bar-info" class="pill-lock" type="button" aria-label="Site information">
             <svg class="i"><use href="#i-shield" /></svg>
           </button>
+          <span id="pill-kind" class="pill-kind" hidden>
+            <svg class="i"><use href="#i-eye-off" /></svg>
+          </span>
           <button id="bar-address" class="pill-addr" type="button" aria-label="Edit address">
             <span class="pill-placeholder">Search or enter address</span>
           </button>
@@ -132,8 +137,8 @@
         <div id="shortcuts" class="shortcuts"></div>
 
         <p class="alpha" role="status">
-          <strong>Alpha.</strong> Identity and signing work. Downloads, private tabs and Tor
-          are not here yet.
+          <strong>Alpha.</strong> Identity, signing, downloads, private tabs and Tor tabs work.
+          Extensions are desktop-only.
         </p>
         </div>
       </div>
@@ -178,6 +183,7 @@
           </button>
         </div>
       </form>
+      <div id="omni-kind" class="kind-note" role="note" hidden></div>
       <p id="omni-error" class="error" role="alert" hidden></p>
       <div id="omni-list" class="suggest"></div>
     </section>
@@ -190,12 +196,13 @@
         </button>
         <h2 id="switcher-title">Tabs</h2>
       </header>
+      <div id="kind-tabs" class="kind-tabs" role="tablist" aria-label="Tab type"></div>
       <div id="tab-grid" class="tab-grid"></div>
       <footer class="switcher-bar">
         <button id="switcher-close-all" class="btn tonal" type="button">Close all</button>
         <button id="switcher-new" class="btn" type="button">
           <svg class="i"><use href="#i-plus" /></svg>
-          New tab
+          <span id="switcher-new-label">New tab</span>
         </button>
       </footer>
     </section>
@@ -566,7 +573,7 @@
       <div class="body">
         <p class="alpha">
           <strong>Alpha software.</strong> Identity, signing, services, sites and
-          downloads work. Private tabs, Tor and extensions do not.
+          downloads, private tabs and Tor tabs work. Extensions do not.
         </p>
         <dl class="facts">
           <div><dt>Version</dt><dd id="about-version">…</dd></div>
@@ -600,10 +607,10 @@
             <svg class="i"><use href="#i-plus" /></svg><span class="row-text"><b>New tab</b></span>
           </button>
           <button id="menu-private" class="row" type="button">
-            <svg class="i"><use href="#i-shield" /></svg><span class="row-text"><b>New private tab</b></span>
+            <svg class="i"><use href="#i-eye-off" /></svg><span class="row-text"><b>New private tab</b></span>
           </button>
           <button id="menu-tor" class="row" type="button">
-            <svg class="i"><use href="#i-shield" /></svg><span class="row-text"><b>New Tor tab</b></span>
+            <svg class="i"><use href="#i-onion" /></svg><span class="row-text"><b>New Tor tab</b></span>
           </button>
           <button id="menu-find" class="row" type="button">
             <svg class="i"><use href="#i-search" /></svg><span class="row-text"><b>Find in page</b></span>
