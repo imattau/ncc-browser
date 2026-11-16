@@ -237,6 +237,9 @@ Still to build:
       cutout and the gesture bar.
 - [x] Tabs: one WebView per tab, a switcher sheet with captured thumbnails, and the
       toolbar position as a setting (bottom by default).
+- [x] `nsite://`: manifest resolution (15128/35128), path matching, sha256-verified
+      Blossom blobs and content types from the path extension. Hosts are
+      `<npub>.<d>.nsite.localhost` and `<npub>.nsite.localhost` for the root site.
 - [ ] Per-tab lifecycle and tab thumbnails.
 - [ ] File chooser and download handling in the content view.
 - [ ] `*.localhost` resolution, secure context, `Secure` cookie behaviour — **the
