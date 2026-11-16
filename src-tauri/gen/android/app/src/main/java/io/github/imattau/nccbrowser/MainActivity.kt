@@ -1,8 +1,11 @@
 package io.github.imattau.nccbrowser
 
+import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import android.view.ViewGroup
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
@@ -14,6 +17,10 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
+import java.net.URLEncoder
 
 /**
  * Tauri hosts the shell. This activity puts a 56 dp chrome strip and a tab container
@@ -42,6 +49,34 @@ class MainActivity : TauriActivity() {
   private var barAtBottom = true
 
   private val tabs = mutableListOf<ContentSurface>()
+  private var pendingDownload: File? = null
+
+  /**
+   * Saving goes through the system picker: no storage permission, and the user chooses
+   * where a file lands.
+   */
+  private val saveDownload =
+    registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+      val file = pendingDownload
+      pendingDownload = null
+      val target = result.data?.data
+
+      if (result.resultCode != Activity.RESULT_OK || target == null || file == null) {
+        file?.delete()
+        return@registerForActivityResult
+      }
+
+      try {
+        file.inputStream().use { input ->
+          contentResolver.openOutputStream(target)?.use { output -> input.copyTo(output) }
+        }
+        toast("Saved")
+      } catch (error: Exception) {
+        toast("Could not save: ${error.message}")
+      } finally {
+        file.delete()
+      }
+    }
   private var activeId: String? = null
   private var nextTabId = 1
 
@@ -177,7 +212,12 @@ class MainActivity : TauriActivity() {
     }
 
     captureActive {
-      val tab = ContentSurface("tab-${nextTabId++}", contentHost ?: return@captureActive, ::onTabEvent)
+      val tab = ContentSurface(
+        "tab-${nextTabId++}",
+        contentHost ?: return@captureActive,
+        ::onTabEvent,
+        ::startDownload,
+      )
       if (!tab.open(url)) {
         tab.destroy()
         return@captureActive
@@ -228,6 +268,61 @@ class MainActivity : TauriActivity() {
     if (index < 0) return
     val next = (index + offset + tabs.size) % tabs.size
     selectTab(tabs[next].id)
+  }
+
+  /**
+   * Fetch a file through the proxy and hand it to the system picker.
+   *
+   * The content view resolves `.localhost` internally, so this process asks for the
+   * same URL by name (`/__ncc/fetch?u=…`) rather than trying to resolve it.
+   */
+  private fun startDownload(vhostUrl: String, mimeType: String?) {
+    val port = Uri.parse(vhostUrl).port
+    if (port <= 0) {
+      toast("Download failed: the proxy port is unknown")
+      return
+    }
+
+    val name = vhostUrl.substringAfterLast('/').substringBefore('?').ifEmpty { "download" }
+    toast("Downloading $name…")
+
+    Thread {
+      val temp = File(cacheDir, "download-${System.currentTimeMillis()}")
+      val fetched = try {
+        val encoded = URLEncoder.encode(vhostUrl, "UTF-8")
+        val connection =
+          URL("http://127.0.0.1:$port/__ncc/fetch?u=$encoded").openConnection() as HttpURLConnection
+        connection.connectTimeout = 15_000
+        connection.readTimeout = 60_000
+        connection.inputStream.use { input ->
+          temp.outputStream().use { output -> input.copyTo(output) }
+        }
+        connection.disconnect()
+        true
+      } catch (error: Exception) {
+        temp.delete()
+        false
+      }
+
+      runOnUiThread {
+        if (!fetched) {
+          toast("Download failed")
+          return@runOnUiThread
+        }
+
+        pendingDownload = temp
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+          addCategory(Intent.CATEGORY_OPENABLE)
+          type = mimeType ?: "application/octet-stream"
+          putExtra(Intent.EXTRA_TITLE, name)
+        }
+        saveDownload.launch(intent)
+      }
+    }.apply { isDaemon = true }.start()
+  }
+
+  private fun toast(message: String) {
+    Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
   }
 
   private fun onTabEvent(payload: JSONObject) {

@@ -457,6 +457,7 @@ pub async fn serve(
     path: &str,
     search: &str,
     method: &Method,
+    document: bool,
 ) -> Response {
     if !matches!(*method, Method::GET | Method::HEAD) {
         return page(StatusCode::METHOD_NOT_ALLOWED, "Sites are read-only");
@@ -484,7 +485,7 @@ pub async fn serve(
             .expect("redirect"),
 
         PathMatch::File { path, hash } => match state.blobs().get(&hash, &manifest.servers).await {
-            Ok(bytes) => response_for(state, vhost, path, bytes, StatusCode::OK, method),
+            Ok(bytes) => response_for(state, vhost, path, bytes, StatusCode::OK, method, document),
             Err(detail) => page(
                 StatusCode::BAD_GATEWAY,
                 &format!("{detail}\n\nserving {}", display(vhost)),
@@ -502,6 +503,7 @@ pub async fn serve(
                         bytes,
                         StatusCode::NOT_FOUND,
                         method,
+                        document,
                     );
                 }
             }
@@ -520,12 +522,13 @@ fn response_for(
     bytes: Vec<u8>,
     status: StatusCode,
     method: &Method,
+    document: bool,
 ) -> Response {
     let content_type = content_type_for(&served_path, None);
 
     // Sites are pages too: `window.nostr` should exist on them exactly as it does on a
-    // service, so the shim goes in on the way out.
-    let bytes = if content_type.starts_with("text/html") {
+    // service, so the shim goes in on the way out. A download is not a page.
+    let bytes = if document && content_type.starts_with("text/html") {
         let html = String::from_utf8_lossy(&bytes);
         crate::server::inject_shim(state, vhost, &html)
             .0

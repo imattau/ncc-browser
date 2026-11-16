@@ -2,298 +2,551 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no"
+    />
     <meta name="color-scheme" content="light dark" />
     <title>Nostr Navigator (alpha)</title>
     <link rel="stylesheet" href="style.css" />
   </head>
-  <body>
+  <body data-bar="bottom">
+    <!-- Icons: Lucide paths, one sprite, referenced with <use>. -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <defs>
+        <symbol id="i-back" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7" /><path d="M19 12H5" /></symbol>
+        <symbol id="i-forward" viewBox="0 0 24 24"><path d="M5 12h14" /><path d="m12 5 7 7-7 7" /></symbol>
+        <symbol id="i-reload" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" /><path d="M21 3v5h-5" /></symbol>
+        <symbol id="i-close" viewBox="0 0 24 24"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></symbol>
+        <symbol id="i-lock" viewBox="0 0 24 24"><rect width="18" height="11" x="3" y="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></symbol>
+        <symbol id="i-unlock" viewBox="0 0 24 24"><rect width="18" height="11" x="3" y="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 9.9-1" /></symbol>
+        <symbol id="i-warn" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" /><path d="M12 9v4" /><path d="M12 17h.01" /></symbol>
+        <symbol id="i-more" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1" /><circle cx="12" cy="5" r="1" /><circle cx="12" cy="19" r="1" /></symbol>
+        <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14" /><path d="M12 5v14" /></symbol>
+        <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /></symbol>
+        <symbol id="i-star" viewBox="0 0 24 24"><path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z" /></symbol>
+        <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" /></symbol>
+        <symbol id="i-settings" viewBox="0 0 24 24"><path d="M21 4h-7" /><path d="M10 4H3" /><path d="M21 12h-9" /><path d="M8 12H3" /><path d="M21 20h-5" /><path d="M12 20H3" /><path d="M14 2v4" /><path d="M8 10v4" /><path d="M16 18v4" /></symbol>
+        <symbol id="i-share" viewBox="0 0 24 24"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="m8.59 13.51 6.83 3.98" /><path d="m15.41 6.51-6.82 3.98" /></symbol>
+        <symbol id="i-copy" viewBox="0 0 24 24"><rect width="14" height="14" x="8" y="8" rx="2" ry="2" /><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" /></symbol>
+        <symbol id="i-monitor" viewBox="0 0 24 24"><rect width="20" height="14" x="2" y="3" rx="2" /><path d="M8 21h8" /><path d="M12 17v4" /></symbol>
+        <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6" /></symbol>
+        <symbol id="i-up" viewBox="0 0 24 24"><path d="m18 15-6-6-6 6" /></symbol>
+        <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" /></symbol>
+        <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /></symbol>
+        <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" /><path d="M2 12h20" /></symbol>
+        <symbol id="i-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" /></symbol>
+        <symbol id="i-key" viewBox="0 0 24 24"><path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z" /><circle cx="16.5" cy="7.5" r=".5" /></symbol>
+        <symbol id="i-radio" viewBox="0 0 24 24"><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9" /><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5" /><circle cx="12" cy="12" r="2" /><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5" /><path d="M19.1 4.9C23 8.8 23 15.2 19.1 19.1" /></symbol>
+        <symbol id="i-database" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3" /><path d="M3 5V19A9 3 0 0 0 21 19V5" /><path d="M3 12A9 3 0 0 0 21 12" /></symbol>
+        <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" /><path d="M12 2v2" /><path d="M12 20v2" /><path d="m4.93 4.93 1.41 1.41" /><path d="m17.66 17.66 1.41 1.41" /><path d="M2 12h2" /><path d="M20 12h2" /><path d="m6.34 17.66-1.41 1.41" /><path d="m19.07 4.93-1.41 1.41" /></symbol>
+        <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /><path d="M12 16v-4" /><path d="M12 8h.01" /></symbol>
+        <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="5" /><path d="M20 21a8 8 0 0 0-16 0" /></symbol>
+        <symbol id="i-pen" viewBox="0 0 24 24"><path d="M12 20h9" /><path d="M16.376 3.622a1 1 0 0 1 3.002 3.002L7.368 18.635a2 2 0 0 1-.855.506l-2.872.838a.5.5 0 0 1-.62-.62l.838-2.872a2 2 0 0 1 .506-.854z" /></symbol>
+        <symbol id="i-tab" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="3" /><path d="M3 9h18" /></symbol>
+        <symbol id="i-arrow-up-left" viewBox="0 0 24 24"><path d="M7 17V7h10" /><path d="M17 17 7 7" /></symbol>
+      </defs>
+    </svg>
+
     <!--
       The chrome strip. Only visible when the shell is resized to one row; every
       full-window surface below is the shell expanded over the page.
     -->
     <header id="bar" class="strip" hidden>
-      <button id="bar-back" class="icon" type="button" aria-label="Back">&#8592;</button>
-      <button id="bar-info" class="icon lock" type="button" aria-label="Site information">&#128274;</button>
-      <button id="bar-address" class="strip-address" type="button">no page</button>
-      <button id="bar-tabs" class="count" type="button" aria-label="Tabs">1</button>
-      <button id="bar-reload" class="icon" type="button" aria-label="Reload">&#8635;</button>
-      <button id="bar-menu" class="icon" type="button" aria-label="Menu">&#8942;</button>
-    </header>
+      <div id="progress" aria-hidden="true"></div>
 
-    <section id="home" class="sheet">
-      <header class="sheet-head">
-        <h2>Nostr Navigator</h2>
-      </header>
+      <div id="strip-main" class="strip-main">
+        <button id="bar-back" class="ib" type="button" aria-label="Back">
+          <svg class="i"><use href="#i-back" /></svg>
+        </button>
 
-      <p class="alpha" role="status">
-        <strong>Alpha.</strong> Identity and signing work. Downloads and settings are
-        partial. Please do not use this as your daily browser.
-      </p>
+        <div class="pill" role="group" aria-label="Address">
+          <button id="bar-info" class="pill-lock" type="button" aria-label="Site information">
+            <svg class="i"><use href="#i-lock" /></svg>
+          </button>
+          <button id="bar-address" class="pill-addr" type="button" aria-label="Edit address">
+            <span class="pill-placeholder">Search or enter address</span>
+          </button>
+          <button id="bar-reload" class="pill-reload" type="button" aria-label="Reload">
+            <svg class="i"><use href="#i-reload" /></svg>
+          </button>
+        </div>
 
-      <label class="field">
-        <span>address</span>
+        <button id="bar-tabs" class="tabs-btn" type="button" aria-label="Tabs">
+          <span id="bar-tabs-n">1</span>
+        </button>
+        <button id="bar-menu" class="ib" type="button" aria-label="Menu">
+          <svg class="i"><use href="#i-more" /></svg>
+        </button>
+      </div>
+
+      <form id="strip-find" class="strip-main" hidden>
         <input
-          id="address"
-          spellcheck="false"
+          id="find-input"
+          class="find-input"
+          type="search"
+          placeholder="Find in page"
+          enterkeyhint="search"
           autocapitalize="off"
           autocomplete="off"
-          value="npub1zapstdvcqpkwqh0sq3685kw87mqlruv9zuck5kxk0m9eazlsd5xq2juxuw"
+          spellcheck="false"
         />
-      </label>
+        <span id="find-count" class="find-count"></span>
+        <button id="find-prev" class="ib" type="button" aria-label="Previous match">
+          <svg class="i"><use href="#i-up" /></svg>
+        </button>
+        <button id="find-next" class="ib" type="button" aria-label="Next match">
+          <svg class="i"><use href="#i-down" /></svg>
+        </button>
+        <button id="find-close" class="ib" type="button" aria-label="Close find">
+          <svg class="i"><use href="#i-close" /></svg>
+        </button>
+      </form>
+    </header>
 
-      <button id="go" type="button">Open in the content view</button>
-      <button id="close" type="button" class="secondary" hidden>Close content view</button>
-      <button id="collapse" type="button" class="secondary" hidden>Back to the page</button>
+    <!-- New tab page: what you see with no tab open. -->
+    <section id="home" class="screen">
+      <div class="home-body">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">
+            <svg class="i"><use href="#i-globe" /></svg>
+          </div>
+          <h1>Nostr Navigator</h1>
+          <p>Browse services by identity, not by domain.</p>
+        </div>
 
-      <pre id="result" class="result">—</pre>
+        <button id="home-search" class="search-field" type="button">
+          <svg class="i"><use href="#i-search" /></svg>
+          <span>Search or enter an npub</span>
+        </button>
 
-      <nav class="menu-list">
-        <button type="button" data-panel="appearance">Address bar</button>
-        <button type="button" data-panel="relays">Relays</button>
-        <button type="button" data-panel="search">Search</button>
-        <button type="button" data-panel="security">Security</button>
-        <button type="button" data-panel="storage">Storage</button>
-        <button type="button" data-panel="identity">Identity</button>
-        <button type="button" data-panel="signer-settings">Signer permissions</button>
-        <button type="button" data-panel="history">History</button>
-        <button type="button" data-panel="bookmarks">Bookmarks</button>
-        <button type="button" data-panel="about">About</button>
+        <p id="shortcuts-label" class="section-label">Shortcuts</p>
+        <div id="shortcuts" class="shortcuts"></div>
+
+        <p class="alpha" role="status">
+          <strong>Alpha.</strong> Identity and signing work. Downloads, private tabs and Tor
+          are not here yet.
+        </p>
+      </div>
+
+      <nav class="home-bar" aria-label="Browser">
+        <button id="home-bookmarks" class="ib" type="button" aria-label="Bookmarks" data-panel="bookmarks">
+          <svg class="i"><use href="#i-star" /></svg>
+        </button>
+        <button id="home-history" class="ib" type="button" aria-label="History" data-panel="history">
+          <svg class="i"><use href="#i-clock" /></svg>
+        </button>
+        <button id="home-tabs" class="tabs-btn" type="button" aria-label="Tabs" data-panel="switcher">
+          <span id="home-tabs-n">0</span>
+        </button>
+        <button id="home-menu" class="ib" type="button" aria-label="Menu" data-panel="menu">
+          <svg class="i"><use href="#i-more" /></svg>
+        </button>
       </nav>
-
-      <dl class="facts">
-        <div><dt>app version</dt><dd id="version">…</dd></div>
-        <div><dt>proxy</dt><dd id="proxy">…</dd></div>
-        <div><dt>tauri bridge</dt><dd id="bridge">…</dd></div>
-      </dl>
     </section>
 
-    <section id="appearance" class="sheet" hidden>
-      <header class="sheet-head">
-        <h2>Address bar</h2>
-        <button type="button" class="secondary" data-panel="home">Back</button>
-      </header>
-      <label class="field">
-        <span>position</span>
-        <select id="bar-position">
-          <option value="bottom">Bottom</option>
-          <option value="top">Top</option>
-        </select>
-      </label>
-      <label class="field">
-        <span>theme</span>
-        <select id="theme">
-          <option value="system">Follow the system</option>
-          <option value="light">Light</option>
-          <option value="dark">Dark</option>
-        </select>
-      </label>
+    <!-- Address entry. -->
+    <section id="omnibox" class="screen" hidden>
+      <form id="omni-form" class="omni-head" autocomplete="off">
+        <button id="omni-back" class="ib" type="button" aria-label="Cancel">
+          <svg class="i"><use href="#i-back" /></svg>
+        </button>
+        <div class="omni-field">
+          <input
+            id="address"
+            type="text"
+            inputmode="url"
+            enterkeyhint="go"
+            spellcheck="false"
+            autocapitalize="off"
+            autocomplete="off"
+            autocorrect="off"
+            placeholder="Search or enter address"
+            aria-label="Address"
+          />
+          <button id="omni-clear" class="ib small" type="button" aria-label="Clear" hidden>
+            <svg class="i"><use href="#i-close" /></svg>
+          </button>
+        </div>
+      </form>
+      <p id="omni-error" class="error" role="alert" hidden></p>
+      <div id="omni-list" class="suggest"></div>
     </section>
 
-    <section id="relays" class="sheet" hidden>
-      <header class="sheet-head">
-        <h2>Relays</h2>
-        <button type="button" class="secondary" data-panel="home">Back</button>
-      </header>
-      <p class="lede">
-        Locators and site manifests are asked for here. One per line; changes apply to
-        the next lookup, no restart.
-      </p>
-      <textarea id="relays-input" rows="6" spellcheck="false" autocapitalize="off"></textarea>
-      <label class="check">
-        <input id="gossip" type="checkbox" />
-        Follow each identity's own relay list (NIP-65)
-      </label>
-      <button id="relays-save" type="button">Save</button>
-      <p id="relays-error" class="note"></p>
-    </section>
-
-    <section id="search" class="sheet" hidden>
-      <header class="sheet-head">
-        <h2>Search</h2>
-        <button type="button" class="secondary" data-panel="home">Back</button>
-      </header>
-      <p class="lede">What the address bar does with something that is not an address.</p>
-      <label class="field">
-        <span>engine</span>
-        <select id="search-engine">
-          <option value="duckduckgo">DuckDuckGo</option>
-          <option value="brave">Brave Search</option>
-          <option value="startpage">Startpage</option>
-          <option value="google">Google</option>
-          <option value="bing">Bing</option>
-          <option value="searx">SearXNG</option>
-          <option value="custom">Custom</option>
-        </select>
-      </label>
-      <label class="field">
-        <span id="search-custom-label">SearXNG instance</span>
-        <input id="search-custom" spellcheck="false" autocapitalize="off" />
-      </label>
-      <button id="search-save" type="button">Save</button>
-      <p id="search-error" class="note"></p>
-    </section>
-
-    <section id="security" class="sheet" hidden>
-      <header class="sheet-head">
-        <h2>Security</h2>
-        <button type="button" class="secondary" data-panel="home">Back</button>
-      </header>
-      <label class="field">
-        <span>secure connections</span>
-        <select id="https-mode">
-          <option value="off">Use whatever the publisher offers</option>
-          <option value="prefer">Prefer HTTPS</option>
-          <option value="only">Require HTTPS</option>
-        </select>
-      </label>
-      <label class="check">
-        <input id="warn-insecure" type="checkbox" />
-        Warn before cleartext pages
-      </label>
-      <button id="security-save" type="button">Save</button>
-      <p id="security-error" class="note"></p>
-    </section>
-
-    <section id="storage" class="sheet" hidden>
-      <header class="sheet-head">
-        <h2>Storage</h2>
-        <button type="button" class="secondary" data-panel="home">Back</button>
-      </header>
-      <p class="lede">
-        Locators, site manifests and site files are kept so a repeat visit is instant.
-        Clearing drops all of them, in memory and on disk, plus the page cache.
-      </p>
-      <button id="clear-cache" type="button">Clear cache</button>
-      <p id="storage-note" class="note"></p>
-    </section>
-
-    <section id="identity" class="sheet" hidden>
-      <header class="sheet-head">
-        <h2>Identity</h2>
-        <button type="button" class="secondary" data-panel="home">Back</button>
-      </header>
-
-      <p id="identity-state" class="lede">Checking…</p>
-
-      <div id="identity-setup" hidden>
-        <label class="field">
-          <span>passphrase</span>
-          <input id="passphrase" type="password" autocomplete="new-password" />
-        </label>
-        <button id="identity-create" type="button">Create a new identity</button>
-        <details class="import">
-          <summary>or import an existing key</summary>
-          <label class="field">
-            <span>nsec</span>
-            <input id="nsec" type="password" autocomplete="off" spellcheck="false" />
-          </label>
-          <button id="identity-import" type="button" class="secondary">Import</button>
-        </details>
-      </div>
-
-      <div id="identity-locked" hidden>
-        <label class="field">
-          <span>passphrase</span>
-          <input id="unlock-passphrase" type="password" autocomplete="current-password" />
-        </label>
-        <button id="identity-unlock" type="button">Unlock</button>
-      </div>
-
-      <button id="identity-lock" type="button" class="secondary" hidden>Lock</button>
-      <p id="identity-error" class="note"></p>
-    </section>
-
-    <section id="signer-settings" class="sheet" hidden>
-      <header class="sheet-head">
-        <h2>Signer permissions</h2>
-        <button type="button" class="secondary" data-panel="home">Back</button>
-      </header>
-      <p class="lede">
-        Services you told the browser not to ask about. Trust lasts until the app
-        restarts.
-      </p>
-      <div id="permissions" class="menu-list"></div>
-    </section>
-
-    <section id="history" class="sheet" hidden>
-      <header class="sheet-head">
-        <h2>History</h2>
-        <button id="history-clear" type="button" class="secondary">Clear</button>
-        <button type="button" class="secondary" data-panel="home">Back</button>
-      </header>
-      <div id="history-list" class="menu-list"></div>
-    </section>
-
-    <section id="bookmarks" class="sheet" hidden>
-      <header class="sheet-head">
-        <h2>Bookmarks</h2>
-        <button type="button" class="secondary" data-panel="home">Back</button>
-      </header>
-      <div id="bookmarks-list" class="menu-list"></div>
-    </section>
-
-    <section id="about" class="sheet" hidden>
-      <header class="sheet-head">
-        <h2>About</h2>
-        <button type="button" class="secondary" data-panel="home">Back</button>
-      </header>
-      <p class="alpha">
-        <strong>Alpha software.</strong> Identity, signing, services and sites work.
-        Downloads, private tabs, Tor and extensions do not.
-      </p>
-      <dl class="facts">
-        <div><dt>version</dt><dd id="about-version">…</dd></div>
-        <div><dt>proxy</dt><dd id="about-proxy">…</dd></div>
-        <div><dt>source</dt><dd>github.com/imattau/ncc-browser</dd></div>
-      </dl>
-    </section>
-
-    <section id="switcher" class="sheet" hidden>
-      <header class="sheet-head">
-        <h2>Tabs</h2>
-        <button id="switcher-new" type="button" class="secondary">New tab</button>
-        <button id="switcher-done" type="button" class="secondary">Done</button>
+    <!-- Tab switcher. -->
+    <section id="switcher" class="screen" hidden>
+      <header class="appbar">
+        <button class="ib" type="button" data-back aria-label="Close tabs">
+          <svg class="i"><use href="#i-back" /></svg>
+        </button>
+        <h2 id="switcher-title">Tabs</h2>
       </header>
       <div id="tab-grid" class="tab-grid"></div>
+      <footer class="switcher-bar">
+        <button id="switcher-close-all" class="btn tonal" type="button">Close all</button>
+        <button id="switcher-new" class="btn" type="button">
+          <svg class="i"><use href="#i-plus" /></svg>
+          New tab
+        </button>
+      </footer>
     </section>
 
-    <section id="info" class="sheet" hidden>
-      <header class="sheet-head">
-        <h2>Site</h2>
-        <button id="info-done" type="button" class="secondary">Done</button>
+    <!-- Settings and its drill-down pages. -->
+    <section id="settings" class="screen" hidden>
+      <header class="appbar">
+        <button class="ib" type="button" data-back aria-label="Back">
+          <svg class="i"><use href="#i-back" /></svg>
+        </button>
+        <h2>Settings</h2>
       </header>
-      <div id="info-body" class="info-body"></div>
-    </section>
+      <div class="body">
+        <div class="card">
+          <button class="row" type="button" data-panel="appearance">
+            <span class="row-icon"><svg class="i"><use href="#i-sun" /></svg></span>
+            <span class="row-text"><b>Appearance</b><small id="sub-appearance">Theme, toolbar position</small></span>
+            <svg class="i chev"><use href="#i-chevron" /></svg>
+          </button>
+          <button class="row" type="button" data-panel="search">
+            <span class="row-icon"><svg class="i"><use href="#i-search" /></svg></span>
+            <span class="row-text"><b>Search</b><small id="sub-search">Search engine</small></span>
+            <svg class="i chev"><use href="#i-chevron" /></svg>
+          </button>
+          <button class="row" type="button" data-panel="security">
+            <span class="row-icon"><svg class="i"><use href="#i-shield" /></svg></span>
+            <span class="row-text"><b>Security</b><small>HTTPS and cleartext warnings</small></span>
+            <svg class="i chev"><use href="#i-chevron" /></svg>
+          </button>
+          <button class="row" type="button" data-panel="relays">
+            <span class="row-icon"><svg class="i"><use href="#i-radio" /></svg></span>
+            <span class="row-text"><b>Relays</b><small>Where locators are looked up</small></span>
+            <svg class="i chev"><use href="#i-chevron" /></svg>
+          </button>
+        </div>
 
-    <section id="menu" class="sheet" hidden>
-      <header class="sheet-head">
-        <h2>Menu</h2>
-        <button id="menu-done" type="button" class="secondary">Done</button>
-      </header>
-      <div class="menu-list">
-        <button id="menu-new" type="button">New tab</button>
-        <button id="menu-reload" type="button">Reload</button>
-        <button id="menu-bookmark" type="button">Bookmark this page</button>
-        <button id="menu-copy" type="button">Copy address</button>
-        <button id="menu-close" type="button">Close tab</button>
-        <button id="menu-history" type="button">History</button>
-        <button id="menu-settings" type="button">Settings</button>
+        <p class="section-label">Identity</p>
+        <div class="card">
+          <button class="row" type="button" data-panel="identity">
+            <span class="row-icon"><svg class="i"><use href="#i-user" /></svg></span>
+            <span class="row-text"><b>Your identity</b><small id="sub-identity">Create, import, unlock</small></span>
+            <svg class="i chev"><use href="#i-chevron" /></svg>
+          </button>
+          <button class="row" type="button" data-panel="signer-settings">
+            <span class="row-icon"><svg class="i"><use href="#i-pen" /></svg></span>
+            <span class="row-text"><b>Signer permissions</b><small>Services you stopped asking about</small></span>
+            <svg class="i chev"><use href="#i-chevron" /></svg>
+          </button>
+        </div>
+
+        <p class="section-label">Data</p>
+        <div class="card">
+          <button class="row" type="button" data-panel="storage">
+            <span class="row-icon"><svg class="i"><use href="#i-database" /></svg></span>
+            <span class="row-text"><b>Storage</b><small>Clear cached sites</small></span>
+            <svg class="i chev"><use href="#i-chevron" /></svg>
+          </button>
+          <button class="row" type="button" data-panel="history">
+            <span class="row-icon"><svg class="i"><use href="#i-clock" /></svg></span>
+            <span class="row-text"><b>History</b></span>
+            <svg class="i chev"><use href="#i-chevron" /></svg>
+          </button>
+          <button class="row" type="button" data-panel="bookmarks">
+            <span class="row-icon"><svg class="i"><use href="#i-star" /></svg></span>
+            <span class="row-text"><b>Bookmarks</b></span>
+            <svg class="i chev"><use href="#i-chevron" /></svg>
+          </button>
+        </div>
+
+        <p class="section-label">Nostr Navigator</p>
+        <div class="card">
+          <button class="row" type="button" data-panel="about">
+            <span class="row-icon"><svg class="i"><use href="#i-info" /></svg></span>
+            <span class="row-text"><b>About</b><small id="sub-about">Version</small></span>
+            <svg class="i chev"><use href="#i-chevron" /></svg>
+          </button>
+        </div>
       </div>
     </section>
 
-    <section id="signer" class="sheet signer" hidden>
-      <h2>Signature request</h2>
-      <p id="signer-service" class="lede"></p>
-      <p id="signer-method" class="note"></p>
-      <pre id="signer-preview" class="result"></pre>
-      <p id="signer-countdown" class="note"></p>
-      <label class="check">
-        <input id="signer-remember" type="checkbox" />
-        Don't ask again for this service
-      </label>
-      <button id="signer-allow" type="button">Approve</button>
-      <button id="signer-deny" type="button" class="secondary">Deny</button>
+    <section id="appearance" class="screen" hidden>
+      <header class="appbar">
+        <button class="ib" type="button" data-back aria-label="Back"><svg class="i"><use href="#i-back" /></svg></button>
+        <h2>Appearance</h2>
+      </header>
+      <div class="body">
+        <label class="field">
+          <span>Theme</span>
+          <select id="theme">
+            <option value="system">Follow the system</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Toolbar position</span>
+          <select id="bar-position">
+            <option value="bottom">Bottom</option>
+            <option value="top">Top</option>
+          </select>
+        </label>
+        <p class="hint">
+          The bottom toolbar is easier to reach one-handed on a large phone. The page
+          resizes either way.
+        </p>
+      </div>
+    </section>
+
+    <section id="relays" class="screen" hidden>
+      <header class="appbar">
+        <button class="ib" type="button" data-back aria-label="Back"><svg class="i"><use href="#i-back" /></svg></button>
+        <h2>Relays</h2>
+      </header>
+      <div class="body">
+        <p class="hint">
+          Locators and site manifests are asked for here. One per line; changes apply to
+          the next lookup, no restart.
+        </p>
+        <textarea id="relays-input" rows="6" spellcheck="false" autocapitalize="off" aria-label="Relays"></textarea>
+        <label class="switch-row">
+          <span>Follow each identity's own relay list (NIP-65)</span>
+          <input id="gossip" class="switch" type="checkbox" role="switch" />
+        </label>
+        <button id="relays-save" class="btn block" type="button">Save</button>
+        <p id="relays-error" class="status" role="status"></p>
+      </div>
+    </section>
+
+    <section id="search" class="screen" hidden>
+      <header class="appbar">
+        <button class="ib" type="button" data-back aria-label="Back"><svg class="i"><use href="#i-back" /></svg></button>
+        <h2>Search</h2>
+      </header>
+      <div class="body">
+        <p class="hint">What the address bar does with something that is not an address.</p>
+        <label class="field">
+          <span>Search engine</span>
+          <select id="search-engine">
+            <option value="duckduckgo">DuckDuckGo</option>
+            <option value="brave">Brave Search</option>
+            <option value="startpage">Startpage</option>
+            <option value="google">Google</option>
+            <option value="bing">Bing</option>
+            <option value="searx">SearXNG</option>
+            <option value="custom">Custom</option>
+          </select>
+        </label>
+        <label class="field">
+          <span id="search-custom-label">SearXNG instance</span>
+          <input id="search-custom" spellcheck="false" autocapitalize="off" />
+        </label>
+        <button id="search-save" class="btn block" type="button">Save</button>
+        <p id="search-error" class="status" role="status"></p>
+      </div>
+    </section>
+
+    <section id="security" class="screen" hidden>
+      <header class="appbar">
+        <button class="ib" type="button" data-back aria-label="Back"><svg class="i"><use href="#i-back" /></svg></button>
+        <h2>Security</h2>
+      </header>
+      <div class="body">
+        <label class="field">
+          <span>Secure connections</span>
+          <select id="https-mode">
+            <option value="off">Use whatever the publisher offers</option>
+            <option value="prefer">Prefer HTTPS</option>
+            <option value="only">Require HTTPS</option>
+          </select>
+        </label>
+        <label class="switch-row">
+          <span>Warn before cleartext pages</span>
+          <input id="warn-insecure" class="switch" type="checkbox" role="switch" />
+        </label>
+        <button id="security-save" class="btn block" type="button">Save</button>
+        <p id="security-error" class="status" role="status"></p>
+      </div>
+    </section>
+
+    <section id="storage" class="screen" hidden>
+      <header class="appbar">
+        <button class="ib" type="button" data-back aria-label="Back"><svg class="i"><use href="#i-back" /></svg></button>
+        <h2>Storage</h2>
+      </header>
+      <div class="body">
+        <p class="hint">
+          Locators, site manifests and site files are kept so a repeat visit is instant.
+          Clearing drops all of them, in memory and on disk, plus the page cache.
+        </p>
+        <button id="clear-cache" class="btn tonal block" type="button">Clear cache</button>
+        <p id="storage-note" class="status" role="status"></p>
+      </div>
+    </section>
+
+    <section id="identity" class="screen" hidden>
+      <header class="appbar">
+        <button class="ib" type="button" data-back aria-label="Back"><svg class="i"><use href="#i-back" /></svg></button>
+        <h2>Identity</h2>
+      </header>
+      <div class="body">
+        <p id="identity-state" class="hint">Checking…</p>
+
+        <div id="identity-setup" hidden>
+          <label class="field">
+            <span>Passphrase (8+ characters)</span>
+            <input id="passphrase" type="password" autocomplete="new-password" />
+          </label>
+          <button id="identity-create" class="btn block" type="button">Create a new identity</button>
+          <details class="import">
+            <summary>Import an existing key</summary>
+            <label class="field">
+              <span>nsec</span>
+              <input id="nsec" type="password" autocomplete="off" spellcheck="false" />
+            </label>
+            <button id="identity-import" class="btn tonal block" type="button">Import</button>
+          </details>
+        </div>
+
+        <div id="identity-locked" hidden>
+          <label class="field">
+            <span>Passphrase</span>
+            <input id="unlock-passphrase" type="password" autocomplete="current-password" />
+          </label>
+          <button id="identity-unlock" class="btn block" type="button">Unlock</button>
+        </div>
+
+        <button id="identity-lock" class="btn tonal block" type="button" hidden>Lock</button>
+        <p id="identity-error" class="status" role="status"></p>
+      </div>
+    </section>
+
+    <section id="signer-settings" class="screen" hidden>
+      <header class="appbar">
+        <button class="ib" type="button" data-back aria-label="Back"><svg class="i"><use href="#i-back" /></svg></button>
+        <h2>Signer permissions</h2>
+      </header>
+      <div class="body">
+        <p class="hint">
+          Services you told the browser not to ask about. Trust lasts until the app
+          restarts.
+        </p>
+        <div id="permissions" class="card"></div>
+      </div>
+    </section>
+
+    <section id="history" class="screen" hidden>
+      <header class="appbar">
+        <button class="ib" type="button" data-back aria-label="Back"><svg class="i"><use href="#i-back" /></svg></button>
+        <h2>History</h2>
+        <button id="history-clear" class="btn text" type="button">Clear</button>
+      </header>
+      <div id="history-list" class="body list"></div>
+    </section>
+
+    <section id="bookmarks" class="screen" hidden>
+      <header class="appbar">
+        <button class="ib" type="button" data-back aria-label="Back"><svg class="i"><use href="#i-back" /></svg></button>
+        <h2>Bookmarks</h2>
+      </header>
+      <div id="bookmarks-list" class="body list"></div>
+    </section>
+
+    <section id="about" class="screen" hidden>
+      <header class="appbar">
+        <button class="ib" type="button" data-back aria-label="Back"><svg class="i"><use href="#i-back" /></svg></button>
+        <h2>About</h2>
+      </header>
+      <div class="body">
+        <p class="alpha">
+          <strong>Alpha software.</strong> Identity, signing, services and sites work.
+          Downloads, private tabs, Tor and extensions do not.
+        </p>
+        <dl class="facts">
+          <div><dt>Version</dt><dd id="about-version">…</dd></div>
+          <div><dt>Proxy</dt><dd id="about-proxy">…</dd></div>
+          <div><dt>Bridge</dt><dd id="bridge">…</dd></div>
+          <div><dt>Source</dt><dd>github.com/imattau/ncc-browser</dd></div>
+        </dl>
+      </div>
+    </section>
+
+    <!-- Bottom sheets: the page behind is a blurred capture of the tab. -->
+    <section id="menu" class="overlay" hidden>
+      <div class="sheet-card">
+        <div class="grab"><i></i></div>
+        <div class="quick">
+          <button id="menu-forward" type="button">
+            <svg class="i"><use href="#i-forward" /></svg><span>Forward</span>
+          </button>
+          <button id="menu-reload" type="button">
+            <svg class="i"><use href="#i-reload" /></svg><span>Reload</span>
+          </button>
+          <button id="menu-bookmark" type="button">
+            <svg id="menu-bookmark-icon" class="i"><use href="#i-star" /></svg><span id="menu-bookmark-label">Bookmark</span>
+          </button>
+          <button id="menu-share" type="button">
+            <svg class="i"><use href="#i-share" /></svg><span>Share</span>
+          </button>
+        </div>
+        <div class="menu-rows">
+          <button id="menu-new" class="row" type="button">
+            <svg class="i"><use href="#i-plus" /></svg><span class="row-text"><b>New tab</b></span>
+          </button>
+          <button id="menu-find" class="row" type="button">
+            <svg class="i"><use href="#i-search" /></svg><span class="row-text"><b>Find in page</b></span>
+          </button>
+          <label id="menu-desktop" class="row" role="button">
+            <svg class="i"><use href="#i-monitor" /></svg><span class="row-text"><b>Desktop site</b></span>
+            <input id="menu-desktop-switch" class="switch" type="checkbox" role="switch" />
+          </label>
+          <button id="menu-copy" class="row" type="button">
+            <svg class="i"><use href="#i-copy" /></svg><span class="row-text"><b>Copy address</b></span>
+          </button>
+          <hr />
+          <button id="menu-bookmarks" class="row" type="button">
+            <svg class="i"><use href="#i-star" /></svg><span class="row-text"><b>Bookmarks</b></span>
+          </button>
+          <button id="menu-history" class="row" type="button">
+            <svg class="i"><use href="#i-clock" /></svg><span class="row-text"><b>History</b></span>
+          </button>
+          <button id="menu-settings" class="row" type="button">
+            <svg class="i"><use href="#i-settings" /></svg><span class="row-text"><b>Settings</b></span>
+          </button>
+          <button id="menu-close" class="row" type="button">
+            <svg class="i"><use href="#i-close" /></svg><span class="row-text"><b>Close tab</b></span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <section id="info" class="overlay" hidden>
+      <div class="sheet-card tall">
+        <div class="grab"><i></i></div>
+        <div id="info-head" class="info-head"></div>
+        <div id="info-body" class="info-body"></div>
+      </div>
+    </section>
+
+    <section id="signer" class="overlay modal" hidden aria-modal="true" role="alertdialog" aria-labelledby="signer-title">
+      <div class="sheet-card">
+        <div class="signer-head">
+          <span class="signer-icon"><svg class="i"><use href="#i-pen" /></svg></span>
+          <div>
+            <h2 id="signer-title">Signature request</h2>
+            <p id="signer-service" class="signer-service"></p>
+          </div>
+        </div>
+        <p id="signer-method" class="signer-method"></p>
+        <pre id="signer-preview" class="preview"></pre>
+        <div class="countdown" aria-hidden="true"><i id="signer-bar"></i></div>
+        <p id="signer-countdown" class="status"></p>
+        <label class="switch-row">
+          <span>Don't ask again for this service</span>
+          <input id="signer-remember" class="switch" type="checkbox" role="switch" />
+        </label>
+        <div class="actions">
+          <button id="signer-deny" class="btn tonal" type="button">Deny</button>
+          <button id="signer-allow" class="btn" type="button">Approve</button>
+        </div>
+      </div>
     </section>
 
     <script type="module" src="main.js"></script>
