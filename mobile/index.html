@@ -50,6 +50,7 @@
 
       <nav class="menu-list">
         <button type="button" data-panel="appearance">Address bar</button>
+        <button type="button" data-panel="relays">Relays</button>
         <button type="button" data-panel="identity">Identity</button>
         <button type="button" data-panel="signer-settings">Signer permissions</button>
         <button type="button" data-panel="history">History</button>
@@ -76,6 +77,20 @@
           <option value="top">Top</option>
         </select>
       </label>
+    </section>
+
+    <section id="relays" class="sheet" hidden>
+      <header class="sheet-head">
+        <h2>Relays</h2>
+        <button type="button" class="secondary" data-panel="home">Back</button>
+      </header>
+      <p class="lede">
+        Locators and site manifests are asked for here. One per line; changes apply to
+        the next lookup, no restart.
+      </p>
+      <textarea id="relays-input" rows="6" spellcheck="false" autocapitalize="off"></textarea>
+      <button id="relays-save" type="button">Save</button>
+      <p id="relays-error" class="note"></p>
     </section>
 
     <section id="identity" class="sheet" hidden>

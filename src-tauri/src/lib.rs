@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tauri::{Emitter, Manager};
 
 use ncc_identity::{IdentityStore, Status};
-use ncc_proxy::{ApprovalRequest, Approvals, ProxyConfig, ProxyState};
+use ncc_proxy::{ApprovalRequest, Approvals, ProxyConfig, ProxyState, Settings, SettingsStore};
 
 /// Everything the commands need. The proxy shares the same `Arc`s.
 struct SignerState {
@@ -18,6 +18,19 @@ struct ProxyPort(Option<u16>);
 #[tauri::command]
 fn proxy_port(state: tauri::State<'_, ProxyPort>) -> Option<u16> {
     state.0
+}
+
+#[tauri::command]
+fn browser_settings(state: tauri::State<'_, SignerState>) -> Settings {
+    state.proxy.settings().get()
+}
+
+#[tauri::command]
+fn settings_set_relays(
+    state: tauri::State<'_, SignerState>,
+    relays: Vec<String>,
+) -> Result<Settings, String> {
+    state.proxy.settings().set_relays(relays)
 }
 
 #[tauri::command]
@@ -118,9 +131,13 @@ fn default_relays() -> Vec<String> {
     ]
 }
 
-fn proxy_config(data_dir: Option<std::path::PathBuf>) -> ProxyConfig {
+fn proxy_config(
+    data_dir: Option<std::path::PathBuf>,
+    settings: Option<Arc<SettingsStore>>,
+) -> ProxyConfig {
     ProxyConfig {
         relays: default_relays(),
+        settings,
         // Verified site blobs survive a restart; the hash is re-checked on read.
         blob_directory: data_dir.map(|dir| dir.join("nsite-blobs")),
         // Only the shell's own bundle may read responses across origins. A page
@@ -180,6 +197,8 @@ pub fn run() {
             identity_import,
             identity_unlock,
             identity_lock,
+            browser_settings,
+            settings_set_relays,
             signer_permissions,
             signer_revoke,
             signer_respond
@@ -206,8 +225,9 @@ pub fn run() {
                 let _ = handle.emit("ncc:signer", request);
             }));
 
+            let settings = Arc::new(SettingsStore::open(data_dir.join("config.json")));
             let proxy = Arc::new(
-                ProxyState::new(&proxy_config(Some(data_dir.clone())))
+                ProxyState::new(&proxy_config(Some(data_dir.clone()), Some(settings.clone())))
                     .with_signer(identity.clone(), approvals.clone()),
             );
 

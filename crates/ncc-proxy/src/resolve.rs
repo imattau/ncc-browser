@@ -1,7 +1,7 @@
 //! NCC-05 resolution: turn `(npub, service)` into fetchable endpoints.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use nostr::{Alphabet, Event, Filter, Kind, PublicKey, SingleLetterTag};
@@ -69,7 +69,7 @@ struct CacheEntry {
 }
 
 pub struct Resolver {
-    relays: Vec<String>,
+    settings: Arc<crate::settings::SettingsStore>,
     timeout: Duration,
     max_cache_seconds: i64,
     negative_cache_seconds: i64,
@@ -77,9 +77,9 @@ pub struct Resolver {
 }
 
 impl Resolver {
-    pub fn new(relays: Vec<String>) -> Self {
+    pub fn new(settings: Arc<crate::settings::SettingsStore>) -> Self {
         Self {
-            relays,
+            settings,
             timeout: Duration::from_secs(8),
             max_cache_seconds: 60,
             negative_cache_seconds: 15,
@@ -92,8 +92,8 @@ impl Resolver {
         self
     }
 
-    pub fn relays(&self) -> &[String] {
-        &self.relays
+    pub fn relays(&self) -> Vec<String> {
+        self.settings.relays()
     }
 
     pub async fn resolve(
@@ -149,7 +149,7 @@ impl Resolver {
         };
 
         let budget = self.timeout.min(Duration::from_secs(5));
-        let events = crate::relay::query_all(&self.relays, &filter, budget).await;
+        let events = crate::relay::query_all(&self.settings.relays(), &filter, budget).await;
 
         let mut found: std::collections::BTreeMap<String, (i64, bool)> =
             std::collections::BTreeMap::new();
@@ -221,11 +221,12 @@ impl Resolver {
             return Err(ResolveError::InvalidPayload);
         };
 
-        if self.relays.is_empty() {
+        let relays = self.settings.relays();
+        if relays.is_empty() {
             return Err(ResolveError::RelayError("no relays configured".into()));
         }
 
-        let events = crate::relay::query_all(&self.relays, &filter, self.timeout).await;
+        let events = crate::relay::query_all(&relays, &filter, self.timeout).await;
         if events.is_empty() {
             return Err(ResolveError::NoRecord);
         }

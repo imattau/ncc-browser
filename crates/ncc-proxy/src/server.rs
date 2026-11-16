@@ -51,6 +51,8 @@ pub struct ProxyConfig {
     pub allowed_origins: Vec<String>,
     /// Where verified site blobs survive a restart; `None` keeps them in memory only.
     pub blob_directory: Option<std::path::PathBuf>,
+    /// Persisted settings. When absent, an in-memory store is built from `relays`.
+    pub settings: Option<Arc<crate::settings::SettingsStore>>,
 }
 
 impl Default for ProxyConfig {
@@ -61,6 +63,7 @@ impl Default for ProxyConfig {
             max_body_bytes: 10 * 1024 * 1024,
             allowed_origins: Vec::new(),
             blob_directory: None,
+            settings: None,
         }
     }
 }
@@ -78,10 +81,19 @@ pub struct ProxyState {
     trusted: Mutex<HashSet<String>>,
     nsite: NsiteResolver,
     blobs: Blobs,
+    settings: Arc<crate::settings::SettingsStore>,
 }
 
 impl ProxyState {
     pub fn new(config: &ProxyConfig) -> Self {
+        let settings = config.settings.clone().unwrap_or_else(|| {
+            Arc::new(crate::settings::SettingsStore::in_memory(
+                crate::settings::Settings {
+                    relays: config.relays.clone(),
+                    ..Default::default()
+                },
+            ))
+        });
         let pins = Arc::new(PinStore::new());
 
         let build = |client: reqwest::ClientBuilder| {
@@ -106,7 +118,7 @@ impl ProxyState {
         };
 
         Self {
-            resolver: Resolver::new(config.relays.clone()),
+            resolver: Resolver::new(settings.clone()),
             client,
             pinned_client,
             pins,
@@ -116,7 +128,8 @@ impl ProxyState {
             identity: None,
             approvals: None,
             trusted: Mutex::new(HashSet::new()),
-            nsite: NsiteResolver::new(config.relays.clone()),
+            nsite: NsiteResolver::new(settings.clone()),
+            settings,
             blobs: Blobs::new(config.request_timeout, config.blob_directory.clone()),
         }
     }
@@ -142,6 +155,10 @@ impl ProxyState {
 
     pub fn blobs(&self) -> &Blobs {
         &self.blobs
+    }
+
+    pub fn settings(&self) -> &Arc<crate::settings::SettingsStore> {
+        &self.settings
     }
 
     /// Services the user chose to stop asking about for this session.

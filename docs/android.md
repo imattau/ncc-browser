@@ -246,8 +246,11 @@ Still to build:
       Blossom servers and file count — the same record that is serving the page.
 - [x] Menu sheet: new tab, reload, bookmark, copy address, close tab, history,
       settings.
-- [x] Settings as a list of sections: address bar, identity, signer permissions,
-      history, bookmarks, about.
+- [x] Settings as a list of sections: address bar, relays, identity, signer
+      permissions, history, bookmarks, about.
+- [x] `config.json` next to the identity, owned by the proxy: validated on load and on
+      write, persisted through a temp file, and read live so a relay change applies to
+      the next lookup without a restart.
 - [x] Signer approvals show a countdown and trusted services can be revoked.
 - [x] History and bookmarks, kept in the shell's storage (200 entries).
 - [ ] Per-tab lifecycle and tab thumbnails.

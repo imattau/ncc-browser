@@ -42,6 +42,7 @@ const PANELS = [
   'info',
   'menu',
   'appearance',
+  'relays',
   'identity',
   'signer-settings',
   'history',
@@ -162,6 +163,32 @@ function openAddress(address) {
   byId('address').value = address
   closePanel()
   void open(proxyPort)
+}
+
+async function loadRelays() {
+  const input = byId('relays-input')
+  byId('relays-error').textContent = ''
+  try {
+    const settings = await globalThis.__TAURI__.core.invoke('browser_settings')
+    input.value = settings.relays.join('\n')
+  } catch (error) {
+    byId('relays-error').textContent = String(error)
+  }
+}
+
+async function saveRelays() {
+  const relays = byId('relays-input')
+    .value.split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+  try {
+    const settings = await globalThis.__TAURI__.core.invoke('settings_set_relays', { relays })
+    byId('relays-input').value = settings.relays.join('\n')
+    byId('relays-error').textContent = 'Saved. The next lookup uses these.'
+  } catch (error) {
+    byId('relays-error').textContent = String(error)
+  }
 }
 
 async function loadPermissions() {
@@ -300,6 +327,7 @@ function showPanel(name) {
   }
   if (name === 'info') void loadInfo()
   if (name === 'signer-settings') void loadPermissions()
+  if (name === 'relays') void loadRelays()
   if (name === 'history') renderHistory()
   if (name === 'bookmarks') renderBookmarks()
   applyLayout()
@@ -533,6 +561,7 @@ async function main() {
       if (activeUrl) toggleBookmark(displayAddress(activeUrl), activeTitle)
       closePanel()
     })
+    byId('relays-save').addEventListener('click', () => void saveRelays())
     byId('history-clear').addEventListener('click', () => {
       writeList(HISTORY_KEY, [])
       renderHistory()

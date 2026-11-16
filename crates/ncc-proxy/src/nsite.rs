@@ -7,7 +7,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::body::Body;
@@ -54,16 +54,16 @@ pub struct Manifest {
 }
 
 pub struct NsiteResolver {
-    relays: Vec<String>,
+    settings: Arc<crate::settings::SettingsStore>,
     timeout: Duration,
     cache: Mutex<HashMap<String, (i64, Manifest)>>,
     misses: Mutex<HashMap<String, i64>>,
 }
 
 impl NsiteResolver {
-    pub fn new(relays: Vec<String>) -> Self {
+    pub fn new(settings: Arc<crate::settings::SettingsStore>) -> Self {
         Self {
-            relays,
+            settings,
             timeout: Duration::from_secs(8),
             cache: Mutex::new(HashMap::new()),
             misses: Mutex::new(HashMap::new()),
@@ -139,7 +139,7 @@ impl NsiteResolver {
             return Err(NsiteError::Invalid);
         };
 
-        let events = crate::relay::query_all(&self.relays, &filter, self.timeout).await;
+        let events = crate::relay::query_all(&self.settings.relays(), &filter, self.timeout).await;
 
         let mut best: Option<Manifest> = None;
         for event in &events {

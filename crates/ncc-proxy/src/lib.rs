@@ -23,6 +23,7 @@ pub mod pins;
 pub mod relay;
 pub mod resolve;
 pub mod server;
+pub mod settings;
 pub mod signer;
 pub mod vhost;
 
@@ -31,4 +32,5 @@ pub use inject::{Injection, TokenStore};
 pub use pins::PinStore;
 pub use resolve::{DiscoveredService, ResolveError, ResolvedService, Resolver};
 pub use server::{serve, ProxyConfig, ProxyState};
+pub use settings::{HttpsMode, Settings, SettingsStore};
 pub use vhost::{host_for, parse_vhost, Vhost};
