@@ -132,7 +132,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ncc-browser-android-${{ github.ref_name }}
+          name: ncc-browser-android
           path: release/android/
           if-no-files-found: error
 
