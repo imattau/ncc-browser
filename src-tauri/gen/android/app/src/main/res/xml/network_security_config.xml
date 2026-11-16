@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The content view loads `http://<npub>.<service>.localhost:<port>/` from the NCC
+  proxy, which is a real cleartext request to loopback. Release builds otherwise set
+  `usesCleartextTraffic="false"`, so this permits cleartext for loopback only and
+  nothing else.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">localhost</domain>
+        <domain>127.0.0.1</domain>
+        <domain>::1</domain>
+    </domain-config>
+</network-security-config>
