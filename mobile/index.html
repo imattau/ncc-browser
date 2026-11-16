@@ -302,9 +302,40 @@
             <option value="top">Top</option>
           </select>
         </label>
+        <div class="appearance-group">
+          <span class="appearance-title">Text size</span>
+          <div id="text-size-options" class="choice-grid four" role="radiogroup" aria-label="Text size">
+            <button type="button" role="radio" aria-checked="false" data-text-size="small">Small</button>
+            <button type="button" role="radio" aria-checked="true" data-text-size="default">Default</button>
+            <button type="button" role="radio" aria-checked="false" data-text-size="large">Large</button>
+            <button type="button" role="radio" aria-checked="false" data-text-size="xlarge">Extra large</button>
+          </div>
+          <p class="appearance-preview">The quick brown fox jumps over the lazy dog.</p>
+        </div>
+        <div class="appearance-group">
+          <span class="appearance-title">Density</span>
+          <div class="choice-grid two" role="radiogroup" aria-label="Density">
+            <button type="button" role="radio" aria-checked="true" data-density="comfortable">Comfortable</button>
+            <button type="button" role="radio" aria-checked="false" data-density="compact">Compact</button>
+          </div>
+        </div>
+        <div class="appearance-group">
+          <span class="appearance-title">Accent colour</span>
+          <div class="choice-grid accents" role="radiogroup" aria-label="Accent colour">
+            <button type="button" role="radio" aria-checked="false" data-accent="blue"><i></i>Blue</button>
+            <button type="button" role="radio" aria-checked="true" data-accent="violet"><i></i>Violet</button>
+            <button type="button" role="radio" aria-checked="false" data-accent="green"><i></i>Green</button>
+            <button type="button" role="radio" aria-checked="false" data-accent="amber"><i></i>Amber</button>
+          </div>
+        </div>
+        <label class="switch-row appearance-motion">
+          <span>Reduce motion<small>Disable panel and chrome animations</small></span>
+          <input id="reduce-motion" class="switch" type="checkbox" role="switch" />
+        </label>
+        <button id="appearance-reset" class="btn tonal block" type="button">Reset appearance</button>
         <p class="hint">
-          The bottom toolbar is easier to reach one-handed on a large phone. The page
-          resizes either way.
+          Changes apply immediately and are remembered across launches. Text size scales
+          the browser controls; page content keeps its own size.
         </p>
       </div>
     </section>

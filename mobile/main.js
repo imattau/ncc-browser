@@ -1619,10 +1619,59 @@ function renderSearchSub() {
 function renderAppearanceSub() {
   const theme = byId('theme').value
   const position = byId('bar-position').value
+  const textSize = readSetting('ncc.text-size', 'default')
+  const accent = readSetting('ncc.accent', 'violet')
   set(
     'sub-appearance',
-    `${theme === 'system' ? 'System theme' : theme === 'dark' ? 'Dark' : 'Light'} · ${position} toolbar`
+    `${theme === 'system' ? 'System theme' : theme === 'dark' ? 'Dark' : 'Light'} · ${textSize} text · ${accent} accent · ${position} toolbar`
   )
+}
+
+function readSetting(key, fallback) {
+  try {
+    return globalThis.localStorage?.getItem(key) || fallback
+  } catch {
+    return fallback
+  }
+}
+
+function applyChoiceAttribute(attribute, value, choices, key, fallback) {
+  const selected = choices.includes(value) ? value : fallback
+  if (selected === fallback) delete document.documentElement.dataset[attribute]
+  else document.documentElement.dataset[attribute] = selected
+  try {
+    globalThis.localStorage?.setItem(key, selected)
+  } catch {
+    // The setting still applies for this run.
+  }
+  const dataAttribute = attribute.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)
+  for (const button of document.querySelectorAll(`button[data-${dataAttribute}]`)) {
+    button.setAttribute('aria-checked', String(button.dataset[attribute] === selected))
+  }
+  renderAppearanceSub()
+}
+
+function applyTextSize(value) {
+  applyChoiceAttribute('textSize', value, ['small', 'default', 'large', 'xlarge'], 'ncc.text-size', 'default')
+}
+
+function applyAccent(value) {
+  applyChoiceAttribute('accent', value, ['blue', 'violet', 'green', 'amber'], 'ncc.accent', 'violet')
+}
+
+function applyDensity(value) {
+  applyChoiceAttribute('density', value, ['comfortable', 'compact'], 'ncc.density', 'comfortable')
+}
+
+function applyReduceMotion(value) {
+  const enabled = value === true || value === 'true'
+  document.documentElement.dataset.reduceMotion = String(enabled)
+  byId('reduce-motion').checked = enabled
+  try {
+    globalThis.localStorage?.setItem('ncc.reduce-motion', String(enabled))
+  } catch {
+    // The setting still applies for this run.
+  }
 }
 
 async function loadSearch() {
@@ -2118,6 +2167,24 @@ function wireChrome() {
 
   byId('bar-position').addEventListener('change', (event) => applyBarPosition(event.target.value))
   byId('theme').addEventListener('change', (event) => applyTheme(event.target.value))
+  document.querySelectorAll('[data-text-size]').forEach((button) => {
+    button.addEventListener('click', () => applyTextSize(button.dataset.textSize))
+  })
+  document.querySelectorAll('[data-accent]').forEach((button) => {
+    button.addEventListener('click', () => applyAccent(button.dataset.accent))
+  })
+  document.querySelectorAll('[data-density]').forEach((button) => {
+    button.addEventListener('click', () => applyDensity(button.dataset.density))
+  })
+  byId('reduce-motion').addEventListener('change', (event) => applyReduceMotion(event.target.checked))
+  byId('appearance-reset').addEventListener('click', () => {
+    applyTheme('system')
+    applyBarPosition('bottom')
+    applyTextSize('default')
+    applyAccent('violet')
+    applyDensity('comfortable')
+    applyReduceMotion(false)
+  })
 
   byId('signer-allow').addEventListener('click', () => void answerSigner(true))
   byId('signer-deny').addEventListener('click', () => void answerSigner(false))
@@ -2126,8 +2193,12 @@ function wireChrome() {
 }
 
 async function main() {
-  applyTheme(globalThis.localStorage?.getItem('ncc.theme') || 'system')
-  applyBarPosition(globalThis.localStorage?.getItem('ncc.bar') || 'bottom')
+  applyTheme(readSetting('ncc.theme', 'system'))
+  applyBarPosition(readSetting('ncc.bar', 'bottom'))
+  applyTextSize(readSetting('ncc.text-size', 'default'))
+  applyAccent(readSetting('ncc.accent', 'violet'))
+  applyDensity(readSetting('ncc.density', 'comfortable'))
+  applyReduceMotion(readSetting('ncc.reduce-motion', 'false'))
   renderCounts()
   renderPill()
   applyLayout()

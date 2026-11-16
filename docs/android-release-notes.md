@@ -5,6 +5,9 @@ is not a daily driver.
 
 ## New in this build
 
+- Appearance settings now include text size, four accent colours, compact spacing and
+  reduced motion, alongside theme and toolbar position. Settings apply immediately and
+  persist across launches.
 - A redesigned browser chrome: one-row toolbar (bottom or top) with an address pill, a
   shield badge that shows how the service was verified, tab count and menu.
 - Address screen with suggestions from history and bookmarks; new-tab page with
@@ -24,7 +27,8 @@ is not a daily driver.
 - pages served through a loopback proxy so each service keeps its own origin
   (`<npub>.<service>.localhost`), and `nsite://` sites
 - an encrypted local identity and a NIP-07 signer with per-service approval prompts
-- history, bookmarks, settings (relays, search engine, HTTPS policy, theme), downloads
+- history, bookmarks, settings (relays, search engine, HTTPS policy and appearance), downloads
+- NIP-46 remote signer sessions
 
 ## What is missing
 
