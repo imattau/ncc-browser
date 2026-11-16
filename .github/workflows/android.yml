@@ -6,8 +6,6 @@ name: Android
 on:
   push:
     tags: ['android-v*']
-    # Temporary while this branch is being built out; removed before merge.
-    branches: [chore/android-shell]
   workflow_dispatch:
     inputs:
       publish:
