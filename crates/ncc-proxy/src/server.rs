@@ -275,6 +275,17 @@ async fn handle_inner(state: &ProxyState, request: Request) -> Response {
         return text(StatusCode::METHOD_NOT_ALLOWED, "CONNECT is not proxied");
     }
 
+    // Continuing past a cleartext warning: remember the exception, then go back to
+    // the page the browser would have loaded.
+    if request.uri().path() == "/__ncc/allow" {
+        return allow_cleartext(
+            state,
+            &vhost,
+            &authority,
+            request.uri().query().unwrap_or_default(),
+        );
+    }
+
     let path = request.uri().path().to_string();
     let query = request.uri().query().unwrap_or_default().to_string();
     let method = request.method().clone();
@@ -333,6 +344,21 @@ async fn handle_inner(state: &ProxyState, request: Request) -> Response {
 
     if candidates.is_empty() {
         return error_page(&ResolveError::NoEndpoint, &vhost);
+    }
+
+    // A cleartext page is worth an interstitial, but only once per service: the
+    // answer is remembered in settings, so the next visit goes straight through.
+    let cleartext = candidates
+        .first()
+        .map(|endpoint| endpoint.protocol == "http" || endpoint.protocol == "ws")
+        .unwrap_or(false);
+
+    if document
+        && cleartext
+        && state.settings().warn_insecure()
+        && !state.settings().allows_http(&vhost.identity_key())
+    {
+        return cleartext_warning(state, &vhost, candidates.first());
     }
 
     let mut failures = Vec::new();
@@ -838,6 +864,73 @@ async fn route(state: &ProxyState, authority: &str, query: &str) -> Response {
         "unsupported-scheme",
         "Only ncc://, nsite:// and localhost URLs are routed",
     )
+}
+
+/// A page that has to be acknowledged before a cleartext service loads.
+fn cleartext_warning(state: &ProxyState, vhost: &Vhost, endpoint: Option<&Endpoint>) -> Response {
+    let key = vhost.identity_key();
+    let injection = Injection::new(&key);
+    state.tokens.remember(&injection.token, &key);
+
+    let host = endpoint
+        .and_then(|endpoint| url::Url::parse(&endpoint.url).ok())
+        .and_then(|url| url.host_str().map(str::to_string))
+        .unwrap_or_else(|| "this endpoint".to_string());
+
+    let body = format!(
+        "<!doctype html><meta charset=\"utf-8\">\
+         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
+         <style>body{{font:15px system-ui;margin:2rem;max-width:34rem;line-height:1.5}}\
+         a.button{{display:inline-block;margin-top:1.5rem;padding:12px 18px;border-radius:10px;\
+         background:#2563eb;color:#fff;text-decoration:none;font-weight:600}}\
+         code{{background:#eee;padding:.1rem .3rem;border-radius:3px}}</style>\
+         <h1>Not a secure connection</h1>\
+         <p><code>{key}</code> is served by <code>{host}</code> over plain HTTP. Anything\
+         sent to it — a login, a message — can be read or changed on the way.</p>\
+         <p>If the service is yours, publish an HTTPS endpoint with a <code>k</code>\
+         fingerprint; that is what makes the connection checkable.</p>\
+         <a class=\"button\" href=\"/__ncc/allow?token={token}\">Continue anyway</a>",
+        key = key,
+        host = host,
+        token = injection.token
+    );
+
+    (
+        StatusCode::OK,
+        [(header::CACHE_CONTROL, "no-store")],
+        Html(body),
+    )
+        .into_response()
+}
+
+/// Record the exception the warning page asked for, then reload the page.
+fn allow_cleartext(state: &ProxyState, vhost: &Vhost, authority: &str, query: &str) -> Response {
+    let token = url::form_urlencoded::parse(query.as_bytes())
+        .find(|(name, _)| name == "token")
+        .map(|(_, value)| value.into_owned())
+        .unwrap_or_default();
+
+    let key = vhost.identity_key();
+    if !state.tokens.matches(&token, &key) {
+        return json_error(
+            StatusCode::FORBIDDEN,
+            "invalid-token",
+            "That warning has expired; reload the page.",
+        );
+    }
+
+    if let Err(error) = state.settings().allow_http(&key) {
+        return json_error(StatusCode::INTERNAL_SERVER_ERROR, "settings-failed", &error);
+    }
+
+    let _ = authority;
+
+    Response::builder()
+        .status(StatusCode::FOUND)
+        .header(header::LOCATION, "/")
+        .header(header::CACHE_CONTROL, "no-store")
+        .body(Body::empty())
+        .expect("redirect")
 }
 
 fn routed(url: String) -> Response {

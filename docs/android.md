@@ -259,6 +259,8 @@ Still to build:
 - [x] History and bookmarks, kept in the shell's storage (200 entries).
 - [x] Storage: clear cache drops locator records, site manifests, verified blobs in
       memory and on disk, and the WebView page cache.
+- [x] Cleartext warning: when the setting is on and the endpoint is plain HTTP, a page
+      explains it and a one-shot token records the exception, so it is asked once.
 - [ ] Per-tab lifecycle and tab thumbnails.
 - [ ] File chooser and download handling in the content view.
 - [ ] `*.localhost` resolution, secure context, `Secure` cookie behaviour — **the
