@@ -76,10 +76,14 @@ Four layers, in the order they are being built:
    ```
 3. **Tauri shell (`src-tauri`)** — the React chrome, talking to Rust commands behind
    the existing `NccApi` seam. This is the only part that resembles Capacitor.
-4. **Kotlin content surface (inside `src-tauri/gen/android`)** — one
-   `android.webkit.WebView` added to the activity layout under the toolbar strip,
-   plus the loopback proxy's TLS exception. Tauri does not expose the view
-   hierarchy, so this glue is Kotlin regardless of shell.
+4. **Kotlin content surface (inside `src-tauri/gen/android`)** — `ContentSurface.kt`
+   adds one `android.webkit.WebView` above Tauri's own view and refuses any URL that
+   is not an `http(s)` `*.localhost` host. The shell drives it through a
+   `@JavascriptInterface` (`NccContent.open/close/back`) that is exposed only to the
+   shell's WebView; state comes back as `__nccContent` events (loading, loaded,
+   blocked, failed, closed). System back walks the page history first, then closes
+   the surface. Tauri does not expose the Android view hierarchy, so this glue is
+   Kotlin regardless of shell.
 
 The content WebView never sees `ncc://`. It loads
 `http://<npub>.<service>.localhost:<port>/…`; the proxy maps that back onto the
@@ -182,9 +186,14 @@ Still to build:
 
 - [x] Start the proxy from the Tauri app and expose its port to the shell.
 - [x] A status page that fetches a live service through a `*.localhost` vhost.
+- [x] Kotlin content surface: a WebView limited to `*.localhost`, driven from the
+      shell through a `JavascriptInterface`, with back handling and page events.
 - [ ] `vite.mobile.config.ts` + an `NccApi` adapter over Tauri commands, replacing
       `mobile/` with the React chrome.
-- [ ] Kotlin content WebView under the toolbar, per-tab lifecycle, tab thumbnails.
+- [ ] Real chrome strip above the content surface (the surface covers the shell
+      today; it should sit below a 56 dp bar).
+- [ ] Per-tab lifecycle and tab thumbnails.
+- [ ] File chooser and download handling in the content view.
 - [ ] `*.localhost` resolution, secure context, `Secure` cookie behaviour — **the
       go/no-go test**. If `Secure` cookies fail, add a TLS listener and accept its
       own certificate through `onReceivedSslError`.
