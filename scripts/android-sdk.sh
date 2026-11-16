@@ -6,9 +6,10 @@
 # The runner image already carries an SDK; this only installs the pieces we need and
 # exports the environment for later steps.
 #
-# Android has minor SDK levels now (`android-37.0`, `android-37.1`, …), so the
-# platform Tauri pins cannot be installed by appending its compileSdk to a string.
-# Resolve the real package id from the remote repository listing.
+# Android has minor SDK levels now (`android-37.0`, `android-37.1`, `android-37.2`),
+# so the platform Tauri pins cannot be built by appending its compileSdk to a
+# string. Probe the candidate ids from newest to oldest and keep the first that
+# sdkmanager accepts.
 set -euo pipefail
 
 SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
@@ -38,24 +39,44 @@ if [ -z "$SDK_LEVEL" ] && [ -f src-tauri/gen/android/app/build.gradle.kts ]; the
 fi
 SDK_LEVEL="${SDK_LEVEL:-35}"
 
-LISTING=$(mktemp)
-"$SDKMANAGER" --list > "$LISTING" 2>/dev/null || true
+install_package() {
+  "$SDKMANAGER" --install "$1" >/dev/null 2>&1
+}
 
-# `platforms;android-37` when it exists, else the highest `platforms;android-37.N`.
-PLATFORM=$(printf '%s\n' "$LISTING" | grep -oE "platforms;android-${SDK_LEVEL}([.][0-9]+)?" | sort -uV | tail -1 || true)
+yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+
+PLATFORM=""
+for candidate in \
+  "platforms;android-${SDK_LEVEL}.2" \
+  "platforms;android-${SDK_LEVEL}.1" \
+  "platforms;android-${SDK_LEVEL}.0" \
+  "platforms;android-${SDK_LEVEL}"; do
+  if install_package "$candidate"; then
+    PLATFORM="$candidate"
+    break
+  fi
+done
 if [ -z "$PLATFORM" ]; then
-  echo "no SDK platform found for API level ${SDK_LEVEL}" >&2
+  echo "no installable SDK platform for API level ${SDK_LEVEL}" >&2
   exit 1
 fi
 
-PACKAGES=("platform-tools" "$PLATFORM" "ndk;$NDK_VERSION")
-if printf '%s\n' "$LISTING" | grep -qE "build-tools;${SDK_LEVEL}[.]0[.]0"; then
-  PACKAGES+=("build-tools;${SDK_LEVEL}.0.0")
-fi
-rm -f "$LISTING"
+BUILD_TOOLS=""
+for candidate in "build-tools;${SDK_LEVEL}.0.0" "build-tools;${SDK_LEVEL}.0.0-rc1"; do
+  if install_package "$candidate"; then
+    BUILD_TOOLS="$candidate"
+    break
+  fi
+done
 
-yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
-"$SDKMANAGER" --install "${PACKAGES[@]}"
+if ! install_package "platform-tools"; then
+  echo "could not install platform-tools" >&2
+  exit 1
+fi
+if ! install_package "ndk;$NDK_VERSION"; then
+  echo "could not install ndk;$NDK_VERSION" >&2
+  exit 1
+fi
 
 {
   echo "ANDROID_HOME=$SDK"
@@ -65,4 +86,5 @@ yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
 
 echo "sdkmanager: $SDKMANAGER"
 echo "platform: $PLATFORM"
+echo "build-tools: ${BUILD_TOOLS:-<from runner image>}"
 echo "ndk: $SDK/ndk/$NDK_VERSION"
