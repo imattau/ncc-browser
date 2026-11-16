@@ -181,3 +181,17 @@ Two consequences:
 - Thumbnails in the switcher need `PixelCopy` per tab; worth it for six tabs, or use the
   service label alone for the alpha?
 - Does "recent services" belong in the address sheet or the tab switcher?
+
+## Status of this pass
+
+Built in `mobile/` plus small bridge additions in `MainActivity.kt` / `ContentSurface.kt`:
+SVG icon set; one-row strip with an address pill (lock chip coloured by pinned / TLS /
+cleartext, stop/reload, progress line on the content edge); omnibox with history and
+bookmark suggestions; new-tab page with shortcuts; tab switcher cards with close-all;
+bottom-sheet menu (forward, reload, bookmark, share, find in page, desktop site, copy);
+site-info and signer bottom sheets with a blurred capture of the page behind;
+drill-down settings; swipe on the pill to change tab; system back closes the sheet in
+front first; keyboard insets lift the strip.
+
+Not done: forced theme does not recolour the system bars, pull-to-refresh, private tabs,
+long-press tab count to close.

@@ -232,6 +232,33 @@ class ContentSurface(
       override fun onProgressChanged(view: WebView, newProgress: Int) {
         emit(JSONObject().put("type", "progress").put("value", newProgress))
       }
+
+      /**
+       * The page's own favicon, shrunk to something a tile or a tab card can carry.
+       * The shell keeps it per service, so it outlives the tab.
+       */
+      override fun onReceivedIcon(view: WebView, icon: Bitmap) {
+        val size = 96
+        val scale = size.toFloat() / maxOf(icon.width, icon.height).coerceAtLeast(1)
+        val small = if (scale < 1f) {
+          Bitmap.createScaledBitmap(
+            icon,
+            (icon.width * scale).toInt().coerceAtLeast(1),
+            (icon.height * scale).toInt().coerceAtLeast(1),
+            true,
+          )
+        } else {
+          icon
+        }
+        val bytes = ByteArrayOutputStream()
+        small.compress(Bitmap.CompressFormat.PNG, 100, bytes)
+        emit(
+          JSONObject()
+            .put("type", "icon")
+            .put("url", view.url ?: currentUrl ?: "")
+            .put("icon", "data:image/png;base64," + Base64.encodeToString(bytes.toByteArray(), Base64.NO_WRAP)),
+        )
+      }
     }
 
     // A file the WebView will not render becomes a download through the proxy, because

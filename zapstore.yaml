@@ -22,11 +22,11 @@ description: |
   the browser that resolves services by Nostr identity instead of DNS.
 
   What works: NCC-05 resolution from relays, SPKI pinning of endpoints, pages served
-  over a loopback proxy so each service keeps its own origin, a NIP-07 shim with an
-  encrypted local identity and per-service approval prompts.
+  over a loopback proxy so each service keeps its own origin, nsite:// sites, a NIP-07
+  signer with an encrypted local identity and per-service approval prompts, tabs,
+  history, bookmarks, downloads and settings.
 
-  What is missing: tabs, history, bookmarks, downloads, settings. Extensions, private
-  tabs and Tor are desktop-only.
+  What is missing: extensions, private tabs and Tor are desktop-only.
 
   The desktop build is unaffected and remains the supported one.
 website: https://github.com/imattau/ncc-browser
