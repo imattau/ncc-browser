@@ -70,7 +70,7 @@ struct Sealed {
     ciphertext: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Status {
     pub initialised: bool,
     /// The npub of the stored identity, available even while locked.

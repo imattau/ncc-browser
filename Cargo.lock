@@ -1125,6 +1125,7 @@ dependencies = [
  "base64 0.23.1",
  "futures-util",
  "ncc-core",
+ "ncc-identity",
  "nostr",
  "reqwest",
  "rustls",

@@ -1,9 +1,9 @@
 # Android build
 
 Status: **alpha**. Published to Zapstore as `Nostr Navigator (alpha)` for testing.
-The shell builds and signs in CI, the NCC proxy serves live records and a content
-WebView renders them; there is no identity, no signer behind the NIP-07 routes, no
-tabs and no real chrome yet. Not a daily driver.
+The shell builds and signs in CI, the NCC proxy serves live records, a content
+WebView renders them, and a local identity signs through the NIP-07 routes after an
+approval. No tabs, history, bookmarks, downloads or settings yet. Not a daily driver.
 
 ## Verified
 
@@ -242,7 +242,8 @@ Still to build:
       own certificate through `onReceivedSslError`.
 - [x] NIP-07 injection: shim first in `<head>`, CSP nonce, same-origin signer route
       scoped to `npub/service`.
-- [ ] The signer behind those routes: identity storage, approvals, NIP-46.
+- [x] The signer behind those routes: encrypted local identity, per-service
+      approvals and a prompt in the shell. NIP-46 is still missing.
 - [ ] NIP-07 inside iframes (`sec-fetch-dest: iframe`) is deliberately not injected;
       revisit if a real service needs it.
 - [ ] Emulator run of the built APK.

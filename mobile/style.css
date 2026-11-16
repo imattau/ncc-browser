@@ -268,3 +268,35 @@ body.compact #stage {
 body.compact {
   padding-top: 0;
 }
+
+.panel {
+  margin-top: 26px;
+  padding-top: 4px;
+  border-top: 1px solid var(--line);
+}
+
+.panel.signer {
+  border: 1px solid #c07a00;
+  border-radius: 12px;
+  padding: 14px;
+  margin-top: 22px;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.import {
+  margin-top: 12px;
+}
+
+.import summary {
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+}
