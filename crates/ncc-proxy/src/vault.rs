@@ -198,7 +198,10 @@ impl VaultService {
         let settings = self.settings.get().passwords;
         let state = self.secure();
         VaultStatus {
-            configured: self.identity.public_key().is_ok(),
+            // `initialised`, not "the key is loaded": an identity sealed by the device
+            // envelope is still configured while it is locked, and telling its owner to
+            // set one up would be wrong.
+            configured: self.identity.status().initialised,
             unlocked: state.unlocked,
             entry_count: state
                 .vault
