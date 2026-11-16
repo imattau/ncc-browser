@@ -1,0 +1,140 @@
+/*
+ * M0 shell styling. Mirrors the semantic tokens in src/renderer/src/index.css so the
+ * React chrome can take over later without a visual reset.
+ */
+
+:root {
+  --ink: #f2f4f8;
+  --panel: #ffffff;
+  --line: #d7dce7;
+  --text: #1b2130;
+  --muted: #5a6475;
+  --accent: #2563eb;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #0b0c10;
+    --panel: #12141a;
+    --line: #262a35;
+    --text: #dfe3ea;
+    --muted: #9aa3b2;
+    --accent: #8ab4ff;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  background: var(--ink);
+  color: var(--text);
+  font: 15px/1.45 system-ui, -apple-system, 'Segoe UI', sans-serif;
+  padding-top: env(safe-area-inset-top);
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+.mark {
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+}
+
+.address {
+  flex: 1;
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.spacer {
+  display: none;
+}
+
+.count {
+  min-width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.stage {
+  flex: 1;
+  padding: 28px 20px calc(28px + env(safe-area-inset-bottom));
+}
+
+h1 {
+  margin: 0 0 6px;
+  font-size: 22px;
+}
+
+.lede {
+  margin: 0 0 24px;
+  color: var(--muted);
+}
+
+.facts {
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--panel);
+}
+
+.facts > div {
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 11px 14px;
+  border-top: 1px solid var(--line);
+}
+
+.facts > div:first-child {
+  border-top: 0;
+}
+
+dt {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  max-width: 62%;
+}
+
+dd.wrap {
+  word-break: break-word;
+  font-size: 12px;
+}
+
+.note {
+  margin: 20px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}

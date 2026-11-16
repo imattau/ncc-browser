@@ -1,0 +1,11 @@
+[workspace]
+resolver = "2"
+members = ["crates/ncc-core"]
+# The Tauri shell has its own dependency tree and its own lockfile.
+exclude = ["src-tauri"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+rust-version = "1.80"

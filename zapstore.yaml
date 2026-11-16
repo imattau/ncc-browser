@@ -1,0 +1,13 @@
+# Zapstore listing.
+#
+# Written and renewed by `zsp` (run it once, locally, by hand — it is the only step
+# that touches the keystore, and it creates the NIP-C1 claim that ties the APK
+# signing certificate to our pubkey).
+#
+# CI only replaces the file at `release_source` and runs `zsp publish`, so this path
+# is a contract: keep it stable. The catalog relay reads the APK itself for the
+# package id, certificate, ABI and versionCode, so the filename carries no meaning.
+
+repository: https://github.com/imattau/ncc-browser
+release_source: ./release/android/ncc-browser-android-arm64.apk
+channel: main

@@ -1,0 +1,25 @@
+[package]
+name = "ncc-navigator"
+description = "Nostr Navigator shell for Android"
+version = "0.12.1"
+authors = ["imattau"]
+license = "MIT"
+edition = "2024"
+rust-version = "1.90"
+
+# Excluded from the root workspace (see ../Cargo.toml): a Tauri desktop dependency
+# tree would drag WebKitGTK into `cargo test -p ncc-core` on Linux.
+[lib]
+name = "ncc_navigator_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7.4" }
+
+[dependencies]
+ncc-core = { path = "../crates/ncc-core" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+log = "0.4"
+tauri = { version = "2.12.5" }
+tauri-plugin-log = "2"

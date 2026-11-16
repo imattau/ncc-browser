@@ -1,0 +1,65 @@
+name: Android scaffold
+
+# `tauri android init` generates `src-tauri/gen/android`, which is meant to be
+# committed and then edited (signing config, Kotlin content surface). It needs an
+# Android SDK, so it runs here once instead of on a developer machine.
+#
+# Run it, then download and commit the artifact:
+#   gh workflow run android-scaffold.yml --ref <branch>
+#   gh run download -n android-project -D /tmp/opencode/android-scaffold
+#
+# Re-run only to regenerate after a Tauri major bump; it overwrites local edits.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  NDK_VERSION: 27.2.12479018
+
+jobs:
+  init:
+    name: Generate src-tauri/gen/android
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install NDK
+        run: |
+          sdkmanager --install "ndk;${NDK_VERSION}" "platforms;android-35" "build-tools;35.0.0"
+          echo "NDK_HOME=${ANDROID_SDK_ROOT}/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+
+      - run: npm ci
+
+      - name: Generate the Android project
+        run: npx tauri android init --ci
+
+      - name: Show what was generated
+        run: |
+          find src-tauri/gen/android -maxdepth 2 -type f | sort | head -40
+          echo '---'
+          cat src-tauri/gen/android/app/build.gradle.kts
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-project
+          path: src-tauri/gen/android
+          if-no-files-found: error
