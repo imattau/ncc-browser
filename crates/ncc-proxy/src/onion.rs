@@ -29,7 +29,7 @@ use url::Url;
 
 use ncc_core::is_onion_host;
 
-use crate::server::{inject_shim, request_headers, ProxyState};
+use crate::server::{inject_shim, is_document_request, request_headers, ProxyState, TorProgress};
 use crate::vhost::Vhost;
 
 /// Documents above this are handed through untouched. Rewriting means holding the
@@ -137,6 +137,56 @@ fn is_https_upgrade(status: StatusCode, location: Option<&str>, site: &str) -> b
         })
 }
 
+/// What a tab shows while Tor is still being set up, or when it could not be.
+fn connecting_page(progress: &TorProgress) -> Response {
+    let (title, detail, refresh) = match progress {
+        TorProgress::Starting { percent } if *percent > 0 => (
+            "Connecting to Tor".to_string(),
+            format!("Building a connection… {percent}%. This page loads on its own."),
+            true,
+        ),
+        TorProgress::Starting { .. } => (
+            "Starting Tor".to_string(),
+            "Getting ready to connect. This page loads on its own.".to_string(),
+            true,
+        ),
+        TorProgress::Failed { reason } => (
+            "Tor could not start".to_string(),
+            format!(
+                "{} Check Settings → Tor, or switch to an external Tor such as Orbot.",
+                escape(reason)
+            ),
+            false,
+        ),
+        TorProgress::Ready => ("Tor is ready".to_string(), String::new(), true),
+    };
+
+    let refresh = if refresh {
+        "<meta http-equiv=\"refresh\" content=\"2\">"
+    } else {
+        ""
+    };
+    let body = format!(
+        "<!doctype html><meta charset=\"utf-8\">\
+         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
+         <meta name=\"color-scheme\" content=\"light dark\">{refresh}\
+         <title>{title}</title>\
+         <style>body{{font:16px/1.5 system-ui,sans-serif;margin:0;padding:18vh 28px 28px;\
+         max-width:34rem;margin-inline:auto;text-align:center}}\
+         h1{{font-size:1.3rem;margin:0 0 .5rem}}p{{opacity:.75;margin:0}}\
+         .dot{{width:14px;height:14px;margin:0 auto 1.2rem;border-radius:50%;\
+         background:#a855f7;animation:p 1.2s ease-in-out infinite}}\
+         @keyframes p{{50%{{transform:scale(1.6);opacity:.35}}}}</style>\
+         <div class=\"dot\"></div><h1>{title}</h1><p>{detail}</p>"
+    );
+
+    let mut response = Html(body).into_response();
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+}
+
 // The pieces are all distinct and each is used as-is; a parameter struct would only
 // move the same names one level down.
 #[allow(clippy::too_many_arguments)]
@@ -157,6 +207,16 @@ pub async fn serve(
             "This listener only serves onion sites.",
         );
     };
+
+    // Building the first circuit takes a while, and the tab would sit blank for all of
+    // it. A page load gets a page that says what is happening and reloads itself;
+    // subresources fall through and simply wait, as they do once the page is real.
+    if is_document_request(headers) {
+        match state.tor_progress() {
+            Some(TorProgress::Ready) | None => {}
+            Some(other) => return connecting_page(&other),
+        }
+    }
 
     let query_part = if search.is_empty() {
         String::new()
@@ -886,5 +946,96 @@ mod tests {
         assert!(!is_https_only(REMEMBERED));
         remember_https_only(REMEMBERED);
         assert!(is_https_only(REMEMBERED));
+    }
+
+    async fn page_text(progress: &TorProgress) -> String {
+        let response = connecting_page(progress);
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .expect("body");
+        String::from_utf8(bytes.to_vec()).expect("utf8")
+    }
+
+    #[tokio::test]
+    async fn the_connecting_page_shows_progress_and_reloads_itself() {
+        let waiting = page_text(&TorProgress::Starting { percent: 45 }).await;
+        assert!(waiting.contains("Connecting to Tor"));
+        assert!(waiting.contains("45%"));
+        assert!(waiting.contains("http-equiv=\"refresh\""));
+
+        let idle = page_text(&TorProgress::Starting { percent: 0 }).await;
+        assert!(idle.contains("Starting Tor"));
+        assert!(idle.contains("http-equiv=\"refresh\""));
+    }
+
+    #[tokio::test]
+    async fn a_failed_start_says_why_and_stops_reloading() {
+        let failed = page_text(&TorProgress::Failed {
+            reason: "Tor could not bootstrap: <timed out>".to_string(),
+        })
+        .await;
+        assert!(failed.contains("Tor could not start"));
+        // The reason is text, not markup.
+        assert!(failed.contains("&lt;timed out&gt;"));
+        assert!(!failed.contains("<timed out>"));
+        assert!(!failed.contains("http-equiv=\"refresh\""));
+    }
+
+    #[derive(Debug)]
+    struct Fixed(TorProgress);
+
+    impl crate::server::TorProgressSource for Fixed {
+        fn progress(&self) -> TorProgress {
+            self.0.clone()
+        }
+    }
+
+    /// A page load while Tor is still starting gets the connecting page at once, and
+    /// only a page load: a subresource is not answered with a page it cannot show.
+    #[tokio::test]
+    async fn a_document_waits_on_a_progress_page_and_a_subresource_does_not() {
+        let config = crate::server::ProxyConfig {
+            // Nothing listens here: reaching it would be a 502, not the progress page.
+            tor_proxy: Some("socks5h://127.0.0.1:1".to_string()),
+            tor_progress: Some(std::sync::Arc::new(Fixed(TorProgress::Starting {
+                percent: 30,
+            }))),
+            ..Default::default()
+        };
+        let state = std::sync::Arc::new(ProxyState::new(&config));
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(crate::server::serve(listener, state));
+
+        let client = reqwest::Client::new();
+        let get = |dest: &'static str| {
+            let client = client.clone();
+            async move {
+                client
+                    .get(format!("http://127.0.0.1:{port}/"))
+                    .header("host", format!("{SITE}.localhost:{port}"))
+                    .header("sec-fetch-dest", dest)
+                    .send()
+                    .await
+                    .unwrap()
+            }
+        };
+
+        let document = get("document").await;
+        assert_eq!(document.status(), StatusCode::OK);
+        let text = document.text().await.unwrap();
+        assert!(
+            text.contains("Connecting to Tor") && text.contains("30%"),
+            "{text}"
+        );
+
+        let image = get("image").await;
+        assert_ne!(image.status(), StatusCode::OK);
+        let text = image.text().await.unwrap();
+        assert!(!text.contains("Connecting to Tor"), "{text}");
     }
 }

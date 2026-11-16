@@ -43,6 +43,25 @@ const HOP_BY_HOP: &[&str] = &[
     "upgrade",
 ];
 
+/// How far the Tor route is, as far as a page waiting on it is concerned.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TorProgress {
+    /// Nothing is happening yet, or the client is still bootstrapping.
+    Starting {
+        percent: u8,
+    },
+    Ready,
+    Failed {
+        reason: String,
+    },
+}
+
+/// Where the Tor listener learns that progress. The proxy does not depend on the Tor
+/// crate, so the shell supplies this.
+pub trait TorProgressSource: Send + Sync + std::fmt::Debug {
+    fn progress(&self) -> TorProgress;
+}
+
 #[derive(Debug, Clone)]
 pub struct ProxyConfig {
     pub relays: Vec<String>,
@@ -63,6 +82,9 @@ pub struct ProxyConfig {
     /// listener the Tor listener: it serves onion vhosts and nothing else, and its
     /// client never gets a direct route to anything.
     pub tor_proxy: Option<String>,
+    /// Lets the Tor listener answer a page load with a "Connecting to Tor" page while
+    /// the route is still being built, instead of leaving the tab blank and waiting.
+    pub tor_progress: Option<Arc<dyn TorProgressSource>>,
 }
 
 impl Default for ProxyConfig {
@@ -76,6 +98,7 @@ impl Default for ProxyConfig {
             permissions_file: None,
             settings: None,
             tor_proxy: None,
+            tor_progress: None,
         }
     }
 }
@@ -86,6 +109,7 @@ pub struct ProxyState {
     pinned_client: reqwest::Client,
     /// Present only on the Tor listener.
     tor_client: Option<reqwest::Client>,
+    tor_progress: Option<Arc<dyn TorProgressSource>>,
     pins: Arc<PinStore>,
     pub(crate) tokens: TokenStore,
     max_body_bytes: usize,
@@ -171,6 +195,7 @@ impl ProxyState {
             client,
             pinned_client,
             tor_client,
+            tor_progress: config.tor_progress.clone(),
             pins,
             tokens: TokenStore::new(),
             max_body_bytes: config.max_body_bytes,
@@ -260,6 +285,10 @@ impl ProxyState {
     /// The client onion requests use. `None` means this is not the Tor listener.
     pub(crate) fn tor_client(&self) -> Option<&reqwest::Client> {
         self.tor_client.as_ref()
+    }
+
+    pub(crate) fn tor_progress(&self) -> Option<TorProgress> {
+        self.tor_progress.as_ref().map(|source| source.progress())
     }
 
     pub(crate) fn is_tor_listener(&self) -> bool {
@@ -861,7 +890,7 @@ fn rewrite_location(location: &str, target: &Url, authority: &str) -> String {
     relative
 }
 
-fn is_document_request(headers: &HeaderMap) -> bool {
+pub(crate) fn is_document_request(headers: &HeaderMap) -> bool {
     if let Some(destination) = headers.get("sec-fetch-dest").and_then(|v| v.to_str().ok()) {
         return destination == "document";
     }

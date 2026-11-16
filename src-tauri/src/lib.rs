@@ -10,7 +10,7 @@ use ncc_proxy::{
 use ncc_vault::{GeneratorOptions, PasswordSummary, TotpCode};
 use ncc_proxy::settings::PasswordSettings;
 use ncc_proxy::vault::VaultService;
-use ncc_tor::{Tor, TorConfig, TorMode, TorStatus};
+use ncc_tor::{Tor, TorConfig, TorMode, TorState, TorStatus};
 
 /// Everything the commands need. The proxy shares the same `Arc`s.
 struct SignerState {
@@ -525,6 +525,33 @@ fn default_relays() -> Vec<String> {
     ]
 }
 
+/// Tells the Tor listener how far Tor has got, so a tab opened while it is still being
+/// built shows "Connecting to Tor" instead of a blank page.
+struct TorProgressFeed(Arc<Tor>);
+
+impl std::fmt::Debug for TorProgressFeed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TorProgressFeed")
+    }
+}
+
+impl ncc_proxy::TorProgressSource for TorProgressFeed {
+    fn progress(&self) -> ncc_proxy::TorProgress {
+        let status = self.0.status();
+        match status.state {
+            TorState::Ready => ncc_proxy::TorProgress::Ready,
+            TorState::Failed => ncc_proxy::TorProgress::Failed {
+                reason: status
+                    .error
+                    .unwrap_or_else(|| "No route to Tor was found.".to_string()),
+            },
+            _ => ncc_proxy::TorProgress::Starting {
+                percent: status.percent,
+            },
+        }
+    }
+}
+
 fn tor_config(dir: &std::path::Path, mode: TorMode, socks: String) -> TorConfig {
     TorConfig {
         mode,
@@ -776,6 +803,7 @@ pub fn run() {
             let tor_port = tor.as_ref().and_then(|tor| {
                 let mut config = proxy_config(None, Some(settings.clone()));
                 config.tor_proxy = Some(tor.socks_url().to_string());
+                config.tor_progress = Some(Arc::new(TorProgressFeed(tor.clone())));
                 let listener = Arc::new(
                     ProxyState::new(&config).with_signer(
                         Arc::new(IdentityStore::ephemeral()),

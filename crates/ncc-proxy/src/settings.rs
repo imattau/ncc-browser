@@ -508,7 +508,9 @@ mod tests {
         assert!(store.allows_http("ncc://npub/other"));
 
         // Removing what is not there is not an error.
-        store.remove_http_exception("ncc://npub/none").expect("noop");
+        store
+            .remove_http_exception("ncc://npub/none")
+            .expect("noop");
     }
 
     #[test]

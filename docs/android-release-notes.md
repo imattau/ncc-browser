@@ -5,6 +5,10 @@ is not a daily driver.
 
 ## New in this build
 
+- Tor tabs no longer sit blank while Tor starts. A page opened before Tor is ready now
+  shows "Connecting to Tor" with its progress and loads by itself, or says why Tor
+  could not start. Choosing "New Tor tab" also starts Tor straight away, so it is
+  further along by the time you have typed an address.
 - Site information can now clear a site's data: its cookies and local storage, with an
   optional "forget trust decisions" switch that also revokes signer access and any
   cleartext exception. Signer access can be trusted or revoked from the same sheet,

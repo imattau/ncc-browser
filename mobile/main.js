@@ -1037,6 +1037,11 @@ function openOmnibox({ newTab = false, private: isPrivate = false, tor = false }
   newTabMode = newTab
   privateMode = isPrivate
   torMode = tor
+
+  // Asking for a Tor tab is the earliest sign that Tor will be needed, and building
+  // the first circuit is the slow part. Starting now means it is further along by the
+  // time an address has been typed. Nothing contacts the network before this point.
+  if (tor && typeof invoke === 'function') void invoke('tor_prepare').catch(() => {})
   panel = 'omnibox'
   pendingFocus = 'omnibox'
   byId('address').value = newTab || !activeUrl ? '' : displayAddress(activeUrl)

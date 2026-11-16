@@ -35,7 +35,7 @@ pub use approvals::{ApprovalRequest, Approvals};
 pub use inject::{Injection, TokenStore};
 pub use pins::PinStore;
 pub use resolve::{DiscoveredService, ResolveError, ResolvedService, Resolver};
-pub use server::{serve, ProxyConfig, ProxyState};
+pub use server::{serve, ProxyConfig, ProxyState, TorProgress, TorProgressSource};
 pub use settings::{HttpsMode, Settings, SettingsStore};
 pub use vault::VaultService;
 pub use vhost::{host_for, parse_vhost, Vhost};
