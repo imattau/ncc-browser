@@ -39,6 +39,71 @@ pub fn nsite_host(pubkey: &str, site: Option<&str>) -> String {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NsiteAddress {
+    pub pubkey: String,
+    pub site: Option<String>,
+    /// Always begins with `/`; preserves a trailing slash.
+    pub path: String,
+    pub search: String,
+    pub hash: String,
+}
+
+/// Parse `nsite://<npub>[/<d>][/<path…>]`, the form a link or a person uses.
+///
+/// The first segment is a site id only when it could be one, so `index.html` is a
+/// root-site path and `blog` is a named site. Deciding properly needs the manifest,
+/// which is the caller's job.
+pub fn parse_nsite_address(raw: &str) -> Option<NsiteAddress> {
+    let trimmed = raw.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    if !lower.starts_with("nsite://") {
+        return None;
+    }
+    let rest = &trimmed["nsite://".len()..];
+
+    let (before_hash, hash) = match rest.split_once('#') {
+        Some((before, fragment)) => (before, format!("#{fragment}")),
+        None => (rest, String::new()),
+    };
+    let (before_search, search) = match before_hash.split_once('?') {
+        Some((before, query)) => (before, format!("?{query}")),
+        None => (before_hash, String::new()),
+    };
+
+    let mut segments = before_search.split('/');
+    let pubkey = segments.next().filter(|value| !value.is_empty())?;
+    if !crate::address::is_nostr_id(pubkey) {
+        return None;
+    }
+
+    let rest: Vec<&str> = segments.collect();
+    let mut site = None;
+    let mut path_segments: &[&str] = &rest;
+
+    if let Some(first) = rest.first() {
+        let candidate = first.to_ascii_lowercase();
+        if is_valid_site_id(&candidate) {
+            site = Some(candidate);
+            path_segments = &rest[1..];
+        }
+    }
+
+    let path = if path_segments.is_empty() {
+        "/".to_string()
+    } else {
+        format!("/{}", path_segments.join("/"))
+    };
+
+    Some(NsiteAddress {
+        pubkey: pubkey.to_string(),
+        site,
+        path,
+        search,
+        hash,
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PathMatch {
     File { path: String, hash: String },
     Redirect { location: String },
@@ -198,6 +263,33 @@ mod tests {
             "npub1x.myblog.nsite.localhost"
         );
         assert_eq!(nsite_host("npub1x", None), "npub1x.nsite.localhost");
+    }
+
+    const NPUB: &str = "npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqhs2n3v";
+
+    #[test]
+    fn parses_site_addresses() {
+        let named = parse_nsite_address(&format!("nsite://{NPUB}/blog/docs/page.html?x=1#top"))
+            .expect("named");
+        assert_eq!(named.pubkey, NPUB);
+        assert_eq!(named.site.as_deref(), Some("blog"));
+        assert_eq!(named.path, "/docs/page.html");
+        assert_eq!(named.search, "?x=1");
+        assert_eq!(named.hash, "#top");
+
+        let root = parse_nsite_address(&format!("nsite://{NPUB}/index.html")).expect("root");
+        assert_eq!(root.site, None);
+        assert_eq!(root.path, "/index.html");
+
+        let bare = parse_nsite_address(&format!("nsite://{NPUB}")).expect("bare");
+        assert_eq!(bare.path, "/");
+
+        let trailing = parse_nsite_address(&format!("nsite://{NPUB}/blog/")).expect("trailing");
+        assert_eq!(trailing.site.as_deref(), Some("blog"));
+        assert_eq!(trailing.path, "/");
+
+        assert!(parse_nsite_address("nsite://example.com/blog").is_none());
+        assert!(parse_nsite_address("https://example.com").is_none());
     }
 
     #[test]

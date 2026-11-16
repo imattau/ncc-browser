@@ -38,7 +38,7 @@ pub use locator::{
 };
 pub use nsite::{
     aggregate_hash, content_type_for, is_valid_site_id, match_path, mime_for_path, nsite_host,
-    PathMatch, NSITE_NAMED_KIND, NSITE_ROOT_KIND,
+    parse_nsite_address, NsiteAddress, PathMatch, NSITE_NAMED_KIND, NSITE_ROOT_KIND,
 };
 pub use routing::{http_origin, join_paths, rewrite_location, upstream_headers, RewriteContext};
 pub use transport::{

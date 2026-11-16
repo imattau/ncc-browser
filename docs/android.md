@@ -240,6 +240,8 @@ Still to build:
 - [x] `nsite://`: manifest resolution (15128/35128), path matching, sha256-verified
       Blossom blobs and content types from the path extension. Hosts are
       `<npub>.<d>.nsite.localhost` and `<npub>.nsite.localhost` for the root site.
+- [x] Link routing: an in-page `ncc://` or `nsite://` link is mapped to its host by
+      `GET /__ncc/route` and loaded in place, so pages can link across services.
 - [ ] Per-tab lifecycle and tab thumbnails.
 - [ ] File chooser and download handling in the content view.
 - [ ] `*.localhost` resolution, secure context, `Secure` cookie behaviour — **the
