@@ -263,7 +263,9 @@ Still to build:
       explains it and a one-shot token records the exception, so it is asked once.
 - [x] Downloads: the content view hands a file to the app, which fetches it through
       `/__ncc/fetch` and saves it wherever the system picker says. No storage
-      permission, and downloaded HTML is not shimmed.
+      permission, and downloaded HTML is not shimmed. The name comes from
+      `Content-Disposition` when the server sends one, and a list of recent downloads
+      (with live progress) is kept in app storage.
 - [ ] Per-tab lifecycle and tab thumbnails.
 - [ ] File chooser and download handling in the content view.
 - [ ] `*.localhost` resolution, secure context, `Secure` cookie behaviour — **the

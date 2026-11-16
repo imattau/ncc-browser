@@ -249,6 +249,11 @@
             <span class="row-text"><b>History</b></span>
             <svg class="i chev"><use href="#i-chevron" /></svg>
           </button>
+          <button class="row" type="button" data-panel="downloads">
+            <span class="row-icon"><svg class="i"><use href="#i-down" /></svg></span>
+            <span class="row-text"><b>Downloads</b><small>Files you have fetched</small></span>
+            <svg class="i chev"><use href="#i-chevron" /></svg>
+          </button>
           <button class="row" type="button" data-panel="bookmarks">
             <span class="row-icon"><svg class="i"><use href="#i-star" /></svg></span>
             <span class="row-text"><b>Bookmarks</b></span>
@@ -449,6 +454,15 @@
       <div id="bookmarks-list" class="body list"></div>
     </section>
 
+    <section id="downloads" class="screen" hidden>
+      <header class="appbar">
+        <button class="ib" type="button" data-back aria-label="Back"><svg class="i"><use href="#i-back" /></svg></button>
+        <h2>Downloads</h2>
+        <button id="downloads-clear" class="btn text" type="button" hidden>Clear</button>
+      </header>
+      <div id="downloads-list" class="body list"></div>
+    </section>
+
     <section id="about" class="screen" hidden>
       <header class="appbar">
         <button class="ib" type="button" data-back aria-label="Back"><svg class="i"><use href="#i-back" /></svg></button>
@@ -456,8 +470,8 @@
       </header>
       <div class="body">
         <p class="alpha">
-          <strong>Alpha software.</strong> Identity, signing, services and sites work.
-          Downloads, private tabs, Tor and extensions do not.
+          <strong>Alpha software.</strong> Identity, signing, services, sites and
+          downloads work. Private tabs, Tor and extensions do not.
         </p>
         <dl class="facts">
           <div><dt>Version</dt><dd id="about-version">…</dd></div>
@@ -549,6 +563,7 @@
       </div>
     </section>
 
+    <script src="downloads.js"></script>
     <script type="module" src="main.js"></script>
   </body>
 </html>
