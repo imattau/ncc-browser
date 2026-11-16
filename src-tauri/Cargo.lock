@@ -3627,7 +3627,7 @@ dependencies = [
 
 [[package]]
 name = "ncc-navigator"
-version = "0.29.5"
+version = "0.29.6"
 dependencies = [
  "log",
  "ncc-core",

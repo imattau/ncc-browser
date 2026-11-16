@@ -26,7 +26,11 @@ description: |
   signer with an encrypted local identity and per-service approval prompts, tabs,
   history, bookmarks, downloads and settings.
 
-  What is missing: extensions, private tabs and Tor are desktop-only.
+  Private tabs and Tor tabs are included: Tor starts when the first Tor tab opens, and
+  private and Tor tabs keep their cookies and storage apart from normal tabs on a recent
+  WebView.
+
+  What is missing: extensions are desktop-only.
 
   The desktop build is unaffected and remains the supported one.
 website: https://github.com/imattau/ncc-browser
