@@ -2671,6 +2671,7 @@ dependencies = [
  "ncc-core",
  "ncc-identity",
  "ncc-tor",
+ "ncc-vault",
  "nostr",
  "rand 0.8.8",
  "reqwest",
@@ -2696,6 +2697,21 @@ dependencies = [
  "tokio",
  "tor-rtcompat",
  "tracing",
+ "url",
+]
+
+[[package]]
+name = "ncc-vault"
+version = "0.1.0"
+dependencies = [
+ "hmac 0.12.1",
+ "ncc-core",
+ "nostr",
+ "rand 0.8.8",
+ "serde",
+ "serde_json",
+ "sha1 0.10.7",
+ "sha2 0.10.9",
  "url",
 ]
 

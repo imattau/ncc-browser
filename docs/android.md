@@ -284,6 +284,13 @@ passphrase and rewritten with the device envelope.
       Limits, deliberately: onion-only (as on the desktop), no WebSockets, and a page
       that builds a URL in JavaScript cannot have that URL rewritten — the policy is
       what stops it from reaching the clearnet.
+- [x] Passwords: the desktop vault format, unchanged — one NIP-78 event (kind 30078,
+      `d = ncc-browser/passwords/v1`) whose content is NIP-44 encrypted to your own key.
+      The cache on disk holds the signed ciphertext, never a plaintext password, so the
+      vault opens offline. Unlock is gated on the device credential and the decrypted
+      vault is dropped after the configured idle time. In-browser filling only: a native
+      hook reports submitted logins, a fill is one-shot and native-initiated, and private
+      and Tor tabs have no hook at all.
 - [x] Storage: clear cache drops locator records, site manifests, verified blobs in
       memory and on disk, and the WebView page cache.
 - [x] A cold load asks for several files at once, so a lookup is gated per site: one
@@ -309,6 +316,62 @@ passphrase and rewritten with the device envelope.
 - [ ] NIP-07 inside iframes (`sec-fetch-dest: iframe`) is deliberately not injected;
       revisit if a real service needs it.
 - [ ] Emulator run of the built APK.
+
+## Passwords
+
+The vault is **the same event the desktop build writes**: kind `30078`, `d` tag
+`ncc-browser/passwords/v1`, entries merged by id with `updatedAt` winning, and the
+whole plaintext NIP-44 encrypted to your own identity. Nothing is translated between
+platforms, so the same npub sees the same logins. `crates/ncc-vault` is the shared
+validator, merge rule, generator and TOTP implementation, tested against the desktop's
+rules — including its two quirks: only `https://` and `ncc://` origins are kept
+(`nsite://` would be discarded by the desktop on its next read), and ids are sixteen
+hex characters rather than UUIDs.
+
+**Unlock.** The Android key is sealed by the keystore and available without a
+passphrase, so "unlock" is a deliberate gate rather than a cryptographic one: the shell
+asks Android for the device credential (`KeyguardManager`, no extra library), and only
+then calls `vault_unlock`. The decrypted vault lives in Rust memory and is dropped after
+`autoLockMinutes` of no activity (default 15; `0` disables it). A device with no lock
+set skips the prompt and says so. This is a real barrier against someone holding an
+unlocked phone, not against a compromised app process — the identity's key is available
+to the app either way.
+
+A **remote signer cannot unlock the vault** on this build: decryption is a NIP-44 round
+trip that would need the signer online for every session, and the vault would then be
+unavailable for autofill. The limit is reported as "set up a locally stored identity".
+
+**Filling, in the browser only.** There is no `AutofillService` yet, and this is
+deliberate: a system service sees only a web domain, cannot tell a private tab from a
+normal one, and cannot express `ncc://` origins. Instead:
+
+- Every normal tab gets a small hook after the page finishes loading. It reports a
+  login only on a *trusted submit*, the same rule the desktop preload uses.
+- The report goes to Kotlin through a `JavascriptInterface` object that is **write-only**:
+  it has one method and returns nothing, so a page can offer a capture but cannot read
+  a credential. A hostile page can therefore spam save prompts; the user confirms each
+  one, captures are deduplicated, and `neverSave` applies.
+- Filling is the opposite direction: the user picks an entry, the origin is checked in
+  Rust, and Kotlin injects a one-shot script with the values inline. There is no
+  page-callable function that returns a password.
+- A captured password crosses the shell's command call on its way to Rust (the shell is
+  our own bundle, not the page), and the save prompt then holds only the request id.
+- Private and Tor tabs never get the hook, and the vault refuses those tab kinds even
+  if the shell asks. `http://` pages are refused; `ncc://` pages are allowed (the npub
+  authenticates the locator), `nsite://` is refused for the format reason above.
+
+**Syncing.** Reads and publishes go through NIP-42 authenticated relay connections;
+writes carry the `d` tag, merge with the newest relay copy first, and a save that no
+relay accepted is kept locally with `pending` set until a later sync republishes it.
+The relay list is the browser's configured relays, or a dedicated vault relay if one is
+set. NIP-65 write-relay discovery is not implemented on this shell, which is why the
+setting is a relay URL rather than a toggle.
+
+Known limits: no CSV import/export yet; forms submitted by JavaScript (`form.submit()`)
+do not fire a trusted `submit` event and are not captured; clipboard clearing after a
+copy is best effort, because Android 10+ restricts background clipboard access; and the
+in-page hook is visible to the page, which is the price of `WebView` having no isolated
+world.
 
 ## Tor
 

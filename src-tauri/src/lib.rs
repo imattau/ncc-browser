@@ -4,8 +4,12 @@ use tauri::{Emitter, Manager};
 
 use ncc_identity::{IdentityStore, KeyEnvelope, PassphraseEnvelope, Status};
 use ncc_proxy::{
+    vault::{Credentials, Draft, PendingSave, SaveOutcome, VaultStatus},
     ApprovalRequest, Approvals, HttpsMode, ProxyConfig, ProxyState, Settings, SettingsStore,
 };
+use ncc_vault::{GeneratorOptions, PasswordSummary, TotpCode};
+use ncc_proxy::settings::PasswordSettings;
+use ncc_proxy::vault::VaultService;
 use ncc_tor::{Tor, TorConfig, TorMode, TorStatus};
 
 /// Everything the commands need. The proxy shares the same `Arc`s.
@@ -33,6 +37,9 @@ struct TorHandle(Option<Arc<Tor>>);
 
 /// Where arti keeps its guard state and directory cache.
 struct AppDataDir(std::path::PathBuf);
+
+/// The password vault. It needs the identity and the settings store, not the proxy.
+struct VaultHandle(Arc<VaultService>);
 
 #[tauri::command]
 fn proxy_port(state: tauri::State<'_, ProxyPort>) -> Option<u16> {
@@ -63,6 +70,138 @@ fn tor_prepare(state: tauri::State<'_, TorHandle>) {
     if let Some(tor) = state.0.as_ref() {
         tor.prepare();
     }
+}
+
+#[tauri::command]
+fn vault_status(vault: tauri::State<'_, VaultHandle>) -> VaultStatus {
+    vault.0.status()
+}
+
+/// Unlocking is gated on a device credential in the shell before this is called; the
+/// vault itself can only check that the identity is available.
+///
+/// The identity is opened here too when it is stored with the device envelope. One
+/// device-credential prompt should be enough to open both, and a passphrase-sealed
+/// identity stays locked and says so.
+#[tauri::command]
+async fn vault_unlock(
+    state: tauri::State<'_, SignerState>,
+    vault: tauri::State<'_, VaultHandle>,
+) -> Result<VaultStatus, String> {
+    let identity = state.identity.status();
+    if identity.initialised && !identity.unlocked {
+        let _ = state.identity.unlock(envelope(None).as_ref());
+    }
+    Ok(vault.0.unlock().await)
+}
+
+#[tauri::command]
+fn vault_lock(vault: tauri::State<'_, VaultHandle>) -> VaultStatus {
+    vault.0.lock()
+}
+
+#[tauri::command]
+fn vault_list(vault: tauri::State<'_, VaultHandle>) -> Vec<PasswordSummary> {
+    vault.0.list()
+}
+
+#[tauri::command]
+fn vault_entry(vault: tauri::State<'_, VaultHandle>, id: String) -> Result<serde_json::Value, String> {
+    let entry = vault.0.entry(&id)?;
+    Ok(serde_json::to_value(entry).map_err(|error| error.to_string())?)
+}
+
+#[tauri::command]
+fn vault_matches(
+    vault: tauri::State<'_, VaultHandle>,
+    url: String,
+    kind: String,
+) -> Result<Vec<PasswordSummary>, String> {
+    vault.0.matches(&url, &kind)
+}
+
+#[tauri::command]
+fn vault_fill(
+    vault: tauri::State<'_, VaultHandle>,
+    id: String,
+    url: String,
+    kind: String,
+) -> Result<Credentials, String> {
+    vault.0.fill(&id, &url, &kind)
+}
+
+#[tauri::command]
+fn vault_totp(vault: tauri::State<'_, VaultHandle>, id: String) -> Result<TotpCode, String> {
+    vault.0.totp(&id)
+}
+
+#[tauri::command]
+fn vault_generate(vault: tauri::State<'_, VaultHandle>, options: GeneratorOptions) -> String {
+    vault.0.generate(&options)
+}
+
+#[tauri::command]
+async fn vault_save(
+    vault: tauri::State<'_, VaultHandle>,
+    draft: Draft,
+) -> Result<SaveOutcome, String> {
+    Ok(vault.0.save(draft).await)
+}
+
+#[tauri::command]
+async fn vault_remove(
+    vault: tauri::State<'_, VaultHandle>,
+    id: String,
+) -> Result<SaveOutcome, String> {
+    Ok(vault.0.remove(&id).await)
+}
+
+#[tauri::command]
+fn vault_capture(
+    vault: tauri::State<'_, VaultHandle>,
+    url: String,
+    kind: String,
+    title: String,
+    username: String,
+    password: String,
+) -> Result<Option<PendingSave>, String> {
+    vault
+        .0
+        .capture(&url, &kind, &title, &username, &password)
+}
+
+#[tauri::command]
+async fn vault_respond(
+    vault: tauri::State<'_, VaultHandle>,
+    id: String,
+    action: String,
+) -> Result<SaveOutcome, String> {
+    Ok(vault.0.respond_to_save(&id, &action).await)
+}
+
+#[tauri::command]
+fn vault_config(
+    state: tauri::State<'_, SignerState>,
+    vault: tauri::State<'_, VaultHandle>,
+    passwords: PasswordSettings,
+) -> Result<Settings, String> {
+    let saved = state.proxy.settings().set_passwords(passwords)?;
+    let _ = vault;
+    Ok(saved)
+}
+
+#[tauri::command]
+fn vault_forget_never_save(
+    state: tauri::State<'_, SignerState>,
+    origin: String,
+) -> Result<Settings, String> {
+    state.proxy.settings().remove_never_save(&origin)
+}
+
+/// Called when the shell becomes visible again: pulls the relay copy, throttled.
+#[tauri::command]
+async fn vault_focus(vault: tauri::State<'_, VaultHandle>) -> Result<VaultStatus, String> {
+    Ok(vault.0.on_focus().await)
 }
 
 #[tauri::command]
@@ -442,6 +581,22 @@ pub fn run() {
             tor_status,
             tor_prepare,
             settings_set_tor,
+            vault_status,
+            vault_unlock,
+            vault_lock,
+            vault_list,
+            vault_entry,
+            vault_matches,
+            vault_fill,
+            vault_totp,
+            vault_generate,
+            vault_save,
+            vault_remove,
+            vault_capture,
+            vault_respond,
+            vault_config,
+            vault_forget_never_save,
+            vault_focus,
             bunker_connect,
             bunker_status,
             bunker_disconnect,
@@ -578,7 +733,14 @@ pub fn run() {
 
             app.manage(ProxyPort(port));
             app.manage(PrivateProxyPort(private_port));
+            let vault_service = Arc::new(VaultService::new(
+                identity.clone(),
+                settings.clone(),
+                data_dir.join("vault").join("cache.json"),
+            ));
+
             app.manage(TorProxyPort(tor_port));
+            app.manage(VaultHandle(vault_service));
             app.manage(TorHandle(tor));
             app.manage(AppDataDir(data_dir.clone()));
             app.manage(SignerState {

@@ -28,6 +28,7 @@ pub mod resolve;
 pub mod server;
 pub mod settings;
 pub mod signer;
+pub mod vault;
 pub mod vhost;
 
 pub use approvals::{ApprovalRequest, Approvals};
@@ -36,6 +37,7 @@ pub use pins::PinStore;
 pub use resolve::{DiscoveredService, ResolveError, ResolvedService, Resolver};
 pub use server::{serve, ProxyConfig, ProxyState};
 pub use settings::{HttpsMode, Settings, SettingsStore};
+pub use vault::VaultService;
 pub use vhost::{host_for, parse_vhost, Vhost};
 
 use std::sync::{Mutex, MutexGuard};
