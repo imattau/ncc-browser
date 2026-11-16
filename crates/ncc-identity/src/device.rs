@@ -31,6 +31,10 @@ impl KeyEnvelope for DeviceEnvelope {
     }
 }
 
+// The crate denies `unsafe`; this is the single place it is unavoidable, because
+// turning the VM and application-context pointers that `ndk_context` hands out into
+// JNI handles is an unchecked conversion with no safe alternative in `jni`.
+#[allow(unsafe_code)]
 fn call(method: &str, input: &str) -> Result<String, IdentityError> {
     let context = ndk_context::android_context();
     // SAFETY: `ndk_context` holds the VM the app is running on; this is the pointer

@@ -447,9 +447,11 @@ fn parse_secret(secret: &str) -> Result<Keys, IdentityError> {
 }
 
 fn npub_of(keys: &Keys) -> Result<String, IdentityError> {
-    keys.public_key()
-        .to_bech32()
-        .map_err(|error| IdentityError::Codec(error.to_string()))
+    // Encoding a valid public key cannot fail; the error type is `Infallible`.
+    match keys.public_key().to_bech32() {
+        Ok(npub) => Ok(npub),
+        Err(never) => match never {},
+    }
 }
 
 fn derive(passphrase: &str, salt: &[u8]) -> Result<[u8; KEY_LEN], IdentityError> {
