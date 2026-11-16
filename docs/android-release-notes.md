@@ -5,6 +5,13 @@ is not a daily driver.
 
 ## New in this build
 
+- Passwords. The vault is the same NIP-78 event the desktop build uses, encrypted to
+  your own key, so importing the same npub brings your logins with you. Unlock asks for
+  your device lock, the decrypted vault is forgotten after a configurable idle time, and
+  nothing plaintext is written to disk. Settings → Passwords manages logins (add, edit,
+  delete, generator, 2FA codes, auto-lock, relay); the menu fills one into the current
+  page, and submitting a login offers to save it. Filling works on https and ncc pages
+  only, never in private or Tor tabs, and a page can never read a password back.
 - Searching from a Tor tab now works: the address bar searches through DuckDuckGo's
   onion service (or your own onion search instance), and an engine with no onion
   service falls back to DuckDuckGo instead of refusing. Typing in a Tor or private
