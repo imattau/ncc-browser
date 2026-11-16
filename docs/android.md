@@ -92,6 +92,16 @@ The content WebView never sees `ncc://`. It loads
 endpoint and rewrites redirects into the same host form. `to_display_url` (already in
 `ncc-core`) is what the address bar renders, so the user-facing address is unchanged.
 
+Android's resolver does not map `*.localhost` to loopback (`net::ERR_NAME_NOT_RESOLVED`),
+so the content surface intercepts those requests in `shouldInterceptRequest` and
+replays them against `127.0.0.1:<port>` with the vhost in `x-ncc-vhost`. The document
+URL — and therefore the origin, cookies, storage and service-worker scope — stays the
+vhost, so interception preserves the origin model rather than bypassing it.
+
+Three gaps come with interception, all because the WebView hands over a request
+without its body: submitted form bodies are dropped, only the last `Set-Cookie`
+survives, and service-worker/WebSocket traffic is not intercepted.
+
 ### NIP-07
 
 Electron gets `window.nostr` from a preload in an isolated world at document start.

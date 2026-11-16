@@ -91,20 +91,54 @@ async function main() {
   byId('close').addEventListener('click', () => content?.close())
 }
 
+/**
+ * Accept what a person actually pastes: `ncc://npub…/service`, `npub…/service`,
+ * a hex key, or a bare key for the default service.
+ */
+function parseAddress(input) {
+  const text = input
+    .trim()
+    .replace(/^ncc:\/\//i, '')
+    .replace(/^\/+/, '')
+
+  if (!text) return { error: 'Enter an npub and, optionally, a service.' }
+
+  const [pubkey, rawService = ''] = text.split('/')
+  const service = rawService.trim() || 'addr'
+
+  if (!/^(npub1[0-9a-z]{20,}|[0-9a-f]{64})$/i.test(pubkey)) {
+    return {
+      error: 'Expected an npub (npub1…) or a 64-character hex pubkey, then an optional /service.'
+    }
+  }
+  if (!/^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$/.test(service)) {
+    return { error: `"${service}" is not a valid service name.` }
+  }
+
+  return { pubkey: pubkey.toLowerCase(), service }
+}
+
 function targetUrl(port) {
-  const value = byId('address').value.trim()
-  const [pubkey, service = 'addr'] = value.split('/')
-  return `http://${pubkey}.${service}.localhost:${port}/`
+  const parsed = parseAddress(byId('address').value)
+  if (parsed.error) return { error: parsed.error }
+  return { url: `http://${parsed.pubkey}.${parsed.service}.localhost:${port}/` }
 }
 
 function open(port) {
-  const url = targetUrl(port)
-  if (content) {
-    byId('result').textContent = `opening ${url}`
-    content.open(url)
+  const target = targetUrl(port)
+  if (target.error) {
+    byId('result').textContent = target.error
     return
   }
-  void probe(url)
+
+  byId('close').hidden = true
+  byId('result').textContent = `opening ${target.url}`
+
+  if (content) {
+    content.open(target.url)
+    return
+  }
+  void probe(target.url)
 }
 
 async function probe(url) {
