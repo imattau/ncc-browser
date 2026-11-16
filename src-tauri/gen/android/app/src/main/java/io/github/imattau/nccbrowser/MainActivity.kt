@@ -55,6 +55,9 @@ class MainActivity : TauriActivity() {
   private var barAtBottom = true
 
   private val tabs = mutableListOf<ContentSurface>()
+
+  /** The proxy's port, as reported by the shell. Clearnet pages cannot reveal it. */
+  private var proxyPortNumber = 0
   private var pendingDownload: Pair<File, String>? = null
   private lateinit var downloads: Downloads
 
@@ -267,6 +270,7 @@ class MainActivity : TauriActivity() {
       val tab = ContentSurface(
         "tab-${nextTabId++}",
         contentHost ?: return@captureActive,
+        { proxyPortNumber },
         ::onTabEvent,
         ::startDownload,
       )
@@ -329,7 +333,7 @@ class MainActivity : TauriActivity() {
    * same URL by name (`/__ncc/fetch?u=…`) rather than trying to resolve it.
    */
   private fun startDownload(vhostUrl: String, mimeType: String?, contentDisposition: String?) {
-    val port = Uri.parse(vhostUrl).port
+    val port = proxyPortNumber.takeIf { it > 0 } ?: Uri.parse(vhostUrl).port
     if (port <= 0) {
       toast("Download failed: the proxy port is unknown")
       return
@@ -526,6 +530,19 @@ class MainActivity : TauriActivity() {
     @JavascriptInterface
     fun capture() {
       runOnUiThread { emitTabs(true) }
+    }
+
+    /** The shell learns the port from the Rust side; the tabs need it for links and
+     * downloads from pages that do not carry it in their URL. */
+    @JavascriptInterface
+    fun setProxyPort(port: Int) {
+      runOnUiThread { proxyPortNumber = port }
+    }
+
+    /** The strip's arrow: same path as the system gesture, so the two cannot drift. */
+    @JavascriptInterface
+    fun navigateBack() {
+      runOnUiThread { navigateBack() }
     }
 
     @JavascriptInterface
