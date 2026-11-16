@@ -56,6 +56,15 @@ fn tor_status(state: tauri::State<'_, TorHandle>) -> Option<TorStatus> {
     state.0.as_ref().map(|tor| tor.status())
 }
 
+/// Start resolving a Tor route, if one is not already being resolved. Called when a
+/// Tor tab is opened: launching the app on its own must not contact the Tor network.
+#[tauri::command]
+fn tor_prepare(state: tauri::State<'_, TorHandle>) {
+    if let Some(tor) = state.0.as_ref() {
+        tor.prepare();
+    }
+}
+
 #[tauri::command]
 fn browser_settings(state: tauri::State<'_, SignerState>) -> Settings {
     state.proxy.settings().get()
@@ -431,6 +440,7 @@ pub fn run() {
             private_proxy_port,
             tor_proxy_port,
             tor_status,
+            tor_prepare,
             settings_set_tor,
             bunker_connect,
             bunker_status,

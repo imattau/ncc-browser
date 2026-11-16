@@ -1066,6 +1066,14 @@ async function navigate(text, { newTab = false, private: isPrivate = false, tor 
   if (onion) {
     if (!torPort) return { error: 'Tor is not available in this build.' }
 
+    // Opening the first Tor tab is what starts Tor. Nothing contacts the network on
+    // launch, and a session that never opens an onion never does either.
+    try {
+      await invoke('tor_prepare')
+    } catch {
+      // The status panel explains a missing route; the tab waits for one either way.
+    }
+
     let target = onionTarget(onion, torPort)
     try {
       const response = await fetch(
@@ -1835,7 +1843,7 @@ function torStateText(status) {
   if (status.state === 'failed') {
     return `Tor is not running: ${status.error || 'no reason was reported'}`
   }
-  return 'Tor has not started yet.'
+  return 'Tor starts when a Tor tab is opened.'
 }
 
 async function refreshTorState() {
@@ -1849,6 +1857,14 @@ async function refreshTorState() {
 }
 
 async function loadTor() {
+  // Looking at this panel is asking about Tor, so it is also a reasonable moment to
+  // start it. `prepare` does nothing if a route is already being resolved.
+  try {
+    await invoke('tor_prepare')
+  } catch {
+    // Reported below via the status line.
+  }
+
   try {
     browserSettings = await invoke('browser_settings')
     byId('tor-mode').value = browserSettings.torMode === 'local' ? 'local' : 'auto'
