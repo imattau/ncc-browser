@@ -1,7 +1,9 @@
 package io.github.imattau.nccbrowser
 
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.graphics.Bitmap
+import android.graphics.Rect
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
@@ -105,10 +107,22 @@ class ContentSurface(
       return
     }
 
-    val full = Bitmap.createBitmap(web.width, web.height, Bitmap.Config.ARGB_8888)
+    val activity = container.context as? Activity
+    if (activity == null) {
+      onCaptured(null)
+      return
+    }
+
+    // PixelCopy has no View overload on this SDK: copy the rectangle the view occupies
+    // out of the window instead.
+    val location = IntArray(2)
+    web.getLocationInWindow(location)
+    val source = Rect(location[0], location[1], location[0] + web.width, location[1] + web.height)
+    val full = Bitmap.createBitmap(source.width(), source.height(), Bitmap.Config.ARGB_8888)
     try {
       PixelCopy.request(
-        web,
+        activity.window,
+        source,
         full,
         { result ->
           if (result != PixelCopy.SUCCESS) {

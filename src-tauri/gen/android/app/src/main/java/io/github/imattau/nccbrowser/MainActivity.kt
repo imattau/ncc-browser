@@ -175,10 +175,10 @@ class MainActivity : TauriActivity() {
     }
 
     captureActive {
-      val tab = ContentSurface("tab-${nextTabId++}", contentHost ?: return@capture, ::onTabEvent)
+      val tab = ContentSurface("tab-${nextTabId++}", contentHost ?: return@captureActive, ::onTabEvent)
       if (!tab.open(url)) {
         tab.destroy()
-        return@capture
+        return@captureActive
       }
       active()?.hide()
       tabs.add(tab)
