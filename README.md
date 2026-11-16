@@ -20,6 +20,12 @@ themes with text/density/accent controls, an encrypted NIP-78 password manager w
 fill/save and TOTP, a Manifest V3 extension host with `chrome.*` compatibility and NCC
 Nostr APIs, and packaged Linux, macOS and Windows releases.
 
+> **Android is alpha.** There is an early Tauri build for Android, published to
+> Zapstore for testing. It resolves locators, serves pages through a loopback proxy
+> with `k` pinning and injects a NIP-07 shim, but it has no identity, no signer
+> approvals, no tabs and no extensions yet. It is not a daily driver. See
+> [`docs/android.md`](./docs/android.md).
+
 ![Start screen](./docs/welcome.png)
 
 | Tabs | Failure page | Settings page |

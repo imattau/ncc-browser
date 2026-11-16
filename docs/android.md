@@ -1,7 +1,9 @@
 # Android build
 
-Status: **shell builds and signs in CI; the NCC proxy serves live records**. The
-content WebView and the React chrome are not written yet.
+Status: **alpha**. Published to Zapstore as `Nostr Navigator (alpha)` for testing.
+The shell builds and signs in CI, the NCC proxy serves live records and a content
+WebView renders them; there is no identity, no signer behind the NIP-07 routes, no
+tabs and no real chrome yet. Not a daily driver.
 
 ## Verified
 
