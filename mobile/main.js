@@ -29,9 +29,167 @@ const content = globalThis.NccContent
 let contentOpen = false
 let tabs = []
 let activeTabId = ''
-let panel = 'stage'
+let panel = 'home'
 let proxyPort = null
 let activeUrl = ''
+let activeTitle = ''
+let signerTimer = null
+let signerDeadline = 0
+
+const PANELS = [
+  'home',
+  'switcher',
+  'info',
+  'menu',
+  'appearance',
+  'identity',
+  'signer-settings',
+  'history',
+  'bookmarks',
+  'about'
+]
+
+const HISTORY_KEY = 'ncc.history'
+const BOOKMARKS_KEY = 'ncc.bookmarks'
+
+function readList(key) {
+  try {
+    const value = JSON.parse(globalThis.localStorage?.getItem(key) || '[]')
+    return Array.isArray(value) ? value : []
+  } catch {
+    return []
+  }
+}
+
+function writeList(key, value) {
+  try {
+    globalThis.localStorage?.setItem(key, JSON.stringify(value))
+  } catch {
+    // Storage can be unavailable; history just does not persist.
+  }
+}
+
+function recordVisit(url, title) {
+  if (!url) return
+  const address = displayAddress(url)
+  const entries = readList(HISTORY_KEY).filter((entry) => entry.address !== address)
+  entries.unshift({ address, title: title || '', at: Date.now() })
+  writeList(HISTORY_KEY, entries.slice(0, 200))
+}
+
+function toggleBookmark(address, title) {
+  const entries = readList(BOOKMARKS_KEY)
+  const index = entries.findIndex((entry) => entry.address === address)
+  if (index >= 0) entries.splice(index, 1)
+  else entries.unshift({ address, title: title || '', at: Date.now() })
+  writeList(BOOKMARKS_KEY, entries)
+  renderBookmarks()
+}
+
+function listRow(label, detail, onClick, action) {
+  const row = document.createElement('button')
+  row.type = 'button'
+  row.style.textAlign = 'left'
+
+  const strong = document.createElement('strong')
+  strong.textContent = label
+  const small = document.createElement('small')
+  small.style.display = 'block'
+  small.style.color = 'var(--muted)'
+  small.textContent = detail
+
+  row.append(strong, small)
+  row.addEventListener('click', onClick)
+
+  if (action) {
+    const remove = document.createElement('button')
+    remove.type = 'button'
+    remove.className = 'secondary'
+    remove.textContent = action.label
+    remove.style.marginTop = '8px'
+    remove.addEventListener('click', action.onClick)
+
+    const wrapper = document.createElement('div')
+    wrapper.append(row, remove)
+    return wrapper
+  }
+
+  return row
+}
+
+function renderHistory() {
+  const container = byId('history-list')
+  container.textContent = ''
+
+  const entries = readList(HISTORY_KEY)
+  if (entries.length === 0) {
+    container.textContent = 'No history yet.'
+    return
+  }
+
+  for (const entry of entries) {
+    container.appendChild(
+      listRow(
+        entry.title || entry.address,
+        `${entry.address} · ${new Date(entry.at).toLocaleString()}`,
+        () => openAddress(entry.address)
+      )
+    )
+  }
+}
+
+function renderBookmarks() {
+  const container = byId('bookmarks-list')
+  container.textContent = ''
+
+  const entries = readList(BOOKMARKS_KEY)
+  if (entries.length === 0) {
+    container.textContent = 'No bookmarks yet.'
+    return
+  }
+
+  for (const entry of entries) {
+    container.appendChild(
+      listRow(entry.title || entry.address, entry.address, () => openAddress(entry.address), {
+        label: 'Remove',
+        onClick: () => toggleBookmark(entry.address, entry.title)
+      })
+    )
+  }
+}
+
+function openAddress(address) {
+  byId('address').value = address
+  closePanel()
+  void open(proxyPort)
+}
+
+async function loadPermissions() {
+  const container = byId('permissions')
+  container.textContent = ''
+
+  try {
+    const services = await globalThis.__TAURI__.core.invoke('signer_permissions')
+    if (services.length === 0) {
+      container.textContent = 'No service is trusted yet.'
+      return
+    }
+
+    for (const service of services) {
+      container.appendChild(
+        listRow(service, 'Does not ask again this session', () => {}, {
+          label: 'Revoke',
+          onClick: async () => {
+            await globalThis.__TAURI__.core.invoke('signer_revoke', { service })
+            await loadPermissions()
+          }
+        })
+      )
+    }
+  } catch (error) {
+    container.textContent = String(error)
+  }
+}
 let newTabMode = false
 
 /**
@@ -69,13 +227,14 @@ globalThis.__nccTabs = (payload) => {
 
   if (panel === 'switcher') renderTabGrid()
   if (tabs.length === 0 && panel === 'switcher') {
-    panel = 'stage'
+    panel = 'home'
     applyLayout()
   }
 
   const active = tabs.find((tab) => tab.id === activeTabId)
   if (active && active.url) {
     activeUrl = active.url
+    activeTitle = active.title || ''
     byId('bar-address').textContent = displayAddress(active.url)
   }
 }
@@ -114,7 +273,7 @@ function renderTabGrid() {
     card.appendChild(close)
 
     card.addEventListener('click', () => {
-      panel = 'stage'
+      panel = 'home'
       applyLayout()
       content?.select(tab.id)
     })
@@ -140,11 +299,14 @@ function showPanel(name) {
     renderTabGrid()
   }
   if (name === 'info') void loadInfo()
+  if (name === 'signer-settings') void loadPermissions()
+  if (name === 'history') renderHistory()
+  if (name === 'bookmarks') renderBookmarks()
   applyLayout()
 }
 
 function closePanel() {
-  panel = 'stage'
+  panel = 'home'
   if (tabs.length > 0) content?.expand(false)
   applyLayout()
 }
@@ -249,6 +411,14 @@ globalThis.__nccContent = (state) => {
 
   byId('result').textContent = lines.join('\n')
 
+  if (state.type === 'loaded') {
+    recordVisit(state.url, state.title)
+    if (tabs.find((tab) => tab.id === state.tab)?.active) {
+      activeUrl = state.url
+      activeTitle = state.title || ''
+    }
+  }
+
   if (state.type === 'loaded' || state.type === 'blocked' || state.type === 'failed') {
     contentOpen = true
     byId('close').hidden = false
@@ -279,11 +449,11 @@ async function main() {
   }
 
   set('bridge', 'ok')
-  set('secure', globalThis.isSecureContext ? 'yes' : 'no')
-  set('sw', 'serviceWorker' in navigator ? 'available' : 'absent')
 
   try {
-    set('version', await tauri.app.getVersion())
+    const version = await tauri.app.getVersion()
+    set('version', version)
+    set('about-version', version)
   } catch {
     // Informational only.
   }
@@ -304,6 +474,7 @@ async function main() {
 
   proxyPort = port
   set('proxy', `127.0.0.1:${port}`)
+  set('about-proxy', `127.0.0.1:${port}`)
   byId('go').textContent = content
     ? 'Open in the content view'
     : 'Fetch through the proxy'
@@ -319,11 +490,15 @@ async function main() {
     byId('bar-back').addEventListener('click', () => content.back())
     byId('bar-reload').addEventListener('click', () => content.reload())
     byId('bar-address').addEventListener('click', () => {
-      panel = 'stage'
+      panel = 'home'
       content.expand(true)
       applyLayout()
       byId('address').focus()
     })
+    for (const button of document.querySelectorAll('[data-panel]')) {
+      button.addEventListener('click', () => showPanel(button.dataset.panel))
+    }
+
     byId('bar-tabs').addEventListener('click', () => showPanel('switcher'))
     byId('switcher-done').addEventListener('click', () => closePanel())
     byId('switcher-new').addEventListener('click', () => startNewTab())
@@ -350,8 +525,17 @@ async function main() {
       closePanel()
     })
     byId('menu-settings').addEventListener('click', () => {
-      panel = 'stage'
+      panel = 'home'
       applyLayout()
+    })
+    byId('menu-history').addEventListener('click', () => showPanel('history'))
+    byId('menu-bookmark').addEventListener('click', () => {
+      if (activeUrl) toggleBookmark(displayAddress(activeUrl), activeTitle)
+      closePanel()
+    })
+    byId('history-clear').addEventListener('click', () => {
+      writeList(HISTORY_KEY, [])
+      renderHistory()
     })
     byId('bar-position').addEventListener('change', (event) => applyBarPosition(event.target.value))
     applyBarPosition(globalThis.localStorage?.getItem('ncc.bar') || 'bottom')
@@ -453,6 +637,10 @@ async function setupIdentity(tauri) {
 /** A page is waiting on an answer, so take the window until it has one. */
 function showSigner(request) {
   signerRequest = request
+  signerDeadline = Date.now() + 120_000
+  byId('signer-countdown').textContent = 'Expires in 120s'
+  if (signerTimer) clearInterval(signerTimer)
+  signerTimer = setInterval(tickSigner, 1000)
   byId('signer-service').textContent = request.service
   byId('signer-method').textContent =
     request.method + (request.kind ? ` · kind ${request.kind}` : '')
@@ -462,8 +650,24 @@ function showSigner(request) {
   content?.expand(true)
 }
 
+function tickSigner() {
+  const left = Math.max(0, Math.round((signerDeadline - Date.now()) / 1000))
+  byId('signer-countdown').textContent =
+    left > 0 ? `Expires in ${left}s` : 'Expired — the request was denied.'
+
+  if (left === 0) {
+    if (signerTimer) clearInterval(signerTimer)
+    signerTimer = null
+    signerRequest = null
+    byId('signer').hidden = true
+  }
+}
+
 async function answerSigner(allow) {
   if (!signerRequest) return
+
+  if (signerTimer) clearInterval(signerTimer)
+  signerTimer = null
   const request = signerRequest
   signerRequest = null
 
@@ -484,7 +688,7 @@ async function answerSigner(allow) {
 
 function startNewTab() {
   newTabMode = true
-  panel = 'stage'
+  panel = 'home'
   content?.expand(true)
   applyLayout()
   byId('go').textContent = 'Open in a new tab'
@@ -496,16 +700,9 @@ function applyLayout() {
   document.body.classList.toggle('compact', compact)
   byId('bar').hidden = !compact
 
-  if (compact) {
-    byId('stage').hidden = true
-    byId('switcher').hidden = true
-    byId('info').hidden = true
-    byId('menu').hidden = true
-  } else {
-    byId('stage').hidden = panel !== 'stage'
-    byId('switcher').hidden = panel !== 'switcher'
-    byId('info').hidden = panel !== 'info'
-    byId('menu').hidden = panel !== 'menu'
+  for (const name of PANELS) {
+    const element = byId(name)
+    if (element) element.hidden = compact || panel !== name
   }
 
   if (!compact && contentOpen) byId('collapse').hidden = false

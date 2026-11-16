@@ -9,11 +9,9 @@
   </head>
   <body>
     <!--
-      M0 shell. Not the React chrome yet: it exists to prove the shell builds, signs,
-      installs, starts the NCC proxy and can reach a virtual host from the WebView.
-      The React chrome and the content surface replace it in M1.
+      The chrome strip. Only visible when the shell is resized to one row; every
+      full-window surface below is the shell expanded over the page.
     -->
-    <!-- The chrome strip. Only visible when the shell is resized to one row. -->
     <header id="bar" class="strip" hidden>
       <button id="bar-back" class="icon" type="button" aria-label="Back">&#8592;</button>
       <button id="bar-info" class="icon lock" type="button" aria-label="Site information">&#128274;</button>
@@ -22,6 +20,153 @@
       <button id="bar-reload" class="icon" type="button" aria-label="Reload">&#8635;</button>
       <button id="bar-menu" class="icon" type="button" aria-label="Menu">&#8942;</button>
     </header>
+
+    <section id="home" class="sheet">
+      <header class="sheet-head">
+        <h2>Nostr Navigator</h2>
+      </header>
+
+      <p class="alpha" role="status">
+        <strong>Alpha.</strong> Identity and signing work. Downloads and settings are
+        partial. Please do not use this as your daily browser.
+      </p>
+
+      <label class="field">
+        <span>address</span>
+        <input
+          id="address"
+          spellcheck="false"
+          autocapitalize="off"
+          autocomplete="off"
+          value="npub1zapstdvcqpkwqh0sq3685kw87mqlruv9zuck5kxk0m9eazlsd5xq2juxuw"
+        />
+      </label>
+
+      <button id="go" type="button">Open in the content view</button>
+      <button id="close" type="button" class="secondary" hidden>Close content view</button>
+      <button id="collapse" type="button" class="secondary" hidden>Back to the page</button>
+
+      <pre id="result" class="result">—</pre>
+
+      <nav class="menu-list">
+        <button type="button" data-panel="appearance">Address bar</button>
+        <button type="button" data-panel="identity">Identity</button>
+        <button type="button" data-panel="signer-settings">Signer permissions</button>
+        <button type="button" data-panel="history">History</button>
+        <button type="button" data-panel="bookmarks">Bookmarks</button>
+        <button type="button" data-panel="about">About</button>
+      </nav>
+
+      <dl class="facts">
+        <div><dt>app version</dt><dd id="version">…</dd></div>
+        <div><dt>proxy</dt><dd id="proxy">…</dd></div>
+        <div><dt>tauri bridge</dt><dd id="bridge">…</dd></div>
+      </dl>
+    </section>
+
+    <section id="appearance" class="sheet" hidden>
+      <header class="sheet-head">
+        <h2>Address bar</h2>
+        <button type="button" class="secondary" data-panel="home">Back</button>
+      </header>
+      <label class="field">
+        <span>position</span>
+        <select id="bar-position">
+          <option value="bottom">Bottom</option>
+          <option value="top">Top</option>
+        </select>
+      </label>
+    </section>
+
+    <section id="identity" class="sheet" hidden>
+      <header class="sheet-head">
+        <h2>Identity</h2>
+        <button type="button" class="secondary" data-panel="home">Back</button>
+      </header>
+
+      <p id="identity-state" class="lede">Checking…</p>
+
+      <div id="identity-setup" hidden>
+        <label class="field">
+          <span>passphrase</span>
+          <input id="passphrase" type="password" autocomplete="new-password" />
+        </label>
+        <button id="identity-create" type="button">Create a new identity</button>
+        <details class="import">
+          <summary>or import an existing key</summary>
+          <label class="field">
+            <span>nsec</span>
+            <input id="nsec" type="password" autocomplete="off" spellcheck="false" />
+          </label>
+          <button id="identity-import" type="button" class="secondary">Import</button>
+        </details>
+      </div>
+
+      <div id="identity-locked" hidden>
+        <label class="field">
+          <span>passphrase</span>
+          <input id="unlock-passphrase" type="password" autocomplete="current-password" />
+        </label>
+        <button id="identity-unlock" type="button">Unlock</button>
+      </div>
+
+      <button id="identity-lock" type="button" class="secondary" hidden>Lock</button>
+      <p id="identity-error" class="note"></p>
+    </section>
+
+    <section id="signer-settings" class="sheet" hidden>
+      <header class="sheet-head">
+        <h2>Signer permissions</h2>
+        <button type="button" class="secondary" data-panel="home">Back</button>
+      </header>
+      <p class="lede">
+        Services you told the browser not to ask about. Trust lasts until the app
+        restarts.
+      </p>
+      <div id="permissions" class="menu-list"></div>
+    </section>
+
+    <section id="history" class="sheet" hidden>
+      <header class="sheet-head">
+        <h2>History</h2>
+        <button id="history-clear" type="button" class="secondary">Clear</button>
+        <button type="button" class="secondary" data-panel="home">Back</button>
+      </header>
+      <div id="history-list" class="menu-list"></div>
+    </section>
+
+    <section id="bookmarks" class="sheet" hidden>
+      <header class="sheet-head">
+        <h2>Bookmarks</h2>
+        <button type="button" class="secondary" data-panel="home">Back</button>
+      </header>
+      <div id="bookmarks-list" class="menu-list"></div>
+    </section>
+
+    <section id="about" class="sheet" hidden>
+      <header class="sheet-head">
+        <h2>About</h2>
+        <button type="button" class="secondary" data-panel="home">Back</button>
+      </header>
+      <p class="alpha">
+        <strong>Alpha software.</strong> Identity, signing, services and sites work.
+        Downloads, private tabs, Tor and extensions do not.
+      </p>
+      <dl class="facts">
+        <div><dt>version</dt><dd id="about-version">…</dd></div>
+        <div><dt>proxy</dt><dd id="about-proxy">…</dd></div>
+        <div><dt>source</dt><dd>github.com/imattau/ncc-browser</dd></div>
+      </dl>
+    </section>
+
+    <section id="switcher" class="sheet" hidden>
+      <header class="sheet-head">
+        <h2>Tabs</h2>
+        <button id="switcher-new" type="button" class="secondary">New tab</button>
+        <button id="switcher-done" type="button" class="secondary">Done</button>
+      </header>
+      <div id="tab-grid" class="tab-grid"></div>
+    </section>
 
     <section id="info" class="sheet" hidden>
       <header class="sheet-head">
@@ -39,117 +184,27 @@
       <div class="menu-list">
         <button id="menu-new" type="button">New tab</button>
         <button id="menu-reload" type="button">Reload</button>
+        <button id="menu-bookmark" type="button">Bookmark this page</button>
         <button id="menu-copy" type="button">Copy address</button>
         <button id="menu-close" type="button">Close tab</button>
+        <button id="menu-history" type="button">History</button>
         <button id="menu-settings" type="button">Settings</button>
       </div>
     </section>
 
-    <section id="switcher" class="sheet" hidden>
-      <header class="sheet-head">
-        <h2>Tabs</h2>
-        <button id="switcher-new" type="button" class="secondary">New tab</button>
-        <button id="switcher-done" type="button" class="secondary">Done</button>
-      </header>
-      <div id="tab-grid" class="tab-grid"></div>
-    </section>
-
-    <main id="stage" class="stage">
-      <p class="alpha" role="status">
-        <strong>Alpha.</strong> Identity and signing work. Tabs, history, bookmarks
-        and downloads do not. Please do not use this as your daily browser.
-      </p>
-
-      <h1>Nostr Navigator</h1>
-      <p class="lede">Android shell. The content surface is not wired up yet.</p>
-
-      <dl class="facts">
-        <div><dt>app version</dt><dd id="version">…</dd></div>
-        <div><dt>proxy</dt><dd id="proxy">…</dd></div>
-        <div><dt>tauri bridge</dt><dd id="bridge">…</dd></div>
-        <div><dt>secure context</dt><dd id="secure">…</dd></div>
-        <div><dt>service workers</dt><dd id="sw">…</dd></div>
-      </dl>
-
-      <section class="panel">
-        <h2>Appearance</h2>
-        <label class="field">
-          <span>toolbar position</span>
-          <select id="bar-position">
-            <option value="bottom">Bottom</option>
-            <option value="top">Top</option>
-          </select>
-        </label>
-      </section>
-
-      <section class="panel">
-        <h2>Identity</h2>
-        <p id="identity-state" class="lede">Checking…</p>
-
-        <div id="identity-setup" hidden>
-          <label class="field">
-            <span>passphrase</span>
-            <input id="passphrase" type="password" autocomplete="new-password" />
-          </label>
-          <button id="identity-create" type="button">Create a new identity</button>
-          <details class="import">
-            <summary>or import an existing key</summary>
-            <label class="field">
-              <span>nsec</span>
-              <input id="nsec" type="password" autocomplete="off" spellcheck="false" />
-            </label>
-            <button id="identity-import" type="button" class="secondary">Import</button>
-          </details>
-        </div>
-
-        <div id="identity-locked" hidden>
-          <label class="field">
-            <span>passphrase</span>
-            <input id="unlock-passphrase" type="password" autocomplete="current-password" />
-          </label>
-          <button id="identity-unlock" type="button">Unlock</button>
-        </div>
-
-        <button id="identity-lock" type="button" class="secondary" hidden>Lock</button>
-        <p id="identity-error" class="note"></p>
-      </section>
-
-      <section id="signer" class="panel signer" hidden>
-        <h2>Signature request</h2>
-        <p id="signer-service" class="lede"></p>
-        <p id="signer-method" class="note"></p>
-        <pre id="signer-preview" class="result"></pre>
-        <label class="check">
-          <input id="signer-remember" type="checkbox" />
-          Don't ask again for this service
-        </label>
-        <button id="signer-allow" type="button">Approve</button>
-        <button id="signer-deny" type="button" class="secondary">Deny</button>
-      </section>
-
-      <h2>Try a live service</h2>
-      <p class="lede">
-        Fetches the service root through the proxy, so this is the
-        <code>*.localhost</code> test without the content view.
-      </p>
-
-      <label class="field">
-        <span>address</span>
-        <input
-          id="address"
-          spellcheck="false"
-          autocapitalize="off"
-          autocomplete="off"
-          value="1a11f6a505399c25805eceffb6078f1b924df15134886fdaf985b2399faace13/web"
-        />
+    <section id="signer" class="sheet signer" hidden>
+      <h2>Signature request</h2>
+      <p id="signer-service" class="lede"></p>
+      <p id="signer-method" class="note"></p>
+      <pre id="signer-preview" class="result"></pre>
+      <p id="signer-countdown" class="note"></p>
+      <label class="check">
+        <input id="signer-remember" type="checkbox" />
+        Don't ask again for this service
       </label>
-
-      <button id="go" type="button">Open in the content view</button>
-      <button id="close" type="button" class="secondary" hidden>Close content view</button>
-      <button id="collapse" type="button" class="secondary" hidden>Back to the page</button>
-
-      <pre id="result" class="result">—</pre>
-    </main>
+      <button id="signer-allow" type="button">Approve</button>
+      <button id="signer-deny" type="button" class="secondary">Deny</button>
+    </section>
 
     <script type="module" src="main.js"></script>
   </body>

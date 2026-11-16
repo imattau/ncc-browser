@@ -27,6 +27,22 @@
   box-sizing: border-box;
 }
 
+/*
+ * A flex or grid child defaults to min-width: auto, so a long npub in the address
+ * pill pushes the whole bar wider than the screen. Every text-bearing box opts out.
+ */
+.strip-address,
+.tab-card,
+.info-row dd {
+  min-width: 0;
+}
+
+html,
+body {
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
 html,
 body {
   margin: 0;
@@ -307,6 +323,8 @@ body.compact {
   z-index: 20;
   display: flex;
   flex-direction: column;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   background: var(--ink);
   padding: 10px 14px calc(14px + env(safe-area-inset-bottom));
 }

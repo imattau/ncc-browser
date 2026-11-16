@@ -244,7 +244,12 @@ Still to build:
       `GET /__ncc/route` and loaded in place, so pages can link across services.
 - [x] Site panel fed by `GET /__ncc/info`: record, d tag, endpoints with pin state,
       Blossom servers and file count — the same record that is serving the page.
-- [x] Menu sheet: new tab, reload, copy address, close tab, settings.
+- [x] Menu sheet: new tab, reload, bookmark, copy address, close tab, history,
+      settings.
+- [x] Settings as a list of sections: address bar, identity, signer permissions,
+      history, bookmarks, about.
+- [x] Signer approvals show a countdown and trusted services can be revoked.
+- [x] History and bookmarks, kept in the shell's storage (200 entries).
 - [ ] Per-tab lifecycle and tab thumbnails.
 - [ ] File chooser and download handling in the content view.
 - [ ] `*.localhost` resolution, secure context, `Secure` cookie behaviour — **the
