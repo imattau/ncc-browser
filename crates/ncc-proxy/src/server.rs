@@ -193,6 +193,11 @@ async fn handle_inner(state: &ProxyState, request: Request) -> Response {
 
     let resolved = match state.resolver.resolve(&vhost.pubkey, &vhost.service).await {
         Ok(resolved) => resolved,
+        // The address named a service this identity does not publish. It may still
+        // publish others, so use the records that do exist instead of dead-ending.
+        Err(ResolveError::NoRecord) => {
+            return missing_service(state, &vhost, &authority).await;
+        }
         Err(error) => return error_page(&error, &vhost),
     };
 
@@ -501,6 +506,94 @@ fn help_page(authority: &str) -> Response {
          or <code>http://&lt;npub&gt;.localhost:PORT/</code> for the default service.</p>"
     );
     (StatusCode::NOT_FOUND, Html(body)).into_response()
+}
+
+/// Fall back to whatever the identity actually publishes.
+///
+/// `ncc://<npub>/` means the `addr` service, and the resolver's `d`-tag ladder only
+/// ever falls back *to* `addr`, never from it. An identity that publishes `web` and
+/// nothing else would otherwise be unreachable at its bare address, on every shell.
+async fn missing_service(state: &ProxyState, vhost: &Vhost, authority: &str) -> Response {
+    let services = state.resolver.discover_services(&vhost.pubkey).await;
+    if services.is_empty() {
+        return failure_page(
+            StatusCode::NOT_FOUND,
+            &format!("No service called \"{}\"", vhost.service),
+            "This identity publishes no NCC-05 locator records that these relays can see.",
+            vhost,
+        );
+    }
+
+    let pages: Vec<&crate::resolve::DiscoveredService> =
+        services.iter().filter(|service| service.page).collect();
+
+    // One page to go to and no ambiguity: land there instead of asking.
+    if pages.len() == 1 {
+        return redirect_to_service(vhost, authority, &pages[0].name);
+    }
+
+    service_list_page(vhost, authority, &services)
+}
+
+fn service_origin(vhost: &Vhost, authority: &str, service: &str) -> String {
+    let host = crate::vhost::host_for(&vhost.pubkey, service);
+    match authority.rsplit_once(':') {
+        Some((_, port)) => format!("{host}:{port}"),
+        None => host,
+    }
+}
+
+fn redirect_to_service(vhost: &Vhost, authority: &str, service: &str) -> Response {
+    let location = format!("http://{}/", service_origin(vhost, authority, service));
+    Response::builder()
+        .status(StatusCode::FOUND)
+        .header(header::LOCATION, location)
+        .header(header::CACHE_CONTROL, "no-store")
+        .body(Body::empty())
+        .expect("redirect response")
+}
+
+fn service_list_page(
+    vhost: &Vhost,
+    authority: &str,
+    services: &[crate::resolve::DiscoveredService],
+) -> Response {
+    let mut items = String::new();
+    for service in services {
+        if service.page {
+            items.push_str(&format!(
+                "<li><a href=\"http://{}/\">{name}</a></li>",
+                service_origin(vhost, authority, &service.name),
+                name = service.name
+            ));
+        } else {
+            items.push_str(&format!(
+                "<li><span class=\"muted\">{}</span> <small>(not a page service)</small></li>",
+                service.name
+            ));
+        }
+    }
+
+    let body = format!(
+        "<!doctype html><meta charset=\"utf-8\">\
+         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
+         <style>body{{font:15px system-ui;margin:2rem;max-width:40rem}}\
+         code{{background:#eee;padding:.1rem .3rem;border-radius:3px}}\
+         .muted{{color:#666}}</style>\
+         <h1>Which service?</h1>\
+         <p><code>{pubkey}</code> does not publish a service called \
+         <code>{requested}</code>. It publishes these:</p>\
+         <ul>{items}</ul>",
+        pubkey = vhost.pubkey,
+        requested = vhost.service
+    );
+
+    (
+        StatusCode::OK,
+        [(header::CACHE_CONTROL, "no-store")],
+        Html(body),
+    )
+        .into_response()
 }
 
 /// The identity a token and a signer request are scoped to.
