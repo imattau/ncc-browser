@@ -17,8 +17,18 @@
     <header id="bar" class="strip" hidden>
       <button id="bar-back" class="icon" type="button" aria-label="Back">&#8592;</button>
       <button id="bar-address" class="strip-address" type="button">no page</button>
+      <button id="bar-tabs" class="count" type="button" aria-label="Tabs">1</button>
       <button id="bar-reload" class="icon" type="button" aria-label="Reload">&#8635;</button>
     </header>
+
+    <section id="switcher" class="sheet" hidden>
+      <header class="sheet-head">
+        <h2>Tabs</h2>
+        <button id="switcher-new" type="button" class="secondary">New tab</button>
+        <button id="switcher-done" type="button" class="secondary">Done</button>
+      </header>
+      <div id="tab-grid" class="tab-grid"></div>
+    </section>
 
     <main id="stage" class="stage">
       <p class="alpha" role="status">
@@ -36,6 +46,17 @@
         <div><dt>secure context</dt><dd id="secure">…</dd></div>
         <div><dt>service workers</dt><dd id="sw">…</dd></div>
       </dl>
+
+      <section class="panel">
+        <h2>Appearance</h2>
+        <label class="field">
+          <span>toolbar position</span>
+          <select id="bar-position">
+            <option value="bottom">Bottom</option>
+            <option value="top">Top</option>
+          </select>
+        </label>
+      </section>
 
       <section class="panel">
         <h2>Identity</h2>

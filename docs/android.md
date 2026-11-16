@@ -235,6 +235,8 @@ Still to build:
       and reload; tapping the address expands the shell over the page to edit it.
 - [x] Window insets: the strip and the page are inset for the status bar, the camera
       cutout and the gesture bar.
+- [x] Tabs: one WebView per tab, a switcher sheet with captured thumbnails, and the
+      toolbar position as a setting (bottom by default).
 - [ ] Per-tab lifecycle and tab thumbnails.
 - [ ] File chooser and download handling in the content view.
 - [ ] `*.localhost` resolution, secure context, `Secure` cookie behaviour — **the
