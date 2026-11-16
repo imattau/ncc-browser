@@ -107,6 +107,10 @@ export function registerIpc(deps: IpcDeps): void {
     if (!fromChrome(event)) return
     deps.shell.closeTabsToRight(typeof id === 'string' ? id : undefined)
   })
+  ipcMain.handle('ncc:new-tab-menu', () => {
+    deps.shell.showNewTabMenu()
+  })
+
   ipcMain.handle('ncc:tab-menu', (event, id: unknown) => {
     if (!fromChrome(event) || typeof id !== 'string') return
     deps.shell.showTabMenu(id)

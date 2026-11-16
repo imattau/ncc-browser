@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import {
+  ChevronDown,
   ChevronsDown,
   EyeOff,
   Maximize2,
@@ -12,6 +13,7 @@ import {
 import type { TabSummary } from '@shared/types'
 import { cn } from '../lib/cn'
 import { OnionIcon } from './TransportIcons'
+import { TAB_KIND_LABEL, TAB_KIND_TONE } from '../lib/tab-kind'
 
 interface TabStripProps {
   tabs: TabSummary[]
@@ -20,6 +22,7 @@ interface TabStripProps {
   onSelect: (id: string) => void
   onClose: (id: string) => void
   onNew: () => void
+  onNewMenu: () => void
   onMove: (id: string, toIndex: number) => void
   onContextMenu: (id: string) => void
   onToggleMute: (id: string) => void
@@ -38,6 +41,7 @@ export function TabStrip({
   onSelect,
   onClose,
   onNew,
+  onNewMenu,
   onMove,
   onContextMenu,
   onToggleMute,
@@ -110,6 +114,7 @@ export function TabStrip({
               data-tab-kind={tab.kind}
               data-no-drag
               aria-selected={active}
+              aria-label={tab.kind === 'normal' ? undefined : `${tab.title} — ${TAB_KIND_LABEL[tab.kind]}`}
               tabIndex={0}
               draggable
               title={tab.url || tab.title}
@@ -147,14 +152,10 @@ export function TabStrip({
                 active
                   ? 'border-[color:var(--color-line)] bg-[color:var(--color-panel)] text-[color:var(--color-text-strong)]'
                   : 'border-transparent text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)]',
-                tab.kind === 'private' &&
+                tab.kind !== 'normal' &&
                   (active
-                    ? 'border-[color:var(--color-violet)]/40 bg-[color:var(--color-violet-soft-alt)]'
-                    : 'text-[color:var(--color-violet-muted)] hover:bg-[color:var(--color-violet)]/10'),
-                tab.kind === 'tor' &&
-                  (active
-                    ? 'border-[color:var(--color-violet)]/50 bg-[color:var(--color-violet-soft)]'
-                    : 'text-[color:var(--color-violet-text)] hover:bg-[color:var(--color-violet)]/10'),
+                    ? cn(TAB_KIND_TONE[tab.kind].border, TAB_KIND_TONE[tab.kind].soft, TAB_KIND_TONE[tab.kind].text)
+                    : cn(TAB_KIND_TONE[tab.kind].text, 'opacity-80', TAB_KIND_TONE[tab.kind].hover)),
                 dragId === tab.id && 'opacity-50'
               )}
             >
@@ -178,12 +179,9 @@ export function TabStrip({
               <span className="min-w-0 flex-1 truncate">{tab.title}</span>
 
               {tab.kind === 'private' ? (
-                <EyeOff
-                  className="h-3 w-3 shrink-0 text-[color:var(--color-violet-strong)]"
-                  aria-label="Private tab"
-                />
+                <EyeOff className="h-3.5 w-3.5 shrink-0" aria-hidden />
               ) : tab.kind === 'tor' ? (
-                <OnionIcon className="h-3 w-3 shrink-0 text-[color:var(--color-violet-text)]" />
+                <OnionIcon className="h-3.5 w-3.5 shrink-0" />
               ) : null}
 
               {tab.audible || tab.muted ? (
@@ -227,16 +225,37 @@ export function TabStrip({
           <span className="mb-1 h-[26px] w-0.5 shrink-0 rounded bg-[color:var(--color-accent)]" />
         ) : null}
 
-        <button
-          type="button"
+        <div
           data-no-drag
-          aria-label="New tab (Ctrl+T)"
-          title="New tab (Ctrl+T)"
-          onClick={onNew}
-          className="ncc-no-drag mb-[3px] ml-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)] hover:text-[color:var(--color-text-strong)]"
+          className="ncc-no-drag mb-[3px] ml-0.5 inline-flex shrink-0 items-center rounded-lg"
+          onContextMenu={(event) => {
+            event.preventDefault()
+            onNewMenu()
+          }}
         >
-          <Plus className="h-4 w-4" />
-        </button>
+          <button
+            type="button"
+            data-no-drag
+            aria-label="New tab (Ctrl+T)"
+            title="New tab (Ctrl+T) — right-click for private and Tor tabs"
+            onClick={onNew}
+            className="ncc-no-drag inline-flex h-7 w-7 items-center justify-center rounded-l-lg text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)] hover:text-[color:var(--color-text-strong)]"
+          >
+            <Plus className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            data-no-drag
+            data-new-tab-menu
+            aria-label="New private or Tor tab"
+            aria-haspopup="menu"
+            title="New private or Tor tab"
+            onClick={onNewMenu}
+            className="ncc-no-drag inline-flex h-7 w-4 items-center justify-center rounded-r-lg text-[color:var(--color-faint)] hover:bg-[color:var(--color-hover)] hover:text-[color:var(--color-text-strong)]"
+          >
+            <ChevronDown className="h-3 w-3" />
+          </button>
+        </div>
       </div>
 
       {overflow ? (

@@ -40,6 +40,20 @@
   --color-violet-soft: light-dark(#f1edff, #18142b);
   --color-violet-soft-alt: light-dark(#ece6ff, #171328);
 
+  /*
+   * Private and Tor tabs get their own hues so they cannot be mistaken for each
+   * other: private is a cool indigo, Tor is the onion's purple-magenta. Neither
+   * follows the accent preset.
+   */
+  --color-private: light-dark(#4655c9, #8b97ff);
+  --color-private-text: light-dark(#35419f, #b9c1ff);
+  --color-private-soft: light-dark(#eceeff, #14172b);
+  --color-private-chrome: light-dark(#e3e6fb, #1b1f3d);
+  --color-tor: light-dark(#8a35b5, #c27fe8);
+  --color-tor-text: light-dark(#732a9a, #e3b6f8);
+  --color-tor-soft: light-dark(#f6ebfb, #211230);
+  --color-tor-chrome: light-dark(#eedcf8, #2d1743);
+
   --color-hover: light-dark(rgba(15, 23, 42, 0.06), rgba(255, 255, 255, 0.06));
   --color-hover-soft: light-dark(rgba(15, 23, 42, 0.035), rgba(255, 255, 255, 0.03));
   --color-hover-strong: light-dark(rgba(15, 23, 42, 0.1), rgba(255, 255, 255, 0.1));
@@ -272,4 +286,30 @@ textarea {
     transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/*
+ * Whole-window cue. The tab strip and toolbar take the active tab's hue, so which
+ * kind of tab you are typing into is visible without reading a badge.
+ */
+[data-window-kind='private'] [data-titlebar] {
+  background: var(--color-private-chrome);
+  border-color: color-mix(in srgb, var(--color-private) 35%, transparent);
+}
+
+[data-window-kind='private'] [data-toolbar] {
+  background: var(--color-private-soft);
+  border-color: color-mix(in srgb, var(--color-private) 35%, transparent);
+  box-shadow: inset 0 2px 0 var(--color-private);
+}
+
+[data-window-kind='tor'] [data-titlebar] {
+  background: var(--color-tor-chrome);
+  border-color: color-mix(in srgb, var(--color-tor) 40%, transparent);
+}
+
+[data-window-kind='tor'] [data-toolbar] {
+  background: var(--color-tor-soft);
+  border-color: color-mix(in srgb, var(--color-tor) 40%, transparent);
+  box-shadow: inset 0 2px 0 var(--color-tor);
 }

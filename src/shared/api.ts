@@ -82,6 +82,7 @@ export interface NccApi {
   closeOtherTabs(id?: string): Promise<void>
   closeTabsToRight(id?: string): Promise<void>
   showTabMenu(id: string): Promise<void>
+  showNewTabMenu(): Promise<void>
   tabHistory(id?: string): Promise<TabHistory>
   goToHistoryIndex(index: number): Promise<void>
   clearHistory(): Promise<void>

@@ -531,7 +531,10 @@ export function App() {
   const bookmarked = state.displayUrl !== '' && bookmarks.some((item) => item.url === state.displayUrl)
 
   return (
-    <div className="flex h-full flex-col overflow-hidden bg-[color:var(--color-ink)]">
+    <div
+      data-window-kind={state.tabKind}
+      className="flex h-full flex-col overflow-hidden bg-[color:var(--color-ink)]"
+    >
       <TabStrip
         tabs={state.tabs}
         activeTabId={state.activeTabId}
@@ -539,6 +542,7 @@ export function App() {
         onSelect={selectTab}
         onClose={closeTab}
         onNew={newTab}
+        onNewMenu={() => void window.ncc.showNewTabMenu()}
         onMove={moveTab}
         onContextMenu={tabContextMenu}
         onToggleMute={toggleMute}
@@ -602,6 +606,7 @@ export function App() {
             onOpenSettings={() => openSettings('general')}
             onNewPrivateTab={newPrivateTab}
             onNewTorTab={newTorTab}
+            kind={state.tabKind}
           />
         ) : null}
       </main>

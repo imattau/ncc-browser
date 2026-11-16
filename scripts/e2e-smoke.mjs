@@ -1437,6 +1437,10 @@ async function main() {
           'Boolean(document.querySelector(\'[data-tab-kind-badge="private"]\'))'
         )) === true
     )
+    {
+      const shot = await chrome.send('Page.captureScreenshot', { format: 'png' })
+      writeFileSync(join(ARTIFACTS, 'private-tab.png'), Buffer.from(shot.data, 'base64'))
+    }
 
     await privateOne.send('Page.navigate', {
       url: `ncc://${serviceNpub}.web/cookie-set?private=1`
@@ -2771,6 +2775,10 @@ async function main() {
           'Boolean(document.querySelector("[data-tor-button]"))'
         )) === false
     )
+    {
+      const shot = await chrome.send('Page.captureScreenshot', { format: 'png' })
+      writeFileSync(join(ARTIFACTS, 'tor-tab.png'), Buffer.from(shot.data, 'base64'))
+    }
     const torTargets = torProxy.getTargets()
     check(
       'routes the Tor tab endpoint through the SOCKS proxy',

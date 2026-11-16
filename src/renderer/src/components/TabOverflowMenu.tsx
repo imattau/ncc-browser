@@ -1,7 +1,9 @@
 import { useState } from 'react'
-import { Plus, Search, X } from 'lucide-react'
+import { EyeOff, Plus, Search, X } from 'lucide-react'
 import type { TabSummary } from '@shared/types'
 import { cn } from '../lib/cn'
+import { TAB_KIND_LABEL, TAB_KIND_TONE } from '../lib/tab-kind'
+import { OnionIcon } from './TransportIcons'
 import { Popover } from './Popover'
 
 interface TabOverflowMenuProps {
@@ -74,8 +76,13 @@ export function TabOverflowMenu({
                 type="button"
                 data-overflow-tab={tab.id}
                 onClick={() => onSelect(tab.id)}
+                data-tab-kind={tab.kind}
+                aria-label={tab.kind === 'normal' ? undefined : `${tab.title} — ${TAB_KIND_LABEL[tab.kind]}`}
                 className={cn(
-                  'flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left',
+                  'flex min-w-0 flex-1 items-center gap-2 rounded-lg border-l-2 px-2 py-1.5 text-left',
+                  tab.kind === 'normal'
+                    ? 'border-transparent'
+                    : cn(TAB_KIND_TONE[tab.kind].border, TAB_KIND_TONE[tab.kind].soft),
                   tab.id === activeTabId
                     ? 'bg-[color:var(--color-accent)]/10 text-[color:var(--color-text-strong)]'
                     : 'text-[color:var(--color-text-soft)] hover:bg-[color:var(--color-hover)]'
@@ -83,7 +90,20 @@ export function TabOverflowMenu({
               >
                 <TabIcon tab={tab} />
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-ui-115">{tab.title}</span>
+                  <span className="flex items-center gap-1.5 text-ui-115">
+                    <span className="truncate">{tab.title}</span>
+                    {tab.kind === 'private' ? (
+                      <span className={cn('inline-flex shrink-0 items-center gap-0.5 text-ui-95 font-semibold', TAB_KIND_TONE.private.text)}>
+                        <EyeOff className="h-3 w-3" aria-hidden />
+                        Private
+                      </span>
+                    ) : tab.kind === 'tor' ? (
+                      <span className={cn('inline-flex shrink-0 items-center gap-0.5 text-ui-95 font-semibold', TAB_KIND_TONE.tor.text)}>
+                        <OnionIcon className="h-3 w-3" />
+                        Tor
+                      </span>
+                    ) : null}
+                  </span>
                   <span className="mt-0.5 block truncate font-mono text-ui-95 text-[color:var(--color-faint)]">
                     {tab.url || 'New tab'}
                   </span>

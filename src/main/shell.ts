@@ -409,6 +409,30 @@ export class BrowserShell {
     }
   }
 
+  /** Close every tab of one kind, which also releases that kind's session. */
+  closeTabsOfKind(kind: TabKind): void {
+    for (const tab of [...this.tabs]) {
+      if (tab.kind === kind) this.closeTab(tab.id)
+    }
+  }
+
+  /** The `+` button's menu: the only place a normal tab user meets private and Tor. */
+  showNewTabMenu(): void {
+    Menu.buildFromTemplate([
+      { label: 'New tab', accelerator: 'CmdOrCtrl+T', click: () => this.newTab() },
+      {
+        label: 'New private tab',
+        accelerator: 'CmdOrCtrl+Shift+N',
+        click: () => this.newPrivateTab()
+      },
+      {
+        label: 'New Tor tab',
+        accelerator: 'CmdOrCtrl+Shift+O',
+        click: () => this.newTorTab()
+      }
+    ]).popup({ window: this.window })
+  }
+
   closeTabsToRight(id?: string): void {
     const anchor = id ? this.tabs.find((tab) => tab.id === id) : this.activeTab()
     if (!anchor) return
@@ -729,7 +753,16 @@ export class BrowserShell {
         label: 'Close tabs to the right',
         enabled: index < this.tabs.length - 1,
         click: () => this.closeTabsToRight(tab.id)
-      }
+      },
+      ...(tab.kind === 'normal'
+        ? []
+        : [
+            { type: 'separator' as const },
+            {
+              label: tab.kind === 'tor' ? 'Close all Tor tabs' : 'Close all private tabs',
+              click: () => this.closeTabsOfKind(tab.kind)
+            }
+          ])
     ]).popup({ window: this.window })
   }
 

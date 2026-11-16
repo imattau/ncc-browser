@@ -1,16 +1,20 @@
 import { useEffect, useState } from 'react'
 import { Check, Copy, EyeOff, KeyRound, Settings2, ShieldCheck, TimerOff } from 'lucide-react'
+import type { TabKind } from '@shared/types'
+import { cn } from '../lib/cn'
+import { TAB_KIND_SUMMARY, TAB_KIND_TONE } from '../lib/tab-kind'
 import { OnionIcon } from './TransportIcons'
 
 interface WelcomeProps {
   onOpenSettings: () => void
   onNewPrivateTab: () => void
   onNewTorTab: () => void
+  kind?: TabKind
 }
 
 const EXAMPLE = 'ncc://npub1…/web'
 
-export function Welcome({ onOpenSettings, onNewPrivateTab, onNewTorTab }: WelcomeProps) {
+export function Welcome({ onOpenSettings, onNewPrivateTab, onNewTorTab, kind = 'normal' }: WelcomeProps) {
   const [relays, setRelays] = useState<string[]>([])
   const [copied, setCopied] = useState(false)
 
@@ -38,6 +42,31 @@ export function Welcome({ onOpenSettings, onNewPrivateTab, onNewTorTab }: Welcom
     <div className="h-full overflow-y-auto bg-[radial-gradient(1100px_480px_at_50%_-15%,rgba(138,180,255,0.16),transparent_62%)]">
       <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col justify-center px-10 py-14">
         <div className="ncc-fade-in">
+          {kind !== 'normal' ? (
+            <div
+              data-kind-notice={kind}
+              role="note"
+              className={cn(
+                'mb-6 flex items-start gap-3 rounded-xl border px-4 py-3',
+                TAB_KIND_TONE[kind].border,
+                TAB_KIND_TONE[kind].soft
+              )}
+            >
+              {kind === 'tor' ? (
+                <OnionIcon className={cn('mt-0.5 h-5 w-5 shrink-0', TAB_KIND_TONE.tor.text)} />
+              ) : (
+                <EyeOff className={cn('mt-0.5 h-5 w-5 shrink-0', TAB_KIND_TONE.private.text)} />
+              )}
+              <div>
+                <p className={cn('text-ui-135 font-semibold', TAB_KIND_TONE[kind].text)}>
+                  {kind === 'tor' ? 'You are in a Tor tab' : 'You are in a private tab'}
+                </p>
+                <p className="mt-0.5 text-ui-12 text-[color:var(--color-muted)]">
+                  {TAB_KIND_SUMMARY[kind]}
+                </p>
+              </div>
+            </div>
+          ) : null}
           <span className="inline-flex items-center gap-2 rounded-full border border-[color:var(--color-accent)]/25 bg-[color:var(--color-accent)]/10 px-3 py-1 text-ui-11 font-medium tracking-wide text-[color:var(--color-accent)]">
             NCC-05 · identity-bound resolution
           </span>
@@ -72,7 +101,7 @@ export function Welcome({ onOpenSettings, onNewPrivateTab, onNewTorTab }: Welcom
             <button
               type="button"
               onClick={onNewPrivateTab}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-[color:var(--color-line)] px-3 py-1.5 text-ui-115 text-[color:var(--color-muted)] hover:bg-[color:var(--color-violet)]/10 hover:text-[color:var(--color-violet-text)]"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[color:var(--color-line)] px-3 py-1.5 text-ui-115 text-[color:var(--color-muted)] hover:bg-[color:var(--color-private)]/12 hover:text-[color:var(--color-private-text)]"
             >
               <EyeOff className="h-3.5 w-3.5" />
               New private tab
@@ -80,7 +109,7 @@ export function Welcome({ onOpenSettings, onNewPrivateTab, onNewTorTab }: Welcom
             <button
               type="button"
               onClick={onNewTorTab}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-[color:var(--color-line)] px-3 py-1.5 text-ui-115 text-[color:var(--color-muted)] hover:bg-[color:var(--color-violet)]/10 hover:text-[color:var(--color-violet-text)]"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[color:var(--color-line)] px-3 py-1.5 text-ui-115 text-[color:var(--color-muted)] hover:bg-[color:var(--color-tor)]/12 hover:text-[color:var(--color-tor-text)]"
             >
               <OnionIcon className="h-3.5 w-3.5" />
               New Tor tab

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { EyeOff, Lock, Star } from 'lucide-react'
 import type { OmniboxSuggestion, TabKind, TorState } from '@shared/types'
+import { TAB_KIND_SUMMARY } from '../lib/tab-kind'
 import type { SecuritySummary } from '../lib/security'
 import type { PopoverAnchor } from './Popover'
 import { Omnibox } from './Omnibox'
@@ -188,8 +189,8 @@ export function AddressBar({
         {tabKind === 'tor' ? (
           <span
             data-tab-kind-badge="tor"
-            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[color:var(--color-violet)]/35 bg-[color:var(--color-violet)]/10 px-1.5 py-0.5 text-ui-95 font-medium text-[color:var(--color-violet-text)]"
-            title="Tor tab — all traffic is routed through Tor"
+            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[color:var(--color-tor)]/45 bg-[color:var(--color-tor)]/12 px-1.5 py-0.5 text-ui-95 font-semibold text-[color:var(--color-tor-text)]"
+            title={TAB_KIND_SUMMARY.tor}
           >
             <OnionIcon className="h-3 w-3" />
             Tor
@@ -197,8 +198,8 @@ export function AddressBar({
         ) : tabKind === 'private' ? (
           <span
             data-tab-kind-badge="private"
-            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[color:var(--color-line)] bg-[color:var(--color-raised-soft)] px-1.5 py-0.5 text-ui-95 font-medium text-[color:var(--color-muted)]"
-            title="Private tab — cookies and history are not saved"
+            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[color:var(--color-private)]/45 bg-[color:var(--color-private)]/12 px-1.5 py-0.5 text-ui-95 font-semibold text-[color:var(--color-private-text)]"
+            title={TAB_KIND_SUMMARY.private}
           >
             <EyeOff className="h-3 w-3" />
             Private
@@ -280,8 +281,8 @@ export function AddressBar({
             aria-pressed={tor.active}
             aria-label={
               tor.active
-                ? 'Using Tor — reload the direct endpoint'
-                : 'Onion endpoint available — load over Tor'
+                ? 'Using Tor for this page — reload the direct endpoint'
+                : 'Onion endpoint available — load this page over Tor'
             }
             title={
               tor.active
@@ -292,8 +293,8 @@ export function AddressBar({
             className={cn(
               'shrink-0 rounded p-0.5 transition-colors hover:bg-[color:var(--color-hover)]',
               tor.active
-                ? 'text-[color:var(--color-violet-text)]'
-                : 'text-[color:var(--color-violet)]/70 hover:text-[color:var(--color-violet-strong)]'
+                ? 'text-[color:var(--color-tor-text)]'
+                : 'text-[color:var(--color-tor)]/70 hover:text-[color:var(--color-tor-text)]'
             )}
           >
             <OnionIcon className="h-3.5 w-3.5" />

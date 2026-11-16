@@ -83,7 +83,7 @@ export function Toolbar({
   const security = securitySummary(state)
 
   return (
-    <header className="relative z-10 flex h-[60px] shrink-0 items-center gap-2 border-b border-[color:var(--color-line)] bg-[color:var(--color-panel)] px-3">
+    <header data-toolbar className="relative z-10 flex h-[60px] shrink-0 items-center gap-2 border-b border-[color:var(--color-line)] bg-[color:var(--color-panel)] px-3">
       <NavButton
         label="Back (Alt+←) — right-click or hold for history"
         disabled={!state.canGoBack}

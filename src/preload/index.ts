@@ -38,6 +38,7 @@ const api: NccApi = {
   closeOtherTabs: (id) => ipcRenderer.invoke('ncc:close-other-tabs', id),
   closeTabsToRight: (id) => ipcRenderer.invoke('ncc:close-tabs-right', id),
   showTabMenu: (id) => ipcRenderer.invoke('ncc:tab-menu', id),
+  showNewTabMenu: () => ipcRenderer.invoke('ncc:new-tab-menu'),
   tabHistory: (id) => ipcRenderer.invoke('ncc:tab-history', id),
   goToHistoryIndex: (index) => ipcRenderer.invoke('ncc:go-history-index', index),
   clearHistory: () => ipcRenderer.invoke('ncc:clear-history'),
