@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/ncc-core"]
+members = ["crates/ncc-core", "crates/ncc-proxy"]
 # The Tauri shell has its own dependency tree and its own lockfile.
 exclude = ["src-tauri"]
 

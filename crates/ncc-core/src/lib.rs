@@ -24,10 +24,10 @@ pub mod transport;
 pub const DEFAULT_SERVICE: &str = "addr";
 
 pub use address::{
-    build_internal_url, build_ncc_url, display_address, encode_service_label, is_nostr_id,
-    is_valid_service_name, looks_like_ncc_input, ncc_storage_origin, parse_ncc_address,
-    parse_ncc_host, to_display_url, to_internal_url, BuildAddress, NccAddress, NccHost,
-    NccUrlError,
+    build_internal_url, build_ncc_url, decode_service_label, display_address, encode_service_label,
+    is_nostr_id, is_valid_service_name, looks_like_ncc_input, ncc_storage_origin,
+    parse_ncc_address, parse_ncc_host, to_display_url, to_internal_url, BuildAddress, NccAddress,
+    NccHost, NccUrlError,
 };
 pub use locator::{
     candidate_d_tags, d_tag_source, is_relay_endpoint, is_secure_endpoint, normalize_endpoints,
