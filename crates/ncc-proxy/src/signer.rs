@@ -36,6 +36,13 @@ pub async fn handle(state: &ProxyState, vhost: &Vhost, method: &str, body: &[u8]
         );
     }
 
+    // A remote signer answers for the identity. There is no local prompt in that
+    // mode: the bunker asks its own user, and that is the only answer that can
+    // produce a signature, so asking twice would be asking the same question again.
+    if let Some(bunker) = state.remote() {
+        return remote(state, &bunker, method, &parsed).await;
+    }
+
     let Some(identity) = state.identity() else {
         return json_error(
             StatusCode::NOT_IMPLEMENTED,
@@ -66,13 +73,7 @@ pub async fn handle(state: &ProxyState, vhost: &Vhost, method: &str, body: &[u8]
             Err(error) => internal(error),
         },
 
-        "get-relays" => {
-            let mut map = serde_json::Map::new();
-            for url in state.resolver().relays() {
-                map.insert(url.clone(), json!({ "read": true, "write": true }));
-            }
-            ok(json!({ "result": map }))
-        }
+        "get-relays" => relays(state),
 
         "sign-event" => {
             let kind = params
@@ -139,6 +140,89 @@ pub async fn handle(state: &ProxyState, vhost: &Vhost, method: &str, body: &[u8]
             "Unknown signer method.",
         ),
     }
+}
+
+/// Answer NIP-07 from a signer this device does not hold the key for.
+async fn remote(
+    state: &ProxyState,
+    bunker: &crate::bunker::Bunker,
+    method: &str,
+    parsed: &Value,
+) -> Response {
+    let params = parsed.get("params").cloned().unwrap_or(Value::Null);
+
+    match method {
+        // NIP-07 wants hex, and it wants the *user's* key: the bunker's own key is
+        // only the channel.
+        "get-public-key" => match bunker.ensure_user().await {
+            Ok(user) => ok(json!({ "result": user })),
+            Err(detail) => unreachable_signer(&detail),
+        },
+
+        "get-relays" => relays(state),
+
+        "sign-event" => {
+            // Learn the user key first, so a signature from any other key is refused.
+            if let Err(detail) = bunker.ensure_user().await {
+                return unreachable_signer(&detail);
+            }
+
+            match bunker.sign_event(&params).await {
+                Ok(event) => match event.as_json().parse::<Value>() {
+                    Ok(value) => ok(json!({ "result": value })),
+                    Err(error) => internal_text(error.to_string()),
+                },
+                Err(detail) => signer_error(&detail),
+            }
+        }
+
+        "nip04-encrypt" | "nip04-decrypt" | "nip44-encrypt" | "nip44-decrypt" => {
+            let peer = params
+                .get("peer")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let text = params
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+
+            let result = match method {
+                "nip04-encrypt" => bunker.nip04_encrypt(peer, text).await,
+                "nip04-decrypt" => bunker.nip04_decrypt(peer, text).await,
+                "nip44-encrypt" => bunker.nip44_encrypt(peer, text).await,
+                _ => bunker.nip44_decrypt(peer, text).await,
+            };
+
+            match result {
+                Ok(value) => ok(json!({ "result": value })),
+                Err(detail) => signer_error(&detail),
+            }
+        }
+
+        _ => json_error(
+            StatusCode::NOT_FOUND,
+            "unknown-method",
+            "Unknown signer method.",
+        ),
+    }
+}
+
+fn relays(state: &ProxyState) -> Response {
+    let mut map = serde_json::Map::new();
+    for url in state.resolver().relays() {
+        map.insert(url.clone(), json!({ "read": true, "write": true }));
+    }
+    ok(json!({ "result": map }))
+}
+
+/// The signer could not be reached, or refused. Both are the signer's business, not
+/// this browser's, and both are worth showing as they came.
+fn signer_error(detail: &str) -> Response {
+    json_error(StatusCode::BAD_GATEWAY, "signer-refused", detail)
+}
+
+fn unreachable_signer(detail: &str) -> Response {
+    json_error(StatusCode::BAD_GATEWAY, "signer-unreachable", detail)
 }
 
 async fn approved(

@@ -111,8 +111,8 @@
     <section id="home" class="screen">
       <div class="home-body">
         <div class="hero">
-          <div class="brand-mark" aria-hidden="true">
-            <svg class="i"><use href="#i-globe" /></svg>
+          <div id="brand-mark" class="brand-mark" aria-hidden="true">
+            <img id="brand-img" src="app-icon.png" alt="" draggable="false" />
           </div>
           <h1>Nostr Navigator</h1>
           <p>Browse services by identity, not by domain.</p>
@@ -430,6 +430,16 @@
 
         <button id="identity-lock" class="btn tonal block" type="button" hidden>Lock</button>
         <p id="identity-error" class="status" role="status"></p>
+
+        <h3 class="group">Remote signer</h3>
+        <p id="bunker-state" class="hint">Checking…</p>
+        <label class="field">
+          <span>bunker:// link</span>
+          <input id="bunker-url" type="text" autocomplete="off" spellcheck="false" placeholder="bunker://…" />
+        </label>
+        <button id="bunker-connect" class="btn block" type="button">Connect a remote signer</button>
+        <button id="bunker-disconnect" class="btn tonal block" type="button" hidden>Disconnect</button>
+        <p id="bunker-error" class="status" role="status"></p>
       </div>
     </section>
 

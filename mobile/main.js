@@ -518,7 +518,10 @@ function showPanel(name) {
   if (name === 'history') renderHistory()
   if (name === 'bookmarks') renderBookmarks()
   if (name === 'downloads') loadDownloads()
-  if (name === 'identity') void refreshIdentity()
+  if (name === 'identity') {
+    void refreshIdentity()
+    void refreshBunker()
+  }
   if (name === 'home') renderHome()
 
   applyLayout()
@@ -580,14 +583,198 @@ function shortcutEntries() {
   return out
 }
 
+/* ───────────────────────────── Profile (kind 0) ───────────────────────────── */
+
+const PROFILE_KEY = 'ncc.profiles'
+const PROFILE_TTL = 6 * 60 * 60 * 1000
+const BECH32 = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l'
+
+/** `npub1…` to the 64-character hex key. The checksum is not needed to read one. */
+function npubToHex(npub) {
+  const text = String(npub || '').toLowerCase()
+  if (!text.startsWith('npub1')) return null
+  const data = [...text.slice(5, -6)].map((char) => BECH32.indexOf(char))
+  if (data.length === 0 || data.includes(-1)) return null
+
+  let acc = 0
+  let bits = 0
+  const out = []
+  for (const value of data) {
+    acc = (acc << 5) | value
+    bits += 5
+    while (bits >= 8) {
+      bits -= 8
+      out.push((acc >> bits) & 255)
+    }
+    acc &= (1 << bits) - 1
+  }
+  return out.length === 32 ? out.map((byte) => byte.toString(16).padStart(2, '0')).join('') : null
+}
+
+function readProfiles() {
+  try {
+    const value = JSON.parse(globalThis.localStorage?.getItem(PROFILE_KEY) || '{}')
+    return value && typeof value === 'object' ? value : {}
+  } catch {
+    return {}
+  }
+}
+
+function saveProfile(hex, profile) {
+  const profiles = readProfiles()
+  profiles[hex] = { ...profile, at: Date.now() }
+  try {
+    globalThis.localStorage?.setItem(PROFILE_KEY, JSON.stringify(profiles))
+  } catch {
+    // Not persisted; it is asked for again next launch.
+  }
+}
+
+/** Only https images: a profile is written by someone else and shown as-is. */
+function safePicture(url) {
+  try {
+    return new URL(url).protocol === 'https:' ? url : ''
+  } catch {
+    return ''
+  }
+}
+
+/** Newest kind 0 for a key, asked of the user's own relays. */
+function queryProfile(hex, relays) {
+  return new Promise((resolve) => {
+    const urls = relays.filter((url) => /^wss?:\/\//i.test(url)).slice(0, 5)
+    if (urls.length === 0) return resolve(null)
+
+    let best = null
+    let remaining = urls.length
+    const sockets = []
+    let finished = false
+
+    const finish = () => {
+      if (finished) return
+      finished = true
+      clearTimeout(timer)
+      for (const socket of sockets) {
+        try {
+          socket.close()
+        } catch {
+          // Already closed.
+        }
+      }
+      resolve(best)
+    }
+    const timer = setTimeout(finish, 6000)
+
+    for (const url of urls) {
+      let settled = false
+      const settle = () => {
+        if (settled) return
+        settled = true
+        if (--remaining === 0) finish()
+      }
+
+      let socket
+      try {
+        socket = new WebSocket(url)
+      } catch {
+        settle()
+        continue
+      }
+      sockets.push(socket)
+
+      const sub = `p${Math.random().toString(36).slice(2, 8)}`
+      socket.onopen = () => socket.send(JSON.stringify(['REQ', sub, { kinds: [0], authors: [hex], limit: 1 }]))
+      socket.onmessage = (message) => {
+        try {
+          const data = JSON.parse(message.data)
+          if (data[0] === 'EVENT' && data[2]?.kind === 0 && data[2].pubkey === hex) {
+            if (!best || data[2].created_at > best.created_at) best = data[2]
+          }
+          if (data[0] === 'EOSE') settle()
+        } catch {
+          // Not a frame we understand.
+        }
+      }
+      socket.onerror = settle
+      socket.onclose = settle
+    }
+  })
+}
+
+let profile = null
+
+/** Show what is cached straight away, then refresh it if it is stale. */
+async function loadProfile() {
+  const hex = npubToHex(identity?.npub)
+  if (!hex || !identity?.unlocked) {
+    profile = null
+    renderHomeIdentity()
+    return
+  }
+
+  const cached = readProfiles()[hex]
+  profile = cached || null
+  renderHomeIdentity()
+  if (cached && Date.now() - cached.at < PROFILE_TTL) return
+
+  const event = await queryProfile(hex, browserSettings?.relays || [])
+  if (!event || npubToHex(identity?.npub) !== hex) return
+
+  try {
+    const meta = JSON.parse(event.content)
+    saveProfile(hex, {
+      name: String(meta.display_name || meta.name || '').slice(0, 60),
+      picture: safePicture(meta.picture)
+    })
+    profile = readProfiles()[hex]
+    renderHomeIdentity()
+  } catch {
+    // A profile that is not JSON is ignored; the app icon stays.
+  }
+}
+
 function renderHomeIdentity() {
   const text = byId('home-identity-text')
+  const mark = byId('brand-mark')
   if (!identity) return
+
   text.textContent = !identity.initialised
     ? 'Set up your identity'
     : identity.unlocked
-      ? `Unlocked · ${shortId(identity.npub)}`
+      ? `${profile?.name ? `${profile.name} · ` : 'Unlocked · '}${shortId(identity.npub)}`
       : `Locked · ${shortId(identity.npub)}`
+
+  const signedIn = identity.initialised && identity.unlocked
+  const picture = signedIn ? profile?.picture : ''
+  const key = `${signedIn}|${picture}|${profile?.name || ''}`
+  if (mark.dataset.key === key) return
+  mark.dataset.key = key
+
+  mark.classList.toggle('is-avatar', signedIn)
+  mark.textContent = ''
+
+  const fallback = () => {
+    mark.textContent = ''
+    mark.appendChild(avatar(profile?.name || identity.npub || 'N'))
+  }
+
+  if (!signedIn) {
+    const image = document.createElement('img')
+    image.src = 'app-icon.png'
+    image.alt = ''
+    image.draggable = false
+    mark.appendChild(image)
+  } else if (picture) {
+    const image = document.createElement('img')
+    image.alt = ''
+    image.draggable = false
+    image.referrerPolicy = 'no-referrer'
+    image.addEventListener('error', fallback)
+    image.src = picture
+    mark.appendChild(image)
+  } else {
+    fallback()
+  }
 }
 
 function renderHome() {
@@ -1601,6 +1788,31 @@ function renderIdentity(status) {
   byId('identity-locked').hidden = !status.initialised || status.unlocked
   byId('identity-lock').hidden = !status.unlocked
   renderHomeIdentity()
+  void loadProfile()
+}
+
+/**
+ * A remote signer replaces the local key for signing: the bunker holds the key and
+ * asks its own user, so nothing is approved here.
+ */
+async function refreshBunker() {
+  const state = byId('bunker-state')
+  if (!state) return
+
+  try {
+    const info = await invoke('bunker_status')
+    if (info?.configured) {
+      state.textContent = info.npub
+        ? `Signing through a remote signer as ${info.npub}. Approve requests on the signer.`
+        : 'A remote signer is connected; waiting for it to answer.'
+      byId('bunker-disconnect').hidden = false
+    } else {
+      state.textContent = 'None. The identity above signs on this device.'
+      byId('bunker-disconnect').hidden = true
+    }
+  } catch (error) {
+    state.textContent = `Could not read the remote signer: ${error}`
+  }
 }
 
 async function refreshIdentity() {
@@ -1651,6 +1863,36 @@ async function setupIdentity(tauri) {
       byId('identity-error').textContent = ''
     } catch (error) {
       identityFailure(error)
+    }
+  })
+
+  byId('bunker-connect').addEventListener('click', async () => {
+    const url = byId('bunker-url').value.trim()
+    const note = byId('bunker-error')
+    if (!url) {
+      note.textContent = 'Paste the bunker:// link from your signer first.'
+      return
+    }
+
+    note.textContent = 'Connecting… the signer may ask you to approve this app.'
+    try {
+      const info = await invoke('bunker_connect', { url })
+      byId('bunker-url').value = ''
+      note.textContent = info?.npub ? `Connected as ${info.npub}.` : 'Connected.'
+      await refreshBunker()
+    } catch (error) {
+      note.textContent = String(error)
+    }
+  })
+
+  byId('bunker-disconnect').addEventListener('click', async () => {
+    const note = byId('bunker-error')
+    try {
+      await invoke('bunker_disconnect')
+      note.textContent = 'Disconnected.'
+      await refreshBunker()
+    } catch (error) {
+      note.textContent = String(error)
     }
   })
 
@@ -1919,6 +2161,9 @@ async function main() {
   } catch {
     // Fall back to the defaults above.
   }
+
+  // Relays are only known now, so a profile asked for during identity setup waits.
+  void loadProfile()
 
   void refreshSecurity()
 }

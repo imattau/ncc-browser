@@ -81,6 +81,8 @@ pub struct ProxyState {
     allowed_origins: Vec<String>,
     identity: Option<Arc<IdentityStore>>,
     approvals: Option<Arc<Approvals>>,
+    /// A remote signer, when the user chose one instead of holding a key here.
+    remote: Mutex<Option<Arc<crate::bunker::Bunker>>>,
     trusted: Mutex<HashSet<String>>,
     nsite: NsiteResolver,
     blobs: Blobs,
@@ -131,6 +133,7 @@ impl ProxyState {
             allowed_origins: config.allowed_origins.clone(),
             identity: None,
             approvals: None,
+            remote: Mutex::new(None),
             trusted: Mutex::new(HashSet::new()),
             nsite: NsiteResolver::new(settings.clone())
                 .with_directory(pointer_directory(&config.cache_directory, "manifests")),
@@ -155,6 +158,16 @@ impl ProxyState {
 
     pub fn approvals(&self) -> Option<&Approvals> {
         self.approvals.as_deref()
+    }
+
+    /// The remote signer, when the user connected one. It answers for the identity:
+    /// the key it signs with never reaches this device.
+    pub fn remote(&self) -> Option<Arc<crate::bunker::Bunker>> {
+        crate::lock(&self.remote).clone()
+    }
+
+    pub fn set_remote(&self, bunker: Option<Arc<crate::bunker::Bunker>>) {
+        *crate::lock(&self.remote) = bunker;
     }
 
     pub fn nsite(&self) -> &NsiteResolver {
