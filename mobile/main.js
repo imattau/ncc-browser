@@ -115,6 +115,10 @@ async function main() {
   byId('go').addEventListener('click', () => open(port))
   byId('close').addEventListener('click', () => content?.close())
 
+  byId('signer-allow').addEventListener('click', () => answerSigner(true))
+  byId('signer-deny').addEventListener('click', () => answerSigner(false))
+  await setupIdentity(tauri)
+
   if (content) {
     byId('collapse').addEventListener('click', () => content.expand(false))
     byId('bar-back').addEventListener('click', () => content.back())
@@ -136,6 +140,120 @@ async function main() {
  * The strip is the same page at 56 dp. Which half renders is decided by the viewport
  * the shell hands us, so no extra bridge call is needed to know the mode.
  */
+/** Identity status drives which of the three panels is visible. */
+let identity = null
+let signerRequest = null
+
+function renderIdentity(status) {
+  identity = status
+  const state = byId('identity-state')
+
+  if (!status.initialised) {
+    state.textContent = 'No identity on this device yet.'
+  } else if (status.unlocked) {
+    state.textContent = `Unlocked: ${status.npub}`
+  } else {
+    state.textContent = `Locked: ${status.npub}`
+  }
+
+  byId('identity-setup').hidden = status.initialised
+  byId('identity-locked').hidden = !status.initialised || status.unlocked
+  byId('identity-lock').hidden = !status.unlocked
+}
+
+async function refreshIdentity() {
+  try {
+    renderIdentity(await globalThis.__TAURI__.core.invoke('identity_status'))
+  } catch (error) {
+    byId('identity-state').textContent = `Identity unavailable: ${error}`
+  }
+}
+
+function identityFailure(error) {
+  byId('identity-error').textContent = String(error)
+}
+
+async function setupIdentity(tauri) {
+  const invoke = tauri.core.invoke
+
+  byId('identity-create').addEventListener('click', async () => {
+    const passphrase = byId('passphrase').value
+    if (passphrase.length < 8) {
+      identityFailure('Use at least 8 characters.')
+      return
+    }
+    try {
+      renderIdentity(await invoke('identity_create', { passphrase }))
+      byId('identity-error').textContent = ''
+    } catch (error) {
+      identityFailure(error)
+    }
+  })
+
+  byId('identity-import').addEventListener('click', async () => {
+    const passphrase = byId('passphrase').value
+    const secret = byId('nsec').value.trim()
+    if (passphrase.length < 8 || !secret) {
+      identityFailure('A passphrase of at least 8 characters and an nsec are required.')
+      return
+    }
+    try {
+      renderIdentity(await invoke('identity_import', { passphrase, secret }))
+      byId('identity-error').textContent = ''
+    } catch (error) {
+      identityFailure(error)
+    }
+  })
+
+  byId('identity-unlock').addEventListener('click', async () => {
+    try {
+      renderIdentity(await invoke('identity_unlock', { passphrase: byId('unlock-passphrase').value }))
+      byId('identity-error').textContent = ''
+    } catch (error) {
+      identityFailure(error)
+    }
+  })
+
+  byId('identity-lock').addEventListener('click', async () => {
+    renderIdentity(await invoke('identity_lock'))
+  })
+
+  await tauri.event.listen('ncc:signer', (event) => showSigner(event.payload))
+  await refreshIdentity()
+}
+
+/** A page is waiting on an answer, so take the window until it has one. */
+function showSigner(request) {
+  signerRequest = request
+  byId('signer-service').textContent = request.service
+  byId('signer-method').textContent =
+    request.method + (request.kind ? ` · kind ${request.kind}` : '')
+  byId('signer-preview').textContent = request.preview || '(nothing to show)'
+  byId('signer').hidden = false
+  byId('signer-remember').checked = false
+  content?.expand(true)
+}
+
+async function answerSigner(allow) {
+  if (!signerRequest) return
+  const request = signerRequest
+  signerRequest = null
+
+  try {
+    await globalThis.__TAURI__.core.invoke('signer_respond', {
+      id: request.id,
+      allow,
+      remember: byId('signer-remember').checked,
+      service: request.service
+    })
+  } catch {
+    // The request is gone either way; the page sees its own error.
+  }
+
+  byId('signer').hidden = true
+  if (contentOpen) content?.expand(false)
+}
+
 function applyLayout() {
   const compact = window.innerHeight < 200
   document.body.classList.toggle('compact', compact)

@@ -4,7 +4,8 @@
 //! the origin exactly as it is under `ncc://`. Requests are resolved, matched to an
 //! endpoint, fetched and rewritten back into the same namespace.
 
-use std::sync::Arc;
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::body::Body;
@@ -19,6 +20,9 @@ use ncc_core::{
     Endpoint,
 };
 
+use ncc_identity::IdentityStore;
+
+use crate::approvals::Approvals;
 use crate::inject::{inject_into_html, relax_csp, Injection, TokenStore, MAX_INJECTION_BYTES};
 use crate::pins::{pinned_tls_config, PinStore};
 use crate::resolve::{ResolveError, ResolvedService, Resolver};
@@ -62,9 +66,12 @@ pub struct ProxyState {
     client: reqwest::Client,
     pinned_client: reqwest::Client,
     pins: Arc<PinStore>,
-    tokens: TokenStore,
+    pub(crate) tokens: TokenStore,
     max_body_bytes: usize,
     allowed_origins: Vec<String>,
+    identity: Option<Arc<IdentityStore>>,
+    approvals: Option<Arc<Approvals>>,
+    trusted: Mutex<HashSet<String>>,
 }
 
 impl ProxyState {
@@ -100,7 +107,37 @@ impl ProxyState {
             tokens: TokenStore::new(),
             max_body_bytes: config.max_body_bytes,
             allowed_origins: config.allowed_origins.clone(),
+            identity: None,
+            approvals: None,
+            trusted: Mutex::new(HashSet::new()),
         }
+    }
+
+    /// Attach a signer. Without this, the NIP-07 routes answer 501.
+    pub fn with_signer(mut self, identity: Arc<IdentityStore>, approvals: Arc<Approvals>) -> Self {
+        self.identity = Some(identity);
+        self.approvals = Some(approvals);
+        self
+    }
+
+    pub fn identity(&self) -> Option<&IdentityStore> {
+        self.identity.as_deref()
+    }
+
+    pub fn approvals(&self) -> Option<&Approvals> {
+        self.approvals.as_deref()
+    }
+
+    /// Services the user chose to stop asking about for this session.
+    pub fn is_trusted(&self, key: &str) -> bool {
+        self.trusted.lock().expect("trust lock").contains(key)
+    }
+
+    pub fn trust(&self, key: &str) {
+        self.trusted
+            .lock()
+            .expect("trust lock")
+            .insert(key.to_string());
     }
 
     pub fn resolver(&self) -> &Resolver {
@@ -184,7 +221,7 @@ async fn handle_inner(state: &ProxyState, request: Request) -> Response {
     // Signer calls are answered by this process and never forwarded upstream. The
     // service comes from the Host header, so a page cannot claim another one.
     if let Some(signer_method) = path.strip_prefix("/__ncc/nip07/") {
-        return nip07(state, &vhost, signer_method, &body);
+        return crate::signer::handle(state, &vhost, signer_method, &body).await;
     }
 
     let resolved = match state.resolver.resolve(&vhost.pubkey, &vhost.service).await {
@@ -593,43 +630,11 @@ fn service_list_page(
 }
 
 /// The identity a token and a signer request are scoped to.
-fn host_key(vhost: &Vhost) -> String {
+pub(crate) fn host_key(vhost: &Vhost) -> String {
     format!("{}/{}", vhost.pubkey, vhost.service)
 }
 
-/// NIP-07 endpoints. The shim posts to its own origin, so the service is unambiguous:
-/// it comes from the `Host` header, never from the page.
-fn nip07(state: &ProxyState, vhost: &Vhost, method: &str, body: &[u8]) -> Response {
-    let parsed: serde_json::Value = serde_json::from_slice(body).unwrap_or(serde_json::Value::Null);
-    let token = parsed
-        .get("token")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default();
-
-    if !state.tokens.matches(token, &host_key(vhost)) {
-        return json_error(
-            StatusCode::FORBIDDEN,
-            "invalid-token",
-            "This page holds no signer token for this service.",
-        );
-    }
-
-    match method {
-        "get-public-key" | "sign-event" | "get-relays" | "nip04-encrypt" | "nip04-decrypt"
-        | "nip44-encrypt" | "nip44-decrypt" => json_error(
-            StatusCode::NOT_IMPLEMENTED,
-            "signer-not-configured",
-            "This build has no identity yet.",
-        ),
-        _ => json_error(
-            StatusCode::NOT_FOUND,
-            "unknown-method",
-            "Unknown signer method.",
-        ),
-    }
-}
-
-fn json_error(status: StatusCode, code: &str, message: &str) -> Response {
+pub(crate) fn json_error(status: StatusCode, code: &str, message: &str) -> Response {
     let body = serde_json::json!({ "code": code, "message": message }).to_string();
     (status, [(header::CONTENT_TYPE, "application/json")], body).into_response()
 }
