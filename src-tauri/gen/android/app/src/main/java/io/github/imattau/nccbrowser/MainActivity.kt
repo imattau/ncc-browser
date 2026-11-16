@@ -12,7 +12,9 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import android.view.ViewGroup
+import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
+import android.webkit.WebStorage
 import android.webkit.WebView
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -389,6 +391,60 @@ class MainActivity : TauriActivity() {
       setExpanded(false)
     }
     emitTabs(false)
+  }
+
+  /**
+   * Drop what one site stored on this device: its cookies and its local storage,
+   * IndexedDB and service workers, then reload the tabs showing it.
+   *
+   * A site is its own host and port, so another service of the same identity is a
+   * different site and is left alone. Cookies cannot be listed, only read for a URL, so
+   * each one is expired on the paths a page could have set it for. Cookies ignore the
+   * port, so a private tab and a normal tab on the same host share a jar: clearing from
+   * either clears both.
+   */
+  private fun clearSiteDataFor(url: String) {
+    val uri = Uri.parse(url)
+    val host = uri.host ?: return
+    val scheme = uri.scheme ?: return
+    val authority = uri.authority ?: return
+    val origin = "$scheme://$authority"
+
+    val cookies = CookieManager.getInstance()
+    var cleared = 0
+    val names = cookies.getCookie(origin)
+      ?.split(";")
+      ?.map { it.substringBefore("=").trim() }
+      ?.filter { it.isNotEmpty() }
+      ?: emptyList()
+
+    val segments = (uri.path ?: "/").split("/").filter { it.isNotEmpty() }
+    val paths = mutableListOf("/")
+    var built = ""
+    for (segment in segments) {
+      built += "/$segment"
+      paths.add(built)
+    }
+
+    for (name in names) {
+      for (path in paths) {
+        cookies.setCookie(origin, "$name=; Max-Age=0; Path=$path")
+        cookies.setCookie(origin, "$name=; Max-Age=0; Path=$path; Domain=$host")
+      }
+      cleared++
+    }
+    cookies.flush()
+
+    WebStorage.getInstance().deleteOrigin(origin)
+
+    for (tab in tabs) {
+      if (Uri.parse(tab.currentUrl ?: "").authority == authority) tab.reload()
+    }
+
+    emitToShell(
+      "window.__nccContent",
+      JSONObject().put("type", "cleared").put("url", url).put("cookies", cleared),
+    )
   }
 
   private fun selectTab(id: String) {
@@ -846,6 +902,13 @@ class MainActivity : TauriActivity() {
         clipboard.setPrimaryClip(ClipData.newPlainText("address", value))
         Toast.makeText(this@MainActivity, "Address copied", Toast.LENGTH_SHORT).show()
       }
+    }
+
+    @JavascriptInterface
+    fun clearSiteData(url: String?) {
+      val target = url ?: return
+      // Qualified like closeTab: the bridge method has the same name.
+      runOnUiThread { this@MainActivity.clearSiteDataFor(target) }
     }
 
     @JavascriptInterface

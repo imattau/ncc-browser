@@ -1895,3 +1895,16 @@ body[data-kind='tor'] .pill-kind {
 .info-body .kind-note {
   margin: 0 0 12px;
 }
+
+.site-data {
+  margin-top: 8px;
+  padding-bottom: 8px;
+}
+
+.site-data .hint {
+  margin: 0 0 4px;
+}
+
+.site-data .switch-row {
+  margin: 0;
+}

@@ -52,19 +52,19 @@ const KIND_INFO = {
     label: 'Private',
     icon: 'eye-off',
     one: 'private tab',
-    info: 'Nothing from this tab is saved: no history, icons or cookies. Your connection is not hidden.',
+    info: 'This tab leaves no history or saved icons. Cookies are shared with normal tabs on this device, and your connection is not hidden.',
     newLabel: 'New private tab',
     short: 'New private',
-    note: 'Nothing from private tabs is saved: no history, icons or cookies. Your connection is not hidden.'
+    note: 'Private tabs leave no history or saved icons. Cookies are shared with normal tabs, and your connection is not hidden.'
   },
   tor: {
     label: 'Tor',
     icon: 'onion',
     one: 'Tor tab',
-    info: 'This tab is loaded through Tor, in its own session that is discarded when the last Tor tab closes.',
+    info: 'This tab is loaded through Tor. It leaves no history or saved icons.',
     newLabel: 'New Tor tab',
     short: 'New Tor',
-    note: 'Tor tabs open .onion addresses and search through an onion search engine, in their own session.'
+    note: 'Tor tabs open .onion addresses and search through an onion search engine, all through Tor.'
   }
 }
 
@@ -322,6 +322,7 @@ function classifySecurity(data) {
   if (!data || data.error) return 'unknown'
   if (data.kind === 'nsite') return 'verified'
   if (data.kind === 'onion') return 'onion'
+  if (data.kind === 'clearnet') return data.secure ? 'tls' : 'plain'
   const endpoints = data.endpoints || []
   if (endpoints.some((endpoint) => endpoint.pinned)) return 'pinned'
   if (endpoints.some((endpoint) => /https/i.test(endpoint.protocol || ''))) return 'tls'
@@ -349,6 +350,20 @@ function isOnionPage(url) {
   } catch {
     return false
   }
+}
+
+/** A page loaded straight from the web: no record to ask the proxy about. */
+function isClearnetPage(url) {
+  try {
+    return !new URL(url).hostname.endsWith('.localhost')
+  } catch {
+    return false
+  }
+}
+
+function clearnetInfo(url) {
+  const parsed = new URL(url)
+  return { kind: 'clearnet', host: parsed.host, secure: parsed.protocol === 'https:' }
 }
 
 function onionInfo(url) {
@@ -652,6 +667,12 @@ globalThis.__nccContent = (state) => {
     if (state.url && state.icon && !isPrivateTab(id)) saveIcon(displayAddress(state.url), state.icon)
     if (panel === 'home') renderHome()
     if (panel === 'switcher') renderTabGrid()
+    return
+  }
+
+  if (state.type === 'cleared') {
+    siteClearWaiter?.(state)
+    siteClearWaiter = null
     return
   }
 
@@ -1731,7 +1752,13 @@ async function loadInfo() {
   message('Loading…')
 
   try {
-    renderInfo(isOnionPage(activeUrl) ? onionInfo(activeUrl) : await fetchInfo(activeUrl))
+    const data = isOnionPage(activeUrl)
+      ? onionInfo(activeUrl)
+      : isClearnetPage(activeUrl)
+        ? clearnetInfo(activeUrl)
+        : await fetchInfo(activeUrl)
+    renderInfo(data)
+    appendClearSection(data)
   } catch (error) {
     body.textContent = ''
     message(String(error))
@@ -1756,7 +1783,12 @@ function renderInfo(data) {
   const title = document.createElement('b')
   title.textContent = SECURITY[state].label
   const detail = document.createElement('small')
-  detail.textContent = SECURITY[state].detail
+  detail.textContent =
+    data.kind === 'clearnet'
+      ? data.secure
+        ? 'An HTTPS website, outside the NCC network'
+        : 'This page is sent without encryption'
+      : SECURITY[state].detail
   text.append(title, detail)
   head.append(badge, text)
   renderPill()
@@ -1810,6 +1842,13 @@ function renderInfo(data) {
     return
   }
 
+  if (data.kind === 'clearnet') {
+    section('Website')
+    row('Address', data.host)
+    row('Connection', data.secure ? 'HTTPS' : 'Plain HTTP')
+    return
+  }
+
   section(data.kind === 'nsite' ? 'Site' : 'Service')
   row('Kind', data.kind)
   row('Identity', data.pubkey)
@@ -1841,6 +1880,15 @@ function renderInfo(data) {
 }
 
 /** The Shields-style list: what was verified, how it was reached, who may sign. */
+/** The address signer trust is scoped to, the same string the proxy keys it by. */
+function trustKey(data) {
+  if (data.kind === 'ncc' && data.pubkey && data.service) return `ncc://${data.pubkey}/${data.service}`
+  if (data.kind === 'nsite' && data.pubkey) {
+    return data.site ? `nsite://${data.pubkey}/${data.site}` : `nsite://${data.pubkey}`
+  }
+  return ''
+}
+
 function buildChecks(data, tabKind = 'normal') {
   const wrap = document.createElement('div')
   wrap.className = 'checks'
@@ -1872,6 +1920,12 @@ function buildChecks(data, tabKind = 'normal') {
   }
 
   const endpoints = data.endpoints || []
+  if (data.kind === 'clearnet') {
+    if (data.secure) add('ok', 'Encrypted', 'HTTPS, checked against the usual certificate authorities')
+    else add('warn', 'Not encrypted', 'Anyone on the network can read or change this page')
+    add('neutral', 'Not an NCC address', 'No locator, pinning or signer is involved')
+    return wrap
+  }
   if (data.kind === 'onion') {
     add('ok', 'Address authenticates the site', 'A .onion address is the service\'s own key: no certificate authority is involved')
     add('ok', 'Through Tor', 'Reached over a Tor circuit, in the Tor tab\'s own session')
@@ -1892,33 +1946,173 @@ function buildChecks(data, tabKind = 'normal') {
     )
   }
 
-  if (tabKind === 'private') add('ok', 'Private session', 'Nothing is kept: no cache, history or icons')
+  if (tabKind === 'private') add('ok', 'Private session', 'No history or saved icons. Cookies are shared with normal tabs')
+
+  // A private tab has a throwaway key of its own, in its own listener: the trust list
+  // below belongs to the normal one, so offering it here would act on the wrong thing.
+  if (tabKind === 'private') {
+    add('neutral', 'Signer', 'A throwaway key for this private session')
+    return wrap
+  }
 
   const signerRow = add('neutral', 'Signer', 'Asks before every signature')
-  void (async () => {
+  const key = trustKey(data)
+  if (!key) return wrap
+
+  const status = signerRow.querySelector('small')
+  const mark = signerRow.querySelector('.check-mark')
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = 'btn tonal'
+  signerRow.appendChild(button)
+
+  let confirmTimer = null
+  const show = (trusted) => {
+    if (confirmTimer) clearTimeout(confirmTimer)
+    confirmTimer = null
+    status.textContent = trusted ? 'Signs without asking' : 'Asks before every signature'
+    mark.className = trusted ? 'check-mark warn' : 'check-mark neutral'
+    button.textContent = trusted ? 'Revoke' : 'Trust'
+    button.dataset.trusted = trusted ? '1' : ''
+  }
+
+  show(false)
+  button.disabled = true
+
+  // Exact address, not a prefix: another service of the same identity is a different
+  // trust decision.
+  void invoke('signer_permissions')
+    .then((trusted) => {
+      show(trusted.includes(key))
+      button.disabled = false
+    })
+    .catch(() => {
+      // Signer list unavailable: the row stays informational.
+      button.remove()
+    })
+
+  button.addEventListener('click', async () => {
+    const trusted = button.dataset.trusted === '1'
     try {
-      const trusted = await invoke('signer_permissions')
-      const mine = trusted.find((entry) => data.pubkey && entry.includes(String(data.pubkey).slice(0, 12)))
-      if (!mine) return
-      signerRow.querySelector('small').textContent = 'Signs without asking'
-      signerRow.querySelector('.check-mark').className = 'check-mark warn'
-      const revoke = document.createElement('button')
-      revoke.type = 'button'
-      revoke.className = 'btn tonal'
-      revoke.textContent = 'Revoke'
-      revoke.addEventListener('click', async () => {
-        await invoke('signer_revoke', { service: mine })
-        signerRow.querySelector('small').textContent = 'Asks before every signature'
-        signerRow.querySelector('.check-mark').className = 'check-mark neutral'
-        revoke.remove()
-      })
-      signerRow.appendChild(revoke)
-    } catch {
-      // Signer list unavailable; the default line stands.
+      if (trusted) {
+        await invoke('signer_revoke', { service: key })
+        show(false)
+        return
+      }
+      // Trusting is the dangerous direction, so it takes a second tap.
+      if (!confirmTimer) {
+        button.textContent = 'Tap again to trust'
+        confirmTimer = setTimeout(() => show(false), 4000)
+        return
+      }
+      await invoke('signer_trust', { service: key })
+      show(true)
+    } catch (error) {
+      status.textContent = String(error)
     }
-  })()
+  })
 
   return wrap
+}
+
+/* ───────────────────────────── Clear site data ───────────────────────────── */
+
+let siteClearWaiter = null
+
+/** Ask native to drop the site's cookies and storage; resolves with its report, or null. */
+function clearSiteDataNatively(url) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      siteClearWaiter = null
+      resolve(null)
+    }, 4000)
+    siteClearWaiter = (report) => {
+      clearTimeout(timer)
+      resolve(report)
+    }
+    content.clearSiteData(url)
+  })
+}
+
+/**
+ * What the site left on this device, and a way to remove it. Forgetting trust is a
+ * separate choice because it also takes the signer permission away, which the person
+ * may want to keep when only clearing cookies.
+ */
+function appendClearSection(data) {
+  if (!content || typeof content.clearSiteData !== 'function') return
+  const body = byId('info-body')
+  const url = activeUrl
+  if (!url) return
+
+  const section = document.createElement('div')
+  section.className = 'site-data'
+
+  const heading = document.createElement('p')
+  heading.className = 'info-section'
+  heading.textContent = 'Site data'
+  const text = document.createElement('p')
+  text.className = 'hint'
+  text.textContent =
+    'Cookies, local storage and offline data this site saved on this device. The page reloads afterwards, and you may be signed out of it.'
+
+  const row = document.createElement('label')
+  row.className = 'switch-row'
+  const label = document.createElement('span')
+  label.textContent = 'Also forget trust decisions for this site'
+  const forget = document.createElement('input')
+  forget.type = 'checkbox'
+  forget.className = 'switch'
+  forget.setAttribute('role', 'switch')
+  row.append(label, forget)
+
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = 'btn tonal block'
+  button.textContent = 'Clear site data'
+  const status = document.createElement('p')
+  status.className = 'status'
+  status.setAttribute('role', 'status')
+
+  let confirmTimer = null
+  const reset = () => {
+    if (confirmTimer) clearTimeout(confirmTimer)
+    confirmTimer = null
+    button.textContent = 'Clear site data'
+  }
+
+  button.addEventListener('click', async () => {
+    // Destructive, so it takes a second tap.
+    if (!confirmTimer) {
+      button.textContent = 'Tap again to clear'
+      confirmTimer = setTimeout(reset, 4000)
+      return
+    }
+    reset()
+    button.disabled = true
+    status.textContent = 'Clearing…'
+
+    const report = await clearSiteDataNatively(url)
+    let note = report ? `Cleared ${report.cookies} cookie${report.cookies === 1 ? '' : 's'} and stored data.` : 'Cleared.'
+
+    if (forget.checked) {
+      const key = trustKey(data)
+      const origin = key || (isClearnetPage(url) ? new URL(url).origin : '')
+      try {
+        if (key) await invoke('site_forget_trust', { service: key })
+        if (origin) await invoke('vault_forget_never_save', { origin })
+        note += ' Trust decisions forgotten.'
+      } catch (error) {
+        note += ` Trust could not be forgotten: ${error}`
+      }
+    }
+
+    status.textContent = note
+    button.disabled = false
+  })
+
+  section.append(heading, text, row, button, status)
+  body.appendChild(section)
 }
 
 /* ───────────────────────────── Find in page ───────────────────────────── */

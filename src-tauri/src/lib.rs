@@ -457,6 +457,29 @@ fn signer_permissions(state: tauri::State<'_, SignerState>) -> Vec<String> {
     state.proxy.trusted_keys()
 }
 
+/// Trust a service without waiting for it to ask, from the site information sheet. Only
+/// the shell can call this: a page never reaches Tauri commands.
+#[tauri::command]
+fn signer_trust(state: tauri::State<'_, SignerState>, service: String) -> Vec<String> {
+    if service.starts_with("ncc://") || service.starts_with("nsite://") {
+        state.proxy.trust(&service);
+    }
+    state.proxy.trusted_keys()
+}
+
+/// "Forget trust decisions for this site": the signer permission and a cleartext
+/// exception both go, so the next visit asks and warns again. Returns what is still
+/// trusted. Passwords' never-save list has its own command.
+#[tauri::command]
+fn site_forget_trust(
+    state: tauri::State<'_, SignerState>,
+    service: String,
+) -> Result<Vec<String>, String> {
+    state.proxy.untrust(&service);
+    state.proxy.settings().remove_http_exception(&service)?;
+    Ok(state.proxy.trusted_keys())
+}
+
 #[tauri::command]
 fn signer_revoke(state: tauri::State<'_, SignerState>, service: String) -> Vec<String> {
     state.proxy.untrust(&service);
@@ -650,6 +673,8 @@ pub fn run() {
             settings_set_https,
             settings_set_gossip,
             signer_permissions,
+            signer_trust,
+            site_forget_trust,
             signer_revoke,
             signer_respond
         ])

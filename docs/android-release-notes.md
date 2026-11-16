@@ -5,6 +5,14 @@ is not a daily driver.
 
 ## New in this build
 
+- Site information can now clear a site's data: its cookies and local storage, with an
+  optional "forget trust decisions" switch that also revokes signer access and any
+  cleartext exception. Signer access can be trusted or revoked from the same sheet,
+  and Revoke now acts on exactly the service you are looking at; before, it could
+  revoke another service of the same identity.
+- Clearnet pages get a proper site information sheet instead of an error.
+- Private tabs no longer claim to keep cookies out: cookies are shared with normal
+  tabs on this device, and the notices now say so.
 - Fixes the app closing when Tor starts. Opening the Tor settings page or entering an
   onion address in a Tor tab crashed the app, and separately the built-in Tor client
   could not start at all. Both are fixed: it now connects in about ten seconds.

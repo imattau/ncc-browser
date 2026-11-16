@@ -261,6 +261,15 @@ impl SettingsStore {
         self.apply(settings)
     }
 
+    /// Take a service off the cleartext allow list, so the next visit warns again.
+    pub fn remove_http_exception(&self, key: &str) -> Result<Settings, String> {
+        let mut settings = self.get();
+        settings
+            .http_exceptions
+            .retain(|entry| !entry.eq_ignore_ascii_case(key));
+        self.apply(settings)
+    }
+
     pub fn gossip(&self) -> bool {
         self.inner.read().expect("settings lock").gossip
     }
@@ -483,6 +492,23 @@ mod tests {
         // Allowing the same service twice must not duplicate the entry.
         store.allow_http("ncc://npub/web").expect("allow again");
         assert_eq!(store.get().http_exceptions.len(), 1);
+    }
+
+    #[test]
+    fn a_cleartext_exception_can_be_withdrawn() {
+        let store = SettingsStore::in_memory(Settings::default());
+        store.allow_http("ncc://npub/web").expect("allow");
+        store.allow_http("ncc://npub/other").expect("allow");
+
+        store
+            .remove_http_exception("NCC://npub/web")
+            .expect("remove, case-insensitively");
+        assert!(!store.allows_http("ncc://npub/web"));
+        // Only that service: another one of the same identity is a separate decision.
+        assert!(store.allows_http("ncc://npub/other"));
+
+        // Removing what is not there is not an error.
+        store.remove_http_exception("ncc://npub/none").expect("noop");
     }
 
     #[test]
