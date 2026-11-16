@@ -126,6 +126,10 @@ class MainActivity : TauriActivity() {
 
     installCrashReporter()
 
+    // Anything an earlier run left in the private or Tor sessions goes first, before a
+    // tab can load them.
+    Profiles.reset()
+
     barHeight = (56 * resources.displayMetrics.density).toInt()
     downloads = Downloads(this).also { store ->
       store.onChange = { json -> emitToShellRaw("window.__nccDownloads", json) }
@@ -410,7 +414,13 @@ class MainActivity : TauriActivity() {
     val authority = uri.authority ?: return
     val origin = "$scheme://$authority"
 
-    val cookies = CookieManager.getInstance()
+    // The port says which listener served the page, and so which session holds its data.
+    val profile = when {
+      torPortNumber > 0 && uri.port == torPortNumber -> Profiles.TOR
+      privatePortNumber > 0 && uri.port == privatePortNumber -> Profiles.PRIVATE
+      else -> null
+    }
+    val cookies = Profiles.cookieManager(profile)
     var cleared = 0
     val names = cookies.getCookie(origin)
       ?.split(";")
@@ -435,7 +445,7 @@ class MainActivity : TauriActivity() {
     }
     cookies.flush()
 
-    WebStorage.getInstance().deleteOrigin(origin)
+    Profiles.webStorage(profile).deleteOrigin(origin)
 
     for (tab in tabs) {
       if (Uri.parse(tab.currentUrl ?: "").authority == authority) tab.reload()
@@ -465,6 +475,10 @@ class MainActivity : TauriActivity() {
     val position = tabs.indexOf(target)
     tabs.remove(target)
     target.destroy()
+
+    // The last private or Tor tab takes its session with it.
+    if (target.isTor && tabs.none { it.isTor }) Profiles.wipe(Profiles.TOR)
+    if (target.isPrivate && tabs.none { it.isPrivate }) Profiles.wipe(Profiles.PRIVATE)
 
     if (tabs.isEmpty()) {
       activeId = null
@@ -904,6 +918,10 @@ class MainActivity : TauriActivity() {
       }
     }
 
+    /** Whether private and Tor tabs get their own cookies and storage. */
+    @JavascriptInterface
+    fun profilesSupported(): Boolean = Profiles.supported()
+
     @JavascriptInterface
     fun clearSiteData(url: String?) {
       val target = url ?: return
@@ -947,6 +965,8 @@ class MainActivity : TauriActivity() {
   override fun onDestroy() {
     for (tab in tabs) tab.destroy()
     tabs.clear()
+    Profiles.wipe(Profiles.PRIVATE)
+    Profiles.wipe(Profiles.TOR)
     super.onDestroy()
   }
 

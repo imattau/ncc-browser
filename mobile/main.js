@@ -68,6 +68,29 @@ const KIND_INFO = {
   }
 }
 
+/** What a private tab can honestly promise depends on whether the WebView can give it
+ * a session of its own; `applyProfileNotices` swaps these in once native says so. */
+let privateSessionDetail = 'No history or saved icons. Cookies are shared with normal tabs'
+
+function applyProfileNotices() {
+  if (!content || typeof content.profilesSupported !== 'function') return
+  let supported = false
+  try {
+    supported = Boolean(content.profilesSupported())
+  } catch {
+    supported = false
+  }
+  if (!supported) return
+
+  KIND_INFO.private.note =
+    'Private tabs leave no history or saved icons. Their cookies and site data are kept apart from normal tabs and discarded when the last private tab closes. Your connection is not hidden.'
+  KIND_INFO.private.info =
+    'This tab leaves no history or saved icons. Its cookies and site data are kept apart from normal tabs and discarded when the last private tab closes. Your connection is not hidden.'
+  KIND_INFO.tor.info =
+    'This tab is loaded through Tor. It leaves no history or saved icons, and its cookies and site data are discarded when the last Tor tab closes.'
+  privateSessionDetail = 'Own cookies and storage, discarded when the last private tab closes'
+}
+
 const kindOf = (tab) => (tab && KINDS.includes(tab.kind) ? tab.kind : 'normal')
 
 /** Which kind the tab switcher is showing. */
@@ -1933,7 +1956,7 @@ function buildChecks(data, tabKind = 'normal') {
   }
   if (data.kind === 'onion') {
     add('ok', 'Address authenticates the site', 'A .onion address is the service\'s own key: no certificate authority is involved')
-    add('ok', 'Through Tor', 'Reached over a Tor circuit, in the Tor tab\'s own session')
+    add('ok', 'Through Tor', 'Reached over a Tor circuit')
     add('neutral', 'Encryption', 'Plain HTTP inside an onion has no TLS layer; HTTPS adds one')
     return wrap
   }
@@ -1951,7 +1974,7 @@ function buildChecks(data, tabKind = 'normal') {
     )
   }
 
-  if (tabKind === 'private') add('ok', 'Private session', 'No history or saved icons. Cookies are shared with normal tabs')
+  if (tabKind === 'private') add('ok', 'Private session', privateSessionDetail)
 
   // A private tab has a throwaway key of its own, in its own listener: the trust list
   // below belongs to the normal one, so offering it here would act on the wrong thing.
@@ -3442,6 +3465,7 @@ async function main() {
   applyLayout()
 
   if (content) wireChrome()
+  applyProfileNotices()
 
   const tauri = globalThis.__TAURI__
 
