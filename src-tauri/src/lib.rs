@@ -32,16 +32,20 @@ fn default_relays() -> Vec<String> {
 
 /// Start the NCC proxy on an ephemeral loopback port.
 ///
-/// The content WebView will load `http://<npub>.<service>.localhost:<port>/`, so the
+/// The content WebView loads `http://<npub>.<service>.localhost:<port>/`, so the
 /// service stays part of the origin the way `ncc://` gives the desktop build. The
 /// port is ephemeral because nothing outside this process is allowed to reach it.
+///
+/// The socket is bound with `std` and only *converted* inside the async task: tokio's
+/// `from_std` registers with the reactor and panics when called outside a runtime,
+/// which `setup()` is.
 fn start_proxy() -> Result<u16, String> {
-    let listener =
+    let std_listener =
         std::net::TcpListener::bind(("127.0.0.1", 0)).map_err(|error| error.to_string())?;
-    listener
+    std_listener
         .set_nonblocking(true)
         .map_err(|error| error.to_string())?;
-    let port = listener
+    let port = std_listener
         .local_addr()
         .map_err(|error| error.to_string())?
         .port();
@@ -59,10 +63,15 @@ fn start_proxy() -> Result<u16, String> {
     };
 
     let state = Arc::new(ncc_proxy::ProxyState::new(&config));
-    let listener =
-        tokio::net::TcpListener::from_std(listener).map_err(|error| error.to_string())?;
 
     tauri::async_runtime::spawn(async move {
+        let listener = match tokio::net::TcpListener::from_std(std_listener) {
+            Ok(listener) => listener,
+            Err(error) => {
+                eprintln!("[proxy] could not attach the listener: {error}");
+                return;
+            }
+        };
         if let Err(error) = ncc_proxy::serve(listener, state).await {
             eprintln!("[proxy] {error}");
         }
@@ -84,13 +93,20 @@ pub fn run() {
                 )?;
             }
 
-            match start_proxy() {
-                Ok(port) => {
+            // A failure here must not take the shell down with it: the app is
+            // still usable to show why the proxy could not start.
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(start_proxy));
+            match outcome {
+                Ok(Ok(port)) => {
                     println!("[proxy] listening on 127.0.0.1:{port}");
                     app.manage(ProxyPort(Some(port)));
                 }
-                Err(error) => {
+                Ok(Err(error)) => {
                     eprintln!("[proxy] could not start: {error}");
+                    app.manage(ProxyPort(None));
+                }
+                Err(_) => {
+                    eprintln!("[proxy] panicked while starting");
                     app.manage(ProxyPort(None));
                 }
             }
