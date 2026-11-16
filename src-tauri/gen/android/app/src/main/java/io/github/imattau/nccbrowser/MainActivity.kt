@@ -208,7 +208,7 @@ class MainActivity : TauriActivity() {
             appendLine(error.stackTraceToString())
           },
         )
-      } catch {
+      } catch (failure: Throwable) {
         // Reporting a crash must not become a second one.
       }
       system?.uncaughtException(thread, error)
@@ -526,30 +526,32 @@ class MainActivity : TauriActivity() {
   inner class Bridge {
     @JavascriptInterface
     fun open(url: String?) {
-      if (url == null) return
-      runOnUiThread { openTab(url, reuseActive = true) }
+      val target = url ?: return
+      runOnUiThread { openTab(target, reuseActive = true) }
     }
 
     @JavascriptInterface
     fun openNew(url: String?) {
-      if (url == null) return
-      runOnUiThread { openTab(url, reuseActive = false) }
+      val target = url ?: return
+      runOnUiThread { openTab(target, reuseActive = false) }
     }
 
     @JavascriptInterface
     fun select(id: String?) {
-      if (id == null) return
-      runOnUiThread { selectTab(id) }
+      val target = id ?: return
+      runOnUiThread { selectTab(target) }
     }
 
     @JavascriptInterface
     fun closeTab(id: String?) {
-      runOnUiThread { closeTab(id) }
+      // Qualified on purpose: an unqualified call resolves to this method, and the
+      // bridge would post itself forever instead of closing anything.
+      runOnUiThread { this@MainActivity.closeTab(id) }
     }
 
     @JavascriptInterface
     fun closeActive() {
-      runOnUiThread { closeTab(activeId) }
+      runOnUiThread { this@MainActivity.closeTab(activeId) }
     }
 
     @JavascriptInterface
@@ -582,14 +584,14 @@ class MainActivity : TauriActivity() {
      * downloads from pages that do not carry it in their URL. */
     @JavascriptInterface
     fun setProxyPort(port: Int?) {
-      if (port == null) return
-      runOnUiThread { proxyPortNumber = port }
+      val value = port ?: return
+      runOnUiThread { proxyPortNumber = value }
     }
 
     /** The strip's arrow: same path as the system gesture, so the two cannot drift. */
     @JavascriptInterface
     fun navigateBack() {
-      runOnUiThread { navigateBack() }
+      runOnUiThread { this@MainActivity.navigateBack() }
     }
 
     @JavascriptInterface
@@ -616,8 +618,8 @@ class MainActivity : TauriActivity() {
 
     @JavascriptInterface
     fun find(query: String?) {
-      if (query == null) return
-      runOnUiThread { active()?.find(query) }
+      val text = query ?: return
+      runOnUiThread { active()?.find(text) }
     }
 
     @JavascriptInterface
@@ -640,11 +642,11 @@ class MainActivity : TauriActivity() {
 
     @JavascriptInterface
     fun share(text: String?) {
-      if (text == null) return
+      val value = text ?: return
       runOnUiThread {
         val send = Intent(Intent.ACTION_SEND)
           .setType("text/plain")
-          .putExtra(Intent.EXTRA_TEXT, text)
+          .putExtra(Intent.EXTRA_TEXT, value)
         try {
           startActivity(Intent.createChooser(send, null))
         } catch (error: Exception) {
@@ -655,10 +657,10 @@ class MainActivity : TauriActivity() {
 
     @JavascriptInterface
     fun copy(text: String?) {
-      if (text == null) return
+      val value = text ?: return
       runOnUiThread {
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText("address", text))
+        clipboard.setPrimaryClip(ClipData.newPlainText("address", value))
         Toast.makeText(this@MainActivity, "Address copied", Toast.LENGTH_SHORT).show()
       }
     }
@@ -672,11 +674,11 @@ class MainActivity : TauriActivity() {
 
     @JavascriptInterface
     fun openExternal(url: String?) {
-      if (url == null) return
+      val target = url ?: return
       runOnUiThread {
         try {
           startActivity(
-            Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            Intent(Intent.ACTION_VIEW, Uri.parse(target)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
           )
         } catch (error: Exception) {
           // No handler installed; nothing else to try.
@@ -691,8 +693,8 @@ class MainActivity : TauriActivity() {
 
     @JavascriptInterface
     fun setBarPosition(position: String?) {
-      if (position == null) return
-      runOnUiThread { applyBarPosition(position) }
+      val value = position ?: return
+      runOnUiThread { applyBarPosition(value) }
     }
   }
 
