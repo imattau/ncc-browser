@@ -446,8 +446,21 @@ function targetUrl(port) {
   return { url: `http://${parsed.pubkey}.${parsed.service}.localhost:${port}/` }
 }
 
-function open(port) {
-  const target = targetUrl(port)
+async function open(port) {
+  let target = targetUrl(port)
+
+  // For a site, whether a `d`-like segment is a name or a path depends on what is
+  // published, so ask the proxy instead of guessing here.
+  if (/^nsite:/i.test(byId('address').value.trim())) {
+    try {
+      const query = encodeURIComponent(byId('address').value.trim())
+      const response = await fetch(`http://127.0.0.1:${port}/__ncc/route?u=${query}`)
+      if (response.ok) target = await response.json()
+    } catch {
+      // Fall back to the local guess; the proxy will answer 404 if it is wrong.
+    }
+  }
+
   if (target.error) {
     byId('result').textContent = target.error
     return

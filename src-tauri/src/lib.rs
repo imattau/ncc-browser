@@ -107,9 +107,11 @@ fn default_relays() -> Vec<String> {
     ]
 }
 
-fn proxy_config() -> ProxyConfig {
+fn proxy_config(data_dir: Option<std::path::PathBuf>) -> ProxyConfig {
     ProxyConfig {
         relays: default_relays(),
+        // Verified site blobs survive a restart; the hash is re-checked on read.
+        blob_directory: data_dir.map(|dir| dir.join("nsite-blobs")),
         // Only the shell's own bundle may read responses across origins. A page
         // served from a vhost does not need CORS at all.
         allowed_origins: vec![
@@ -191,8 +193,10 @@ pub fn run() {
                 let _ = handle.emit("ncc:signer", request);
             }));
 
-            let proxy = Arc::new(ProxyState::new(&proxy_config())
-                .with_signer(identity.clone(), approvals.clone()));
+            let proxy = Arc::new(
+                ProxyState::new(&proxy_config(Some(data_dir.clone())))
+                    .with_signer(identity.clone(), approvals.clone()),
+            );
 
             // A failure here must not take the shell down with it: the app is still
             // usable to show why the proxy could not start.
