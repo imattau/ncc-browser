@@ -221,6 +221,10 @@ async fn handle_inner(state: &ProxyState, request: Request) -> Response {
         return route(state, &authority, request.uri().query().unwrap_or_default()).await;
     }
 
+    if request.uri().path() == "/__ncc/info" {
+        return info(state, request.uri().query().unwrap_or_default()).await;
+    }
+
     let Some(vhost) = parse_vhost(&authority) else {
         return help_page(&authority);
     };
@@ -575,6 +579,91 @@ pub(crate) fn inject_shim(state: &ProxyState, vhost: &Vhost, html: &str) -> (Str
         inject_into_html(html, &injection.script_tag()),
         injection.nonce,
     )
+}
+
+/// What the browser knows about one service or site, for the site panel.
+///
+/// The shell never talks to relays; it asks here, so the record, the endpoint and the
+/// pin it shows are the same ones serving the page.
+async fn info(state: &ProxyState, query: &str) -> Response {
+    let host = url::form_urlencoded::parse(query.as_bytes())
+        .find(|(name, _)| name == "u")
+        .map(|(_, value)| value.into_owned());
+
+    let Some(host) = host else {
+        return json_error(StatusCode::BAD_REQUEST, "missing-host", "Pass ?u=<host>");
+    };
+
+    let Some(vhost) = parse_vhost(&host) else {
+        return json_error(
+            StatusCode::BAD_REQUEST,
+            "unknown-host",
+            "Not an NCC or site host",
+        );
+    };
+
+    if vhost.kind == crate::vhost::HostKind::Nsite {
+        return match state
+            .nsite()
+            .resolve(&vhost.pubkey, vhost.site.as_deref())
+            .await
+        {
+            Ok(manifest) => json_ok(serde_json::json!({
+                "kind": "nsite",
+                "pubkey": vhost.pubkey,
+                "service": serde_json::Value::Null,
+                "site": vhost.site,
+                "event": manifest.event_id,
+                "updated": manifest.updated_at,
+                "expires": serde_json::Value::Null,
+                "title": manifest.title,
+                "servers": manifest.servers,
+                "paths": manifest.paths.len(),
+                "endpoints": [],
+            })),
+            Err(error) => json_error(StatusCode::NOT_FOUND, "no-manifest", &error.to_string()),
+        };
+    }
+
+    match state
+        .resolver()
+        .resolve(&vhost.pubkey, &vhost.service)
+        .await
+    {
+        Ok(resolved) => json_ok(serde_json::json!({
+            "kind": "ncc",
+            "pubkey": vhost.pubkey,
+            "service": vhost.service,
+            "site": serde_json::Value::Null,
+            "dTag": resolved.d_tag,
+            "event": resolved.event_id,
+            "updated": resolved.updated_at,
+            "expires": resolved.expires_at,
+            "endpoints": resolved
+                .endpoints
+                .iter()
+                .map(|endpoint| serde_json::json!({
+                    "host": url::Url::parse(&endpoint.url)
+                        .ok()
+                        .and_then(|url| url.host_str().map(str::to_string))
+                        .unwrap_or_else(|| endpoint.url.clone()),
+                    "protocol": endpoint.protocol,
+                    "family": endpoint.family.as_str(),
+                    "pinned": endpoint.k.is_some(),
+                }))
+                .collect::<Vec<_>>(),
+        })),
+        Err(error) => json_error(StatusCode::NOT_FOUND, "no-record", &error.to_string()),
+    }
+}
+
+fn json_ok(value: serde_json::Value) -> Response {
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/json")],
+        value.to_string(),
+    )
+        .into_response()
 }
 
 /// Map an `ncc://` or `nsite://` link onto the host this browser loads.

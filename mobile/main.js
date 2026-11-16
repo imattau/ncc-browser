@@ -29,7 +29,9 @@ const content = globalThis.NccContent
 let contentOpen = false
 let tabs = []
 let activeTabId = ''
-let switcherOpen = false
+let panel = 'stage'
+let proxyPort = null
+let activeUrl = ''
 let newTabMode = false
 
 /**
@@ -65,14 +67,17 @@ globalThis.__nccTabs = (payload) => {
 
   byId('bar-tabs').textContent = String(Math.max(tabs.length, 1))
 
-  if (switcherOpen) renderTabGrid()
-  if (tabs.length === 0 && switcherOpen) {
-    switcherOpen = false
+  if (panel === 'switcher') renderTabGrid()
+  if (tabs.length === 0 && panel === 'switcher') {
+    panel = 'stage'
     applyLayout()
   }
 
   const active = tabs.find((tab) => tab.id === activeTabId)
-  if (active && active.url) byId('bar-address').textContent = displayAddress(active.url)
+  if (active && active.url) {
+    activeUrl = active.url
+    byId('bar-address').textContent = displayAddress(active.url)
+  }
 }
 
 function renderTabGrid() {
@@ -109,7 +114,7 @@ function renderTabGrid() {
     card.appendChild(close)
 
     card.addEventListener('click', () => {
-      switcherOpen = false
+      panel = 'stage'
       applyLayout()
       content?.select(tab.id)
     })
@@ -125,19 +130,113 @@ function renderTabGrid() {
   }
 }
 
-function showSwitcher() {
+/** Every full-window surface is the shell expanded over the page. */
+function showPanel(name) {
   if (!content) return
-  switcherOpen = true
-  content.capture()
-  content.expand(true)
-  renderTabGrid()
+  panel = name
+  content?.expand(true)
+  if (name === 'switcher') {
+    content.capture()
+    renderTabGrid()
+  }
+  if (name === 'info') void loadInfo()
   applyLayout()
 }
 
-function closeSwitcher() {
-  switcherOpen = false
+function closePanel() {
+  panel = 'stage'
   if (tabs.length > 0) content?.expand(false)
   applyLayout()
+}
+
+/** What the proxy knows about the page in front of you. */
+async function loadInfo() {
+  const body = byId('info-body')
+  body.textContent = 'Loading…'
+
+  if (!activeUrl) {
+    body.textContent = 'No page is open.'
+    return
+  }
+
+  let host = ''
+  try {
+    host = new URL(activeUrl).host
+  } catch {
+    body.textContent = 'The current address is not a page.'
+    return
+  }
+
+  try {
+    const response = await fetch(
+      `http://127.0.0.1:${proxyPort}/__ncc/info?u=${encodeURIComponent(host)}`
+    )
+    renderInfo(await response.json())
+  } catch (error) {
+    body.textContent = String(error)
+  }
+}
+
+function renderInfo(data) {
+  const body = byId('info-body')
+  body.textContent = ''
+
+  const section = (title) => {
+    const heading = document.createElement('p')
+    heading.className = 'info-section'
+    heading.textContent = title
+    body.appendChild(heading)
+  }
+
+  const row = (label, value) => {
+    if (value === undefined || value === null || value === '') return
+    const line = document.createElement('div')
+    line.className = 'info-row'
+    const term = document.createElement('dt')
+    term.textContent = label
+    const detail = document.createElement('dd')
+    detail.textContent = String(value)
+    line.append(term, detail)
+    body.appendChild(line)
+  }
+
+  const when = (seconds) =>
+    seconds ? new Date(seconds * 1000).toLocaleString() : null
+
+  if (data.error) {
+    section('Problem')
+    row('error', data.error)
+    return
+  }
+
+  section(data.kind === 'nsite' ? 'Site' : 'Service')
+  row('kind', data.kind)
+  row('identity', data.pubkey)
+  if (data.service) row('service', data.service)
+  if (data.site) row('site', data.site)
+  if (data.title) row('title', data.title)
+
+  section('Record')
+  if (data.dTag) row('d tag', data.dTag)
+  row('event', data.event)
+  row('updated', when(data.updated))
+  row('expires', when(data.expires))
+  if (data.paths) row('files', data.paths)
+
+  if (data.endpoints && data.endpoints.length > 0) {
+    section('Endpoints')
+    for (const endpoint of data.endpoints) {
+      row(
+        endpoint.family,
+        `${endpoint.host} · ${endpoint.protocol}${endpoint.pinned ? ' · pinned' : ''}`
+      )
+    }
+  }
+
+  if (data.servers && data.servers.length > 0) {
+    section('Blossom')
+    for (const server of data.servers) row('server', server)
+  }
 }
 
 /** Events from the native content surface. */
@@ -203,6 +302,7 @@ async function main() {
     return
   }
 
+  proxyPort = port
   set('proxy', `127.0.0.1:${port}`)
   byId('go').textContent = content
     ? 'Open in the content view'
@@ -219,20 +319,39 @@ async function main() {
     byId('bar-back').addEventListener('click', () => content.back())
     byId('bar-reload').addEventListener('click', () => content.reload())
     byId('bar-address').addEventListener('click', () => {
-      switcherOpen = false
+      panel = 'stage'
       content.expand(true)
       applyLayout()
       byId('address').focus()
     })
-    byId('bar-tabs').addEventListener('click', () => showSwitcher())
-    byId('switcher-done').addEventListener('click', () => closeSwitcher())
-    byId('switcher-new').addEventListener('click', () => {
-      newTabMode = true
-      switcherOpen = false
-      content.expand(true)
+    byId('bar-tabs').addEventListener('click', () => showPanel('switcher'))
+    byId('switcher-done').addEventListener('click', () => closePanel())
+    byId('switcher-new').addEventListener('click', () => startNewTab())
+
+    byId('bar-info').addEventListener('click', () => showPanel('info'))
+    byId('info-done').addEventListener('click', () => closePanel())
+    byId('bar-menu').addEventListener('click', () => showPanel('menu'))
+    byId('menu-done').addEventListener('click', () => closePanel())
+    byId('menu-reload').addEventListener('click', () => {
+      content.reload()
+      closePanel()
+    })
+    byId('menu-new').addEventListener('click', () => startNewTab())
+    byId('menu-close').addEventListener('click', () => {
+      content.closeTab(activeTabId)
+      closePanel()
+    })
+    byId('menu-copy').addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(displayAddress(activeUrl))
+      } catch {
+        // Clipboard access can be refused; the address is on screen anyway.
+      }
+      closePanel()
+    })
+    byId('menu-settings').addEventListener('click', () => {
+      panel = 'stage'
       applyLayout()
-      byId('go').textContent = 'Open in a new tab'
-      byId('address').focus()
     })
     byId('bar-position').addEventListener('change', (event) => applyBarPosition(event.target.value))
     applyBarPosition(globalThis.localStorage?.getItem('ncc.bar') || 'bottom')
@@ -363,6 +482,15 @@ async function answerSigner(allow) {
   if (contentOpen) content?.expand(false)
 }
 
+function startNewTab() {
+  newTabMode = true
+  panel = 'stage'
+  content?.expand(true)
+  applyLayout()
+  byId('go').textContent = 'Open in a new tab'
+  byId('address').focus()
+}
+
 function applyLayout() {
   const compact = window.innerHeight < 200
   document.body.classList.toggle('compact', compact)
@@ -371,9 +499,13 @@ function applyLayout() {
   if (compact) {
     byId('stage').hidden = true
     byId('switcher').hidden = true
+    byId('info').hidden = true
+    byId('menu').hidden = true
   } else {
-    byId('stage').hidden = switcherOpen
-    byId('switcher').hidden = !switcherOpen
+    byId('stage').hidden = panel !== 'stage'
+    byId('switcher').hidden = panel !== 'switcher'
+    byId('info').hidden = panel !== 'info'
+    byId('menu').hidden = panel !== 'menu'
   }
 
   if (!compact && contentOpen) byId('collapse').hidden = false

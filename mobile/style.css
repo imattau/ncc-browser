@@ -409,3 +409,57 @@ select#bar-position {
   color: var(--text);
   font: inherit;
 }
+
+.lock {
+  font-size: 13px;
+  width: 30px;
+}
+
+.info-body {
+  overflow-y: auto;
+}
+
+.info-row {
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 11px 2px;
+  border-bottom: 1px solid var(--line);
+  font-size: 14px;
+}
+
+.info-row dt {
+  color: var(--muted);
+  flex: 0 0 38%;
+}
+
+.info-row dd {
+  margin: 0;
+  text-align: right;
+  word-break: break-all;
+  font-variant-numeric: tabular-nums;
+}
+
+.info-section {
+  margin: 18px 0 6px;
+  font-size: 13px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.menu-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.menu-list button {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+}
