@@ -47,6 +47,10 @@ pub struct Settings {
     pub warn_insecure: bool,
     /// Services the user allowed over cleartext.
     pub http_exceptions: Vec<String>,
+    /// Search engine id; see `SEARCH_ENGINES` in the desktop build.
+    pub search_engine: String,
+    /// SearXNG instance, or a full `%s` template for a custom engine.
+    pub search_engine_custom: String,
 }
 
 impl Default for Settings {
@@ -61,6 +65,8 @@ impl Default for Settings {
             https_mode: HttpsMode::default(),
             warn_insecure: false,
             http_exceptions: Vec::new(),
+            search_engine: "duckduckgo".to_string(),
+            search_engine_custom: String::new(),
         }
     }
 }
@@ -72,6 +78,28 @@ impl Settings {
         if self.relays.is_empty() {
             return Err("Keep at least one relay".to_string());
         }
+
+        // An unknown engine falls back rather than breaking the address bar.
+        if !matches!(
+            self.search_engine.as_str(),
+            "duckduckgo" | "brave" | "startpage" | "google" | "bing" | "searx" | "custom"
+        ) {
+            self.search_engine = "duckduckgo".to_string();
+        }
+
+        let custom = self.search_engine_custom.trim().to_string();
+        self.search_engine_custom = custom.clone();
+
+        if self.search_engine == "custom" && !custom.contains("%s") {
+            return Err("A custom engine needs a %s placeholder".to_string());
+        }
+        if self.search_engine == "searx"
+            && !custom.is_empty()
+            && !(custom.starts_with("https://") || custom.starts_with("http://"))
+        {
+            return Err("A SearXNG instance must be an http(s) URL".to_string());
+        }
+
         Ok(self)
     }
 }
@@ -146,6 +174,18 @@ impl SettingsStore {
         self.inner.read().expect("settings lock").https_mode
     }
 
+    pub fn gossip(&self) -> bool {
+        self.inner.read().expect("settings lock").gossip
+    }
+
+    pub fn search(&self) -> (String, String) {
+        let settings = self.inner.read().expect("settings lock");
+        (
+            settings.search_engine.clone(),
+            settings.search_engine_custom.clone(),
+        )
+    }
+
     /// Apply a validated replacement and persist it. Memory is only changed once the
     /// new value is known to be usable.
     pub fn apply(&self, settings: Settings) -> Result<Settings, String> {
@@ -174,6 +214,13 @@ impl SettingsStore {
     pub fn set_https_mode(&self, mode: HttpsMode) -> Result<Settings, String> {
         let mut settings = self.get();
         settings.https_mode = mode;
+        self.apply(settings)
+    }
+
+    pub fn set_search(&self, engine: String, custom: String) -> Result<Settings, String> {
+        let mut settings = self.get();
+        settings.search_engine = engine;
+        settings.search_engine_custom = custom;
         self.apply(settings)
     }
 
@@ -253,6 +300,26 @@ mod tests {
         assert!(store.set_relays(vec![]).is_err());
         // The old list survives a rejected change.
         assert_eq!(store.get().relays.len(), 3);
+    }
+
+    #[test]
+    fn search_engines_are_validated() {
+        let store = SettingsStore::in_memory(Settings::default());
+        assert!(store
+            .set_search("custom".into(), "https://x/?q=".into())
+            .is_err());
+        assert!(store.set_search("searx".into(), "searx.be".into()).is_err());
+
+        let saved = store
+            .set_search("custom".into(), "https://example.org/find?q=%s".into())
+            .expect("custom");
+        assert_eq!(saved.search_engine, "custom");
+
+        // An unknown id is not an error; it just falls back.
+        let fallback = store
+            .set_search("nonsense".into(), String::new())
+            .expect("fallback");
+        assert_eq!(fallback.search_engine, "duckduckgo");
     }
 
     #[test]

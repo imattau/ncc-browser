@@ -299,12 +299,36 @@ async fn handle_inner(state: &ProxyState, request: Request) -> Response {
     };
 
     let selection = select_transport_endpoints(&resolved.endpoints, false);
-    if selection.candidates.is_empty() {
+    let mut candidates = selection.candidates;
+
+    // The user's HTTPS policy decides which of those are actually usable.
+    let mode = state.settings().https_mode();
+    if mode == crate::settings::HttpsMode::Only {
+        candidates.retain(|endpoint| endpoint.protocol == "https" || endpoint.protocol == "wss");
+        if candidates.is_empty() {
+            return failure_page(
+                StatusCode::BAD_GATEWAY,
+                "Only secure endpoints are allowed",
+                "This locator publishes cleartext endpoints only, and the HTTPS policy is set to require TLS.",
+                &vhost,
+            );
+        }
+    }
+    let candidates = ncc_core::sort_candidates_for_https(
+        &candidates,
+        match mode {
+            crate::settings::HttpsMode::Off => ncc_core::HttpsMode::Off,
+            crate::settings::HttpsMode::Prefer => ncc_core::HttpsMode::Warn,
+            crate::settings::HttpsMode::Only => ncc_core::HttpsMode::Only,
+        },
+    );
+
+    if candidates.is_empty() {
         return error_page(&ResolveError::NoEndpoint, &vhost);
     }
 
     let mut failures = Vec::new();
-    for endpoint in &selection.candidates {
+    for endpoint in &candidates {
         match forward(
             state, endpoint, &method, &headers, &body, &path, &query, &authority, document, &vhost,
         )

@@ -33,6 +33,7 @@ let panel = 'home'
 let proxyPort = null
 let activeUrl = ''
 let activeTitle = ''
+let browserSettings = null
 let signerTimer = null
 let signerDeadline = 0
 
@@ -43,6 +44,8 @@ const PANELS = [
   'menu',
   'appearance',
   'relays',
+  'search',
+  'security',
   'identity',
   'signer-settings',
   'history',
@@ -169,8 +172,9 @@ async function loadRelays() {
   const input = byId('relays-input')
   byId('relays-error').textContent = ''
   try {
-    const settings = await globalThis.__TAURI__.core.invoke('browser_settings')
-    input.value = settings.relays.join('\n')
+    browserSettings = await globalThis.__TAURI__.core.invoke('browser_settings')
+    input.value = browserSettings.relays.join('\n')
+    byId('gossip').checked = browserSettings.gossip
   } catch (error) {
     byId('relays-error').textContent = String(error)
   }
@@ -183,12 +187,93 @@ async function saveRelays() {
     .filter(Boolean)
 
   try {
-    const settings = await globalThis.__TAURI__.core.invoke('settings_set_relays', { relays })
-    byId('relays-input').value = settings.relays.join('\n')
+    browserSettings = await globalThis.__TAURI__.core.invoke('settings_set_relays', { relays })
+    browserSettings = await globalThis.__TAURI__.core.invoke('settings_set_gossip', {
+      value: byId('gossip').checked
+    })
+    byId('relays-input').value = browserSettings.relays.join('\n')
     byId('relays-error').textContent = 'Saved. The next lookup uses these.'
   } catch (error) {
     byId('relays-error').textContent = String(error)
   }
+}
+
+async function loadSearch() {
+  try {
+    browserSettings = await globalThis.__TAURI__.core.invoke('browser_settings')
+    byId('search-engine').value = browserSettings.searchEngine
+    byId('search-custom').value = browserSettings.searchEngineCustom
+    byId('search-custom-label').textContent =
+      browserSettings.searchEngine === 'custom' ? 'Template with %s' : 'SearXNG instance'
+  } catch (error) {
+    byId('search-error').textContent = String(error)
+  }
+}
+
+async function saveSearch() {
+  try {
+    browserSettings = await globalThis.__TAURI__.core.invoke('settings_set_search', {
+      engine: byId('search-engine').value,
+      custom: byId('search-custom').value.trim()
+    })
+    byId('search-error').textContent = 'Saved.'
+  } catch (error) {
+    byId('search-error').textContent = String(error)
+  }
+}
+
+async function loadSecurity() {
+  try {
+    browserSettings = await globalThis.__TAURI__.core.invoke('browser_settings')
+    byId('https-mode').value = browserSettings.httpsMode
+    byId('warn-insecure').checked = browserSettings.warnInsecure
+  } catch (error) {
+    byId('security-error').textContent = String(error)
+  }
+}
+
+async function saveSecurity() {
+  try {
+    browserSettings = await globalThis.__TAURI__.core.invoke('settings_set_https', {
+      mode: byId('https-mode').value,
+      warn: byId('warn-insecure').checked
+    })
+    byId('security-error').textContent = 'Saved.'
+  } catch (error) {
+    byId('security-error').textContent = String(error)
+  }
+}
+
+const SEARCH_TEMPLATES = {
+  duckduckgo: 'https://duckduckgo.com/?q=%s',
+  brave: 'https://search.brave.com/search?q=%s',
+  startpage: 'https://www.startpage.com/sp/search?query=%s',
+  google: 'https://www.google.com/search?q=%s',
+  bing: 'https://www.bing.com/search?q=%s'
+}
+
+function searchUrl(text) {
+  const engine = browserSettings?.searchEngine || 'duckduckgo'
+  const custom = browserSettings?.searchEngineCustom || ''
+
+  const template =
+    engine === 'custom' && custom
+      ? custom
+      : engine === 'searx'
+        ? `${(custom || 'https://searx.be').replace(/\/+$/, '')}/search?q=%s`
+        : SEARCH_TEMPLATES[engine] || SEARCH_TEMPLATES.duckduckgo
+
+  return template.replace('%s', encodeURIComponent(text))
+}
+
+/** Address, URL or search — the same three-way split the desktop omnibox makes. */
+function classifyInput(value) {
+  if (/^(ncc|nsite):/i.test(value)) return 'address'
+  if (/^npub1[0-9a-z]{20,}(\/|$)/i.test(value)) return 'address'
+  if (/^[0-9a-f]{64}(\/|$)/i.test(value)) return 'address'
+  if (/^https?:\/\//i.test(value)) return 'external'
+  if (!value.includes(' ') && /^[^\s.]+(\.[^\s.]+)+/.test(value)) return 'external'
+  return 'search'
 }
 
 async function loadPermissions() {
@@ -328,6 +413,8 @@ function showPanel(name) {
   if (name === 'info') void loadInfo()
   if (name === 'signer-settings') void loadPermissions()
   if (name === 'relays') void loadRelays()
+  if (name === 'search') void loadSearch()
+  if (name === 'security') void loadSecurity()
   if (name === 'history') renderHistory()
   if (name === 'bookmarks') renderBookmarks()
   applyLayout()
@@ -512,6 +599,11 @@ async function main() {
   byId('signer-allow').addEventListener('click', () => answerSigner(true))
   byId('signer-deny').addEventListener('click', () => answerSigner(false))
   await setupIdentity(tauri)
+  try {
+    browserSettings = await tauri.core.invoke('browser_settings')
+  } catch {
+    // Fall back to the defaults above.
+  }
 
   if (content) {
     byId('collapse').addEventListener('click', () => content.expand(false))
@@ -562,6 +654,12 @@ async function main() {
       closePanel()
     })
     byId('relays-save').addEventListener('click', () => void saveRelays())
+    byId('search-save').addEventListener('click', () => void saveSearch())
+    byId('search-engine').addEventListener('change', () => {
+      byId('search-custom-label').textContent =
+        byId('search-engine').value === 'custom' ? 'Template with %s' : 'SearXNG instance'
+    })
+    byId('security-save').addEventListener('click', () => void saveSecurity())
     byId('history-clear').addEventListener('click', () => {
       writeList(HISTORY_KEY, [])
       renderHistory()
@@ -805,6 +903,18 @@ function targetUrl(port) {
 }
 
 async function open(port) {
+  const input = byId('address').value.trim()
+  if (!input) return
+
+  const kind = classifyInput(input)
+  if (kind !== 'address') {
+    const url = kind === 'search' ? searchUrl(input) : (/^[a-z][a-z0-9+.-]*:\/\//i.test(input) ? input : `https://${input}`)
+    byId('result').textContent = `opening ${url} externally`
+    if (content) content.openExternal(url)
+    else globalThis.open?.(url, '_blank', 'noopener')
+    return
+  }
+
   let target = targetUrl(port)
 
   // For a site, whether a `d`-like segment is a name or a path depends on what is

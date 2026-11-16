@@ -131,6 +131,47 @@ impl Resolver {
         result
     }
 
+    /// The target identity's NIP-65 read relays, when gossip is on.
+    ///
+    /// A publisher often publishes a locator to relays their own list names and not to
+    /// the browser's defaults, so this is the difference between resolving and not.
+    async fn gossip_relays(&self, key: PublicKey, _hex: &str) -> Vec<String> {
+        let filter = Filter::new()
+            .kinds([Kind::Custom(10002)])
+            .author(key)
+            .limit(1);
+        let Ok(filter) = serde_json::to_value(&filter) else {
+            return Vec::new();
+        };
+
+        let budget = self.timeout.min(Duration::from_secs(5));
+        let events = crate::relay::query_all(&self.settings.relays(), &filter, budget).await;
+
+        let mut relays: Vec<String> = Vec::new();
+        for event in &events {
+            for tag in event.tags.iter() {
+                let slice = tag.as_slice();
+                if slice.first().map(String::as_str) != Some("r") {
+                    continue;
+                }
+                let Some(url) = slice.get(1) else { continue };
+                // "write" marks a relay the identity publishes to; the rest are readable.
+                if slice.get(2).map(String::as_str) == Some("write") {
+                    continue;
+                }
+                let url = url.trim();
+                if (url.starts_with("wss://") || url.starts_with("ws://"))
+                    && !relays.iter().any(|existing| existing == url)
+                {
+                    relays.push(url.to_string());
+                }
+            }
+        }
+
+        relays.truncate(8);
+        relays
+    }
+
     /// Every service this identity publishes, for when the requested one is missing.
     ///
     /// Costs one relay query, only on the failure path. Each entry also says whether
@@ -221,7 +262,17 @@ impl Resolver {
             return Err(ResolveError::InvalidPayload);
         };
 
-        let relays = self.settings.relays();
+        let mut relays = self.settings.relays();
+        if self.settings.gossip() {
+            for relay in self.gossip_relays(key, hex).await {
+                if !relays
+                    .iter()
+                    .any(|existing| existing.eq_ignore_ascii_case(&relay))
+                {
+                    relays.push(relay);
+                }
+            }
+        }
         if relays.is_empty() {
             return Err(ResolveError::RelayError("no relays configured".into()));
         }
