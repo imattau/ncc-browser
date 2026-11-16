@@ -279,6 +279,8 @@ passphrase and rewritten with the device envelope.
       subresources to the tab's own origin. `shouldInterceptRequest` refuses anything
       that is not the tab's listener and port, which is the network-level guard the
       desktop gets from `onBeforeRequest`.
+      Signing uses that listener's ephemeral key, never the real identity, and its trust
+      decisions stay in memory because the listener has no permissions file.
       Limits, deliberately: onion-only (as on the desktop), no WebSockets, and a page
       that builds a URL in JavaScript cannot have that URL rewritten — the policy is
       what stops it from reaching the clearnet.
@@ -320,7 +322,9 @@ Tor is obtained in one of two ways, chosen in Settings → Tor:
   running, a Tor tab says so and the address is not fetched.
 
 Both modes sit behind the same local SOCKS5 listener, bound at startup and named by
-`tor_status`. The listener stays in place across a settings change, so a tab opened
+`tor_status`. Nothing contacts the Tor network until a Tor tab is opened (or the Tor
+panel is viewed): launching the app must not announce itself, and most sessions never
+open an onion. The listener stays in place across a settings change, so a tab opened
 before the new route was ready only needs a reload. Connections wait while Tor is
 starting, and fail immediately once it has failed — "still bootstrapping" and "no Tor"
 are different messages rather than the same timeout.

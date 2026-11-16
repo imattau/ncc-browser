@@ -177,6 +177,10 @@ impl Inner {
 pub struct Tor {
     socks: String,
     inner: Arc<Inner>,
+    /// Kept so a route can be resolved on demand. Nothing is fetched from the Tor
+    /// network until something asks for a route: launching the app must not announce
+    /// itself to the network, and most sessions never open an onion.
+    config: std::sync::Mutex<Option<TorConfig>>,
 }
 
 impl Tor {
@@ -209,6 +213,7 @@ impl Tor {
         let tor = Arc::new(Self {
             socks,
             inner: inner.clone(),
+            config: std::sync::Mutex::new(Some(config)),
         });
 
         let dialer = Arc::new(Waiting {
@@ -217,7 +222,6 @@ impl Tor {
         });
         tokio::spawn(socks::serve(listener, dialer));
 
-        tor.reconfigure(config);
         Ok(tor)
     }
 
@@ -231,9 +235,37 @@ impl Tor {
         self.inner.status.borrow().clone()
     }
 
-    /// Apply new settings. The endpoint does not move, so a page already pointing at
-    /// it needs nothing more than a reload once the new route is ready.
+    /// Apply new settings, which starts resolving immediately: a person changing Tor
+    /// settings is asking for the new route now.
+    ///
+    /// The endpoint does not move, so a page already pointing at it needs nothing more
+    /// than a reload once the route is ready.
     pub fn reconfigure(&self, config: TorConfig) {
+        *self.config.lock().expect("tor config lock") = Some(config.clone());
+
+        let generation = self.inner.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let inner = self.inner.clone();
+        tokio::spawn(async move {
+            resolve(&inner, config, generation).await;
+        });
+    }
+
+    /// Resolve a route if none is being resolved. Called when a Tor tab is opened, or
+    /// when the Tor panel is viewed.
+    //
+    // Idempotent, and safe to call from every tab: a second call while arti is
+    // bootstrapping does nothing rather than starting a second client.
+    pub fn prepare(&self) {
+        let state = self.inner.status.borrow().state;
+        if matches!(state, TorState::Starting | TorState::Ready) {
+            return;
+        }
+
+        let config = self.config.lock().expect("tor config lock").clone();
+        let Some(config) = config else {
+            return;
+        };
+
         let generation = self.inner.generation.fetch_add(1, Ordering::SeqCst) + 1;
         let inner = self.inner.clone();
         tokio::spawn(async move {
@@ -494,6 +526,9 @@ mod tests {
         .await
         .unwrap();
 
+        assert_eq!(tor.status().state, TorState::Idle);
+        tor.prepare();
+
         let status = wait_for(&tor, TorState::Ready).await;
         assert_eq!(status.kind, Some(TorKind::External));
         assert_eq!(
@@ -508,8 +543,20 @@ mod tests {
         let tor = Tor::start(config(TorMode::Local, "socks5://127.0.0.1:1"))
             .await
             .unwrap();
+        tor.prepare();
         let status = wait_for(&tor, TorState::Failed).await;
         assert!(status.error.unwrap().contains("Nothing answered"));
+    }
+
+    #[tokio::test]
+    async fn starting_alone_contacts_nothing() {
+        // A port that could not answer anyway: the point is that no attempt is made
+        // until something asks for a route.
+        let tor = Tor::start(config(TorMode::Local, "socks5://127.0.0.1:1"))
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        assert_eq!(tor.status().state, TorState::Idle);
     }
 
     #[tokio::test]
@@ -519,6 +566,7 @@ mod tests {
         let tor = Tor::start(config(TorMode::Local, "socks5://127.0.0.1:1"))
             .await
             .unwrap();
+        tor.prepare();
         let endpoint = socks::parse_proxy(tor.socks_url()).unwrap();
         let result = socks::connect_through(&endpoint, "example.onion", 80).await;
         assert!(result.is_err());
