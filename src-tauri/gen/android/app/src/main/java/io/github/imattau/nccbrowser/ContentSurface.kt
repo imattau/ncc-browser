@@ -47,6 +47,8 @@ class ContentSurface(
 ) {
   private var webView: WebView? = null
   private var showingError = false
+  /// Set once the tab is gone, so a callback posted before that cannot touch it.
+  private var destroyed = false
 
   var title: String? = null
     private set
@@ -158,6 +160,9 @@ class ContentSurface(
    * attached to the window is not allowed and takes the process down with it.
    */
   fun destroy() {
+    if (destroyed) return
+    destroyed = true
+
     val web = webView ?: return
     webView = null
     web.stopLoading()
@@ -379,6 +384,7 @@ class ContentSurface(
         null
       }
       view.post {
+        if (destroyed) return@post
         if (resolved != null) {
           view.loadUrl(resolved)
         } else {
@@ -408,12 +414,14 @@ class ContentSurface(
   }
 
   private fun emit(payload: JSONObject) {
+    if (destroyed) return
     payload.put("tab", id)
     lastUsed = System.currentTimeMillis()
     report(payload)
   }
 
   private fun showFailure(view: WebView, url: String, detail: String) {
+    if (destroyed) return
     showingError = true
     val safeUrl = escapeHtml(url)
     val html = """
