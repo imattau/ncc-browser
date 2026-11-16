@@ -174,6 +174,32 @@ impl SettingsStore {
         self.inner.read().expect("settings lock").https_mode
     }
 
+    pub fn warn_insecure(&self) -> bool {
+        self.inner.read().expect("settings lock").warn_insecure
+    }
+
+    /// True when this service was allowed over cleartext by the user.
+    pub fn allows_http(&self, key: &str) -> bool {
+        self.inner
+            .read()
+            .expect("settings lock")
+            .http_exceptions
+            .iter()
+            .any(|entry| entry.eq_ignore_ascii_case(key))
+    }
+
+    pub fn allow_http(&self, key: &str) -> Result<Settings, String> {
+        let mut settings = self.get();
+        if !settings
+            .http_exceptions
+            .iter()
+            .any(|entry| entry.eq_ignore_ascii_case(key))
+        {
+            settings.http_exceptions.push(key.to_string());
+        }
+        self.apply(settings)
+    }
+
     pub fn gossip(&self) -> bool {
         self.inner.read().expect("settings lock").gossip
     }
@@ -320,6 +346,20 @@ mod tests {
             .set_search("nonsense".into(), String::new())
             .expect("fallback");
         assert_eq!(fallback.search_engine, "duckduckgo");
+    }
+
+    #[test]
+    fn cleartext_exceptions_are_remembered_once() {
+        let store = SettingsStore::in_memory(Settings::default());
+        assert!(!store.allows_http("ncc://npub/web"));
+
+        store.allow_http("ncc://npub/web").expect("allow");
+        assert!(store.allows_http("ncc://npub/web"));
+        assert!(!store.allows_http("ncc://npub/other"));
+
+        // Allowing the same service twice must not duplicate the entry.
+        store.allow_http("ncc://npub/web").expect("allow again");
+        assert_eq!(store.get().http_exceptions.len(), 1);
     }
 
     #[test]
