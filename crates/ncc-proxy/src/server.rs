@@ -19,6 +19,7 @@ use ncc_core::{
     Endpoint,
 };
 
+use crate::inject::{inject_into_html, relax_csp, Injection, TokenStore, MAX_INJECTION_BYTES};
 use crate::pins::{pinned_tls_config, PinStore};
 use crate::resolve::{ResolveError, ResolvedService, Resolver};
 use crate::vhost::{parse_vhost, Vhost};
@@ -61,6 +62,7 @@ pub struct ProxyState {
     client: reqwest::Client,
     pinned_client: reqwest::Client,
     pins: Arc<PinStore>,
+    tokens: TokenStore,
     max_body_bytes: usize,
     allowed_origins: Vec<String>,
 }
@@ -95,6 +97,7 @@ impl ProxyState {
             client,
             pinned_client,
             pins,
+            tokens: TokenStore::new(),
             max_body_bytes: config.max_body_bytes,
             allowed_origins: config.allowed_origins.clone(),
         }
@@ -167,16 +170,6 @@ async fn handle_inner(state: &ProxyState, request: Request) -> Response {
         return text(StatusCode::METHOD_NOT_ALLOWED, "CONNECT is not proxied");
     }
 
-    let resolved = match state.resolver.resolve(&vhost.pubkey, &vhost.service).await {
-        Ok(resolved) => resolved,
-        Err(error) => return error_page(&error, &vhost),
-    };
-
-    let selection = select_transport_endpoints(&resolved.endpoints, false);
-    if selection.candidates.is_empty() {
-        return error_page(&ResolveError::NoEndpoint, &vhost);
-    }
-
     let path = request.uri().path().to_string();
     let query = request.uri().query().unwrap_or_default().to_string();
     let method = request.method().clone();
@@ -188,10 +181,26 @@ async fn handle_inner(state: &ProxyState, request: Request) -> Response {
         Err(_) => return text(StatusCode::PAYLOAD_TOO_LARGE, "Request body too large"),
     };
 
+    // Signer calls are answered by this process and never forwarded upstream. The
+    // service comes from the Host header, so a page cannot claim another one.
+    if let Some(signer_method) = path.strip_prefix("/__ncc/nip07/") {
+        return nip07(state, &vhost, signer_method, &body);
+    }
+
+    let resolved = match state.resolver.resolve(&vhost.pubkey, &vhost.service).await {
+        Ok(resolved) => resolved,
+        Err(error) => return error_page(&error, &vhost),
+    };
+
+    let selection = select_transport_endpoints(&resolved.endpoints, false);
+    if selection.candidates.is_empty() {
+        return error_page(&ResolveError::NoEndpoint, &vhost);
+    }
+
     let mut failures = Vec::new();
     for endpoint in &selection.candidates {
         match forward(
-            state, endpoint, &method, &headers, &body, &path, &query, &authority, document,
+            state, endpoint, &method, &headers, &body, &path, &query, &authority, document, &vhost,
         )
         .await
         {
@@ -236,6 +245,7 @@ async fn forward(
     query: &str,
     authority: &str,
     document: bool,
+    vhost: &Vhost,
 ) -> Result<Response, ForwardError> {
     let base = Url::parse(&endpoint.url)
         .map_err(|error| ForwardError::Retry(format!("{}: {error}", endpoint.url)))?;
@@ -244,7 +254,7 @@ async fn forward(
     target.set_path(&join_paths(base.path(), path));
     target.set_query(if query.is_empty() { None } else { Some(query) });
 
-    let upstream_headers = request_headers(headers, &target);
+    let upstream_headers = request_headers(headers, &target, document);
 
     let pinned = endpoint.k.clone();
     let client = if pinned.is_some() {
@@ -307,6 +317,66 @@ async fn forward(
         response_headers.remove(header::LAST_MODIFIED);
     }
 
+    let is_html = response_headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.to_ascii_lowercase().starts_with("text/html"))
+        .unwrap_or(false);
+    let small_enough = response
+        .content_length()
+        .map(|length| length as usize <= MAX_INJECTION_BYTES)
+        .unwrap_or(true);
+
+    if document
+        && status.is_success()
+        && is_html
+        && !response_headers.contains_key(header::CONTENT_ENCODING)
+        && small_enough
+    {
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|error| ForwardError::Retry(error.to_string()))?;
+
+        if bytes.len() <= MAX_INJECTION_BYTES {
+            let key = host_key(vhost);
+            let injection = Injection::new(&key);
+            state.tokens.remember(&injection.token, &key);
+
+            let html = String::from_utf8_lossy(&bytes);
+            let body = inject_into_html(&html, &injection.script_tag());
+
+            if let Some(csp) = response_headers
+                .get(header::CONTENT_SECURITY_POLICY)
+                .and_then(|value| value.to_str().ok())
+            {
+                let relaxed = relax_csp(csp, &injection.nonce);
+                if let Ok(value) = HeaderValue::from_str(&relaxed) {
+                    response_headers.insert(header::CONTENT_SECURITY_POLICY, value);
+                }
+            }
+
+            response_headers.remove(header::CONTENT_LENGTH);
+
+            let mut builder = Response::builder().status(status);
+            if let Some(out) = builder.headers_mut() {
+                *out = response_headers;
+            }
+            return builder
+                .body(Body::from(body))
+                .map_err(|error| ForwardError::Retry(error.to_string()));
+        }
+
+        // Too large after all: hand it back untouched.
+        let mut builder = Response::builder().status(status);
+        if let Some(out) = builder.headers_mut() {
+            *out = response_headers;
+        }
+        return builder
+            .body(Body::from(bytes))
+            .map_err(|error| ForwardError::Retry(error.to_string()));
+    }
+
     let stream = response.bytes_stream();
     let mut builder = Response::builder().status(status);
     if let Some(out) = builder.headers_mut() {
@@ -317,7 +387,7 @@ async fn forward(
         .map_err(|error| ForwardError::Retry(error.to_string()))
 }
 
-fn request_headers(headers: &HeaderMap, target: &Url) -> HeaderMap {
+fn request_headers(headers: &HeaderMap, target: &Url, document: bool) -> HeaderMap {
     let pairs: Vec<(String, String)> = headers
         .iter()
         .filter_map(|(name, value)| {
@@ -332,6 +402,10 @@ fn request_headers(headers: &HeaderMap, target: &Url) -> HeaderMap {
     for (name, value) in upstream_headers(&pairs, target) {
         let lower = name.to_ascii_lowercase();
         if HOP_BY_HOP.contains(&lower.as_str()) {
+            continue;
+        }
+        // Injection needs the document as text; ask the endpoint not to compress it.
+        if document && lower == "accept-encoding" {
             continue;
         }
         let (Ok(name), Ok(value)) = (
@@ -423,6 +497,48 @@ fn help_page(authority: &str) -> Response {
          or <code>http://&lt;npub&gt;.localhost:PORT/</code> for the default service.</p>"
     );
     (StatusCode::NOT_FOUND, Html(body)).into_response()
+}
+
+/// The identity a token and a signer request are scoped to.
+fn host_key(vhost: &Vhost) -> String {
+    format!("{}/{}", vhost.pubkey, vhost.service)
+}
+
+/// NIP-07 endpoints. The shim posts to its own origin, so the service is unambiguous:
+/// it comes from the `Host` header, never from the page.
+fn nip07(state: &ProxyState, vhost: &Vhost, method: &str, body: &[u8]) -> Response {
+    let parsed: serde_json::Value = serde_json::from_slice(body).unwrap_or(serde_json::Value::Null);
+    let token = parsed
+        .get("token")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+
+    if !state.tokens.matches(token, &host_key(vhost)) {
+        return json_error(
+            StatusCode::FORBIDDEN,
+            "invalid-token",
+            "This page holds no signer token for this service.",
+        );
+    }
+
+    match method {
+        "get-public-key" | "sign-event" | "get-relays" | "nip04-encrypt" | "nip04-decrypt"
+        | "nip44-encrypt" | "nip44-decrypt" => json_error(
+            StatusCode::NOT_IMPLEMENTED,
+            "signer-not-configured",
+            "This build has no identity yet.",
+        ),
+        _ => json_error(
+            StatusCode::NOT_FOUND,
+            "unknown-method",
+            "Unknown signer method.",
+        ),
+    }
+}
+
+fn json_error(status: StatusCode, code: &str, message: &str) -> Response {
+    let body = serde_json::json!({ "code": code, "message": message }).to_string();
+    (status, [(header::CONTENT_TYPE, "application/json")], body).into_response()
 }
 
 fn error_page(error: &ResolveError, vhost: &Vhost) -> Response {

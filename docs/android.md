@@ -90,6 +90,34 @@ The content WebView never sees `ncc://`. It loads
 endpoint and rewrites redirects into the same host form. `to_display_url` (already in
 `ncc-core`) is what the address bar renders, so the user-facing address is unchanged.
 
+### NIP-07
+
+Electron gets `window.nostr` from a preload in an isolated world at document start.
+Android has no preload, so the proxy rewrites the document on the way through: the
+shim is inserted as the first child of `<head>`, before any page script can look for
+it.
+
+```
+page  window.nostr.*  →  POST /__ncc/nip07/<method>  on its own origin
+                             ↓ intercepted before resolution
+                          Rust answers (or forwards to the signer)
+```
+
+Same-origin HTTP rather than a `JavascriptInterface` on purpose: the service is
+derived from the `Host` header instead of anything the page supplies, the signer
+stays in Rust, and no privileged object is exposed to page script. Each document
+load gets a token that is bound to `npub/service`; a call with a token from another
+service is refused.
+
+The trade-off is CSP. A page with `script-src 'self'` would never see an injected
+inline script, so the proxy adds a nonce to `script-src` and `'self'` to
+`connect-src`, and nothing else. That is a real weakening of the page's own policy,
+and it is the price of not having a preload.
+
+The signer itself is not implemented yet: calls answer `501 signer-not-configured`
+once the token checks out, which is where identity storage, NIP-46 and approvals plug
+in.
+
 Pinning deserves a note because it is the reason the core is Rust: an endpoint that
 publishes `k` usually presents a self-signed certificate. The proxy routes those
 requests through a client whose verifier accepts a certificate only when its
@@ -197,8 +225,11 @@ Still to build:
 - [ ] `*.localhost` resolution, secure context, `Secure` cookie behaviour — **the
       go/no-go test**. If `Secure` cookies fail, add a TLS listener and accept its
       own certificate through `onReceivedSslError`.
-- [ ] NIP-07 injection by rewriting the top document in the proxy, with a per-load
-      nonce so a subframe cannot call the bridge.
+- [x] NIP-07 injection: shim first in `<head>`, CSP nonce, same-origin signer route
+      scoped to `npub/service`.
+- [ ] The signer behind those routes: identity storage, approvals, NIP-46.
+- [ ] NIP-07 inside iframes (`sec-fetch-dest: iframe`) is deliberately not injected;
+      revisit if a real service needs it.
 - [ ] Emulator run of the built APK.
 
 ## What does not carry over
