@@ -1869,12 +1869,14 @@ body[data-kind='tor'] .pill-kind {
   margin-top: 1px;
 }
 
-#omnibox[data-kind='private'] .kind-note {
+#omnibox[data-kind='private'] .kind-note,
+.kind-note[data-kind='private'] {
   background: color-mix(in srgb, var(--private) 14%, transparent);
   color: var(--private-text);
 }
 
-#omnibox[data-kind='tor'] .kind-note {
+#omnibox[data-kind='tor'] .kind-note,
+.kind-note[data-kind='tor'] {
   background: color-mix(in srgb, var(--tor) 14%, transparent);
   color: var(--tor-text);
 }
@@ -1887,4 +1889,9 @@ body[data-kind='tor'] .pill-kind {
 #omnibox[data-kind='tor'] .omni-field {
   background: color-mix(in srgb, var(--tor) 16%, var(--surface));
   box-shadow: inset 0 0 0 1.5px var(--tor);
+}
+
+/* In the site sheet the note sits above the badge, inside the padded body. */
+.info-body .kind-note {
+  margin: 0 0 12px;
 }

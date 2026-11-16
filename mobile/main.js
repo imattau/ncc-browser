@@ -52,6 +52,7 @@ const KIND_INFO = {
     label: 'Private',
     icon: 'eye-off',
     one: 'private tab',
+    info: 'Nothing from this tab is saved: no history, icons or cookies. Your connection is not hidden.',
     newLabel: 'New private tab',
     short: 'New private',
     note: 'Nothing from private tabs is saved: no history, icons or cookies. Your connection is not hidden.'
@@ -60,6 +61,7 @@ const KIND_INFO = {
     label: 'Tor',
     icon: 'onion',
     one: 'Tor tab',
+    info: 'This tab is loaded through Tor, in its own session that is discarded when the last Tor tab closes.',
     newLabel: 'New Tor tab',
     short: 'New Tor',
     note: 'Tor tabs open .onion addresses and search through an onion search engine, in their own session.'
@@ -319,6 +321,7 @@ const securityCache = new Map()
 function classifySecurity(data) {
   if (!data || data.error) return 'unknown'
   if (data.kind === 'nsite') return 'verified'
+  if (data.kind === 'onion') return 'onion'
   const endpoints = data.endpoints || []
   if (endpoints.some((endpoint) => endpoint.pinned)) return 'pinned'
   if (endpoints.some((endpoint) => /https/i.test(endpoint.protocol || ''))) return 'tls'
@@ -327,10 +330,30 @@ function classifySecurity(data) {
   return 'unknown'
 }
 
+/**
+ * Ask the listener that serves this tab. A private tab is served by its own listener
+ * (and resolver), so asking the normal one would resolve and cache the service in the
+ * session the tab exists to stay out of.
+ */
 async function fetchInfo(url) {
-  const host = new URL(url).host
-  const response = await fetch(`http://127.0.0.1:${proxyPort}/__ncc/info?u=${encodeURIComponent(host)}`)
+  const parsed = new URL(url)
+  const port = parsed.port || proxyPort
+  const response = await fetch(`http://127.0.0.1:${port}/__ncc/info?u=${encodeURIComponent(parsed.host)}`)
   return response.json()
+}
+
+/** An onion page: the proxy has no record to report, the address is the whole story. */
+function isOnionPage(url) {
+  try {
+    return new URL(url).hostname.endsWith('.onion.localhost')
+  } catch {
+    return false
+  }
+}
+
+function onionInfo(url) {
+  const host = new URL(url).hostname.replace(/\.localhost$/, '')
+  return { kind: 'onion', onion: host }
 }
 
 async function securityFor(url) {
@@ -348,6 +371,8 @@ async function securityFor(url) {
   if (!parsed.hostname.endsWith('.localhost')) {
     return parsed.protocol === 'https:' ? 'tls' : 'plain'
   }
+
+  if (isOnionPage(url)) return 'onion'
 
   if (!proxyPort) return 'unknown'
   const key = parsed.host
@@ -1628,8 +1653,7 @@ async function loadInfo() {
   message('Loading…')
 
   try {
-    const data = await fetchInfo(activeUrl)
-    renderInfo(data)
+    renderInfo(isOnionPage(activeUrl) ? onionInfo(activeUrl) : await fetchInfo(activeUrl))
   } catch (error) {
     body.textContent = ''
     message(String(error))
@@ -1659,7 +1683,21 @@ function renderInfo(data) {
   head.append(badge, text)
   renderPill()
 
-  if (!data.error) body.appendChild(buildChecks(data))
+  // Which kind of tab this is changes what the page promises, so say it first.
+  const tabKind = kindOf(tabs.find((tab) => tab.id === activeTabId))
+  if (tabKind !== 'normal') {
+    const note = document.createElement('div')
+    note.className = 'kind-note'
+    note.dataset.kind = tabKind
+    const words = document.createElement('span')
+    const strong = document.createElement('strong')
+    strong.textContent = `${KIND_INFO[tabKind].label} tab`
+    words.append(strong, document.createTextNode(` — ${KIND_INFO[tabKind].info}`))
+    note.append(icon(KIND_INFO[tabKind].icon), words)
+    body.appendChild(note)
+  }
+
+  if (!data.error) body.appendChild(buildChecks(data, tabKind))
 
   const section = (name) => {
     const heading = document.createElement('p')
@@ -1685,6 +1723,12 @@ function renderInfo(data) {
   if (data.error) {
     section('Problem')
     row('Error', data.error)
+    return
+  }
+
+  if (data.kind === 'onion') {
+    section('Onion service')
+    row('Address', data.onion)
     return
   }
 
@@ -1719,7 +1763,7 @@ function renderInfo(data) {
 }
 
 /** The Shields-style list: what was verified, how it was reached, who may sign. */
-function buildChecks(data) {
+function buildChecks(data, tabKind = 'normal') {
   const wrap = document.createElement('div')
   wrap.className = 'checks'
 
@@ -1750,6 +1794,12 @@ function buildChecks(data) {
   }
 
   const endpoints = data.endpoints || []
+  if (data.kind === 'onion') {
+    add('ok', 'Address authenticates the site', 'A .onion address is the service\'s own key: no certificate authority is involved')
+    add('ok', 'Through Tor', 'Reached over a Tor circuit, in the Tor tab\'s own session')
+    add('neutral', 'Encryption', 'Plain HTTP inside an onion has no TLS layer; HTTPS adds one')
+    return wrap
+  }
   if (data.kind === 'nsite') {
     add('ok', 'Files verified', 'Each file is checked against its published hash')
   } else {
@@ -1763,6 +1813,8 @@ function buildChecks(data) {
       endpoints.some((e) => e.family === 'onion') ? 'Onion endpoint available' : 'Clearnet only'
     )
   }
+
+  if (tabKind === 'private') add('ok', 'Private session', 'Nothing is kept: no cache, history or icons')
 
   const signerRow = add('neutral', 'Signer', 'Asks before every signature')
   void (async () => {
