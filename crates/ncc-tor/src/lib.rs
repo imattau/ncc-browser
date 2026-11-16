@@ -181,6 +181,11 @@ pub struct Tor {
     /// network until something asks for a route: launching the app must not announce
     /// itself to the network, and most sessions never open an onion.
     config: std::sync::Mutex<Option<TorConfig>>,
+    /// The runtime `start` ran in. `prepare` and `reconfigure` are called from plain
+    /// Tauri commands, which run on a thread with no runtime of its own, so a bare
+    /// `tokio::spawn` there panics ("there is no reactor running") and takes the app
+    /// with it. Spawning on a handle works from any thread.
+    runtime: tokio::runtime::Handle,
 }
 
 impl Tor {
@@ -214,6 +219,7 @@ impl Tor {
             socks,
             inner: inner.clone(),
             config: std::sync::Mutex::new(Some(config)),
+            runtime: tokio::runtime::Handle::current(),
         });
 
         let dialer = Arc::new(Waiting {
@@ -245,7 +251,7 @@ impl Tor {
 
         let generation = self.inner.generation.fetch_add(1, Ordering::SeqCst) + 1;
         let inner = self.inner.clone();
-        tokio::spawn(async move {
+        self.runtime.spawn(async move {
             resolve(&inner, config, generation).await;
         });
     }
@@ -268,7 +274,7 @@ impl Tor {
 
         let generation = self.inner.generation.fetch_add(1, Ordering::SeqCst) + 1;
         let inner = self.inner.clone();
-        tokio::spawn(async move {
+        self.runtime.spawn(async move {
             resolve(&inner, config, generation).await;
         });
     }
@@ -432,6 +438,19 @@ async fn external(proxy: &str) -> Result<(Arc<dyn Dialer>, String), String> {
     Ok((Arc::new(External { endpoint }), shown))
 }
 
+/// Choose the TLS back-end arti will use, before it starts.
+///
+/// The app links both rustls back-ends: the proxy's own TLS uses aws-lc-rs, and arti
+/// uses ring. With both present rustls cannot pick a process-wide default, so the first
+/// thing arti does that needs one panics ("Could not automatically determine the
+/// process-level CryptoProvider") and the client never starts. The proxy names its
+/// provider explicitly everywhere, so installing ring here changes nothing for it.
+/// A second call, or a default installed elsewhere first, is a harmless no-op.
+#[cfg(feature = "bundled")]
+fn install_crypto_provider() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
 #[cfg(feature = "bundled")]
 async fn bootstrap(
     inner: &Arc<Inner>,
@@ -439,6 +458,8 @@ async fn bootstrap(
     generation: u64,
 ) -> Result<Arc<arti_client::TorClient<tor_rtcompat::PreferredRuntime>>, String> {
     use arti_client::config::TorClientConfigBuilder;
+
+    install_crypto_provider();
 
     std::fs::create_dir_all(&config.state_dir)
         .map_err(|error| format!("could not create {}: {error}", config.state_dir.display()))?;
@@ -570,6 +591,93 @@ mod tests {
         let endpoint = socks::parse_proxy(tor.socks_url()).unwrap();
         let result = socks::connect_through(&endpoint, "example.onion", 80).await;
         assert!(result.is_err());
+    }
+
+    /// `tor_prepare` is a plain Tauri command: it runs on a thread with no Tokio
+    /// runtime, which is where the app calls it from. Every other test here calls from
+    /// inside a runtime, which is why this went unnoticed until a phone opened a Tor tab.
+    #[test]
+    fn prepare_works_from_a_thread_with_no_runtime() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let tor = runtime
+            .block_on(Tor::start(config(TorMode::Local, "socks5://127.0.0.1:1")))
+            .unwrap();
+
+        // This thread has no runtime context, like the command thread.
+        tor.prepare();
+        tor.reconfigure(config(TorMode::Local, "socks5://127.0.0.1:1"));
+
+        let status = runtime.block_on(wait_for(&tor, TorState::Failed));
+        assert!(status.error.unwrap().contains("Nothing answered"));
+    }
+
+    /// Starts the bundled client for real and waits for a route. Needs the network and
+    /// takes a while, so it only runs on request:
+    /// `cargo test -p ncc-tor --features bundled -- --ignored bundled_client`
+    #[cfg(feature = "bundled")]
+    #[test]
+    #[ignore = "bootstraps a real Tor circuit"]
+    fn bundled_client_bootstraps_from_a_thread_with_no_runtime() {
+        let dir = std::env::temp_dir().join(format!("ncc-tor-live-{}", std::process::id()));
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let tor = runtime
+            .block_on(Tor::start(TorConfig {
+                mode: TorMode::Auto,
+                socks: "socks5://127.0.0.1:1".to_string(),
+                state_dir: dir.join("state"),
+                cache_dir: dir.join("cache"),
+            }))
+            .unwrap();
+
+        tor.prepare();
+        let mut seen = Vec::new();
+        let deadline = std::time::Instant::now() + Duration::from_secs(170);
+        let status = loop {
+            let status = tor.status();
+            if seen.last() != Some(&status.percent) {
+                seen.push(status.percent);
+            }
+            if matches!(status.state, TorState::Ready | TorState::Failed)
+                || std::time::Instant::now() > deadline
+            {
+                break status;
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        };
+        eprintln!("progress {seen:?}, final {status:?}");
+        assert_eq!(status.state, TorState::Ready, "{status:?}");
+        assert_eq!(status.kind, Some(TorKind::Bundled));
+
+        // And the route reaches an onion: DuckDuckGo's answers plain http with a redirect.
+        let first_line = runtime.block_on(async {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let host = "duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion";
+            let endpoint = socks::parse_proxy(tor.socks_url()).unwrap();
+            let mut stream = socks::connect_through(&endpoint, host, 80).await.unwrap();
+            stream
+                .write_all(
+                    format!("GET / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n")
+                        .as_bytes(),
+                )
+                .await
+                .unwrap();
+            let mut buffer = vec![0u8; 256];
+            let read = stream.read(&mut buffer).await.unwrap();
+            String::from_utf8_lossy(&buffer[..read])
+                .lines()
+                .next()
+                .unwrap_or_default()
+                .to_string()
+        });
+        eprintln!("onion answered: {first_line}");
+        assert!(first_line.starts_with("HTTP/1.1 "), "{first_line}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     async fn wait_for(tor: &Arc<Tor>, state: TorState) -> TorStatus {

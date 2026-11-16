@@ -5,6 +5,9 @@ is not a daily driver.
 
 ## New in this build
 
+- Fixes the app closing when Tor starts. Opening the Tor settings page or entering an
+  onion address in a Tor tab crashed the app, and separately the built-in Tor client
+  could not start at all. Both are fixed: it now connects in about ten seconds.
 - Tabs survive a restart. Normal tabs are reopened in their old order, and only the
   one you were on loads; the rest wait until you pick them. Private and Tor tabs are
   never saved.

@@ -20,6 +20,8 @@ serde = { version = "1.0.229", features = ["derive"] }
 # arti's runtime abstraction; named because the client type is parameterised by it.
 tor-rtcompat = { version = "0.48", default-features = false, features = ["tokio", "rustls"], optional = true }
 tokio = { version = "1.53.3", features = ["rt", "net", "sync", "time", "io-util", "macros"] }
+# Only to pick a process-wide TLS provider for arti: see `install_crypto_provider`.
+rustls = { version = "0.23", default-features = false, features = ["std", "ring"], optional = true }
 tracing = "0.1.44"
 url = "2"
 
@@ -29,7 +31,7 @@ tokio = { version = "1.53.3", features = ["rt-multi-thread", "macros", "net", "s
 [features]
 default = []
 # arti, compiled into the app. Without it `auto` mode can only find a daemon.
-bundled = ["dep:arti-client", "dep:tor-rtcompat"]
+bundled = ["dep:arti-client", "dep:tor-rtcompat", "dep:rustls"]
 
 [lints.rust]
 unsafe_code = "forbid"
