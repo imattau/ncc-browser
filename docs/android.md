@@ -261,6 +261,9 @@ Still to build:
       memory and on disk, and the WebView page cache.
 - [x] Cleartext warning: when the setting is on and the endpoint is plain HTTP, a page
       explains it and a one-shot token records the exception, so it is asked once.
+- [x] Downloads: the content view hands a file to the app, which fetches it through
+      `/__ncc/fetch` and saves it wherever the system picker says. No storage
+      permission, and downloaded HTML is not shimmed.
 - [ ] Per-tab lifecycle and tab thumbnails.
 - [ ] File chooser and download handling in the content view.
 - [ ] `*.localhost` resolution, secure context, `Secure` cookie behaviour — **the

@@ -259,16 +259,29 @@ async fn handle_inner(state: &ProxyState, request: Request) -> Response {
 
     // Linking between schemes needs the same rules the hosts use, so the page asks
     // this process instead of reimplementing base32 labels in Kotlin.
-    if request.uri().path() == "/__ncc/route" {
-        return route(state, &authority, request.uri().query().unwrap_or_default()).await;
+    let path = request.uri().path().to_string();
+    let query = request.uri().query().unwrap_or_default().to_string();
+
+    if path == "/__ncc/route" {
+        return route(state, &authority, &query).await;
     }
 
-    if request.uri().path() == "/__ncc/info" {
-        return info(state, request.uri().query().unwrap_or_default()).await;
+    if path == "/__ncc/info" {
+        return info(state, &query).await;
     }
 
-    let Some(vhost) = parse_vhost(&authority) else {
-        return help_page(&authority);
+    // Downloads: the app process cannot resolve a virtual host, so it names one by URL
+    // and the request continues as if it had arrived on that host.
+    let (vhost, path, query) = if path == "/__ncc/fetch" {
+        match fetch_target(&query) {
+            Ok(parts) => parts,
+            Err(response) => return response,
+        }
+    } else {
+        let Some(vhost) = parse_vhost(&authority) else {
+            return help_page(&authority);
+        };
+        (vhost, path, query)
     };
 
     if request.method() == axum::http::Method::CONNECT {
@@ -286,8 +299,6 @@ async fn handle_inner(state: &ProxyState, request: Request) -> Response {
         );
     }
 
-    let path = request.uri().path().to_string();
-    let query = request.uri().query().unwrap_or_default().to_string();
     let method = request.method().clone();
     let headers = request.headers().clone();
     let document = is_document_request(&headers);
@@ -304,7 +315,7 @@ async fn handle_inner(state: &ProxyState, request: Request) -> Response {
     }
 
     if vhost.kind == crate::vhost::HostKind::Nsite {
-        return crate::nsite::serve(state, &vhost, &path, &query, &method).await;
+        return crate::nsite::serve(state, &vhost, &path, &query, &method, document).await;
     }
 
     let resolved = match state.resolver.resolve(&vhost.pubkey, &vhost.service).await {
@@ -864,6 +875,46 @@ async fn route(state: &ProxyState, authority: &str, query: &str) -> Response {
         "unsupported-scheme",
         "Only ncc://, nsite:// and localhost URLs are routed",
     )
+}
+
+/// Resolve `?u=<vhost URL>` into the parts the normal request path needs.
+fn fetch_target(query: &str) -> Result<(Vhost, String, String), Response> {
+    let target = url::form_urlencoded::parse(query.as_bytes())
+        .find(|(name, _)| name == "u")
+        .map(|(_, value)| value.into_owned())
+        .ok_or_else(|| {
+            json_error(
+                StatusCode::BAD_REQUEST,
+                "missing-url",
+                "Pass ?u=<vhost url>",
+            )
+        })?;
+
+    let parsed = url::Url::parse(&target)
+        .map_err(|_| json_error(StatusCode::BAD_REQUEST, "invalid-url", "Not a URL"))?;
+
+    let host = parsed.host_str().unwrap_or_default();
+    let authority = match parsed.port() {
+        Some(port) => format!("{host}:{port}"),
+        None => host.to_string(),
+    };
+
+    let vhost = parse_vhost(&authority).ok_or_else(|| {
+        json_error(
+            StatusCode::BAD_REQUEST,
+            "unknown-host",
+            "Only NCC and site hosts can be fetched here",
+        )
+    })?;
+
+    let path = if parsed.path().is_empty() {
+        "/".to_string()
+    } else {
+        parsed.path().to_string()
+    };
+    let query = parsed.query().unwrap_or_default().to_string();
+
+    Ok((vhost, path, query))
 }
 
 /// A page that has to be acknowledged before a cleartext service loads.

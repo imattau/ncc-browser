@@ -39,6 +39,7 @@ class ContentSurface(
   val id: String,
   private val container: ViewGroup,
   private val report: (JSONObject) -> Unit,
+  private val onDownload: (String, String?) -> Unit,
 ) {
   private var webView: WebView? = null
   private var showingError = false
@@ -167,6 +168,10 @@ class ContentSurface(
       mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
       userAgentString = "$userAgentString NostrNavigator/${BuildConfig.VERSION_NAME}"
     }
+
+    // A file the WebView will not render becomes a download through the proxy, because
+    // this process cannot resolve the virtual host itself.
+    web.setDownloadListener { url, _, _, mimeType, _ -> onDownload(url, mimeType) }
 
     web.webViewClient = object : WebViewClient() {
       override fun shouldOverrideUrlLoading(
