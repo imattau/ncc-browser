@@ -327,29 +327,37 @@ class MainActivity : TauriActivity() {
   }
 
   /**
-   * Fetch a file through the proxy and hand it to the system picker.
+   * Fetch a file and hand it to the system picker.
    *
-   * The content view resolves `.localhost` internally, so this process asks for the
-   * same URL by name (`/__ncc/fetch?u=…`) rather than trying to resolve it.
+   * A virtual host only resolves inside the content WebView, so those are fetched by
+   * the proxy (`/__ncc/fetch?u=…`). A clearnet URL needs no help: this process can
+   * open it directly.
    */
-  private fun startDownload(vhostUrl: String, mimeType: String?, contentDisposition: String?) {
-    val port = proxyPortNumber.takeIf { it > 0 } ?: Uri.parse(vhostUrl).port
-    if (port <= 0) {
+  private fun startDownload(url: String, mimeType: String?, contentDisposition: String?) {
+    val host = Uri.parse(url).host?.lowercase() ?: ""
+    val throughProxy = host.endsWith(".localhost")
+    val port = proxyPortNumber.takeIf { it > 0 } ?: Uri.parse(url).port
+
+    if (throughProxy && port <= 0) {
       toast("Download failed: the proxy port is unknown")
       return
     }
 
-    val name = filenameFor(contentDisposition, vhostUrl, mimeType)
+    val name = filenameFor(contentDisposition, url, mimeType)
     toast("Downloading $name…")
 
     Thread {
       val temp = File(cacheDir, "download-${System.currentTimeMillis()}")
-      val id = downloads.start(name, vhostUrl, -1)
+      val id = downloads.start(name, url, -1)
 
       val fetched = try {
-        val encoded = URLEncoder.encode(vhostUrl, "UTF-8")
-        val connection =
-          URL("http://127.0.0.1:$port/__ncc/fetch?u=$encoded").openConnection() as HttpURLConnection
+        val source = if (throughProxy) {
+          val encoded = URLEncoder.encode(url, "UTF-8")
+          "http://127.0.0.1:$port/__ncc/fetch?u=$encoded"
+        } else {
+          url
+        }
+        val connection = URL(source).openConnection() as HttpURLConnection
         connection.connectTimeout = 15_000
         connection.readTimeout = 60_000
 
