@@ -46,6 +46,7 @@ async fn run() -> ExitCode {
     let mut relays: Vec<String> = Vec::new();
     let mut resolve: Option<String> = None;
     let mut allowed_origins: Vec<String> = Vec::new();
+    let mut tor_proxy: Option<String> = None;
 
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -75,6 +76,12 @@ async fn run() -> ExitCode {
             "--allow-origin" => match args.next() {
                 Some(value) => allowed_origins.push(value),
                 None => return usage("--allow-origin needs an origin"),
+            },
+            // Makes this process the onion listener, fetching through a SOCKS endpoint:
+            // the way to try `<onion>.onion.localhost` without a phone.
+            "--tor-proxy" => match args.next() {
+                Some(value) if value.starts_with("socks5h://") => tor_proxy = Some(value),
+                _ => return usage("--tor-proxy needs a socks5h:// URL"),
             },
             "--resolve" => match args.next() {
                 Some(value) => resolve = Some(value),
@@ -106,6 +113,7 @@ async fn run() -> ExitCode {
     let config = ProxyConfig {
         relays: relays.clone(),
         allowed_origins: allowed_origins.clone(),
+        tor_proxy,
         ..Default::default()
     };
     let state = Arc::new(ProxyState::new(&config));
@@ -186,7 +194,8 @@ fn usage(message: &str) -> ExitCode {
     }
     eprintln!(
         "ncc-proxy [--port {DEFAULT_PORT}] [--bind 127.0.0.1] [--relay URL]… \
-         [--relays a,b] [--allow-origin ORIGIN]… [--resolve <npub>[/service]]"
+         [--relays a,b] [--allow-origin ORIGIN]… [--tor-proxy socks5h://host:port] \
+         [--resolve <npub>[/service]]"
     );
     if message.is_empty() {
         ExitCode::SUCCESS

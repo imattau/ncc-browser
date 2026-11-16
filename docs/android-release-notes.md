@@ -5,6 +5,12 @@ is not a daily driver.
 
 ## New in this build
 
+- Searching from a Tor tab now works: the address bar searches through DuckDuckGo's
+  onion service (or your own onion search instance), and an engine with no onion
+  service falls back to DuckDuckGo instead of refusing. Typing in a Tor or private
+  tab's address bar stays in that kind of tab.
+- Onion sites that only serve HTTPS, DuckDuckGo's among them, now load. They used to
+  redirect forever because the Tor listener only ever spoke plain HTTP to onions.
 - Normal, private and Tor tabs are now clearly separate. The tab switcher has a
   Normal / Private / Tor switch with a count for each, and "Close all" and "New tab"
   act on the kind on screen. Private and Tor tabs have their own colours (indigo and

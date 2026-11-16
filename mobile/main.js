@@ -62,7 +62,7 @@ const KIND_INFO = {
     one: 'Tor tab',
     newLabel: 'New Tor tab',
     short: 'New Tor',
-    note: 'Tor tabs open .onion addresses only, through Tor, in their own session.'
+    note: 'Tor tabs open .onion addresses and search through an onion search engine, in their own session.'
   }
 }
 
@@ -598,6 +598,8 @@ function showPanel(name) {
 function closePanel() {
   panel = 'home'
   newTabMode = false
+  privateMode = false
+  torMode = false
   if (tabs.length > 0 && !signerRequest) content?.expand(false)
   applyLayout()
 }
@@ -871,6 +873,16 @@ function renderHome() {
 
 function openOmnibox({ newTab = false, private: isPrivate = false, tor = false } = {}) {
   if (!content) return
+
+  // Editing the address of a private or Tor tab stays in that kind. Otherwise a search
+  // typed in a Tor tab would open in a normal one, which is exactly what the tab is for
+  // avoiding.
+  if (!newTab && !isPrivate && !tor) {
+    const current = kindOf(tabs.find((tab) => tab.id === activeTabId))
+    isPrivate = current === 'private'
+    tor = current === 'tor'
+  }
+
   newTabMode = newTab
   privateMode = isPrivate
   torMode = tor
@@ -891,7 +903,7 @@ function openOmnibox({ newTab = false, private: isPrivate = false, tor = false }
     text.append(strong, document.createTextNode(` — ${KIND_INFO[kind].note}`))
     note.append(icon(KIND_INFO[kind].icon), text)
   }
-  byId('address').placeholder = tor ? 'Enter a .onion address' : 'Search or enter address'
+  byId('address').placeholder = tor ? 'Search or enter a .onion address' : 'Search or enter address'
   renderSuggestions('')
   content.expand(true)
   applyLayout()
@@ -937,12 +949,32 @@ function renderSuggestions(query) {
   if (q) {
     const kind = classifyInput(q)
     const row =
-      kind === 'address'
+      onionUrl(q)
+        ? suggestionRow(
+            { primary: `Open ${q}`, secondary: 'Onion address · opens in a Tor tab' },
+            { iconName: 'onion', onClick: () => void submitOmnibox() }
+          )
+        : kind === 'address'
         ? suggestionRow(
             { primary: `Open ${q}`, secondary: 'Nostr address' },
             { iconName: 'globe', onClick: () => void submitOmnibox() }
           )
-        : kind === 'external'
+        : torMode && kind === 'external'
+          ? suggestionRow(
+              { primary: `Can't open ${q}`, secondary: 'Tor tabs open .onion addresses and searches only' },
+              { iconName: 'onion', onClick: () => void submitOmnibox() }
+            )
+          : torMode
+            ? suggestionRow(
+                {
+                  primary: `Search for “${q}”`,
+                  secondary: torSearch().swapped
+                    ? `${torSearch().wanted} has no onion service · using DuckDuckGo over Tor`
+                    : `${torSearch().name} over Tor`
+                },
+                { iconName: 'onion', onClick: () => void submitOmnibox() }
+              )
+            : kind === 'external'
           ? suggestionRow(
               { primary: `Open ${q}`, secondary: 'Opens in your device browser' },
               { iconName: 'globe', onClick: () => void submitOmnibox() }
@@ -1000,7 +1032,7 @@ async function submitOmnibox() {
 }
 
 /** Open whatever was typed or tapped. Errors surface under the field. */
-async function submit(text, { newTab = false, private: isPrivate = false, tor = false } = {}) {
+async function submit(text, { newTab = false, private: isPrivate = privateMode, tor = torMode } = {}) {
   const result = await navigate(text, { newTab, private: isPrivate, tor })
   if (result?.error) {
     const error = byId('omni-error')
@@ -1048,6 +1080,40 @@ function searchUrl(text) {
         : SEARCH_TEMPLATES[engine] || SEARCH_TEMPLATES.duckduckgo
 
   return template.replace('%s', encodeURIComponent(text))
+}
+
+/**
+ * Engines that publish an onion service the proxy can reach. A Tor tab cannot use a
+ * clearnet engine at all, so an engine that is not here falls back to DuckDuckGo, the
+ * one every Tor client already trusts. Brave Search has an onion too, but it lives on
+ * a subdomain (`search.<onion>`) and the Tor listener only serves bare onion hosts.
+ */
+const ONION_SEARCH = {
+  duckduckgo: {
+    name: 'DuckDuckGo',
+    template: 'https://duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion/?q=%s'
+  }
+}
+
+/** The engine a Tor tab searches with, and whether it had to be swapped. */
+function torSearch() {
+  const engine = browserSettings?.searchEngine || 'duckduckgo'
+  const custom = (browserSettings?.searchEngineCustom || '').trim()
+
+  // An engine the user pointed at their own onion service is used as given.
+  if ((engine === 'custom' || engine === 'searx') && custom && onionUrl(custom.replace('%s', 'x'))) {
+    const template =
+      engine === 'custom' ? custom : `${custom.replace(/\/+$/, '')}/search?q=%s`
+    return { name: ENGINE_NAMES[engine], template, swapped: false }
+  }
+
+  const found = ONION_SEARCH[engine]
+  if (found) return { ...found, swapped: false }
+  return { ...ONION_SEARCH.duckduckgo, swapped: true, wanted: ENGINE_NAMES[engine] || 'Your engine' }
+}
+
+function torSearchUrl(text) {
+  return torSearch().template.replace('%s', encodeURIComponent(text))
 }
 
 /**
@@ -1160,7 +1226,13 @@ async function navigate(text, { newTab = false, private: isPrivate = false, tor 
   // A Tor tab is onion-only, so refusing here is clearer than an empty page. The
   // refusal is not a preference: fetching clearnet from a Tor tab would reveal the
   // reader's address, which is what the tab exists to avoid.
-  if (tor) return { error: 'A Tor tab loads .onion addresses only.' }
+  if (tor) {
+    // A search is fine: it goes to the engine's onion service, never to clearnet.
+    if (classifyInput(input) === 'search') {
+      return navigate(torSearchUrl(input), { newTab, tor: true })
+    }
+    return { error: 'A Tor tab opens .onion addresses and searches only.' }
+  }
 
   const kind = classifyInput(input)
   if (kind !== 'address') {

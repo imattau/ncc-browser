@@ -17,6 +17,9 @@
 //! * **Nothing is left on disk.** Responses carry `no-store`, and the listener that
 //!   runs this module has no cache directory at all.
 
+use std::collections::HashSet;
+use std::sync::{Mutex, OnceLock};
+
 use axum::body::Body;
 use axum::http::{header, HeaderMap, HeaderName, HeaderValue, Method, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
@@ -86,6 +89,54 @@ impl Context {
     }
 }
 
+/// Onions that only answer over https, remembered for this process.
+///
+/// A v3 onion address is the service's key, so Tor already authenticates and encrypts
+/// the path and plain http is the common case. Some services (DuckDuckGo's among them)
+/// refuse it and redirect to https, which would otherwise loop: the redirect is
+/// rewritten back onto this http vhost. Holding only host names in memory keeps the
+/// "nothing is left on disk" rule.
+fn https_only() -> &'static Mutex<HashSet<String>> {
+    static HOSTS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    HOSTS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn is_https_only(site: &str) -> bool {
+    https_only()
+        .lock()
+        .map(|hosts| hosts.contains(site))
+        .unwrap_or(false)
+}
+
+fn remember_https_only(site: &str) {
+    if let Ok(mut hosts) = https_only().lock() {
+        hosts.insert(site.to_string());
+    }
+}
+
+/// Whether a redirect from the http onion points at the same onion over https.
+fn redirects_to_https(response: &reqwest::Response, site: &str) -> bool {
+    let location = response
+        .headers()
+        .get(header::LOCATION)
+        .and_then(|value| value.to_str().ok());
+    is_https_upgrade(response.status(), location, site)
+}
+
+fn is_https_upgrade(status: StatusCode, location: Option<&str>, site: &str) -> bool {
+    if !status.is_redirection() {
+        return false;
+    }
+    location
+        .and_then(|location| Url::parse(location).ok())
+        .is_some_and(|url| {
+            url.scheme() == "https"
+                && url
+                    .host_str()
+                    .is_some_and(|host| host.eq_ignore_ascii_case(site))
+        })
+}
+
 // The pieces are all distinct and each is used as-is; a parameter struct would only
 // move the same names one level down.
 #[allow(clippy::too_many_arguments)]
@@ -107,42 +158,76 @@ pub async fn serve(
         );
     };
 
-    // The onion is reached over http. There is no CA for `.onion`, so an https
-    // request would fail verification before reaching the service; Tor already
-    // encrypts every hop, and the last hop is inside the onion service.
-    let target = format!(
-        "http://{site}{path}{}",
-        if search.is_empty() {
-            String::new()
-        } else {
-            format!("?{search}")
-        }
-    );
-
-    let Ok(url) = Url::parse(&target) else {
-        return page(StatusCode::BAD_REQUEST, "Bad onion URL", &target);
+    let query_part = if search.is_empty() {
+        String::new()
+    } else {
+        format!("?{search}")
     };
 
-    let mut upstream = request_headers(headers, &url, true);
-    // Documents and stylesheets are rewritten, which needs the text, not a
-    // compressed stream.
-    upstream.remove(header::ACCEPT_ENCODING);
-
+    // Plain http first: most onions serve it, and there is no CA for the address
+    // itself, so it is not a downgrade. A service that redirects to https, or does not
+    // listen on port 80 at all, is switched to https (verified against the web roots)
+    // and remembered, so the next request goes straight there.
     let client = state.tor_client().expect("the Tor listener has a client");
-    let mut request = client
-        .request(method.clone(), url.clone())
-        .headers(upstream);
-    if !matches!(*method, Method::GET | Method::HEAD) && !body.is_empty() {
-        request = request.body(body.to_vec());
+    let send = |scheme: &str| {
+        let target = format!("{scheme}://{site}{path}{query_part}");
+        let url = Url::parse(&target).map_err(|_| target.clone());
+        let upstream = url.as_ref().ok().map(|url| {
+            let mut upstream = request_headers(headers, url, true);
+            // Documents and stylesheets are rewritten, which needs the text, not a
+            // compressed stream.
+            upstream.remove(header::ACCEPT_ENCODING);
+            upstream
+        });
+        let method = method.clone();
+        async move {
+            let (Ok(url), Some(upstream)) = (url, upstream) else {
+                return Err(None);
+            };
+            let mut request = client.request(method.clone(), url).headers(upstream);
+            if !matches!(method, Method::GET | Method::HEAD) && !body.is_empty() {
+                request = request.body(body.to_vec());
+            }
+            request.send().await.map_err(Some)
+        }
+    };
+
+    let first = if is_https_only(&site) {
+        "https"
+    } else {
+        "http"
+    };
+    let mut result = send(first).await;
+
+    if first == "http" {
+        let upgrade = match &result {
+            Ok(response) => redirects_to_https(response, &site),
+            Err(_) => true,
+        };
+        if upgrade {
+            // An https attempt that also failed says less than the http one did, so
+            // the first answer is kept in that case.
+            if let Ok(response) = send("https").await {
+                remember_https_only(&site);
+                result = Ok(response);
+            }
+        }
     }
 
-    let response = match request.send().await {
+    let response = match result {
         Ok(response) => response,
-        Err(error) => {
+        Err(Some(error)) => {
             return page(
                 StatusCode::BAD_GATEWAY,
                 "Tor could not load this onion site",
                 &error.to_string(),
+            )
+        }
+        Err(None) => {
+            return page(
+                StatusCode::BAD_REQUEST,
+                "Bad onion URL",
+                &format!("{site}{path}"),
             )
         }
     };
@@ -751,5 +836,55 @@ mod tests {
             url::form_urlencoded::byte_serialize(b"https://example.com/secret").collect::<String>();
         let response = blocked_page(&format!("u={query}"));
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn an_https_redirect_to_the_same_onion_is_an_upgrade() {
+        assert!(is_https_upgrade(
+            StatusCode::MOVED_PERMANENTLY,
+            Some(&format!("https://{SITE}/?q=x")),
+            SITE
+        ));
+        assert!(is_https_upgrade(
+            StatusCode::PERMANENT_REDIRECT,
+            Some(&format!("HTTPS://{}/a", SITE.to_ascii_uppercase())),
+            SITE
+        ));
+    }
+
+    #[test]
+    fn other_redirects_are_not_an_upgrade() {
+        // Another onion, clearnet, the same scheme, a relative path, no Location, or
+        // not a redirect at all.
+        assert!(!is_https_upgrade(
+            StatusCode::MOVED_PERMANENTLY,
+            Some(&format!("https://{OTHER}/")),
+            SITE
+        ));
+        assert!(!is_https_upgrade(
+            StatusCode::FOUND,
+            Some("https://example.com/"),
+            SITE
+        ));
+        assert!(!is_https_upgrade(
+            StatusCode::FOUND,
+            Some(&format!("http://{SITE}/next")),
+            SITE
+        ));
+        assert!(!is_https_upgrade(StatusCode::FOUND, Some("/next"), SITE));
+        assert!(!is_https_upgrade(StatusCode::FOUND, None, SITE));
+        assert!(!is_https_upgrade(
+            StatusCode::OK,
+            Some(&format!("https://{SITE}/")),
+            SITE
+        ));
+    }
+
+    #[test]
+    fn https_only_onions_are_remembered() {
+        const REMEMBERED: &str = "rememberedrememberedrememberedrememberedremembered2.onion";
+        assert!(!is_https_only(REMEMBERED));
+        remember_https_only(REMEMBERED);
+        assert!(is_https_only(REMEMBERED));
     }
 }
