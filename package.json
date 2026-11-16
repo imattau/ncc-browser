@@ -30,6 +30,7 @@
   },
   "dependencies": {
     "@nostrify/nostrify": "^0.55.1",
+    "@tauri-apps/api": "^2.12.4",
     "lucide-react": "^0.545.0",
     "nostr-tools": "^2.26.0",
     "react": "^19.3.1",
@@ -38,6 +39,7 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.5",
+    "@tauri-apps/cli": "^2.12.4",
     "@types/node": "^22.10.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",

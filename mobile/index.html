@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Nostr Navigator</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <!--
+      M0 shell. This is deliberately not the React chrome yet: it exists to prove the
+      Tauri shell builds, signs, installs and talks to Rust on a device. The content
+      surface and the React chrome replace it in M1.
+    -->
+    <header class="bar">
+      <span class="mark">NCC</span>
+      <span class="address">no page</span>
+      <span class="spacer"></span>
+      <span class="count" id="tabs">1</span>
+    </header>
+
+    <main class="stage">
+      <h1>Nostr Navigator</h1>
+      <p class="lede">Android shell. The content surface is not wired up yet.</p>
+
+      <dl class="facts">
+        <div><dt>app version</dt><dd id="version">…</dd></div>
+        <div><dt>tauri bridge</dt><dd id="bridge">…</dd></div>
+        <div><dt>secure context</dt><dd id="secure">…</dd></div>
+        <div><dt>service workers</dt><dd id="sw">…</dd></div>
+        <div><dt>user agent</dt><dd id="ua" class="wrap">…</dd></div>
+      </dl>
+
+      <p class="note" id="note"></p>
+    </main>
+
+    <script type="module" src="main.js"></script>
+  </body>
+</html>
