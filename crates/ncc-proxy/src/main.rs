@@ -45,6 +45,7 @@ async fn run() -> ExitCode {
     let mut bind: IpAddr = IpAddr::from([127, 0, 0, 1]);
     let mut relays: Vec<String> = Vec::new();
     let mut resolve: Option<String> = None;
+    let mut allowed_origins: Vec<String> = Vec::new();
 
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -70,6 +71,10 @@ async fn run() -> ExitCode {
                         .map(str::to_string),
                 ),
                 None => return usage("--relays needs a comma-separated list"),
+            },
+            "--allow-origin" => match args.next() {
+                Some(value) => allowed_origins.push(value),
+                None => return usage("--allow-origin needs an origin"),
             },
             "--resolve" => match args.next() {
                 Some(value) => resolve = Some(value),
@@ -100,6 +105,7 @@ async fn run() -> ExitCode {
 
     let config = ProxyConfig {
         relays: relays.clone(),
+        allowed_origins: allowed_origins.clone(),
         ..Default::default()
     };
     let state = Arc::new(ProxyState::new(&config));
@@ -180,7 +186,7 @@ fn usage(message: &str) -> ExitCode {
     }
     eprintln!(
         "ncc-proxy [--port {DEFAULT_PORT}] [--bind 127.0.0.1] [--relay URL]… \
-         [--relays a,b] [--resolve <npub>[/service]]"
+         [--relays a,b] [--allow-origin ORIGIN]… [--resolve <npub>[/service]]"
     );
     if message.is_empty() {
         ExitCode::SUCCESS

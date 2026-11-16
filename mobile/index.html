@@ -9,14 +9,13 @@
   </head>
   <body>
     <!--
-      M0 shell. This is deliberately not the React chrome yet: it exists to prove the
-      Tauri shell builds, signs, installs and talks to Rust on a device. The content
-      surface and the React chrome replace it in M1.
+      M0 shell. Not the React chrome yet: it exists to prove the shell builds, signs,
+      installs, starts the NCC proxy and can reach a virtual host from the WebView.
+      The React chrome and the content surface replace it in M1.
     -->
     <header class="bar">
       <span class="mark">NCC</span>
       <span class="address">no page</span>
-      <span class="spacer"></span>
       <span class="count" id="tabs">1</span>
     </header>
 
@@ -26,13 +25,32 @@
 
       <dl class="facts">
         <div><dt>app version</dt><dd id="version">…</dd></div>
+        <div><dt>proxy</dt><dd id="proxy">…</dd></div>
         <div><dt>tauri bridge</dt><dd id="bridge">…</dd></div>
         <div><dt>secure context</dt><dd id="secure">…</dd></div>
         <div><dt>service workers</dt><dd id="sw">…</dd></div>
-        <div><dt>user agent</dt><dd id="ua" class="wrap">…</dd></div>
       </dl>
 
-      <p class="note" id="note"></p>
+      <h2>Try a live service</h2>
+      <p class="lede">
+        Fetches the service root through the proxy, so this is the
+        <code>*.localhost</code> test without the content view.
+      </p>
+
+      <label class="field">
+        <span>address</span>
+        <input
+          id="address"
+          spellcheck="false"
+          autocapitalize="off"
+          autocomplete="off"
+          value="1a11f6a505399c25805eceffb6078f1b924df15134886fdaf985b2399faace13/web"
+        />
+      </label>
+
+      <button id="go" type="button">Fetch through the proxy</button>
+
+      <pre id="result" class="result">—</pre>
     </main>
 
     <script type="module" src="main.js"></script>

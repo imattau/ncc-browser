@@ -6,6 +6,8 @@ name: Android
 on:
   push:
     tags: ['android-v*']
+    # Temporary while this branch is being built out; removed before merge.
+    branches: [chore/android-shell]
   workflow_dispatch:
     inputs:
       publish:
@@ -95,6 +97,9 @@ jobs:
 
       # `beforeBuildCommand` in tauri.conf.json builds the chrome bundle.
       - name: Build APK
+        env:
+          # aws-lc-sys needs the NDK to cross-compile its C for Android.
+          ANDROID_NDK_HOME: ${{ env.NDK_HOME }}
         run: npx tauri android build --apk --split-per-abi
 
       - name: Stage the APK for Zapstore

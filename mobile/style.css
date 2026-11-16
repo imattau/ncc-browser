@@ -138,3 +138,62 @@ dd.wrap {
   color: var(--muted);
   font-size: 13px;
 }
+
+h2 {
+  margin: 28px 0 4px;
+  font-size: 17px;
+}
+
+code {
+  font-size: 13px;
+}
+
+.field {
+  display: block;
+  margin: 16px 0 10px;
+}
+
+.field span {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.field input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+  font: 13px ui-monospace, monospace;
+}
+
+button {
+  width: 100%;
+  padding: 12px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+}
+
+button:disabled {
+  opacity: 0.5;
+}
+
+.result {
+  margin: 14px 0 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+  font: 12px/1.5 ui-monospace, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  min-height: 96px;
+}
