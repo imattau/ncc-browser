@@ -18,6 +18,9 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
+import java.net.URLEncoder
 
 /**
  * One tab: a WebView plus what the switcher needs to draw it.
@@ -165,6 +168,15 @@ class ContentSurface(
         request: WebResourceRequest,
       ): Boolean {
         val url = request.url.toString()
+
+        // A page can link to another service or site. Those carry the label rules that
+        // live in Rust, so ask the proxy instead of reimplementing base32 here.
+        val scheme = request.url.scheme?.lowercase()
+        if (scheme == "ncc" || scheme == "nsite") {
+          routeLink(view, url)
+          return true
+        }
+
         if (accepts(url)) return false
         emit(JSONObject().put("type", "blocked").put("url", url))
         return true
@@ -225,6 +237,49 @@ class ContentSurface(
     container.addView(web)
 
     return web
+  }
+
+  /** Resolve an `ncc://` or `nsite://` link through the proxy, then load it. */
+  private fun routeLink(view: WebView, url: String) {
+    val port = Uri.parse(view.url ?: "").port
+    if (port <= 0) {
+      emit(JSONObject().put("type", "blocked").put("url", url))
+      return
+    }
+
+    Thread {
+      val resolved = try {
+        resolveRoute(port, url)
+      } catch (error: Exception) {
+        null
+      }
+      view.post {
+        if (resolved != null) {
+          view.loadUrl(resolved)
+        } else {
+          emit(JSONObject().put("type", "blocked").put("url", url))
+        }
+      }
+    }.apply { isDaemon = true }.start()
+  }
+
+  private fun resolveRoute(port: Int, url: String): String? {
+    val encoded = URLEncoder.encode(url, "UTF-8")
+    val connection = URL("http://127.0.0.1:$port/__ncc/route?u=$encoded").openConnection() as HttpURLConnection
+    return try {
+      connection.connectTimeout = 5000
+      connection.readTimeout = 5000
+      if (connection.responseCode != 200) {
+        null
+      } else {
+        val body = connection.inputStream.bufferedReader().use { it.readText() }
+        JSONObject(body).optString("url").takeIf { it.isNotEmpty() }
+      }
+    } catch (error: Exception) {
+      null
+    } finally {
+      connection.disconnect()
+    }
   }
 
   private fun emit(payload: JSONObject) {

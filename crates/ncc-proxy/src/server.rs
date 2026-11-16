@@ -212,6 +212,12 @@ async fn handle_inner(state: &ProxyState, request: Request) -> Response {
         .unwrap_or_default()
         .to_string();
 
+    // Linking between schemes needs the same rules the hosts use, so the page asks
+    // this process instead of reimplementing base32 labels in Kotlin.
+    if request.uri().path() == "/__ncc/route" {
+        return route(&authority, request.uri().query().unwrap_or_default());
+    }
+
     let Some(vhost) = parse_vhost(&authority) else {
         return help_page(&authority);
     };
@@ -556,6 +562,106 @@ fn help_page(authority: &str) -> Response {
          or <code>http://&lt;npub&gt;.localhost:PORT/</code> for the default service.</p>"
     );
     (StatusCode::NOT_FOUND, Html(body)).into_response()
+}
+
+/// Map an `ncc://` or `nsite://` link onto the host this browser loads.
+fn route(authority: &str, query: &str) -> Response {
+    let target = url::form_urlencoded::parse(query.as_bytes())
+        .find(|(name, _)| name == "u")
+        .map(|(_, value)| value.into_owned());
+
+    let Some(target) = target else {
+        return json_error(
+            StatusCode::BAD_REQUEST,
+            "missing-url",
+            "Pass the address as ?u=<ncc://…|nsite://…>",
+        );
+    };
+
+    let port = authority.rsplit_once(':').map(|(_, port)| port.to_string());
+    let with_port = |host: String| match &port {
+        Some(port) if !port.is_empty() => format!("{host}:{port}"),
+        _ => host,
+    };
+
+    let lower = target.trim().to_ascii_lowercase();
+
+    if lower.starts_with("ncc:") {
+        let Ok(address) = parse_ncc_address(target.trim()) else {
+            return json_error(
+                StatusCode::BAD_REQUEST,
+                "invalid-ncc",
+                "Not an ncc:// address",
+            );
+        };
+        let host = crate::vhost::host_for(&address.pubkey, &address.service);
+        let path = if address.path.is_empty() {
+            "/".to_string()
+        } else {
+            address.path.clone()
+        };
+        return routed(format!(
+            "http://{}{}{}{}",
+            with_port(host),
+            path,
+            address.search,
+            address.hash
+        ));
+    }
+
+    if lower.starts_with("nsite:") {
+        let Some(address) = ncc_core::parse_nsite_address(target.trim()) else {
+            return json_error(
+                StatusCode::BAD_REQUEST,
+                "invalid-nsite",
+                "Not an nsite:// address",
+            );
+        };
+        let host = ncc_core::nsite_host(&address.pubkey, address.site.as_deref());
+        return routed(format!(
+            "http://{}{}{}{}",
+            with_port(host),
+            address.path,
+            address.search,
+            address.hash
+        ));
+    }
+
+    if lower.starts_with("http://") || lower.starts_with("https://") {
+        if let Ok(url) = url::Url::parse(target.trim()) {
+            let host = url.host_str().unwrap_or_default();
+            if !host.ends_with(".localhost") {
+                return json_error(
+                    StatusCode::BAD_REQUEST,
+                    "unsupported-host",
+                    "Only NCC and site hosts are routed here",
+                );
+            }
+            if url.port().is_none() {
+                let mut rebuilt = url.clone();
+                if let Some(port) = port.as_deref().and_then(|value| value.parse::<u16>().ok()) {
+                    let _ = rebuilt.set_port(Some(port));
+                }
+                return routed(rebuilt.to_string());
+            }
+            return routed(url.to_string());
+        }
+    }
+
+    json_error(
+        StatusCode::BAD_REQUEST,
+        "unsupported-scheme",
+        "Only ncc://, nsite:// and localhost URLs are routed",
+    )
+}
+
+fn routed(url: String) -> Response {
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/json")],
+        serde_json::json!({ "url": url }).to_string(),
+    )
+        .into_response()
 }
 
 /// Fall back to whatever the identity actually publishes.
