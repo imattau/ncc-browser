@@ -429,6 +429,16 @@
         </div>
 
         <button id="identity-lock" class="btn tonal block" type="button" hidden>Lock</button>
+
+        <label id="keep-unlocked-row" class="switch-row" hidden>
+          <span>Stay unlocked across restarts</span>
+          <input id="keep-unlocked" class="switch" type="checkbox" role="switch" />
+        </label>
+        <p class="hint">
+          The key is wrapped by the device keystore, so unlocking needs no passphrase.
+          Leaving this off means a fresh launch starts locked.
+        </p>
+
         <p id="identity-error" class="status" role="status"></p>
 
         <h3 class="group">Remote signer</h3>

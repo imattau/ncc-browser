@@ -54,6 +54,9 @@ pub struct ProxyConfig {
     /// Root of the on-disk cache: manifests, locator records and verified site files.
     /// `None` keeps all three in memory only.
     pub cache_directory: Option<std::path::PathBuf>,
+    /// Where trusted services are remembered. Separate from the cache on purpose:
+    /// clearing the cache must not revoke a permission.
+    pub permissions_file: Option<std::path::PathBuf>,
     /// Persisted settings. When absent, an in-memory store is built from `relays`.
     pub settings: Option<Arc<crate::settings::SettingsStore>>,
 }
@@ -66,6 +69,7 @@ impl Default for ProxyConfig {
             max_body_bytes: 10 * 1024 * 1024,
             allowed_origins: Vec::new(),
             cache_directory: None,
+            permissions_file: None,
             settings: None,
         }
     }
@@ -83,7 +87,7 @@ pub struct ProxyState {
     approvals: Option<Arc<Approvals>>,
     /// A remote signer, when the user chose one instead of holding a key here.
     remote: Mutex<Option<Arc<crate::bunker::Bunker>>>,
-    trusted: Mutex<HashSet<String>>,
+    trusted: Trusted,
     nsite: NsiteResolver,
     blobs: Blobs,
     settings: Arc<crate::settings::SettingsStore>,
@@ -134,7 +138,7 @@ impl ProxyState {
             identity: None,
             approvals: None,
             remote: Mutex::new(None),
-            trusted: Mutex::new(HashSet::new()),
+            trusted: Trusted::open(config.permissions_file.clone()),
             nsite: NsiteResolver::new(settings.clone())
                 .with_directory(pointer_directory(&config.cache_directory, "manifests")),
             settings,
@@ -190,24 +194,22 @@ impl ProxyState {
         self.blobs.clear();
     }
 
-    /// Services the user chose to stop asking about for this session.
+    /// Services the user chose to stop being asked about.
     pub fn is_trusted(&self, key: &str) -> bool {
-        crate::lock(&self.trusted).contains(key)
+        self.trusted.contains(key)
     }
 
     /// Services the user stopped being asked about, for the permissions screen.
     pub fn trusted_keys(&self) -> Vec<String> {
-        let mut keys: Vec<String> = crate::lock(&self.trusted).iter().cloned().collect();
-        keys.sort();
-        keys
+        self.trusted.list()
     }
 
     pub fn untrust(&self, key: &str) {
-        crate::lock(&self.trusted).remove(key);
+        self.trusted.remove(key);
     }
 
     pub fn trust(&self, key: &str) {
-        crate::lock(&self.trusted).insert(key.to_string());
+        self.trusted.insert(key);
     }
 
     pub fn resolver(&self) -> &Resolver {
@@ -228,6 +230,74 @@ pub async fn serve(
     state: Arc<ProxyState>,
 ) -> std::io::Result<()> {
     axum::serve(listener, app(state)).await
+}
+
+/// Services that may ask the signer without a prompt.
+///
+/// A permission, not a cache: it is written next to the settings and survives a
+/// restart, because "remember this service" that is forgotten on relaunch is a bug,
+/// not a policy. Clearing the cache must not hand a service the right to sign again
+/// either, which is why this is a file of its own rather than a cache entry.
+struct Trusted {
+    path: Option<std::path::PathBuf>,
+    keys: Mutex<HashSet<String>>,
+}
+
+impl Trusted {
+    fn open(path: Option<std::path::PathBuf>) -> Self {
+        let keys = path
+            .as_ref()
+            .and_then(|path| std::fs::read(path).ok())
+            .and_then(|bytes| serde_json::from_slice::<Vec<String>>(&bytes).ok())
+            .map(|list| list.into_iter().collect())
+            .unwrap_or_default();
+
+        Self {
+            path,
+            keys: Mutex::new(keys),
+        }
+    }
+
+    fn contains(&self, key: &str) -> bool {
+        crate::lock(&self.keys).contains(key)
+    }
+
+    fn list(&self) -> Vec<String> {
+        let mut keys: Vec<String> = crate::lock(&self.keys).iter().cloned().collect();
+        keys.sort();
+        keys
+    }
+
+    fn insert(&self, key: &str) {
+        crate::lock(&self.keys).insert(key.to_string());
+        self.save();
+    }
+
+    fn remove(&self, key: &str) {
+        crate::lock(&self.keys).remove(key);
+        self.save();
+    }
+
+    fn save(&self) {
+        let Some(path) = &self.path else {
+            return;
+        };
+
+        let keys = self.list();
+        let Ok(bytes) = serde_json::to_vec_pretty(&keys) else {
+            return;
+        };
+
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+
+        // Beside the target, then rename: a crash cannot leave half a permission list.
+        let temporary = path.with_extension("tmp");
+        if std::fs::write(&temporary, bytes).is_ok() {
+            let _ = std::fs::rename(&temporary, path);
+        }
+    }
 }
 
 /// A named directory inside the cache root, if there is a root at all.
@@ -1180,4 +1250,47 @@ pub async fn resolve_address(
     service: &str,
 ) -> Result<ResolvedService, ResolveError> {
     state.resolver.resolve(pubkey, service).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_permission_survives_a_restart() {
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let id = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path =
+            std::env::temp_dir().join(format!("ncc-permissions-{}-{id}.json", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+
+        let first = Trusted::open(Some(path.clone()));
+        first.insert("ncc://npub1abc/web");
+        first.insert("nsite://npub1abc/blog");
+        assert!(first.contains("ncc://npub1abc/web"));
+
+        // A new process reads the same file, which is the whole point.
+        let second = Trusted::open(Some(path.clone()));
+        assert!(second.contains("ncc://npub1abc/web"));
+        assert_eq!(
+            second.list(),
+            vec![
+                "ncc://npub1abc/web".to_string(),
+                "nsite://npub1abc/blog".to_string()
+            ]
+        );
+
+        second.remove("ncc://npub1abc/web");
+        assert!(!Trusted::open(Some(path.clone())).contains("ncc://npub1abc/web"));
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn trusting_without_a_file_only_lasts_for_the_session() {
+        let trusted = Trusted::open(None);
+        trusted.insert("ncc://npub1abc/web");
+        assert!(trusted.contains("ncc://npub1abc/web"));
+        assert!(Trusted::open(None).list().is_empty());
+    }
 }

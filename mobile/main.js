@@ -1787,6 +1787,11 @@ function renderIdentity(status) {
   byId('identity-setup').hidden = status.initialised
   byId('identity-locked').hidden = !status.initialised || status.unlocked
   byId('identity-lock').hidden = !status.unlocked
+
+  // Only an identity stored on this device can stay unlocked; there is nothing to
+  // keep open otherwise.
+  byId('keep-unlocked-row').hidden = !status.initialised
+  byId('keep-unlocked').checked = browserSettings?.keepUnlocked === true
   renderHomeIdentity()
   void loadProfile()
 }
@@ -1863,6 +1868,19 @@ async function setupIdentity(tauri) {
       byId('identity-error').textContent = ''
     } catch (error) {
       identityFailure(error)
+    }
+  })
+
+  byId('keep-unlocked').addEventListener('change', async () => {
+    const enabled = byId('keep-unlocked').checked
+    try {
+      const status = await invoke('settings_set_keep_unlocked', { enabled })
+      browserSettings = await invoke('browser_settings')
+      renderIdentity(status)
+    } catch (error) {
+      // Refused, so say why and put the switch back where it was.
+      byId('identity-error').textContent = String(error)
+      byId('keep-unlocked').checked = !enabled
     }
   })
 

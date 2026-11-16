@@ -148,6 +148,30 @@ async fn bunker_disconnect(state: tauri::State<'_, SignerState>) -> Result<Bunke
     Ok(bunker_info(None))
 }
 
+/// Keeping the identity unlocked across launches.
+///
+/// Turning it on unlocks now; turning it off locks now. It can only work where the
+/// envelope opens without asking anything, which is the case with the device keystore.
+#[tauri::command]
+fn settings_set_keep_unlocked(
+    state: tauri::State<'_, SignerState>,
+    enabled: bool,
+) -> Result<Status, String> {
+    state.proxy.settings().set_keep_unlocked(enabled)?;
+
+    if enabled {
+        let envelope = envelope(None);
+        state
+            .identity
+            .unlock(envelope.as_ref())
+            .map_err(|error| error.to_string())?;
+    } else {
+        state.identity.lock();
+    }
+
+    Ok(state.identity.status())
+}
+
 #[tauri::command]
 fn identity_status(state: tauri::State<'_, SignerState>) -> Status {
     state.identity.status()
@@ -236,8 +260,8 @@ fn signer_revoke(state: tauri::State<'_, SignerState>, service: String) -> Vec<S
     state.proxy.trusted_keys()
 }
 
-/// Answer a parked signer request. `remember` grants the whole service, so the shell
-/// stops asking until the app restarts.
+/// Answer a parked signer request. `remember` grants the whole service, and the grant
+/// is written to disk, so the shell stops asking across restarts too.
 #[tauri::command]
 fn signer_respond(
     state: tauri::State<'_, SignerState>,
@@ -282,6 +306,9 @@ fn proxy_config(
     ProxyConfig {
         relays: default_relays(),
         settings,
+        permissions_file: data_dir
+            .as_ref()
+            .map(|dir| dir.join("permissions.json")),
         // Manifests, records and verified site files survive a restart; site files are
         // hash-checked when read back.
         cache_directory: data_dir,
@@ -345,6 +372,7 @@ pub fn run() {
             identity_import,
             identity_unlock,
             identity_lock,
+            settings_set_keep_unlocked,
             browser_settings,
             clear_cache,
             settings_set_relays,
@@ -378,6 +406,16 @@ pub fn run() {
             }));
 
             let settings = Arc::new(SettingsStore::open(data_dir.join("config.json")));
+
+            // Staying unlocked is a setting, so it applies before anything asks. A file
+            // that still needs a passphrase simply stays locked, and says so in status.
+            if settings.get().keep_unlocked {
+                let envelope = envelope(None);
+                match identity.unlock(envelope.as_ref()) {
+                    Ok(npub) => println!("[identity] unlocked at startup: {npub}"),
+                    Err(error) => eprintln!("[identity] keep-unlocked did not apply: {error}"),
+                }
+            }
             let proxy = Arc::new(
                 ProxyState::new(&proxy_config(Some(data_dir.clone()), Some(settings.clone())))
                     .with_signer(identity.clone(), approvals.clone()),
