@@ -160,5 +160,18 @@ jobs:
         env:
           SIGN_WITH: ${{ secrets.ZAPSTORE_NSEC }}
         run: |
-          go install github.com/zapstore/zsp/v2/cmd/zsp@v2.0.1
+          # sum.golang.org and the module proxy are occasionally unreachable, and a
+          # release should not fail because a checksum lookup did. Retried rather than
+          # worked around: turning the checks off would be the wrong fix.
+          installed=""
+          for attempt in 1 2 3; do
+            if go install github.com/zapstore/zsp/v2/cmd/zsp@v2.0.1; then
+              installed=1
+              break
+            fi
+            echo "go install failed (attempt $attempt), retrying" >&2
+            sleep $((attempt * 10))
+          done
+          [ -n "$installed" ] || { echo "zsp could not be installed after 3 attempts" >&2; exit 1; }
+
           "$(go env GOPATH)/bin/zsp" publish
