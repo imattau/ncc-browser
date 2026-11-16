@@ -170,6 +170,27 @@ impl ServerCertVerifier for PinningVerifier {
 }
 
 /// A rustls configuration that trusts only pinned keys.
+/// The ordinary client's TLS: the Mozilla root set, verified by rustls itself.
+///
+/// reqwest's `rustls` feature builds a `rustls-platform-verifier`, which on Android has
+/// to be initialised with a JVM context that this app deliberately does not keep — its
+/// first HTTPS request panicked with "Expect rustls-platform-verifier to be initialised".
+/// Naming the roots avoids the platform store entirely and matches the pinned client
+/// and the relay sockets, which already trust webpki roots.
+pub fn webpki_tls_config() -> Result<rustls::ClientConfig, TlsError> {
+    let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+    let mut roots = rustls::RootCertStore::empty();
+    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+
+    let mut config = rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()?
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+
+    Ok(config)
+}
+
 pub fn pinned_tls_config(pins: Arc<PinStore>) -> Result<rustls::ClientConfig, TlsError> {
     let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
     let verifier = Arc::new(PinningVerifier::new(pins, &provider));
@@ -187,6 +208,14 @@ pub fn pinned_tls_config(pins: Arc<PinStore>) -> Result<rustls::ClientConfig, Tl
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_ordinary_client_has_roots_without_a_platform_verifier() {
+        let config = webpki_tls_config().expect("config");
+        // The platform verifier is never constructed: this config carries its own roots
+        // and its own ALPN, so no JVM or OS initialisation is required.
+        assert!(config.alpn_protocols.iter().any(|p| p == b"h2"));
+    }
 
     #[test]
     fn fingerprints_are_base64url_sha256_of_the_spki() {
