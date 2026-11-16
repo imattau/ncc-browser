@@ -24,6 +24,7 @@ use ncc_identity::IdentityStore;
 
 use crate::approvals::Approvals;
 use crate::inject::{inject_into_html, relax_csp, Injection, TokenStore, MAX_INJECTION_BYTES};
+use crate::nsite::{Blobs, NsiteResolver};
 use crate::pins::{pinned_tls_config, PinStore};
 use crate::resolve::{ResolveError, ResolvedService, Resolver};
 use crate::vhost::{parse_vhost, Vhost};
@@ -72,6 +73,8 @@ pub struct ProxyState {
     identity: Option<Arc<IdentityStore>>,
     approvals: Option<Arc<Approvals>>,
     trusted: Mutex<HashSet<String>>,
+    nsite: NsiteResolver,
+    blobs: Blobs,
 }
 
 impl ProxyState {
@@ -110,6 +113,8 @@ impl ProxyState {
             identity: None,
             approvals: None,
             trusted: Mutex::new(HashSet::new()),
+            nsite: NsiteResolver::new(config.relays.clone()),
+            blobs: Blobs::new(config.request_timeout),
         }
     }
 
@@ -126,6 +131,14 @@ impl ProxyState {
 
     pub fn approvals(&self) -> Option<&Approvals> {
         self.approvals.as_deref()
+    }
+
+    pub fn nsite(&self) -> &NsiteResolver {
+        &self.nsite
+    }
+
+    pub fn blobs(&self) -> &Blobs {
+        &self.blobs
     }
 
     /// Services the user chose to stop asking about for this session.
@@ -222,6 +235,10 @@ async fn handle_inner(state: &ProxyState, request: Request) -> Response {
     // service comes from the Host header, so a page cannot claim another one.
     if let Some(signer_method) = path.strip_prefix("/__ncc/nip07/") {
         return crate::signer::handle(state, &vhost, signer_method, &body).await;
+    }
+
+    if vhost.kind == crate::vhost::HostKind::Nsite {
+        return crate::nsite::serve(state, &vhost, &path, &query, &method).await;
     }
 
     let resolved = match state.resolver.resolve(&vhost.pubkey, &vhost.service).await {
@@ -631,7 +648,7 @@ fn service_list_page(
 
 /// The identity a token and a signer request are scoped to.
 pub(crate) fn host_key(vhost: &Vhost) -> String {
-    format!("{}/{}", vhost.pubkey, vhost.service)
+    vhost.identity_key()
 }
 
 pub(crate) fn json_error(status: StatusCode, code: &str, message: &str) -> Response {

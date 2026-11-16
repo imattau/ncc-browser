@@ -113,7 +113,7 @@ pub async fn handle(state: &ProxyState, vhost: &Vhost, method: &str, body: &[u8]
             let preview = if method.ends_with("encrypt") {
                 text.chars().take(PREVIEW_CHARS).collect::<String>()
             } else {
-                format!("{}…", &text.chars().take(32).collect::<String>())
+                format!("{}…", text.chars().take(32).collect::<String>())
             };
 
             if !approved(state, vhost, method, None, preview).await {
@@ -196,7 +196,6 @@ fn internal_text(detail: String) -> Response {
     json_error(StatusCode::INTERNAL_SERVER_ERROR, "signer-failed", &detail)
 }
 
-
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -213,10 +212,8 @@ mod tests {
 
     fn state() -> (ProxyState, Vhost) {
         let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!(
-            "ncc-signer-test-{}-{id}.json",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("ncc-signer-test-{}-{id}.json", std::process::id()));
         let _ = std::fs::remove_file(&path);
 
         let identity = Arc::new(ncc_identity::IdentityStore::open(path));
@@ -226,9 +223,10 @@ mod tests {
             .with_signer(identity, Arc::new(Approvals::new(|_| {})));
 
         let vhost = Vhost {
-            pubkey: "npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqhs2n3v"
-                .to_string(),
+            pubkey: "npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqhs2n3v".to_string(),
             service: "web".to_string(),
+            site: None,
+            kind: crate::vhost::HostKind::Ncc,
         };
         state.tokens.remember("token", &host_key(&vhost));
 
@@ -248,7 +246,9 @@ mod tests {
         let result = value.get("result").and_then(Value::as_str).expect("result");
 
         assert_eq!(result.len(), 64, "NIP-07 wants hex, got {result}");
-        assert!(result.chars().all(|character| character.is_ascii_hexdigit()));
+        assert!(result
+            .chars()
+            .all(|character| character.is_ascii_hexdigit()));
     }
 
     #[tokio::test]

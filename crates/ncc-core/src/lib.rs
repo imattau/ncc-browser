@@ -17,6 +17,7 @@
 pub mod address;
 pub mod base32;
 pub mod locator;
+pub mod nsite;
 pub mod routing;
 pub mod transport;
 
@@ -34,6 +35,10 @@ pub use locator::{
     parse_payload, payload_expiry, select_relay_endpoint, sort_endpoints, DTagSource, Endpoint,
     EndpointFamily, Payload, RelayEndpointRejection, RelayEndpointSelection, DEFAULT_D_TAG,
     DEFAULT_PRIORITY,
+};
+pub use nsite::{
+    aggregate_hash, content_type_for, is_valid_site_id, match_path, mime_for_path, nsite_host,
+    PathMatch, NSITE_NAMED_KIND, NSITE_ROOT_KIND,
 };
 pub use routing::{http_origin, join_paths, rewrite_location, upstream_headers, RewriteContext};
 pub use transport::{

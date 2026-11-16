@@ -39,6 +39,15 @@ let newTabMode = false
 function displayAddress(url) {
   try {
     const parsed = new URL(url)
+
+    if (parsed.hostname.endsWith('.nsite.localhost')) {
+      // pubkey.site.nsite.localhost, or pubkey.nsite.localhost for the root site.
+      const labels = parsed.hostname.split('.')
+      const pubkey = labels[0]
+      const site = labels.length === 4 ? labels[1] : null
+      return `nsite://${pubkey}${site ? `/${site}` : ''}${parsed.pathname}`
+    }
+
     if (!parsed.hostname.endsWith('.localhost')) return url
     const labels = parsed.hostname.split('.')
     const pubkey = labels[0]
@@ -401,8 +410,38 @@ function parseAddress(input) {
   return { pubkey: pubkey.toLowerCase(), service }
 }
 
+/**
+ * `nsite://npub/d/path` addresses a named site, `nsite://npub/path` the root one.
+ *
+ * The first segment is only a site id when it could be one: `index.html` cannot, so it
+ * is a root-site path. The ambiguous middle ground — a bare word that is also a
+ * directory — resolves as a site, which is the common case and what the desktop does
+ * when such a site is published.
+ */
+function nsiteTarget(input, port) {
+  const rest = input.replace(/^nsite:\/\//i, '').replace(/^\/+/, '')
+  const [pubkey, ...segments] = rest.split('/')
+
+  if (!/^(npub1[0-9a-z]{20,}|[0-9a-f]{64})$/i.test(pubkey || '')) {
+    return { error: 'An nsite address starts with an npub.' }
+  }
+
+  let site = null
+  if (segments.length > 0 && /^[a-z0-9-]{1,13}$/i.test(segments[0]) && !segments[0].endsWith('-')) {
+    site = segments.shift().toLowerCase()
+  }
+
+  const path = segments.length > 0 ? `/${segments.join('/')}` : '/'
+  return {
+    url: `http://${pubkey.toLowerCase()}${site ? `.${site}` : ''}.nsite.localhost:${port}${path}`
+  }
+}
+
 function targetUrl(port) {
-  const parsed = parseAddress(byId('address').value)
+  const value = byId('address').value.trim()
+  if (/^nsite:/i.test(value)) return nsiteTarget(value, port)
+
+  const parsed = parseAddress(value)
   if (parsed.error) return { error: parsed.error }
   return { url: `http://${parsed.pubkey}.${parsed.service}.localhost:${port}/` }
 }
