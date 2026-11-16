@@ -62,6 +62,10 @@ class MainActivity : TauriActivity() {
   /** The private listener's port. A different port is a different origin, so private
    * tabs get their own storage instead of sharing the normal one. */
   private var privatePortNumber = 0
+
+  /** The onion listener's port. Separate again, so a Tor tab's storage is its own and
+   * none of the NCC cache is reachable from it. */
+  private var torPortNumber = 0
   private var pendingDownload: Pair<File, String>? = null
   private lateinit var downloads: Downloads
 
@@ -295,10 +299,19 @@ class MainActivity : TauriActivity() {
     }
   }
 
-  private fun openTab(url: String, reuseActive: Boolean, isPrivate: Boolean = false): Boolean {
+  private fun openTab(
+    url: String,
+    reuseActive: Boolean,
+    isPrivate: Boolean = false,
+    isTor: Boolean = false,
+  ): Boolean {
     if (reuseActive) {
       val current = active()
-      if (current != null && current.isPrivate == isPrivate && current.open(url)) {
+      if (current != null &&
+        current.isPrivate == isPrivate &&
+        current.isTor == isTor &&
+        current.open(url)
+      ) {
         setExpanded(false)
         emitTabs(false)
         return true
@@ -309,8 +322,15 @@ class MainActivity : TauriActivity() {
       val tab = ContentSurface(
         "tab-${nextTabId++}",
         isPrivate,
+        isTor,
         contentHost ?: return@captureActive,
-        { if (isPrivate) privatePortNumber else proxyPortNumber },
+        {
+          when {
+            isTor -> torPortNumber
+            isPrivate -> privatePortNumber
+            else -> proxyPortNumber
+          }
+        },
         ::onTabEvent,
         ::startDownload,
       )
@@ -378,11 +398,13 @@ class MainActivity : TauriActivity() {
     val host = parsed.host?.lowercase() ?: ""
     val throughProxy = host.endsWith(".localhost")
     // The vhost URL already names the listener that served it, which is how a private
-    // tab's download comes from the private listener.
+    // or Tor tab's download comes from the listener that tab uses.
     val port = if (throughProxy) parsed.port else proxyPortNumber
-    // A private tab's download keeps its name but not its address: the list is a file
-    // on disk, and what a private tab fetched is not something to leave in it.
-    val fromPrivateTab = throughProxy && privatePortNumber > 0 && parsed.port == privatePortNumber
+    // A private or Tor tab's download keeps its name but not its address: the list is
+    // a file on disk, and what those tabs fetched is not something to leave in it.
+    val fromEphemeralTab = throughProxy &&
+      ((privatePortNumber > 0 && parsed.port == privatePortNumber) ||
+        (torPortNumber > 0 && parsed.port == torPortNumber))
 
     if (throughProxy && port <= 0) {
       toast("Download failed: the proxy port is unknown")
@@ -394,7 +416,7 @@ class MainActivity : TauriActivity() {
 
     Thread {
       val temp = File(cacheDir, "download-${System.currentTimeMillis()}")
-      val id = downloads.start(name, if (fromPrivateTab) "" else url, -1)
+      val id = downloads.start(name, if (fromEphemeralTab) "" else url, -1)
 
       val fetched = try {
         val source = if (throughProxy) {
@@ -501,7 +523,14 @@ class MainActivity : TauriActivity() {
         .put("canGoBack", tab.canGoBack())
         .put("canGoForward", tab.canGoForward())
         .put("desktop", tab.desktopMode)
-        .put("kind", if (tab.isPrivate) "private" else "normal")
+        .put(
+          "kind",
+          when {
+            tab.isTor -> "tor"
+            tab.isPrivate -> "private"
+            else -> "normal"
+          },
+        )
       tab.thumbnail?.let { entry.put("thumbnail", it) }
       array.put(entry)
     }
@@ -561,6 +590,18 @@ class MainActivity : TauriActivity() {
     }
 
     @JavascriptInterface
+    fun openTor(url: String?) {
+      val target = url ?: return
+      runOnUiThread { openTab(target, reuseActive = true, isTor = true) }
+    }
+
+    @JavascriptInterface
+    fun openNewTor(url: String?) {
+      val target = url ?: return
+      runOnUiThread { openTab(target, reuseActive = false, isTor = true) }
+    }
+
+    @JavascriptInterface
     fun select(id: String?) {
       val target = id ?: return
       runOnUiThread { selectTab(target) }
@@ -616,6 +657,12 @@ class MainActivity : TauriActivity() {
     fun setPrivateProxyPort(port: Int?) {
       val value = port ?: return
       runOnUiThread { privatePortNumber = value }
+    }
+
+    @JavascriptInterface
+    fun setTorProxyPort(port: Int?) {
+      val value = port ?: return
+      runOnUiThread { torPortNumber = value }
     }
 
     /** The strip's arrow: same path as the system gesture, so the two cannot drift. */

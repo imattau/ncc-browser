@@ -6,6 +6,7 @@ use ncc_identity::{IdentityStore, KeyEnvelope, PassphraseEnvelope, Status};
 use ncc_proxy::{
     ApprovalRequest, Approvals, HttpsMode, ProxyConfig, ProxyState, Settings, SettingsStore,
 };
+use ncc_tor::{Tor, TorConfig, TorMode, TorStatus};
 
 /// Everything the commands need. The proxy shares the same `Arc`s.
 struct SignerState {
@@ -23,6 +24,16 @@ struct ProxyPort(Option<u16>);
 /// so its storage is separate, and it is built without any of the on-disk caches.
 struct PrivateProxyPort(Option<u16>);
 
+/// The third listener: onion sites, fetched through Tor. A separate port again, so a
+/// Tor tab is its own origin and none of the NCC caches are reachable from it.
+struct TorProxyPort(Option<u16>);
+
+/// The local SOCKS endpoint Tor tabs leave through, and its state.
+struct TorHandle(Option<Arc<Tor>>);
+
+/// Where arti keeps its guard state and directory cache.
+struct AppDataDir(std::path::PathBuf);
+
 #[tauri::command]
 fn proxy_port(state: tauri::State<'_, ProxyPort>) -> Option<u16> {
     state.0
@@ -31,6 +42,18 @@ fn proxy_port(state: tauri::State<'_, ProxyPort>) -> Option<u16> {
 #[tauri::command]
 fn private_proxy_port(state: tauri::State<'_, PrivateProxyPort>) -> Option<u16> {
     state.0
+}
+
+#[tauri::command]
+fn tor_proxy_port(state: tauri::State<'_, TorProxyPort>) -> Option<u16> {
+    state.0
+}
+
+/// Bootstrap progress, the route in use and the reason for a failure. The shell shows
+/// this rather than guessing from an empty page.
+#[tauri::command]
+fn tor_status(state: tauri::State<'_, TorHandle>) -> Option<TorStatus> {
+    state.0.as_ref().map(|tor| tor.status())
 }
 
 #[tauri::command]
@@ -68,6 +91,29 @@ fn settings_set_https(
     };
     state.proxy.settings().set_https_mode(mode)?;
     state.proxy.settings().set_warn_insecure(warn)
+}
+
+#[tauri::command]
+async fn settings_set_tor(
+    state: tauri::State<'_, SignerState>,
+    tor_handle: tauri::State<'_, TorHandle>,
+    dir: tauri::State<'_, AppDataDir>,
+    mode: String,
+    socks: String,
+) -> Result<Settings, String> {
+    let mode = match mode.as_str() {
+        "local" => TorMode::Local,
+        _ => TorMode::Auto,
+    };
+    let saved = state.proxy.settings().set_tor(mode, socks.clone())?;
+
+    if let Some(tor) = tor_handle.0.as_ref() {
+        // The endpoint stays where it is, so a tab already pointing at it only needs a
+        // reload once the new route is ready.
+        tor.reconfigure(tor_config(&dir.0, mode, socks));
+    }
+
+    Ok(saved)
 }
 
 #[tauri::command]
@@ -308,6 +354,15 @@ fn default_relays() -> Vec<String> {
     ]
 }
 
+fn tor_config(dir: &std::path::Path, mode: TorMode, socks: String) -> TorConfig {
+    TorConfig {
+        mode,
+        socks,
+        state_dir: dir.join("tor").join("state"),
+        cache_dir: dir.join("tor").join("cache"),
+    }
+}
+
 fn proxy_config(
     data_dir: Option<std::path::PathBuf>,
     settings: Option<Arc<SettingsStore>>,
@@ -374,6 +429,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             proxy_port,
             private_proxy_port,
+            tor_proxy_port,
+            tor_status,
+            settings_set_tor,
             bunker_connect,
             bunker_status,
             bunker_disconnect,
@@ -470,8 +528,49 @@ pub fn run() {
                 None => eprintln!("[proxy] could not start the private listener"),
             }
 
+            // Tor tabs: the local SOCKS endpoint starts here and resolves its route in
+            // the background. Failing to bind it is not fatal — the rest of the app
+            // works, and the Tor status says what happened.
+            let (tor_mode, tor_socks) = settings.tor();
+            let tor = tauri::async_runtime::block_on(Tor::start(tor_config(
+                &data_dir,
+                tor_mode,
+                tor_socks,
+            )))
+            .map_err(|error| {
+                eprintln!("[tor] could not start the endpoint: {error}");
+                error
+            })
+            .ok();
+
+            let tor_port = tor.as_ref().and_then(|tor| {
+                let mut config = proxy_config(None, Some(settings.clone()));
+                config.tor_proxy = Some(tor.socks_url().to_string());
+                let listener = Arc::new(
+                    ProxyState::new(&config).with_signer(
+                        Arc::new(IdentityStore::ephemeral()),
+                        approvals.clone(),
+                    ),
+                );
+                match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    start_proxy(listener)
+                })) {
+                    Ok(Ok(port)) => {
+                        println!("[proxy] Tor listener on 127.0.0.1:{port}");
+                        Some(port)
+                    }
+                    _ => {
+                        eprintln!("[proxy] could not start the Tor listener");
+                        None
+                    }
+                }
+            });
+
             app.manage(ProxyPort(port));
             app.manage(PrivateProxyPort(private_port));
+            app.manage(TorProxyPort(tor_port));
+            app.manage(TorHandle(tor));
+            app.manage(AppDataDir(data_dir.clone()));
             app.manage(SignerState {
                 identity,
                 approvals,

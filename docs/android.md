@@ -270,6 +270,18 @@ passphrase and rewritten with the device envelope.
       storage. Two limits worth knowing: cookies are scoped by host in Chromium and
       cannot be isolated per tab, and the ephemeral key lasts for the app run rather
       than for the private session.
+- [x] Tor tabs: a third listener (`tor_proxy_port`) serves `.onion` sites as
+      `<onion>.onion.localhost` and fetches them over SOCKS. The route is the bundled
+      `arti` client, or a local daemon such as Orbot when the mode is `local`; both are
+      `socks5h`, so the name is resolved inside Tor and never by this device. Documents
+      are rewritten to keep every reference on the same listener, a clearnet reference
+      becomes a blocked page, and a policy on every response confines scripts and
+      subresources to the tab's own origin. `shouldInterceptRequest` refuses anything
+      that is not the tab's listener and port, which is the network-level guard the
+      desktop gets from `onBeforeRequest`.
+      Limits, deliberately: onion-only (as on the desktop), no WebSockets, and a page
+      that builds a URL in JavaScript cannot have that URL rewritten — the policy is
+      what stops it from reaching the clearnet.
 - [x] Storage: clear cache drops locator records, site manifests, verified blobs in
       memory and on disk, and the WebView page cache.
 - [x] A cold load asks for several files at once, so a lookup is gated per site: one
@@ -296,13 +308,51 @@ passphrase and rewritten with the device envelope.
       revisit if a real service needs it.
 - [ ] Emulator run of the built APK.
 
+## Tor
+
+Tor is obtained in one of two ways, chosen in Settings → Tor:
+
+- **Bundled (`auto`, the default).** `arti` is compiled into the app and bootstrapped
+  on a background task. State and directory cache live under `<data>/tor`. The status
+  reports bootstrap percentage while it starts.
+- **A local daemon (`local`).** Only the configured SOCKS proxy is used, which is what
+  Orbot provides on `127.0.0.1:9050`. Nothing is bundled into the path; if Orbot is not
+  running, a Tor tab says so and the address is not fetched.
+
+Both modes sit behind the same local SOCKS5 listener, bound at startup and named by
+`tor_status`. The listener stays in place across a settings change, so a tab opened
+before the new route was ready only needs a reload. Connections wait while Tor is
+starting, and fail immediately once it has failed — "still bootstrapping" and "no Tor"
+are different messages rather than the same timeout.
+
+A Tor tab is **onion-only**, matching `TorGuard` in the desktop build. That is a
+consequence of the loopback method, not a shortcut: the proxy fetches onion documents
+and serves them from a virtual host, so the tab's network access is exactly the traffic
+the proxy chose to make. Serving clearnet from it would either need a process-wide
+proxy (which would put every other tab on Tor) or a rewriting reverse proxy for
+arbitrary sites. Neither is honest, so clearnet links are refused and the page says
+why.
+
+Known limits:
+
+- WebSockets inside an onion page are not proxied; the policy's `connect-src 'self'`
+  blocks them rather than letting them escape.
+- Frames from a *different* onion host are blocked, because each onion is its own
+  origin and the policy allows only `'self'`.
+- Cookies are scoped by host, as everywhere in Chromium. They are shared with a normal
+  tab only if that tab somehow used the same onion vhost, which a normal tab cannot.
+- The onion is reached over `http`. There is no CA for `.onion`; Tor encrypts the hops,
+  and the last hop is inside the service.
+
 ## What does not carry over
 
 - **Extensions (MV3).** No extension API and no background pages. Cut, not deferred.
 - **Per-tab sessions.** One WebView profile per process. "Private" becomes
   clear-on-exit, which is weaker and must say so in the UI.
-- **Per-tab Tor.** `ProxyController` is app-wide. Tor is either the whole app (via
-  `arti`) or absent.
+- **Clearnet over Tor, per tab.** `ProxyController` is app-wide, so a clearnet page in
+  a Tor tab would need a rewriting reverse proxy for arbitrary sites. Tor tabs are
+  onion-only, as they are on the desktop. Putting the whole app behind Tor is still
+  possible with Orbot in VPN mode, outside this app.
 - **TLS pin enforcement in the WebView.** Full pin honesty comes from the Rust proxy;
   a WebView-only path can accept a pinned self-signed cert but cannot reject a
   publicly-valid certificate that fails the pin.

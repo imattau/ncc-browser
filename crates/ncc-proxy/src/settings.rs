@@ -14,6 +14,8 @@ use std::sync::RwLock;
 
 use serde::{Deserialize, Serialize};
 
+pub use ncc_tor::TorMode;
+
 pub const DEFAULT_RELAYS: &[&str] = &[
     "wss://relay.damus.io",
     "wss://nos.lol",
@@ -55,6 +57,11 @@ pub struct Settings {
     pub search_engine: String,
     /// SearXNG instance, or a full `%s` template for a custom engine.
     pub search_engine_custom: String,
+    /// How Tor is obtained: the bundled client, or a SOCKS daemon such as Orbot.
+    pub tor_mode: TorMode,
+    /// The SOCKS endpoint for `local` mode. Validated on the way in, because a proxy
+    /// URL that does not parse would leave Tor tabs with no route and no reason.
+    pub tor_socks: String,
 }
 
 impl Default for Settings {
@@ -72,6 +79,8 @@ impl Default for Settings {
             http_exceptions: Vec::new(),
             search_engine: "duckduckgo".to_string(),
             search_engine_custom: String::new(),
+            tor_mode: TorMode::default(),
+            tor_socks: "socks5h://127.0.0.1:9050".to_string(),
         }
     }
 }
@@ -94,6 +103,8 @@ impl Settings {
 
         let custom = self.search_engine_custom.trim().to_string();
         self.search_engine_custom = custom.clone();
+
+        self.tor_socks = ncc_tor::socks::normalize_proxy(&self.tor_socks)?;
 
         if self.search_engine == "custom" && !custom.contains("%s") {
             return Err("A custom engine needs a %s placeholder".to_string());
@@ -261,6 +272,18 @@ impl SettingsStore {
         self.apply(settings)
     }
 
+    pub fn tor(&self) -> (TorMode, String) {
+        let settings = self.inner.read().expect("settings lock");
+        (settings.tor_mode, settings.tor_socks.clone())
+    }
+
+    pub fn set_tor(&self, mode: TorMode, socks: String) -> Result<Settings, String> {
+        let mut settings = self.get();
+        settings.tor_mode = mode;
+        settings.tor_socks = socks;
+        self.apply(settings)
+    }
+
     pub fn set_warn_insecure(&self, value: bool) -> Result<Settings, String> {
         let mut settings = self.get();
         settings.warn_insecure = value;
@@ -357,6 +380,22 @@ mod tests {
             .set_search("nonsense".into(), String::new())
             .expect("fallback");
         assert_eq!(fallback.search_engine, "duckduckgo");
+    }
+
+    #[test]
+    fn tor_endpoints_are_canonical_and_rejected_when_unusable() {
+        let store = SettingsStore::in_memory(Settings::default());
+        let saved = store
+            .set_tor(TorMode::Local, "socks5://127.0.0.1".into())
+            .expect("a host without a port is the default port");
+        assert_eq!(saved.tor_socks, "socks5h://127.0.0.1:9050");
+
+        assert!(store
+            .set_tor(TorMode::Local, "https://127.0.0.1:9050".into())
+            .is_err());
+        assert!(store.set_tor(TorMode::Local, "".into()).is_err());
+        // The previous value survives a rejected change.
+        assert_eq!(store.get().tor_socks, "socks5h://127.0.0.1:9050");
     }
 
     #[test]

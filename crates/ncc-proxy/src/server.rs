@@ -18,8 +18,8 @@ use futures_util::FutureExt;
 use url::Url;
 
 use ncc_core::{
-    http_origin, join_paths, parse_ncc_address, select_transport_endpoints, upstream_headers,
-    Endpoint,
+    http_origin, is_onion_host, join_paths, parse_ncc_address, select_transport_endpoints,
+    upstream_headers, Endpoint,
 };
 
 use ncc_identity::IdentityStore;
@@ -59,6 +59,10 @@ pub struct ProxyConfig {
     pub permissions_file: Option<std::path::PathBuf>,
     /// Persisted settings. When absent, an in-memory store is built from `relays`.
     pub settings: Option<Arc<crate::settings::SettingsStore>>,
+    /// The SOCKS endpoint onion traffic leaves through. Setting it makes this
+    /// listener the Tor listener: it serves onion vhosts and nothing else, and its
+    /// client never gets a direct route to anything.
+    pub tor_proxy: Option<String>,
 }
 
 impl Default for ProxyConfig {
@@ -71,6 +75,7 @@ impl Default for ProxyConfig {
             cache_directory: None,
             permissions_file: None,
             settings: None,
+            tor_proxy: None,
         }
     }
 }
@@ -79,6 +84,8 @@ pub struct ProxyState {
     resolver: Resolver,
     client: reqwest::Client,
     pinned_client: reqwest::Client,
+    /// Present only on the Tor listener.
+    tor_client: Option<reqwest::Client>,
     pins: Arc<PinStore>,
     pub(crate) tokens: TokenStore,
     max_body_bytes: usize,
@@ -135,11 +142,35 @@ impl ProxyState {
             }
         };
 
+        // Onion fetches go through SOCKS and nowhere else. The long timeout is
+        // deliberate: a circuit and an onion service are both allowed to be slow.
+        let tor_client = config.tor_proxy.as_ref().and_then(|proxy| {
+            let proxy = match reqwest::Proxy::all(proxy) {
+                Ok(proxy) => proxy,
+                Err(error) => {
+                    tracing::error!(target: "ncc_proxy::onion", "bad Tor proxy: {error}");
+                    return None;
+                }
+            };
+            let mut builder = reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                // Tor has to bootstrap and build a circuit before the onion is even
+                // reached, so the ordinary timeout would give up on a working request.
+                .timeout(config.request_timeout.max(Duration::from_secs(120)))
+                .user_agent(concat!("NostrNavigator/", env!("CARGO_PKG_VERSION")))
+                .proxy(proxy);
+            if let Ok(tls) = &roots {
+                builder = builder.use_preconfigured_tls(tls.clone());
+            }
+            builder.build().ok()
+        });
+
         Self {
             resolver: Resolver::new(settings.clone())
                 .with_directory(pointer_directory(&config.cache_directory, "records")),
             client,
             pinned_client,
+            tor_client,
             pins,
             tokens: TokenStore::new(),
             max_body_bytes: config.max_body_bytes,
@@ -224,6 +255,15 @@ impl ProxyState {
 
     pub fn resolver(&self) -> &Resolver {
         &self.resolver
+    }
+
+    /// The client onion requests use. `None` means this is not the Tor listener.
+    pub(crate) fn tor_client(&self) -> Option<&reqwest::Client> {
+        self.tor_client.as_ref()
+    }
+
+    pub(crate) fn is_tor_listener(&self) -> bool {
+        self.tor_client.is_some()
     }
 
     pub fn pins(&self) -> &PinStore {
@@ -433,6 +473,12 @@ async fn handle_inner(state: &ProxyState, request: Request) -> Response {
         return info(state, &query).await;
     }
 
+    // Every clearnet reference in an onion document points here. It is answered by
+    // this process, never fetched.
+    if path == "/__ncc/blocked" {
+        return crate::onion::blocked_page(&query);
+    }
+
     // Downloads: the app process cannot resolve a virtual host, so it names one by URL
     // and the request continues as if it had arrived on that host.
     let (vhost, path, query) = if path == "/__ncc/fetch" {
@@ -475,6 +521,22 @@ async fn handle_inner(state: &ProxyState, request: Request) -> Response {
     // service comes from the Host header, so a page cannot claim another one.
     if let Some(signer_method) = path.strip_prefix("/__ncc/nip07/") {
         return crate::signer::handle(state, &vhost, signer_method, &body).await;
+    }
+
+    if vhost.kind == crate::vhost::HostKind::Onion {
+        if !state.is_tor_listener() {
+            return crate::onion::needs_tor_page(&authority);
+        }
+        return crate::onion::serve(
+            state, &vhost, &authority, &path, &query, &method, &headers, &body,
+        )
+        .await;
+    }
+
+    // The Tor listener is onion-only. Serving an NCC address here would resolve it
+    // off the clearnet while the tab claims to be private.
+    if state.is_tor_listener() {
+        return crate::onion::not_onion_page();
     }
 
     if vhost.kind == crate::vhost::HostKind::Nsite {
@@ -721,7 +783,7 @@ async fn forward(
         .map_err(|error| ForwardError::Retry(error.to_string()))
 }
 
-fn request_headers(headers: &HeaderMap, target: &Url, document: bool) -> HeaderMap {
+pub(crate) fn request_headers(headers: &HeaderMap, target: &Url, document: bool) -> HeaderMap {
     let pairs: Vec<(String, String)> = headers
         .iter()
         .filter_map(|(name, value)| {
@@ -953,6 +1015,46 @@ async fn route(state: &ProxyState, authority: &str, query: &str) -> Response {
     };
 
     let lower = target.trim().to_ascii_lowercase();
+
+    // `.onion` is routed by the Tor listener. A bare onion host is accepted too,
+    // because that is what people paste.
+    let onion_input = if lower.starts_with("http://") || lower.starts_with("https://") {
+        Some(target.trim().to_string())
+    } else if !target.contains(char::is_whitespace)
+        && !lower.starts_with("ncc:")
+        && !lower.starts_with("nsite:")
+        && lower.contains(".onion")
+    {
+        Some(format!("http://{}", target.trim()))
+    } else {
+        None
+    };
+
+    if let Some(input) = onion_input {
+        if let Ok(url) = url::Url::parse(&input) {
+            let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
+            if is_onion_host(&host) {
+                if !state.is_tor_listener() {
+                    return json_error(
+                        StatusCode::BAD_REQUEST,
+                        "tor-required",
+                        "Onion addresses load in a Tor tab",
+                    );
+                }
+                return routed(format!(
+                    "http://{}{}{}{}",
+                    with_port(format!("{host}.localhost")),
+                    url.path(),
+                    url.query()
+                        .map(|query| format!("?{query}"))
+                        .unwrap_or_default(),
+                    url.fragment()
+                        .map(|fragment| format!("#{fragment}"))
+                        .unwrap_or_default()
+                ));
+            }
+        }
+    }
 
     if lower.starts_with("ncc:") {
         let Ok(address) = parse_ncc_address(target.trim()) else {

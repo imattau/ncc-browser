@@ -19,6 +19,8 @@ pub enum HostKind {
     Ncc,
     /// `<npub>.<d>.nsite.localhost`, or `<npub>.nsite.localhost` for the root site.
     Nsite,
+    /// `<onion>.onion.localhost`: an onion site, served through Tor.
+    Onion,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,6 +30,8 @@ pub struct Vhost {
     pub service: String,
     /// NIP-5A site id; `None` for the root site and for NCC hosts.
     pub site: Option<String>,
+    /// The onion host, with its `.onion` suffix, for a Tor vhost.
+    pub onion: Option<String>,
     pub kind: HostKind,
 }
 
@@ -40,6 +44,7 @@ impl Vhost {
                 Some(site) => format!("nsite://{}/{}", self.pubkey, site),
                 None => format!("nsite://{}", self.pubkey),
             },
+            HostKind::Onion => format!("onion://{}", self.onion.as_deref().unwrap_or_default()),
         }
     }
 }
@@ -51,6 +56,22 @@ pub fn parse_vhost(host: &str) -> Option<Vhost> {
         .unwrap_or(host)
         .trim_end_matches('.')
         .to_ascii_lowercase();
+
+    // `<onion>.onion.localhost` is an onion site. Checked first because the label is
+    // not a Nostr id and would otherwise be rejected by the NCC path.
+    if let Some(label) = host.strip_suffix(".onion.localhost") {
+        let onion = format!("{label}.onion");
+        if !ncc_core::is_onion_host(&onion) {
+            return None;
+        }
+        return Some(Vhost {
+            pubkey: String::new(),
+            service: String::new(),
+            site: None,
+            onion: Some(onion),
+            kind: HostKind::Onion,
+        });
+    }
 
     // `<npub>.<d>.nsite.localhost` and `<npub>.nsite.localhost` are sites; anything
     // else ending in `.localhost` is an NCC service.
@@ -71,6 +92,7 @@ pub fn parse_vhost(host: &str) -> Option<Vhost> {
             pubkey: pubkey.to_string(),
             service: String::new(),
             site,
+            onion: None,
             kind: HostKind::Nsite,
         });
     }
@@ -98,8 +120,14 @@ pub fn parse_vhost(host: &str) -> Option<Vhost> {
         pubkey: pubkey.to_string(),
         service,
         site: None,
+        onion: None,
         kind: HostKind::Ncc,
     })
+}
+
+/// The host a shell should load for an onion site.
+pub fn onion_host(onion: &str) -> String {
+    format!("{onion}.localhost")
 }
 
 /// The host a shell should load for one service.
@@ -124,6 +152,7 @@ mod tests {
                 pubkey: NPUB.into(),
                 service: "web".into(),
                 site: None,
+                onion: None,
                 kind: HostKind::Ncc
             })
         );
@@ -133,6 +162,7 @@ mod tests {
                 pubkey: NPUB.into(),
                 service: "addr".into(),
                 site: None,
+                onion: None,
                 kind: HostKind::Ncc
             })
         );
