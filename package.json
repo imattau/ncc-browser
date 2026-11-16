@@ -26,7 +26,8 @@
     "ext:init": "node packages/extension-sdk/bin/ncc-ext.mjs init",
     "ext:validate": "node packages/extension-sdk/bin/ncc-ext.mjs validate",
     "ext:port": "node packages/extension-sdk/bin/ncc-ext.mjs port",
-    "ext:pack": "node packages/extension-sdk/bin/ncc-ext.mjs pack"
+    "ext:pack": "node packages/extension-sdk/bin/ncc-ext.mjs pack",
+    "tauri": "tauri"
   },
   "dependencies": {
     "@nostrify/nostrify": "^0.55.1",
