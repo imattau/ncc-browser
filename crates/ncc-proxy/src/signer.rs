@@ -217,7 +217,9 @@ mod tests {
         let _ = std::fs::remove_file(&path);
 
         let identity = Arc::new(ncc_identity::IdentityStore::open(path));
-        identity.create("passphrase").expect("create");
+        identity
+            .create(&ncc_identity::PassphraseEnvelope::new("passphrase"))
+            .expect("create");
 
         let state = ProxyState::new(&ProxyConfig::default())
             .with_signer(identity, Arc::new(Approvals::new(|_| {})));

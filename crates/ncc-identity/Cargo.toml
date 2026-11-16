@@ -17,3 +17,8 @@ serde_json = "1.0.154"
 
 [lints.rust]
 unsafe_code = "forbid"
+
+# The Android keystore envelope talks to a Kotlin helper through JNI.
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+ndk-context = "0.1"

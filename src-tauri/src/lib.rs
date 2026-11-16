@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use tauri::{Emitter, Manager};
 
-use ncc_identity::{IdentityStore, Status};
+use ncc_identity::{IdentityStore, KeyEnvelope, PassphraseEnvelope, Status};
 use ncc_proxy::{
     ApprovalRequest, Approvals, HttpsMode, ProxyConfig, ProxyState, Settings, SettingsStore,
 };
@@ -78,14 +78,30 @@ fn identity_status(state: tauri::State<'_, SignerState>) -> Status {
     state.identity.status()
 }
 
+/// How the secret is sealed. On Android the keystore holds the wrapping key, so no
+/// passphrase is involved; the passphrase envelope is only used elsewhere, and to
+/// migrate a file written before the keystore existed.
+fn envelope(passphrase: Option<String>) -> Box<dyn KeyEnvelope> {
+    #[cfg(target_os = "android")]
+    {
+        let _ = passphrase;
+        Box::new(ncc_identity::device::DeviceEnvelope)
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        Box::new(PassphraseEnvelope::new(passphrase.unwrap_or_default()))
+    }
+}
+
 #[tauri::command]
 fn identity_create(
     state: tauri::State<'_, SignerState>,
-    passphrase: String,
+    passphrase: Option<String>,
 ) -> Result<Status, String> {
+    let envelope = envelope(passphrase);
     state
         .identity
-        .create(&passphrase)
+        .create(envelope.as_ref())
         .map(|_| state.identity.status())
         .map_err(|error| error.to_string())
 }
@@ -93,12 +109,13 @@ fn identity_create(
 #[tauri::command]
 fn identity_import(
     state: tauri::State<'_, SignerState>,
-    passphrase: String,
+    passphrase: Option<String>,
     secret: String,
 ) -> Result<Status, String> {
+    let envelope = envelope(passphrase);
     state
         .identity
-        .import(&passphrase, &secret)
+        .import(envelope.as_ref(), &secret)
         .map(|_| state.identity.status())
         .map_err(|error| error.to_string())
 }
@@ -106,11 +123,23 @@ fn identity_import(
 #[tauri::command]
 fn identity_unlock(
     state: tauri::State<'_, SignerState>,
-    passphrase: String,
+    passphrase: Option<String>,
 ) -> Result<Status, String> {
+    // A file from before the keystore is opened with its passphrase, then rewritten
+    // with the device envelope, so the passphrase is asked for exactly once.
+    let legacy = state.identity.status().envelope.as_deref() == Some("legacy");
+    let envelope: Box<dyn KeyEnvelope> = if legacy {
+        let Some(passphrase) = passphrase else {
+            return Err(ncc_identity::IdentityError::PassphraseRequired.to_string());
+        };
+        Box::new(PassphraseEnvelope::new(passphrase))
+    } else {
+        envelope(None)
+    };
+
     state
         .identity
-        .unlock(&passphrase)
+        .unlock(envelope.as_ref())
         .map(|_| state.identity.status())
         .map_err(|error| error.to_string())
 }

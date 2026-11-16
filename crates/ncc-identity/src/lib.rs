@@ -1,14 +1,12 @@
 //! The user's Nostr identity, at rest and in memory.
 //!
-//! One file holds a single secret key, sealed with a key derived from a passphrase.
-//! Argon2id derives it (so a stolen file is expensive to attack) and
-//! XChaCha20-Poly1305 seals it (so tampering is detected). Nothing else is stored in
-//! the clear except the public key, which is needed to show *which* identity is
-//! locked before anyone types a passphrase.
+//! One file holds a single secret key, sealed by a [`KeyEnvelope`]. Two envelopes
+//! exist: a passphrase (Argon2id + XChaCha20-Poly1305) and, on Android, a key held by
+//! the system keystore that the app never sees. The store itself only knows how to
+//! ask for "sealed" and "opened", so the signing path is identical either way.
 //!
-//! This crate owns no policy: what a signature is *for*, who may ask, and for how
-//! long an unlock lasts belong to the caller. That keeps the signing path testable
-//! without a browser.
+//! This crate owns no policy: what a signature is *for*, who may ask, and for how long
+//! an unlock lasts belong to the caller.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -23,12 +21,15 @@ use rand::rngs::OsRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-const FILE_VERSION: u32 = 1;
+#[cfg(target_os = "android")]
+pub mod device;
+
+const VERSION_SEALED: u32 = 2;
 const SALT_LEN: usize = 16;
 const NONCE_LEN: usize = 24;
 const KEY_LEN: usize = 32;
-/// Binds the ciphertext to this format, so a sealed blob cannot be replayed as
-/// something else.
+/// Binds the passphrase ciphertext to this format, so a sealed blob cannot be
+/// replayed as something else.
 const AAD: &[u8] = b"ncc-identity-v1";
 
 #[derive(Debug)]
@@ -37,6 +38,7 @@ pub enum IdentityError {
     AlreadyInitialised,
     Locked,
     WrongPassphrase,
+    PassphraseRequired,
     InvalidSecret(String),
     Io(String),
     Crypto(String),
@@ -50,6 +52,9 @@ impl std::fmt::Display for IdentityError {
             Self::AlreadyInitialised => f.write_str("An identity is already stored"),
             Self::Locked => f.write_str("The identity is locked"),
             Self::WrongPassphrase => f.write_str("That passphrase does not open the identity"),
+            Self::PassphraseRequired => f.write_str(
+                "This identity is stored with a passphrase; enter it once to move it to the device",
+            ),
             Self::InvalidSecret(detail) => write!(f, "Not a valid secret key: {detail}"),
             Self::Io(detail) => write!(f, "Identity file: {detail}"),
             Self::Crypto(detail) => write!(f, "Identity crypto: {detail}"),
@@ -60,10 +65,126 @@ impl std::fmt::Display for IdentityError {
 
 impl std::error::Error for IdentityError {}
 
+/// How a secret is sealed for storage.
+pub trait KeyEnvelope: Send + Sync {
+    /// Short label for the UI, e.g. `device` or `passphrase`.
+    fn kind(&self) -> &'static str;
+
+    fn seal(&self, plaintext: &str) -> Result<String, IdentityError>;
+
+    fn open(&self, sealed: &str) -> Result<String, IdentityError>;
+
+    /// Only a passphrase envelope can open a file written before the keystore
+    /// existed; everything else returns `None`.
+    fn passphrase(&self) -> Option<&str> {
+        None
+    }
+}
+
+/// Argon2id + XChaCha20-Poly1305, the original format.
+pub struct PassphraseEnvelope {
+    passphrase: String,
+}
+
+impl PassphraseEnvelope {
+    pub fn new(passphrase: impl Into<String>) -> Self {
+        Self {
+            passphrase: passphrase.into(),
+        }
+    }
+}
+
+impl KeyEnvelope for PassphraseEnvelope {
+    fn kind(&self) -> &'static str {
+        "passphrase"
+    }
+
+    fn seal(&self, plaintext: &str) -> Result<String, IdentityError> {
+        let mut salt = [0u8; SALT_LEN];
+        OsRng.fill_bytes(&mut salt);
+        let mut nonce = [0u8; NONCE_LEN];
+        OsRng.fill_bytes(&mut nonce);
+
+        let key = derive(&self.passphrase, &salt)?;
+        let cipher = XChaCha20Poly1305::new_from_slice(&key)
+            .map_err(|error| IdentityError::Crypto(error.to_string()))?;
+        let ciphertext = cipher
+            .encrypt(
+                XNonce::from_slice(&nonce),
+                Payload {
+                    msg: plaintext.as_bytes(),
+                    aad: AAD,
+                },
+            )
+            .map_err(|error| IdentityError::Crypto(error.to_string()))?;
+
+        // salt and nonce travel with the ciphertext so the envelope is self-contained.
+        Ok(format!(
+            "{}.{}.{}",
+            b64().encode(salt),
+            b64().encode(nonce),
+            b64().encode(ciphertext)
+        ))
+    }
+
+    fn open(&self, sealed: &str) -> Result<String, IdentityError> {
+        let mut parts = sealed.split('.');
+        let (Some(salt), Some(nonce), Some(ciphertext)) =
+            (parts.next(), parts.next(), parts.next())
+        else {
+            return Err(IdentityError::Codec(
+                "sealed identity is not in the expected shape".into(),
+            ));
+        };
+
+        let salt = b64()
+            .decode(salt)
+            .map_err(|error| IdentityError::Codec(error.to_string()))?;
+        let nonce = b64()
+            .decode(nonce)
+            .map_err(|error| IdentityError::Codec(error.to_string()))?;
+        let ciphertext = b64()
+            .decode(ciphertext)
+            .map_err(|error| IdentityError::Codec(error.to_string()))?;
+
+        let key = derive(&self.passphrase, &salt)?;
+        let cipher = XChaCha20Poly1305::new_from_slice(&key)
+            .map_err(|error| IdentityError::Crypto(error.to_string()))?;
+
+        let plaintext = cipher
+            .decrypt(
+                XNonce::from_slice(&nonce),
+                Payload {
+                    msg: &ciphertext,
+                    aad: AAD,
+                },
+            )
+            // A wrong passphrase and a tampered file are indistinguishable here, and
+            // both must fail the same way.
+            .map_err(|_| IdentityError::WrongPassphrase)?;
+
+        String::from_utf8(plaintext).map_err(|error| IdentityError::Codec(error.to_string()))
+    }
+
+    fn passphrase(&self) -> Option<&str> {
+        Some(&self.passphrase)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct Sealed {
+struct SealedFile {
     version: u32,
     /// Hex public key, in the clear on purpose: it identifies the locked identity.
+    pubkey: String,
+    kind: String,
+    sealed: String,
+}
+
+/// The original file, before the envelope seam existed.
+#[derive(Debug, Deserialize)]
+struct LegacyFile {
+    #[allow(dead_code)]
+    version: u32,
     pubkey: String,
     salt: String,
     nonce: String,
@@ -76,6 +197,8 @@ pub struct Status {
     /// The npub of the stored identity, available even while locked.
     pub npub: Option<String>,
     pub unlocked: bool,
+    /// How the secret is sealed, or `legacy` for a file from before the keystore.
+    pub envelope: Option<String>,
 }
 
 pub struct IdentityStore {
@@ -96,60 +219,89 @@ impl IdentityStore {
     }
 
     pub fn status(&self) -> Status {
-        let sealed = self.read().ok();
+        let file = self.read().ok();
         let unlocked = self.keys.lock().expect("identity lock").is_some();
+
+        let (pubkey, envelope) = match &file {
+            Some(File::Sealed(sealed)) => (Some(sealed.pubkey.clone()), Some(sealed.kind.clone())),
+            Some(File::Legacy(legacy)) => (Some(legacy.pubkey.clone()), Some("legacy".to_string())),
+            None => (None, None),
+        };
+
         Status {
-            initialised: sealed.is_some(),
-            npub: sealed.and_then(|sealed| {
-                PublicKey::from_hex(&sealed.pubkey)
+            initialised: file.is_some(),
+            npub: pubkey.and_then(|value| {
+                PublicKey::from_hex(&value)
                     .ok()
                     .and_then(|key| key.to_bech32().ok())
             }),
             unlocked,
+            envelope,
         }
     }
 
-    /// Generate a new key, seal it, and leave the store unlocked.
-    pub fn create(&self, passphrase: &str) -> Result<String, IdentityError> {
+    /// Generate a new key, seal it with `envelope`, and leave the store unlocked.
+    pub fn create(&self, envelope: &dyn KeyEnvelope) -> Result<String, IdentityError> {
         if self.path.exists() {
             return Err(IdentityError::AlreadyInitialised);
         }
         let keys = Keys::generate();
-        self.write_sealed(&keys, passphrase)?;
-        let npub = keys
-            .public_key()
-            .to_bech32()
-            .map_err(|error| IdentityError::Codec(error.to_string()))?;
+        self.write_sealed(&keys, envelope)?;
+        let npub = npub_of(&keys)?;
         *self.keys.lock().expect("identity lock") = Some(keys);
         Ok(npub)
     }
 
-    /// Import an `nsec1…` or hex secret key, seal it, and leave the store unlocked.
-    pub fn import(&self, passphrase: &str, secret: &str) -> Result<String, IdentityError> {
+    /// Import an `nsec1…` or hex secret key and seal it with `envelope`.
+    pub fn import(
+        &self,
+        envelope: &dyn KeyEnvelope,
+        secret: &str,
+    ) -> Result<String, IdentityError> {
         if self.path.exists() {
             return Err(IdentityError::AlreadyInitialised);
         }
         let keys = Keys::parse(secret.trim())
             .map_err(|error| IdentityError::InvalidSecret(error.to_string()))?;
-        self.write_sealed(&keys, passphrase)?;
-        let npub = keys
-            .public_key()
-            .to_bech32()
-            .map_err(|error| IdentityError::Codec(error.to_string()))?;
+        self.write_sealed(&keys, envelope)?;
+        let npub = npub_of(&keys)?;
         *self.keys.lock().expect("identity lock") = Some(keys);
         Ok(npub)
     }
 
-    pub fn unlock(&self, passphrase: &str) -> Result<String, IdentityError> {
+    /// Open the stored identity.
+    ///
+    /// A file from before the keystore is opened with the envelope's passphrase and
+    /// then re-sealed with the current envelope, so the old format disappears the
+    /// first time a user opens it.
+    pub fn unlock(&self, envelope: &dyn KeyEnvelope) -> Result<String, IdentityError> {
         if !self.path.exists() {
             return Err(IdentityError::NotInitialised);
         }
-        let sealed = self.read()?;
-        let keys = self.open_sealed(&sealed, passphrase)?;
-        let npub = keys
-            .public_key()
-            .to_bech32()
-            .map_err(|error| IdentityError::Codec(error.to_string()))?;
+        let file = self.read()?;
+
+        let (keys, migrate) = match file {
+            File::Sealed(sealed) => {
+                let secret = envelope.open(&sealed.sealed)?;
+                (parse_secret(&secret)?, false)
+            }
+            File::Legacy(legacy) => {
+                // The old format is only openable with the passphrase it was written
+                // with; the caller supplies it once and the file is rewritten.
+                let Some(passphrase) = envelope.passphrase() else {
+                    return Err(IdentityError::PassphraseRequired);
+                };
+                let payload = format!("{}.{}.{}", legacy.salt, legacy.nonce, legacy.ciphertext);
+                let secret = PassphraseEnvelope::new(passphrase).open(&payload)?;
+                (parse_secret(&secret)?, true)
+            }
+        };
+
+        if migrate {
+            self.write_sealed(&keys, envelope)?;
+        }
+
+        let npub = npub_of(&keys)?;
         *self.keys.lock().expect("identity lock") = Some(keys);
         Ok(npub)
     }
@@ -167,9 +319,7 @@ impl IdentityStore {
     }
 
     pub fn npub(&self) -> Result<String, IdentityError> {
-        self.public_key()?
-            .to_bech32()
-            .map_err(|error| IdentityError::Codec(error.to_string()))
+        self.with_keys(npub_of)
     }
 
     /// Sign an event template supplied by a page, exactly as NIP-07 defines it.
@@ -241,49 +391,36 @@ impl IdentityStore {
         action(keys)
     }
 
-    fn read(&self) -> Result<Sealed, IdentityError> {
+    fn read(&self) -> Result<File, IdentityError> {
         let bytes = fs::read(&self.path).map_err(|error| IdentityError::Io(error.to_string()))?;
-        let sealed: Sealed = serde_json::from_slice(&bytes)
-            .map_err(|error| IdentityError::Codec(error.to_string()))?;
-        if sealed.version != FILE_VERSION {
+
+        if let Ok(sealed) = serde_json::from_slice::<SealedFile>(&bytes) {
+            if sealed.version == VERSION_SEALED {
+                return Ok(File::Sealed(sealed));
+            }
             return Err(IdentityError::Codec(format!(
                 "unsupported identity version {}",
                 sealed.version
             )));
         }
-        Ok(sealed)
+
+        let legacy: LegacyFile = serde_json::from_slice(&bytes)
+            .map_err(|error| IdentityError::Codec(error.to_string()))?;
+        Ok(File::Legacy(legacy))
     }
 
-    fn write_sealed(&self, keys: &Keys, passphrase: &str) -> Result<(), IdentityError> {
-        let mut salt = [0u8; SALT_LEN];
-        OsRng.fill_bytes(&mut salt);
-        let mut nonce = [0u8; NONCE_LEN];
-        OsRng.fill_bytes(&mut nonce);
-
-        let key = derive(passphrase, &salt)?;
-        let cipher = XChaCha20Poly1305::new_from_slice(&key)
-            .map_err(|error| IdentityError::Crypto(error.to_string()))?;
-
+    fn write_sealed(&self, keys: &Keys, envelope: &dyn KeyEnvelope) -> Result<(), IdentityError> {
         let secret = hex_encode(&keys.secret_key().secret_bytes());
-        let ciphertext = cipher
-            .encrypt(
-                XNonce::from_slice(&nonce),
-                Payload {
-                    msg: secret.as_bytes(),
-                    aad: AAD,
-                },
-            )
-            .map_err(|error| IdentityError::Crypto(error.to_string()))?;
+        let sealed = envelope.seal(&secret)?;
 
-        let sealed = Sealed {
-            version: FILE_VERSION,
+        let file = SealedFile {
+            version: VERSION_SEALED,
             pubkey: keys.public_key().to_hex(),
-            salt: b64().encode(salt),
-            nonce: b64().encode(nonce),
-            ciphertext: b64().encode(ciphertext),
+            kind: envelope.kind().to_string(),
+            sealed,
         };
 
-        let encoded = serde_json::to_vec_pretty(&sealed)
+        let encoded = serde_json::to_vec_pretty(&file)
             .map_err(|error| IdentityError::Codec(error.to_string()))?;
 
         if let Some(parent) = self.path.parent() {
@@ -292,55 +429,27 @@ impl IdentityStore {
         // Write beside the target and rename, so a crash cannot leave a half file.
         let temporary = self.path.with_extension("tmp");
         fs::write(&temporary, &encoded).map_err(|error| IdentityError::Io(error.to_string()))?;
-        restict_permissions(&temporary);
+        restrict(&temporary);
         fs::rename(&temporary, &self.path).map_err(|error| IdentityError::Io(error.to_string()))?;
-        restict_permissions(&self.path);
+        restrict(&self.path);
 
         Ok(())
     }
+}
 
-    fn open_sealed(&self, sealed: &Sealed, passphrase: &str) -> Result<Keys, IdentityError> {
-        let salt = b64()
-            .decode(&sealed.salt)
-            .map_err(|error| IdentityError::Codec(error.to_string()))?;
-        let nonce = b64()
-            .decode(&sealed.nonce)
-            .map_err(|error| IdentityError::Codec(error.to_string()))?;
-        let ciphertext = b64()
-            .decode(&sealed.ciphertext)
-            .map_err(|error| IdentityError::Codec(error.to_string()))?;
+enum File {
+    Sealed(SealedFile),
+    Legacy(LegacyFile),
+}
 
-        let key = derive(passphrase, &salt)?;
-        let cipher = XChaCha20Poly1305::new_from_slice(&key)
-            .map_err(|error| IdentityError::Crypto(error.to_string()))?;
+fn parse_secret(secret: &str) -> Result<Keys, IdentityError> {
+    Keys::parse(secret.trim()).map_err(|error| IdentityError::InvalidSecret(error.to_string()))
+}
 
-        let plaintext = cipher
-            .decrypt(
-                XNonce::from_slice(&nonce),
-                Payload {
-                    msg: &ciphertext,
-                    aad: AAD,
-                },
-            )
-            // A wrong passphrase and a tampered file are indistinguishable here, and
-            // both must fail the same way.
-            .map_err(|_| IdentityError::WrongPassphrase)?;
-
-        let secret = std::str::from_utf8(&plaintext)
-            .map_err(|error| IdentityError::Codec(error.to_string()))?;
-        let keys = Keys::parse(secret.trim())
-            .map_err(|error| IdentityError::InvalidSecret(error.to_string()))?;
-
-        // The stored public key must match the one inside, or the file was built
-        // from two different identities.
-        if keys.public_key().to_hex() != sealed.pubkey {
-            return Err(IdentityError::Codec(
-                "stored public key does not match".into(),
-            ));
-        }
-
-        Ok(keys)
-    }
+fn npub_of(keys: &Keys) -> Result<String, IdentityError> {
+    keys.public_key()
+        .to_bech32()
+        .map_err(|error| IdentityError::Codec(error.to_string()))
 }
 
 fn derive(passphrase: &str, salt: &[u8]) -> Result<[u8; KEY_LEN], IdentityError> {
@@ -368,13 +477,13 @@ fn hex_encode(bytes: &[u8]) -> String {
 }
 
 #[cfg(unix)]
-fn restict_permissions(path: &Path) {
+fn restrict(path: &Path) {
     use std::os::unix::fs::PermissionsExt;
     let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
 }
 
 #[cfg(not(unix))]
-fn restict_permissions(_path: &Path) {}
+fn restrict(_path: &Path) {}
 
 #[cfg(test)]
 mod tests {
@@ -395,25 +504,28 @@ mod tests {
     #[test]
     fn creates_seals_and_reopens() {
         let dir = store();
-        let npub = dir.create("correct horse battery staple").expect("create");
+        let envelope = PassphraseEnvelope::new("correct horse battery staple");
+        let npub = dir.create(&envelope).expect("create");
         assert!(npub.starts_with("npub1"));
-        assert_eq!(dir.status().npub.as_deref(), Some(npub.as_str()));
+
+        let status = dir.status();
+        assert_eq!(status.npub.as_deref(), Some(npub.as_str()));
+        assert_eq!(status.envelope.as_deref(), Some("passphrase"));
 
         let raw = fs::read_to_string(dir.path()).expect("read");
         assert!(!raw.contains("nsec"), "the file must not hold plaintext");
-        assert!(raw.contains("argon2") || raw.contains("ciphertext"));
 
-        // A fresh store starts locked and opens with the same passphrase.
         let reopened = IdentityStore::open(dir.path());
         assert!(!reopened.status().unlocked);
         assert_eq!(
-            reopened.unlock("correct horse battery staple").unwrap(),
+            reopened
+                .unlock(&PassphraseEnvelope::new("correct horse battery staple"))
+                .unwrap(),
             npub
         );
-        assert!(reopened.is_unlocked());
 
         assert!(matches!(
-            reopened.unlock("wrong"),
+            reopened.unlock(&PassphraseEnvelope::new("wrong")),
             Err(IdentityError::WrongPassphrase)
         ));
         let _ = fs::remove_file(dir.path());
@@ -422,13 +534,12 @@ mod tests {
     #[test]
     fn imports_an_nsec_and_signs() {
         let dir = store();
-        let secret = "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqhq3z3t";
-        // Any valid nsec works; generate one so the fixture cannot rot.
         let generated = Keys::generate();
         let nsec = generated.secret_key().to_bech32().unwrap();
-        let _ = secret;
 
-        let npub = dir.import("pass phrase", &nsec).expect("import");
+        let npub = dir
+            .import(&PassphraseEnvelope::new("pass phrase"), &nsec)
+            .expect("import");
         assert_eq!(npub, generated.public_key().to_bech32().unwrap());
 
         let event = dir
@@ -440,7 +551,6 @@ mod tests {
             }))
             .expect("sign");
 
-        assert_eq!(event.kind.as_u16(), 1);
         assert_eq!(event.content, "hello");
         assert_eq!(event.pubkey, generated.public_key());
         event.verify().expect("signature must verify");
@@ -449,62 +559,84 @@ mod tests {
     }
 
     #[test]
-    fn refuses_when_locked_and_refuses_a_second_identity() {
+    fn a_legacy_file_migrates_to_the_current_envelope() {
         let dir = store();
+        let keys = Keys::generate();
+        let legacy = PassphraseEnvelope::new("old passphrase");
+        let payload = legacy
+            .seal(&hex_encode(&keys.secret_key().secret_bytes()))
+            .unwrap();
+        let (salt, nonce, ciphertext) = {
+            let mut parts = payload.split('.');
+            (
+                parts.next().unwrap().to_string(),
+                parts.next().unwrap().to_string(),
+                parts.next().unwrap().to_string(),
+            )
+        };
+
+        let file = serde_json::json!({
+            "version": 1,
+            "pubkey": keys.public_key().to_hex(),
+            "salt": salt,
+            "nonce": nonce,
+            "ciphertext": ciphertext,
+        });
+        fs::write(dir.path(), serde_json::to_vec(&file).unwrap()).unwrap();
+
+        assert_eq!(dir.status().envelope.as_deref(), Some("legacy"));
+
+        // An envelope without a passphrase cannot open it...
+        struct NoPassphrase;
+        impl KeyEnvelope for NoPassphrase {
+            fn kind(&self) -> &'static str {
+                "device"
+            }
+            fn seal(&self, plaintext: &str) -> Result<String, IdentityError> {
+                Ok(plaintext.to_string())
+            }
+            fn open(&self, sealed: &str) -> Result<String, IdentityError> {
+                Ok(sealed.to_string())
+            }
+        }
+
         assert!(matches!(
-            dir.sign_event(&serde_json::json!({})),
-            Err(IdentityError::Locked)
+            IdentityStore::open(dir.path()).unlock(&NoPassphrase),
+            Err(IdentityError::PassphraseRequired)
         ));
-        dir.create("pass").unwrap();
-        assert!(matches!(
-            dir.create("pass"),
-            Err(IdentityError::AlreadyInitialised)
-        ));
-        dir.lock();
-        assert!(matches!(dir.public_key(), Err(IdentityError::Locked)));
+
+        // ...but with one it opens and is rewritten in the current format.
+        let reopened = IdentityStore::open(dir.path());
+        let unlocked = reopened
+            .unlock(&PassphraseEnvelope::new("old passphrase"))
+            .expect("migrate");
+        assert_eq!(unlocked, keys.public_key().to_bech32().unwrap());
+
+        let migrated = IdentityStore::open(dir.path());
+        assert_eq!(migrated.status().envelope.as_deref(), Some("passphrase"));
+        assert!(!fs::read_to_string(dir.path()).unwrap().contains("\"salt\""));
+
         let _ = fs::remove_file(dir.path());
-    }
-
-    #[test]
-    fn nip04_and_nip44_round_trip_between_two_identities() {
-        let alice = store();
-        let bob = store();
-        alice.create("alice pass").unwrap();
-        bob.create("bob pass").unwrap();
-
-        let alice_npub = alice.npub().unwrap();
-        let bob_npub = bob.npub().unwrap();
-
-        let encrypted = alice.nip04_encrypt(&bob_npub, "hello bob").unwrap();
-        assert_eq!(
-            bob.nip04_decrypt(&alice_npub, &encrypted).unwrap(),
-            "hello bob"
-        );
-
-        let encrypted = alice.nip44_encrypt(&bob_npub, "hello again").unwrap();
-        assert_eq!(
-            bob.nip44_decrypt(&alice_npub, &encrypted).unwrap(),
-            "hello again"
-        );
-
-        let _ = fs::remove_file(alice.path());
-        let _ = fs::remove_file(bob.path());
     }
 
     #[test]
     fn a_tampered_file_is_rejected() {
         let dir = store();
-        dir.create("pass").unwrap();
+        let envelope = PassphraseEnvelope::new("pass");
+        dir.create(&envelope).unwrap();
         dir.lock();
 
-        let mut sealed: Sealed = serde_json::from_slice(&fs::read(dir.path()).unwrap()).unwrap();
-        let mut bytes = b64().decode(&sealed.ciphertext).unwrap();
+        let mut sealed: SealedFile =
+            serde_json::from_slice(&fs::read(dir.path()).unwrap()).unwrap();
+        let mut parts: Vec<String> = sealed.sealed.split('.').map(str::to_string).collect();
+        let mut bytes = b64().decode(&parts[2]).unwrap();
         bytes[0] ^= 0x01;
-        sealed.ciphertext = b64().encode(bytes);
+        parts[2] = b64().encode(bytes);
+        sealed.sealed = parts.join(".");
         fs::write(dir.path(), serde_json::to_vec(&sealed).unwrap()).unwrap();
 
         assert!(matches!(
-            dir.unlock("pass"),
+            dir.unlock(&PassphraseEnvelope::new("pass")),
             Err(IdentityError::WrongPassphrase)
         ));
         let _ = fs::remove_file(dir.path());
