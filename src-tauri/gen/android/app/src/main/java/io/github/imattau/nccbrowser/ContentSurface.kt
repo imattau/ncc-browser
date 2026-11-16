@@ -150,10 +150,18 @@ class ContentSurface(
     webView?.visibility = View.GONE
   }
 
+  /**
+   * Drop this tab.
+   *
+   * The WebView leaves its parent before `destroy()`: destroying one that is still
+   * attached to the window is not allowed and takes the process down with it.
+   */
   fun destroy() {
-    webView?.destroy()
-    webView?.let { container.removeView(it) }
+    val web = webView ?: return
     webView = null
+    web.stopLoading()
+    (web.parent as? ViewGroup)?.removeView(web)
+    web.destroy()
   }
 
   /**

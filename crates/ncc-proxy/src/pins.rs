@@ -34,40 +34,29 @@ impl PinStore {
     }
 
     pub fn set(&self, host: &str, fingerprint: &str) {
-        self.pins
-            .lock()
-            .expect("pin lock")
-            .insert(host.to_ascii_lowercase(), fingerprint.to_string());
+        crate::lock(&self.pins).insert(host.to_ascii_lowercase(), fingerprint.to_string());
     }
 
     pub fn get(&self, host: &str) -> Option<String> {
-        self.pins
-            .lock()
-            .expect("pin lock")
+        crate::lock(&self.pins)
             .get(&host.to_ascii_lowercase())
             .cloned()
     }
 
     pub fn clear_host(&self, host: &str) {
         let host = host.to_ascii_lowercase();
-        self.pins.lock().expect("pin lock").remove(&host);
-        self.failures.lock().expect("failure lock").remove(&host);
+        crate::lock(&self.pins).remove(&host);
+        crate::lock(&self.failures).remove(&host);
     }
 
     /// Remember why a handshake was refused, so the response can say more than
     /// "certificate error".
     pub fn record_failure(&self, host: &str, reason: &str) {
-        self.failures
-            .lock()
-            .expect("failure lock")
-            .insert(host.to_ascii_lowercase(), reason.to_string());
+        crate::lock(&self.failures).insert(host.to_ascii_lowercase(), reason.to_string());
     }
 
     pub fn take_failure(&self, host: &str) -> Option<String> {
-        self.failures
-            .lock()
-            .expect("failure lock")
-            .remove(&host.to_ascii_lowercase())
+        crate::lock(&self.failures).remove(&host.to_ascii_lowercase())
     }
 }
 

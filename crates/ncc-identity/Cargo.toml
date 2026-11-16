@@ -15,13 +15,23 @@ rand = "0.8"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 
+[features]
+# Compiles the Android JNI bridge on a host without an NDK:
+#   cargo check -p ncc-identity --features android-bridge
+# Android enables it by target, not by feature.
+android-bridge = ["dep:jni"]
+
 [lints.rust]
 # Denied rather than forbidden: the Android keystore envelope needs two pointer
 # conversions into JNI handles, which is the only `unsafe` in the crate and is
 # allowed at that one function.
 unsafe_code = "deny"
 
-# The Android keystore envelope talks to a Kotlin helper through JNI.
+# The Android keystore envelope talks to a Kotlin helper through JNI. `ndk-context`
+# is deliberately absent: Tauri never initialises it, and its accessor panics.
+[dependencies.jni]
+version = "0.21"
+optional = true
+
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21"
-ndk-context = "0.1"

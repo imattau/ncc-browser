@@ -21,7 +21,7 @@ use rand::rngs::OsRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", feature = "android-bridge"))]
 pub mod device;
 
 const VERSION_SEALED: u32 = 2;

@@ -5,6 +5,7 @@
 //! endpoint, fetched and rewritten back into the same namespace.
 
 use std::collections::HashSet;
+use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -13,6 +14,7 @@ use axum::extract::{Request, State};
 use axum::http::{header, HeaderMap, HeaderName, HeaderValue, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
 use axum::Router;
+use futures_util::FutureExt;
 use url::Url;
 
 use ncc_core::{
@@ -171,31 +173,22 @@ impl ProxyState {
 
     /// Services the user chose to stop asking about for this session.
     pub fn is_trusted(&self, key: &str) -> bool {
-        self.trusted.lock().expect("trust lock").contains(key)
+        crate::lock(&self.trusted).contains(key)
     }
 
     /// Services the user stopped being asked about, for the permissions screen.
     pub fn trusted_keys(&self) -> Vec<String> {
-        let mut keys: Vec<String> = self
-            .trusted
-            .lock()
-            .expect("trust lock")
-            .iter()
-            .cloned()
-            .collect();
+        let mut keys: Vec<String> = crate::lock(&self.trusted).iter().cloned().collect();
         keys.sort();
         keys
     }
 
     pub fn untrust(&self, key: &str) {
-        self.trusted.lock().expect("trust lock").remove(key);
+        crate::lock(&self.trusted).remove(key);
     }
 
     pub fn trust(&self, key: &str) {
-        self.trusted
-            .lock()
-            .expect("trust lock")
-            .insert(key.to_string());
+        crate::lock(&self.trusted).insert(key.to_string());
     }
 
     pub fn resolver(&self) -> &Resolver {
@@ -218,6 +211,37 @@ pub async fn serve(
     axum::serve(listener, app(state)).await
 }
 
+fn panic_detail(panic: &(dyn std::any::Any + Send)) -> String {
+    if let Some(message) = panic.downcast_ref::<&str>() {
+        (*message).to_string()
+    } else if let Some(message) = panic.downcast_ref::<String>() {
+        message.clone()
+    } else {
+        "a panic with no message".to_string()
+    }
+}
+
+/// The last resort: the proxy itself failed, so say so rather than hanging the page.
+fn crash(detail: &str) -> Response {
+    let body = format!(
+        "<!doctype html><meta charset=\"utf-8\">\
+         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
+         <style>body{{font:15px system-ui;margin:2rem;max-width:40rem}}\
+         pre{{white-space:pre-wrap;word-break:break-word;background:#f4f4f4;padding:12px;border-radius:8px}}</style>\
+         <h1>The proxy failed</h1>\
+         <p>This page could not be served. The details below belong in a bug report.</p>\
+         <pre>{}</pre>",
+        escape(detail)
+    );
+    (StatusCode::INTERNAL_SERVER_ERROR, Html(body)).into_response()
+}
+
+fn escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
 /// Adds CORS only for origins the shell registered, so a random web page cannot read
 /// NCC content through the loopback proxy.
 async fn handle(State(state): State<Arc<ProxyState>>, request: Request) -> Response {
@@ -227,7 +251,20 @@ async fn handle(State(state): State<Arc<ProxyState>>, request: Request) -> Respo
         .and_then(|value| value.to_str().ok())
         .map(str::to_string);
 
-    let mut response = handle_inner(&state, request).await;
+    // A panic would tear down axum's task, and the browser would show an empty
+    // response with nothing to go on. Answer like any other failure instead, and keep
+    // the message: this process is the only one that knows what went wrong.
+    let mut response = match AssertUnwindSafe(handle_inner(&state, request))
+        .catch_unwind()
+        .await
+    {
+        Ok(response) => response,
+        Err(panic) => {
+            let detail = panic_detail(&panic);
+            tracing::error!("request failed: {detail}");
+            crash(&detail)
+        }
+    };
 
     if let Some(origin) = origin {
         if state

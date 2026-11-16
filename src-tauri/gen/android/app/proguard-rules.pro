@@ -19,3 +19,7 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+# The identity bridge is reached only by name, from JNI
+# (crates/ncc-identity/src/device.rs). R8 cannot see that reference, so it has to be
+# told to keep the class and its static methods.
+-keep class io.github.imattau.nccbrowser.IdentityKey { *; }
