@@ -361,6 +361,36 @@ class MainActivity : TauriActivity() {
     return true
   }
 
+  /**
+   * A tab from the last run. Only the active one loads; the rest wait to be picked.
+   * The shell restores normal tabs only: private and Tor tabs are never written down.
+   */
+  private fun restoreTab(url: String, savedTitle: String?, makeActive: Boolean) {
+    val host = contentHost ?: return
+    val tab = ContentSurface(
+      "tab-${nextTabId++}",
+      false,
+      false,
+      host,
+      { proxyPortNumber },
+      ::onTabEvent,
+      ::startDownload,
+    )
+    if (!tab.accepts(url)) {
+      tab.destroy()
+      return
+    }
+    tab.park(url, savedTitle)
+    tabs.add(tab)
+    if (makeActive || activeId == null) {
+      active()?.hide()
+      activeId = tab.id
+      tab.show()
+      setExpanded(false)
+    }
+    emitTabs(false)
+  }
+
   private fun selectTab(id: String) {
     val target = tabs.firstOrNull { it.id == id } ?: return
     if (target.id == activeId) return
@@ -657,6 +687,13 @@ class MainActivity : TauriActivity() {
     @JavascriptInterface
     fun capture() {
       runOnUiThread { emitTabs(true) }
+    }
+
+    @JavascriptInterface
+    fun restoreTab(url: String?, title: String?, active: Boolean) {
+      val target = url ?: return
+      // Qualified for the same reason as closeTab above.
+      runOnUiThread { this@MainActivity.restoreTab(target, title, active) }
     }
 
     /** The shell learns the port from the Rust side; the tabs need it for links and

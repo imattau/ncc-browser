@@ -535,18 +535,55 @@ fn proxy_config(
     }
 }
 
-/// Start the NCC proxy on an ephemeral loopback port.
+/// Bind a loopback socket, on `preferred` when it is free and on any free port when not.
+///
+/// A page's origin includes the port, so a new port every launch is a new origin for
+/// every site: `localStorage`, IndexedDB and service workers all start empty after a
+/// restart. Reusing the last port keeps them. It is still a port the OS chose, picked
+/// once and remembered, rather than a well-known number another app could squat on, and
+/// if something else has taken it the proxy simply moves, as it did before.
+fn bind_loopback(preferred: Option<u16>) -> Result<std::net::TcpListener, String> {
+    let reused = preferred
+        .filter(|port| *port > 0)
+        .and_then(|port| std::net::TcpListener::bind(("127.0.0.1", port)).ok());
+    if let Some(listener) = reused {
+        return Ok(listener);
+    }
+    std::net::TcpListener::bind(("127.0.0.1", 0)).map_err(|error| error.to_string())
+}
+
+/// The port used last time, if one was recorded.
+fn remembered_port(file: &std::path::Path) -> Option<u16> {
+    std::fs::read_to_string(file)
+        .ok()
+        .and_then(|text| text.trim().parse::<u16>().ok())
+        .filter(|port| *port >= 1024)
+}
+
+/// Record the port for the next launch. Failing to write it only costs the next
+/// launch its web storage, so it is not an error.
+fn remember_port(file: &std::path::Path, port: u16) {
+    if remembered_port(file) == Some(port) {
+        return;
+    }
+    if let Some(parent) = file.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(file, port.to_string());
+}
+
+/// Start the NCC proxy on a loopback port, `preferred` when it is free.
 ///
 /// The content WebView loads `http://<npub>.<service>.localhost:<port>/`, so the
 /// service stays part of the origin the way `ncc://` gives the desktop build. The
-/// port is ephemeral because nothing outside this process is allowed to reach it.
+/// port is not a fixed number because nothing outside this process is allowed to reach
+/// it.
 ///
 /// The socket is bound with `std` and only *converted* inside the async task: tokio's
 /// `from_std` registers with the reactor and panics when called outside a runtime,
 /// which `setup()` is.
-fn start_proxy(proxy: Arc<ProxyState>) -> Result<u16, String> {
-    let std_listener =
-        std::net::TcpListener::bind(("127.0.0.1", 0)).map_err(|error| error.to_string())?;
+fn start_proxy(proxy: Arc<ProxyState>, preferred: Option<u16>) -> Result<u16, String> {
+    let std_listener = bind_loopback(preferred)?;
     std_listener
         .set_nonblocking(true)
         .map_err(|error| error.to_string())?;
@@ -656,11 +693,14 @@ pub fn run() {
 
             // A failure here must not take the shell down with it: the app is still
             // usable to show why the proxy could not start.
+            // Normal tabs keep their web storage across launches by keeping the port.
+            let port_file = data_dir.join("proxy-port");
             let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                start_proxy(proxy.clone())
+                start_proxy(proxy.clone(), remembered_port(&port_file))
             }));
             let port = match outcome {
                 Ok(Ok(port)) => {
+                    remember_port(&port_file, port);
                     println!("[proxy] listening on 127.0.0.1:{port}");
                     Some(port)
                 }
@@ -683,7 +723,7 @@ pub fn run() {
                 ),
             );
             let private_port = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                start_proxy(private_proxy.clone())
+                start_proxy(private_proxy.clone(), None)
             }))
             .ok()
             .and_then(Result::ok);
@@ -718,7 +758,7 @@ pub fn run() {
                     ),
                 );
                 match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    start_proxy(listener)
+                    start_proxy(listener, None)
                 })) {
                     Ok(Ok(port)) => {
                         println!("[proxy] Tor listener on 127.0.0.1:{port}");
@@ -754,4 +794,59 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while building tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("ncc-port-test-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    #[test]
+    fn a_free_preferred_port_is_reused() {
+        // Find a free port, release it, then ask for it.
+        let probe = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("probe");
+        let port = probe.local_addr().expect("addr").port();
+        drop(probe);
+
+        let listener = bind_loopback(Some(port)).expect("bind");
+        assert_eq!(listener.local_addr().expect("addr").port(), port);
+    }
+
+    #[test]
+    fn a_taken_preferred_port_falls_back_to_another() {
+        let taken = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("taken");
+        let port = taken.local_addr().expect("addr").port();
+
+        let listener = bind_loopback(Some(port)).expect("bind");
+        assert_ne!(listener.local_addr().expect("addr").port(), port);
+    }
+
+    #[test]
+    fn no_preference_still_binds() {
+        assert!(bind_loopback(None).is_ok());
+        assert!(bind_loopback(Some(0)).is_ok());
+    }
+
+    #[test]
+    fn the_port_survives_a_restart_and_junk_is_ignored() {
+        let dir = scratch("file");
+        let file = dir.join("proxy-port");
+
+        assert_eq!(remembered_port(&file), None);
+        remember_port(&file, 48_123);
+        assert_eq!(remembered_port(&file), Some(48_123));
+
+        // A privileged or malformed value is not trusted.
+        std::fs::write(&file, "80").expect("write");
+        assert_eq!(remembered_port(&file), None);
+        std::fs::write(&file, "not a port").expect("write");
+        assert_eq!(remembered_port(&file), None);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

@@ -490,6 +490,82 @@ function setBackdrop(thumbnail) {
   else root.style.removeProperty('--thumb')
 }
 
+/* ───────────────────────────── Keeping tabs across restarts ───────────────────────────── */
+
+const TABS_KEY = 'ncc.tabs'
+let tabsRestored = false
+let saveTabsTimer = null
+
+/**
+ * The proxy listens on a new port every launch, so a saved `http://<host>.localhost:<port>/`
+ * would point nowhere. The port is replaced by a placeholder on the way out and by the
+ * current one on the way back in. Clearnet addresses carry no port of ours.
+ */
+function portable(url) {
+  try {
+    const parsed = new URL(url)
+    if (!parsed.hostname.endsWith('.localhost')) return url
+    return `${parsed.protocol}//${parsed.hostname}:{port}${parsed.pathname}${parsed.search}${parsed.hash}`
+  } catch {
+    return ''
+  }
+}
+
+/** Normal tabs only. A private or Tor tab is never written down, not even its address. */
+function writeTabs() {
+  if (!tabsRestored) return
+  const saved = tabs
+    .filter((tab) => kindOf(tab) === 'normal' && tab.url)
+    .slice(0, 30)
+    .map((tab) => ({
+      url: portable(tab.url),
+      title: String(tab.title || '').slice(0, 120),
+      active: tab.id === activeTabId
+    }))
+    .filter((entry) => entry.url)
+  try {
+    globalThis.localStorage?.setItem(TABS_KEY, JSON.stringify(saved))
+  } catch {
+    // Storage unavailable: the tabs simply are not remembered.
+  }
+}
+
+function saveTabs() {
+  if (saveTabsTimer) clearTimeout(saveTabsTimer)
+  saveTabsTimer = setTimeout(writeTabs, 300)
+}
+
+/**
+ * Reopen what was open. Native keeps all but the active tab parked, so nothing loads
+ * until it is picked and a long list does not hit the relays at launch.
+ */
+function restoreTabs() {
+  let saved = []
+  try {
+    saved = JSON.parse(globalThis.localStorage?.getItem(TABS_KEY) || '[]')
+  } catch {
+    saved = []
+  }
+  tabsRestored = true
+
+  if (!Array.isArray(saved) || !proxyPort) return
+  if (!content || typeof content.restoreTab !== 'function' || tabs.length > 0) return
+
+  const entries = saved.filter((entry) => entry && typeof entry.url === 'string').slice(0, 30)
+  const hasActive = entries.some((entry) => entry.active)
+  entries.forEach((entry, index) => {
+    content.restoreTab(
+      entry.url.replace('{port}', String(proxyPort)),
+      String(entry.title || ''),
+      hasActive ? Boolean(entry.active) : index === 0
+    )
+  })
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) writeTabs()
+})
+
 /** Tab list from the native tab manager. */
 globalThis.__nccTabs = (payload) => {
   tabs = payload.tabs || []
@@ -523,6 +599,8 @@ globalThis.__nccTabs = (payload) => {
       renderTabGrid()
     }
   }
+
+  saveTabs()
 }
 
 /** Events from the native content surface. */
@@ -2415,9 +2493,8 @@ async function renderPasswordFill() {
   }
   byId('fill-origin').textContent = displayAddress(activeUrl)
 
-  if (!vaultStatus) {
-    vaultStatus = await invoke('vault_status').catch(() => null)
-  }
+  // Always ask: the idle timer may have locked the vault since the last panel.
+  vaultStatus = await invoke('vault_status').catch(() => vaultStatus)
 
   if (!vaultStatus?.unlocked) {
     const row = document.createElement('div')
@@ -2616,11 +2693,15 @@ async function respondSave(action) {
  */
 async function handlePasswordCapture(state) {
   const tab = tabs.find((entry) => entry.id === state.tab)
-  if (!tab || !tab.url || tab.kind !== 'normal') return
+  if (!tab || tab.kind !== 'normal') return
+  // The URL stamped at submit time, not the tab's current one: a login form often
+  // redirects, and the credential belongs to the page that asked for it.
+  const url = state.url || tab.url
+  if (!url) return
 
   try {
     const pending = await invoke('vault_capture', {
-      url: tab.url,
+      url,
       kind: tab.kind || 'normal',
       title: state.title || '',
       username: state.username || '',
@@ -3195,6 +3276,9 @@ async function main() {
   if (proxyPort && content && typeof content.setProxyPort === 'function') {
     content.setProxyPort(proxyPort)
   }
+
+  // Before anything else opens a tab, so the saved ones come back in their old order.
+  restoreTabs()
 
   try {
     privatePort = await tauri.core.invoke('private_proxy_port')

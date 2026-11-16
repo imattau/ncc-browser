@@ -5,6 +5,12 @@ is not a daily driver.
 
 ## New in this build
 
+- Tabs survive a restart. Normal tabs are reopened in their old order, and only the
+  one you were on loads; the rest wait until you pick them. Private and Tor tabs are
+  never saved.
+- Sites keep their web storage across restarts. The local proxy now reuses its last
+  port when it is free, so a site's origin no longer changes every launch and logins
+  held in the page's own storage are not lost.
 - Passwords. The vault is the same NIP-78 event the desktop build uses, encrypted to
   your own key, so importing the same npub brings your logins with you. Unlock asks for
   your device lock, the decrypted vault is forgotten after a configurable idle time, and
