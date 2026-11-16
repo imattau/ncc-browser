@@ -44,12 +44,8 @@ jobs:
         with:
           targets: aarch64-linux-android
 
-      - uses: android-actions/setup-android@v3
-
-      - name: Install NDK
-        run: |
-          sdkmanager --install "ndk;${NDK_VERSION}" "platforms;android-35" "build-tools;35.0.0"
-          echo "NDK_HOME=${ANDROID_SDK_ROOT}/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+      - name: Android SDK
+        run: scripts/android-sdk.sh
 
       - run: npm ci
 

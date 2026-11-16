@@ -51,15 +51,8 @@ jobs:
         with:
           key: android-${{ env.RUST_TARGET }}
 
-      - uses: android-actions/setup-android@v3
-
-      - name: Install NDK, platform and build tools
-        run: |
-          sdkmanager --install \
-            "ndk;${NDK_VERSION}" \
-            "platforms;android-35" \
-            "build-tools;35.0.0"
-          echo "NDK_HOME=${ANDROID_SDK_ROOT}/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+      - name: Android SDK
+        run: scripts/android-sdk.sh
 
       - uses: actions/cache@v6
         with:
