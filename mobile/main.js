@@ -27,6 +27,10 @@ function summarise(text) {
 const content = globalThis.NccContent
 
 let contentOpen = false
+let tabs = []
+let activeTabId = ''
+let switcherOpen = false
+let newTabMode = false
 
 /**
  * `http://<npub>.<service>.localhost:<port>/x` is what the content view loads; what
@@ -43,6 +47,88 @@ function displayAddress(url) {
   } catch {
     return url
   }
+}
+
+/** Tab list from the native tab manager. */
+globalThis.__nccTabs = (payload) => {
+  tabs = payload.tabs || []
+  activeTabId = payload.active || ''
+
+  byId('bar-tabs').textContent = String(Math.max(tabs.length, 1))
+
+  if (switcherOpen) renderTabGrid()
+  if (tabs.length === 0 && switcherOpen) {
+    switcherOpen = false
+    applyLayout()
+  }
+
+  const active = tabs.find((tab) => tab.id === activeTabId)
+  if (active && active.url) byId('bar-address').textContent = displayAddress(active.url)
+}
+
+function renderTabGrid() {
+  const grid = byId('tab-grid')
+  grid.textContent = ''
+
+  for (const tab of tabs) {
+    const card = document.createElement('button')
+    card.type = 'button'
+    card.className = tab.active ? 'tab-card active' : 'tab-card'
+
+    if (tab.thumbnail) {
+      const image = document.createElement('img')
+      image.src = tab.thumbnail
+      image.alt = ''
+      card.appendChild(image)
+    } else {
+      const blank = document.createElement('div')
+      blank.className = 'tab-blank'
+      card.appendChild(blank)
+    }
+
+    const label = document.createElement('span')
+    label.textContent = tab.title || displayAddress(tab.url || '') || 'New tab'
+    card.appendChild(label)
+
+    const close = document.createElement('span')
+    close.className = 'tab-close'
+    close.textContent = '×'
+    close.addEventListener('click', (event) => {
+      event.stopPropagation()
+      content?.closeTab(tab.id)
+    })
+    card.appendChild(close)
+
+    card.addEventListener('click', () => {
+      switcherOpen = false
+      applyLayout()
+      content?.select(tab.id)
+    })
+
+    grid.appendChild(card)
+  }
+
+  if (tabs.length === 0) {
+    const empty = document.createElement('p')
+    empty.className = 'note'
+    empty.textContent = 'No tabs yet.'
+    grid.appendChild(empty)
+  }
+}
+
+function showSwitcher() {
+  if (!content) return
+  switcherOpen = true
+  content.capture()
+  content.expand(true)
+  renderTabGrid()
+  applyLayout()
+}
+
+function closeSwitcher() {
+  switcherOpen = false
+  if (tabs.length > 0) content?.expand(false)
+  applyLayout()
 }
 
 /** Events from the native content surface. */
@@ -124,9 +210,23 @@ async function main() {
     byId('bar-back').addEventListener('click', () => content.back())
     byId('bar-reload').addEventListener('click', () => content.reload())
     byId('bar-address').addEventListener('click', () => {
+      switcherOpen = false
       content.expand(true)
+      applyLayout()
       byId('address').focus()
     })
+    byId('bar-tabs').addEventListener('click', () => showSwitcher())
+    byId('switcher-done').addEventListener('click', () => closeSwitcher())
+    byId('switcher-new').addEventListener('click', () => {
+      newTabMode = true
+      switcherOpen = false
+      content.expand(true)
+      applyLayout()
+      byId('go').textContent = 'Open in a new tab'
+      byId('address').focus()
+    })
+    byId('bar-position').addEventListener('change', (event) => applyBarPosition(event.target.value))
+    applyBarPosition(globalThis.localStorage?.getItem('ncc.bar') || 'bottom')
     window.addEventListener('resize', applyLayout)
     applyLayout()
   }
@@ -258,7 +358,24 @@ function applyLayout() {
   const compact = window.innerHeight < 200
   document.body.classList.toggle('compact', compact)
   byId('bar').hidden = !compact
+
+  if (compact) {
+    byId('stage').hidden = true
+    byId('switcher').hidden = true
+  } else {
+    byId('stage').hidden = switcherOpen
+    byId('switcher').hidden = !switcherOpen
+  }
+
   if (!compact && contentOpen) byId('collapse').hidden = false
+}
+
+/** Toolbar position is a user setting; the default matches Firefox and Brave. */
+function applyBarPosition(position) {
+  const value = position === 'top' ? 'top' : 'bottom'
+  byId('bar-position').value = value
+  globalThis.localStorage?.setItem('ncc.bar', value)
+  content?.setBarPosition(value)
 }
 
 function parseAddress(input) {
@@ -301,7 +418,6 @@ function open(port) {
   byId('result').textContent = `opening ${target.url}`
 
   if (content) {
-    content.expand(false)
     content.open(target.url)
     return
   }
