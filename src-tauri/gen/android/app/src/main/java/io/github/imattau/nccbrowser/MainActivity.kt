@@ -336,6 +336,13 @@ class MainActivity : TauriActivity() {
     }
 
     @JavascriptInterface
+    fun clearWebCache() {
+      runOnUiThread {
+        for (tab in tabs) tab.clearCache()
+      }
+    }
+
+    @JavascriptInterface
     fun openExternal(url: String) {
       runOnUiThread {
         try {

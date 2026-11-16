@@ -46,6 +46,7 @@ const PANELS = [
   'relays',
   'search',
   'security',
+  'storage',
   'identity',
   'signer-settings',
   'history',
@@ -660,6 +661,16 @@ async function main() {
         byId('search-engine').value === 'custom' ? 'Template with %s' : 'SearXNG instance'
     })
     byId('security-save').addEventListener('click', () => void saveSecurity())
+    byId('clear-cache').addEventListener('click', async () => {
+      byId('storage-note').textContent = 'Clearing…'
+      try {
+        await globalThis.__TAURI__.core.invoke('clear_cache')
+        content?.clearWebCache()
+        byId('storage-note').textContent = 'Cache cleared.'
+      } catch (error) {
+        byId('storage-note').textContent = String(error)
+      }
+    })
     byId('history-clear').addEventListener('click', () => {
       writeList(HISTORY_KEY, [])
       renderHistory()

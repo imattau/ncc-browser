@@ -114,6 +114,12 @@ impl NsiteResolver {
         outcome.map(|(manifest, _)| manifest)
     }
 
+    /// Drop cached manifests and misses.
+    pub fn clear(&self) {
+        self.cache.lock().expect("nsite cache lock").clear();
+        self.misses.lock().expect("nsite miss lock").clear();
+    }
+
     async fn query(
         &self,
         key: PublicKey,
@@ -358,6 +364,26 @@ impl Blobs {
 
     pub fn cached_bytes(&self) -> usize {
         self.cache.lock().expect("blob lock").total
+    }
+
+    /// Forget every blob, in memory and on disk. Verified bytes are safe to keep, but
+    /// a user asking for a clean slate should get one.
+    pub fn clear(&self) {
+        {
+            let mut cache = self.cache.lock().expect("blob lock");
+            cache.entries.clear();
+            cache.order.clear();
+            cache.total = 0;
+        }
+
+        let Some(directory) = &self.directory else {
+            return;
+        };
+        if let Ok(entries) = std::fs::read_dir(directory) {
+            for entry in entries.flatten() {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
     }
 
     /// Read a blob back from disk, re-checking its hash: a file on disk is not trusted

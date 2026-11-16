@@ -257,6 +257,8 @@ Still to build:
       address to the system browser.
 - [x] Signer approvals show a countdown and trusted services can be revoked.
 - [x] History and bookmarks, kept in the shell's storage (200 entries).
+- [x] Storage: clear cache drops locator records, site manifests, verified blobs in
+      memory and on disk, and the WebView page cache.
 - [ ] Per-tab lifecycle and tab thumbnails.
 - [ ] File chooser and download handling in the content view.
 - [ ] `*.localhost` resolution, secure context, `Secure` cookie behaviour — **the

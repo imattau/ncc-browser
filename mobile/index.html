@@ -53,6 +53,7 @@
         <button type="button" data-panel="relays">Relays</button>
         <button type="button" data-panel="search">Search</button>
         <button type="button" data-panel="security">Security</button>
+        <button type="button" data-panel="storage">Storage</button>
         <button type="button" data-panel="identity">Identity</button>
         <button type="button" data-panel="signer-settings">Signer permissions</button>
         <button type="button" data-panel="history">History</button>
@@ -144,6 +145,19 @@
       </label>
       <button id="security-save" type="button">Save</button>
       <p id="security-error" class="note"></p>
+    </section>
+
+    <section id="storage" class="sheet" hidden>
+      <header class="sheet-head">
+        <h2>Storage</h2>
+        <button type="button" class="secondary" data-panel="home">Back</button>
+      </header>
+      <p class="lede">
+        Locators, site manifests and site files are kept so a repeat visit is instant.
+        Clearing drops all of them, in memory and on disk, plus the page cache.
+      </p>
+      <button id="clear-cache" type="button">Clear cache</button>
+      <p id="storage-note" class="note"></p>
     </section>
 
     <section id="identity" class="sheet" hidden>
