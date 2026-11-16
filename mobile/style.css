@@ -220,3 +220,51 @@ button.secondary {
 .alpha strong {
   color: #c07a00;
 }
+
+/* The chrome strip: one row, shown when the shell is resized to 56 dp. */
+body.compact #stage {
+  display: none;
+}
+
+.strip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 100vh;
+  padding: 0 8px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+.strip button {
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+}
+
+.strip .icon {
+  width: 40px;
+  height: 40px;
+  font-size: 18px;
+  line-height: 1;
+  border-radius: 20px;
+}
+
+.strip-address {
+  flex: 1;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body.compact {
+  padding-top: 0;
+}

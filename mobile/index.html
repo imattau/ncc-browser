@@ -13,13 +13,14 @@
       installs, starts the NCC proxy and can reach a virtual host from the WebView.
       The React chrome and the content surface replace it in M1.
     -->
-    <header class="bar">
-      <span class="mark">NCC</span>
-      <span class="address">no page</span>
-      <span class="count" id="tabs">1</span>
+    <!-- The chrome strip. Only visible when the shell is resized to one row. -->
+    <header id="bar" class="strip" hidden>
+      <button id="bar-back" class="icon" type="button" aria-label="Back">&#8592;</button>
+      <button id="bar-address" class="strip-address" type="button">no page</button>
+      <button id="bar-reload" class="icon" type="button" aria-label="Reload">&#8635;</button>
     </header>
 
-    <main class="stage">
+    <main id="stage" class="stage">
       <p class="alpha" role="status">
         <strong>Alpha.</strong> No identity, no signer approvals, no tabs. Please do
         not use this as your daily browser.
@@ -55,6 +56,7 @@
 
       <button id="go" type="button">Open in the content view</button>
       <button id="close" type="button" class="secondary" hidden>Close content view</button>
+      <button id="collapse" type="button" class="secondary" hidden>Back to the page</button>
 
       <pre id="result" class="result">—</pre>
     </main>

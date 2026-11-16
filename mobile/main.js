@@ -26,6 +26,25 @@ function summarise(text) {
 
 const content = globalThis.NccContent
 
+let contentOpen = false
+
+/**
+ * `http://<npub>.<service>.localhost:<port>/x` is what the content view loads; what
+ * belongs in a 56 dp strip is the address the user typed.
+ */
+function displayAddress(url) {
+  try {
+    const parsed = new URL(url)
+    if (!parsed.hostname.endsWith('.localhost')) return url
+    const labels = parsed.hostname.split('.')
+    const pubkey = labels[0]
+    const service = labels.length > 2 ? labels[1] : null
+    return `ncc://${pubkey}${service ? `/${service}` : ''}${parsed.pathname}`
+  } catch {
+    return url
+  }
+}
+
 /** Events from the native content surface. */
 globalThis.__nccContent = (state) => {
   const lines = [
@@ -37,10 +56,16 @@ globalThis.__nccContent = (state) => {
   byId('result').textContent = lines.join('\n')
 
   if (state.type === 'loaded' || state.type === 'blocked' || state.type === 'failed') {
+    contentOpen = true
     byId('close').hidden = false
+    byId('collapse').hidden = !content ? true : false
+    byId('bar-address').textContent = displayAddress(state.url || '')
   }
   if (state.type === 'closed') {
+    contentOpen = false
     byId('close').hidden = true
+    byId('collapse').hidden = true
+    byId('bar-address').textContent = 'no page'
   }
 }
 
@@ -89,12 +114,35 @@ async function main() {
     : 'Fetch through the proxy'
   byId('go').addEventListener('click', () => open(port))
   byId('close').addEventListener('click', () => content?.close())
+
+  if (content) {
+    byId('collapse').addEventListener('click', () => content.expand(false))
+    byId('bar-back').addEventListener('click', () => content.back())
+    byId('bar-reload').addEventListener('click', () => content.reload())
+    byId('bar-address').addEventListener('click', () => {
+      content.expand(true)
+      byId('address').focus()
+    })
+    window.addEventListener('resize', applyLayout)
+    applyLayout()
+  }
 }
 
 /**
  * Accept what a person actually pastes: `ncc://npub…/service`, `npub…/service`,
  * a hex key, or a bare key for the default service.
  */
+/**
+ * The strip is the same page at 56 dp. Which half renders is decided by the viewport
+ * the shell hands us, so no extra bridge call is needed to know the mode.
+ */
+function applyLayout() {
+  const compact = window.innerHeight < 200
+  document.body.classList.toggle('compact', compact)
+  byId('bar').hidden = !compact
+  if (!compact && contentOpen) byId('collapse').hidden = false
+}
+
 function parseAddress(input) {
   const text = input
     .trim()
@@ -135,6 +183,7 @@ function open(port) {
   byId('result').textContent = `opening ${target.url}`
 
   if (content) {
+    content.expand(false)
     content.open(target.url)
     return
   }

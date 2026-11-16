@@ -237,8 +237,8 @@ Still to build:
       shell through a `JavascriptInterface`, with back handling and page events.
 - [ ] `vite.mobile.config.ts` + an `NccApi` adapter over Tauri commands, replacing
       `mobile/` with the React chrome.
-- [ ] Real chrome strip above the content surface (the surface covers the shell
-      today; it should sit below a 56 dp bar).
+- [x] Chrome strip: a 56 dp bar above the content surface, holding back, the address
+      and reload; tapping the address expands the shell over the page to edit it.
 - [ ] Per-tab lifecycle and tab thumbnails.
 - [ ] File chooser and download handling in the content view.
 - [ ] `*.localhost` resolution, secure context, `Secure` cookie behaviour — **the

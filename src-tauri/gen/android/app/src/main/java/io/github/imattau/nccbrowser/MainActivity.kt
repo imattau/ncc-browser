@@ -5,28 +5,38 @@ import android.view.View
 import android.view.ViewGroup
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
+import android.widget.LinearLayout
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
 import org.json.JSONObject
 
 /**
- * Tauri hosts the shell. This activity adds the content surface on top of it and
- * bridges the two:
+ * Tauri hosts the shell. This activity puts the content surface underneath a
+ * 56 dp chrome strip and bridges the two:
  *
- *   shell → content   `window.NccContent.open(url)`, `.close()`, `.back()`
+ *   shell → content   `window.NccContent.open(url)`, `.close()`, `.back()`,
+ *                     `.reload()`, `.expand(bool)`
  *   content → shell   `window.__nccContent({...})`, `window.__nccContentClosed()`
  *
- * The bridge is a plain `@JavascriptInterface`, which is only exposed to the shell's
- * own WebView. Pages on the content surface never see it.
+ * The strip is the shell's own WebView resized to one row, so the chrome is still
+ * React and still ours. Expanding it gives the shell the whole window again, which is
+ * how the address form is edited without a second UI.
+ *
+ * The bridge is a plain `@JavascriptInterface`, exposed only to the shell's WebView.
+ * Pages on the content surface never see it.
  */
 class MainActivity : TauriActivity() {
-  private var chrome: WebView? = null
+  private var shell: WebView? = null
+  private var column: LinearLayout? = null
   private var surface: ContentSurface? = null
   private var backCallback: OnBackPressedCallback? = null
+  private var barHeight = 0
 
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
+
+    barHeight = (56 * resources.displayMetrics.density).toInt()
 
     val root = findViewById<ViewGroup>(android.R.id.content)
     root.post { install(root) }
@@ -42,9 +52,31 @@ class MainActivity : TauriActivity() {
       if (attempt < 40) root.postDelayed({ install(root, attempt + 1) }, 50)
       return
     }
-    chrome = chromeView
 
-    val contentSurface = ContentSurface(root) { payload -> postToChrome(payload) }
+    val parent = chromeView.parent as? ViewGroup ?: root
+    val index = parent.indexOfChild(chromeView)
+    parent.removeView(chromeView)
+
+    val columnView = LinearLayout(this).apply {
+      orientation = LinearLayout.VERTICAL
+    }
+    columnView.addView(
+      chromeView,
+      LinearLayout.LayoutParams(
+        ViewGroup.LayoutParams.MATCH_PARENT,
+        ViewGroup.LayoutParams.MATCH_PARENT,
+      ),
+    )
+    parent.addView(
+      columnView,
+      index,
+      ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT),
+    )
+
+    column = columnView
+    shell = chromeView
+
+    val contentSurface = ContentSurface(columnView) { payload -> postToShell(payload) }
     surface = contentSurface
 
     val callback = object : OnBackPressedCallback(false) {
@@ -52,6 +84,7 @@ class MainActivity : TauriActivity() {
         val view = contentSurface
         if (view.back()) return
         view.close()
+        setExpanded(false)
         isEnabled = false
       }
     }
@@ -60,8 +93,33 @@ class MainActivity : TauriActivity() {
 
     chromeView.addJavascriptInterface(Bridge(contentSurface), "NccContent")
 
-    // The chrome page may have loaded before the bridge existed.
+    // The shell page may have loaded before the bridge existed.
     chromeView.evaluateJavascript("window.__nccContentReady && window.__nccContentReady()", null)
+  }
+
+  /**
+   * Resize the shell between a one-row strip and the whole window.
+   *
+   * With the strip up, the content surface takes the remaining space; expanded, the
+   * strip takes everything and the surface is squeezed to nothing.
+   */
+  private fun setExpanded(expanded: Boolean) {
+    val chromeView = shell ?: return
+    val params = chromeView.layoutParams as? LinearLayout.LayoutParams ?: return
+
+    params.height = if (expanded) {
+      ViewGroup.LayoutParams.MATCH_PARENT
+    } else {
+      barHeight
+    }
+    chromeView.layoutParams = params
+    chromeView.requestLayout()
+
+    if (expanded) {
+      surface?.hide()
+    } else if (surface?.isOpen == true) {
+      surface?.show()
+    }
   }
 
   inner class Bridge(private val contentSurface: ContentSurface) {
@@ -69,6 +127,7 @@ class MainActivity : TauriActivity() {
     fun open(url: String) {
       runOnUiThread {
         if (contentSurface.open(url)) {
+          setExpanded(false)
           backCallback?.isEnabled = true
         }
       }
@@ -78,6 +137,7 @@ class MainActivity : TauriActivity() {
     fun close() {
       runOnUiThread {
         contentSurface.close()
+        setExpanded(true)
         backCallback?.isEnabled = false
       }
     }
@@ -86,16 +146,23 @@ class MainActivity : TauriActivity() {
     fun back() {
       runOnUiThread { contentSurface.back() }
     }
+
+    @JavascriptInterface
+    fun reload() {
+      runOnUiThread { contentSurface.reload() }
+    }
+
+    @JavascriptInterface
+    fun expand(expanded: Boolean) {
+      runOnUiThread { setExpanded(expanded) }
+    }
   }
 
-  private fun postToChrome(payload: JSONObject) {
-    val view = chrome ?: return
+  private fun postToShell(payload: JSONObject) {
+    val view = shell ?: return
     val json = payload.toString()
     view.post {
-      view.evaluateJavascript(
-        "window.__nccContent && window.__nccContent($json)",
-        null,
-      )
+      view.evaluateJavascript("window.__nccContent && window.__nccContent($json)", null)
     }
   }
 

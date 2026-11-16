@@ -10,6 +10,7 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.LinearLayout
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -44,6 +45,9 @@ class ContentSurface(
   private var webView: WebView? = null
   private var proxyPort: Int = -1
   private var showingError = false
+  // Separate from visibility: the surface stays "open" while the shell is expanded
+  // over it, and must come back when the strip returns.
+  private var active = false
 
   private val client = OkHttpClient.Builder()
     .followRedirects(false)
@@ -53,7 +57,7 @@ class ContentSurface(
     .build()
 
   val isOpen: Boolean
-    get() = webView?.visibility == View.VISIBLE
+    get() = active
 
   /** True when the URL is something the proxy could have served. */
   fun accepts(url: String): Boolean {
@@ -78,19 +82,36 @@ class ContentSurface(
     proxyPort = if (uri.port > 0) uri.port else proxyPort
 
     val web = webView ?: create().also { webView = it }
+    active = true
     web.visibility = View.VISIBLE
     web.loadUrl(url)
     return true
   }
 
   fun close() {
+    active = false
     webView?.visibility = View.GONE
     report(JSONObject().put("type", "closed"))
+  }
+
+  /** Reveal the surface without navigating; used when the chrome strip collapses. */
+  fun show() {
+    if (active) webView?.visibility = View.VISIBLE
+  }
+
+  /** Hide the surface while the shell takes the whole window (address editing). */
+  fun hide() {
+    webView?.visibility = View.GONE
+  }
+
+  fun reload() {
+    webView?.reload()
   }
 
   /** Returns true when the GoBack was consumed by the page history. */
   fun back(): Boolean {
     val web = webView ?: return false
+    if (!active) return false
     if (web.canGoBack()) {
       web.goBack()
       return true
@@ -188,9 +209,11 @@ class ContentSurface(
       }
     }
 
-    web.layoutParams = ViewGroup.LayoutParams(
+    // Height 0 with weight 1: the surface takes whatever the chrome strip leaves.
+    web.layoutParams = LinearLayout.LayoutParams(
       ViewGroup.LayoutParams.MATCH_PARENT,
-      ViewGroup.LayoutParams.MATCH_PARENT,
+      0,
+      1f,
     )
     web.visibility = View.GONE
     container.addView(web)
