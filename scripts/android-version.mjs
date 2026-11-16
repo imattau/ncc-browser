@@ -28,6 +28,8 @@ import { fileURLToPath } from 'node:url'
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const checkOnly = process.argv.includes('--check')
 
+let writes = 0
+
 /** @param {string} message */
 function fail(message) {
   console.error(`[android-version] ${message}`)
@@ -68,6 +70,19 @@ if (currentVersion !== version || currentCode !== versionCode) {
   conf.bundle.android ??= {}
   conf.bundle.android.versionCode = versionCode
   writeFileSync(confPath, `${JSON.stringify(conf, null, 2)}\n`)
+  writes += 1
+}
+
+// Keep the crate version in step, so `cargo build` output is not misleading.
+const cratePath = join(root, 'src-tauri', 'Cargo.toml')
+if (existsSync(cratePath)) {
+  const crate = readFileSync(cratePath, 'utf8')
+  const updated = crate.replace(/^version = "[^"]*"$/m, `version = "${version}"`)
+  if (updated !== crate) {
+    if (checkOnly) fail(`src-tauri/Cargo.toml does not carry version ${version}`)
+    writeFileSync(cratePath, updated)
+    writes += 1
+  }
 }
 
 console.log(JSON.stringify({ version, versionCode, changed: checkOnly ? false : currentVersion !== version || currentCode !== versionCode }, null, 2))
