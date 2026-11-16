@@ -11,10 +11,6 @@ name: Android scaffold
 # Re-run only to regenerate after a Tauri major bump; it overwrites local edits.
 on:
   workflow_dispatch:
-  # Temporary bootstrap trigger: a dispatchable workflow must exist on the default
-  # branch, which this one does not yet. Removed once `gen/android` is committed.
-  push:
-    branches: [chore/android-shell]
 
 permissions:
   contents: read
