@@ -258,8 +258,10 @@ passphrase and rewritten with the device envelope.
       the next lookup without a restart.
 - [x] Settings that change behaviour, not just persist: gossip (NIP-65 read relays are
       merged into the lookup), HTTPS mode (require/hide cleartext endpoints and Blossom
-      servers), and the address-bar search engine, which hands anything that is not an
-      address to the system browser.
+      servers), and the address-bar search engine.
+- [x] Clearnet: `http(s)` pages load in a tab, as they do on the desktop. Only non-web
+      schemes (`mailto:`, `tel:`, `intent:`) leave the app, and a tab takes the proxy
+      port from the shell instead of reading it off the page URL.
 - [x] Signer approvals show a countdown and trusted services can be revoked.
 - [x] History and bookmarks, kept in the shell's storage (200 entries).
 - [x] Storage: clear cache drops locator records, site manifests, verified blobs in

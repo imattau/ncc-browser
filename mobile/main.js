@@ -287,13 +287,23 @@ async function fetchInfo(url) {
 }
 
 async function securityFor(url) {
-  if (!url || !proxyPort) return 'unknown'
-  let key
+  if (!url) return 'unknown'
+
+  let parsed
   try {
-    key = new URL(url).host
+    parsed = new URL(url)
   } catch {
     return 'unknown'
   }
+
+  // Nothing to resolve for a clearnet page, so nothing can be pinned or verified:
+  // whether it is TLS is answered by the URL itself.
+  if (!parsed.hostname.endsWith('.localhost')) {
+    return parsed.protocol === 'https:' ? 'tls' : 'plain'
+  }
+
+  if (!proxyPort) return 'unknown'
+  const key = parsed.host
   if (securityCache.has(key)) return securityCache.get(key)
   try {
     const state = classifySecurity(await fetchInfo(url))
@@ -839,8 +849,14 @@ async function navigate(text, { newTab = false } = {}) {
         : /^[a-z][a-z0-9+.-]*:\/\//i.test(input)
           ? input
           : `https://${input}`
-    if (content) content.openExternal(url)
-    else globalThis.open?.(url, '_blank', 'noopener')
+    // Clearnet is a page like any other: it loads in a tab instead of punting to the
+    // system browser, which is what the desktop build has always done.
+    if (content) {
+      if (newTab && tabs.length > 0) content.openNew(url)
+      else content.open(url)
+    } else {
+      globalThis.open?.(url, '_blank', 'noopener')
+    }
     return { ok: true }
   }
 
@@ -1760,7 +1776,11 @@ function wireChrome() {
     button.addEventListener('click', () => goBackPanel())
   }
 
-  byId('bar-back').addEventListener('click', () => content.back())
+  // The strip's arrow takes the same native path as the system back gesture.
+  byId('bar-back').addEventListener('click', () => {
+    if (typeof content.navigateBack === 'function') content.navigateBack()
+    else content.back()
+  })
   byId('bar-reload').addEventListener('click', () => {
     if (progressByTab[activeTabId] !== undefined) {
       content.stop()
@@ -1880,6 +1900,12 @@ async function main() {
   }
 
   set('about-proxy', proxyPort ? `127.0.0.1:${proxyPort}` : 'not started')
+
+  // Tabs resolve `ncc://` links and downloads through the proxy, and a clearnet page
+  // cannot tell them the port.
+  if (proxyPort && content && typeof content.setProxyPort === 'function') {
+    content.setProxyPort(proxyPort)
+  }
 
   try {
     await setupIdentity(tauri)

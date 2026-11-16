@@ -33,12 +33,15 @@ import java.net.URLEncoder
  * document keeps that origin — cookies, storage, service workers and request bodies
  * all behave as they would anywhere else.
  *
- * Anything that is not one of those hosts is refused: the content view has no business
- * talking to the clearnet directly.
+ * Clearnet pages load here too, exactly as they do on the desktop: this is a browser,
+ * and sending a page to the system browser is a dead end for anything the app knows
+ * how to render. The proxy port therefore cannot be read off the current URL — a
+ * clearnet page does not carry it — so it is supplied by the activity.
  */
 class ContentSurface(
   val id: String,
   private val container: ViewGroup,
+  private val proxyPort: () -> Int,
   private val report: (JSONObject) -> Unit,
   private val onDownload: (String, String?, String?) -> Unit,
 ) {
@@ -60,10 +63,8 @@ class ContentSurface(
     get() = webView?.visibility == View.VISIBLE
 
   fun accepts(url: String): Boolean {
-    val uri = Uri.parse(url)
-    val scheme = uri.scheme?.lowercase()
-    val host = uri.host?.lowercase() ?: return false
-    return (scheme == "http" || scheme == "https") && host.endsWith(".localhost")
+    val scheme = Uri.parse(url).scheme?.lowercase()
+    return scheme == "http" || scheme == "https"
   }
 
   fun open(url: String): Boolean {
@@ -292,22 +293,16 @@ class ContentSurface(
 
         if (accepts(url)) return false
 
-        // Clearnet stays out of the content view on purpose, but a link should still
-        // go somewhere: hand it to whatever the device uses for browsing.
-        if (scheme == "http" || scheme == "https") {
-          val opened = try {
-            container.context.startActivity(
-              Intent(Intent.ACTION_VIEW, request.url).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-            )
-            true
-          } catch (error: ActivityNotFoundException) {
-            false
-          }
-          emit(JSONObject().put("type", if (opened) "external" else "blocked").put("url", url))
-          return true
+        // Everything else — mailto:, tel:, intent: — belongs to another app.
+        val opened = try {
+          container.context.startActivity(
+            Intent(Intent.ACTION_VIEW, request.url).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+          )
+          true
+        } catch (error: ActivityNotFoundException) {
+          false
         }
-
-        emit(JSONObject().put("type", "blocked").put("url", url))
+        emit(JSONObject().put("type", if (opened) "external" else "blocked").put("url", url))
         return true
       }
 
@@ -371,7 +366,7 @@ class ContentSurface(
 
   /** Resolve an `ncc://` or `nsite://` link through the proxy, then load it. */
   private fun routeLink(view: WebView, url: String) {
-    val port = Uri.parse(view.url ?: "").port
+    val port = proxyPort()
     if (port <= 0) {
       emit(JSONObject().put("type", "blocked").put("url", url))
       return
