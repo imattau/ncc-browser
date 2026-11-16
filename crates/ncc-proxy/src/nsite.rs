@@ -6,6 +6,7 @@
 //! meaning.
 
 use std::collections::{BTreeMap, HashMap};
+use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -26,6 +27,7 @@ const NEGATIVE_SECONDS: i64 = 15;
 const MAX_SERVERS: usize = 8;
 const MAX_FILE_BYTES: usize = 25 * 1024 * 1024;
 const DEFAULT_CACHE_BYTES: usize = 64 * 1024 * 1024;
+const DISK_CACHE_BYTES: u64 = 256 * 1024 * 1024;
 
 #[derive(Debug)]
 pub enum NsiteError {
@@ -252,10 +254,13 @@ pub struct Blobs {
     client: reqwest::Client,
     cache: Mutex<BlobCache>,
     max_total: usize,
+    /// Where verified blobs survive a restart. Optional: private sessions would pass
+    /// `None` so nothing is written down.
+    directory: Option<PathBuf>,
 }
 
 impl Blobs {
-    pub fn new(timeout: Duration) -> Self {
+    pub fn new(timeout: Duration, directory: Option<PathBuf>) -> Self {
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::limited(3))
             .timeout(timeout)
@@ -271,6 +276,7 @@ impl Blobs {
                 total: 0,
             }),
             max_total: DEFAULT_CACHE_BYTES,
+            directory,
         }
     }
 
@@ -285,6 +291,11 @@ impl Blobs {
             .get(hash)
             .cloned()
         {
+            return Ok(bytes);
+        }
+
+        if let Some(bytes) = self.read_disk(hash) {
+            self.remember(hash, bytes.clone());
             return Ok(bytes);
         }
 
@@ -317,6 +328,7 @@ impl Blobs {
                         continue;
                     }
                     self.remember(hash, bytes.to_vec());
+                    self.write_disk(hash, &bytes);
                     return Ok(bytes.to_vec());
                 }
                 Err(error) => last = format!("{server}: {error}"),
@@ -346,6 +358,61 @@ impl Blobs {
 
     pub fn cached_bytes(&self) -> usize {
         self.cache.lock().expect("blob lock").total
+    }
+
+    /// Read a blob back from disk, re-checking its hash: a file on disk is not trusted
+    /// just because it is there.
+    fn read_disk(&self, hash: &str) -> Option<Vec<u8>> {
+        let path = self.directory.as_ref()?.join(hash);
+        let bytes = std::fs::read(&path).ok()?;
+        if sha256_hex(&bytes) != hash {
+            let _ = std::fs::remove_file(&path);
+            return None;
+        }
+        Some(bytes)
+    }
+
+    fn write_disk(&self, hash: &str, bytes: &[u8]) {
+        let Some(directory) = &self.directory else {
+            return;
+        };
+        if std::fs::create_dir_all(directory).is_err() {
+            return;
+        }
+        if std::fs::write(directory.join(hash), bytes).is_ok() {
+            self.evict(directory);
+        }
+    }
+
+    /// Keep the directory under its cap, dropping the least recently written files.
+    fn evict(&self, directory: &std::path::Path) {
+        let Ok(entries) = std::fs::read_dir(directory) else {
+            return;
+        };
+
+        let mut files: Vec<(std::time::SystemTime, u64, PathBuf)> = entries
+            .flatten()
+            .filter_map(|entry| {
+                let metadata = entry.metadata().ok()?;
+                let modified = metadata.modified().ok()?;
+                Some((modified, metadata.len(), entry.path()))
+            })
+            .collect();
+
+        let mut total: u64 = files.iter().map(|(_, size, _)| *size).sum();
+        if total <= DISK_CACHE_BYTES {
+            return;
+        }
+
+        files.sort_by_key(|(modified, _, _)| *modified);
+        for (_, size, path) in files {
+            if total <= DISK_CACHE_BYTES {
+                break;
+            }
+            if std::fs::remove_file(&path).is_ok() {
+                total = total.saturating_sub(size);
+            }
+        }
     }
 }
 
@@ -391,7 +458,7 @@ pub async fn serve(
             .expect("redirect"),
 
         PathMatch::File { path, hash } => match state.blobs().get(&hash, &manifest.servers).await {
-            Ok(bytes) => response_for(path, bytes, StatusCode::OK, method),
+            Ok(bytes) => response_for(state, vhost, path, bytes, StatusCode::OK, method),
             Err(detail) => page(
                 StatusCode::BAD_GATEWAY,
                 &format!("{detail}\n\nserving {}", display(vhost)),
@@ -403,6 +470,8 @@ pub async fn serve(
             if let Some(hash) = manifest.paths.get("/404.html") {
                 if let Ok(bytes) = state.blobs().get(hash, &manifest.servers).await {
                     return response_for(
+                        state,
+                        vhost,
                         "/404.html".to_string(),
                         bytes,
                         StatusCode::NOT_FOUND,
@@ -419,12 +488,26 @@ pub async fn serve(
 }
 
 fn response_for(
+    state: &ProxyState,
+    vhost: &Vhost,
     served_path: String,
     bytes: Vec<u8>,
     status: StatusCode,
     method: &Method,
 ) -> Response {
     let content_type = content_type_for(&served_path, None);
+
+    // Sites are pages too: `window.nostr` should exist on them exactly as it does on a
+    // service, so the shim goes in on the way out.
+    let bytes = if content_type.starts_with("text/html") {
+        let html = String::from_utf8_lossy(&bytes);
+        crate::server::inject_shim(state, vhost, &html)
+            .0
+            .into_bytes()
+    } else {
+        bytes
+    };
+
     let cache = if served_path.ends_with(".html") {
         "no-cache"
     } else {

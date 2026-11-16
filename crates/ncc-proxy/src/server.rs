@@ -49,6 +49,8 @@ pub struct ProxyConfig {
     /// Origins allowed to read responses with CORS. The shell's own webview is the
     /// only one that needs it (a page fetching a vhost from its own origin does not).
     pub allowed_origins: Vec<String>,
+    /// Where verified site blobs survive a restart; `None` keeps them in memory only.
+    pub blob_directory: Option<std::path::PathBuf>,
 }
 
 impl Default for ProxyConfig {
@@ -58,6 +60,7 @@ impl Default for ProxyConfig {
             request_timeout: Duration::from_secs(20),
             max_body_bytes: 10 * 1024 * 1024,
             allowed_origins: Vec::new(),
+            blob_directory: None,
         }
     }
 }
@@ -114,7 +117,7 @@ impl ProxyState {
             approvals: None,
             trusted: Mutex::new(HashSet::new()),
             nsite: NsiteResolver::new(config.relays.clone()),
-            blobs: Blobs::new(config.request_timeout),
+            blobs: Blobs::new(config.request_timeout, config.blob_directory.clone()),
         }
     }
 
@@ -215,7 +218,7 @@ async fn handle_inner(state: &ProxyState, request: Request) -> Response {
     // Linking between schemes needs the same rules the hosts use, so the page asks
     // this process instead of reimplementing base32 labels in Kotlin.
     if request.uri().path() == "/__ncc/route" {
-        return route(&authority, request.uri().query().unwrap_or_default());
+        return route(state, &authority, request.uri().query().unwrap_or_default()).await;
     }
 
     let Some(vhost) = parse_vhost(&authority) else {
@@ -404,18 +407,14 @@ async fn forward(
             .map_err(|error| ForwardError::Retry(error.to_string()))?;
 
         if bytes.len() <= MAX_INJECTION_BYTES {
-            let key = host_key(vhost);
-            let injection = Injection::new(&key);
-            state.tokens.remember(&injection.token, &key);
-
             let html = String::from_utf8_lossy(&bytes);
-            let body = inject_into_html(&html, &injection.script_tag());
+            let (body, nonce) = inject_shim(state, vhost, &html);
 
             if let Some(csp) = response_headers
                 .get(header::CONTENT_SECURITY_POLICY)
                 .and_then(|value| value.to_str().ok())
             {
-                let relaxed = relax_csp(csp, &injection.nonce);
+                let relaxed = relax_csp(csp, &nonce);
                 if let Ok(value) = HeaderValue::from_str(&relaxed) {
                     response_headers.insert(header::CONTENT_SECURITY_POLICY, value);
                 }
@@ -564,8 +563,22 @@ fn help_page(authority: &str) -> Response {
     (StatusCode::NOT_FOUND, Html(body)).into_response()
 }
 
+/// Insert the NIP-07 shim into a document and return the nonce used for it.
+///
+/// Both schemes serve HTML, and `window.nostr` should exist on either, so this is
+/// shared rather than living in the NCC path.
+pub(crate) fn inject_shim(state: &ProxyState, vhost: &Vhost, html: &str) -> (String, String) {
+    let key = host_key(vhost);
+    let injection = Injection::new(&key);
+    state.tokens.remember(&injection.token, &key);
+    (
+        inject_into_html(html, &injection.script_tag()),
+        injection.nonce,
+    )
+}
+
 /// Map an `ncc://` or `nsite://` link onto the host this browser loads.
-fn route(authority: &str, query: &str) -> Response {
+async fn route(state: &ProxyState, authority: &str, query: &str) -> Response {
     let target = url::form_urlencoded::parse(query.as_bytes())
         .find(|(name, _)| name == "u")
         .map(|(_, value)| value.into_owned());
@@ -617,11 +630,28 @@ fn route(authority: &str, query: &str) -> Response {
                 "Not an nsite:// address",
             );
         };
-        let host = ncc_core::nsite_host(&address.pubkey, address.site.as_deref());
+        // A `d`-like first segment is a site only when one is published; otherwise it
+        // is a path on the root site. That needs the manifest, which is why this
+        // endpoint exists rather than the shell guessing.
+        let (site, path) = match &address.site {
+            Some(site)
+                if state
+                    .nsite()
+                    .resolve(&address.pubkey, Some(site))
+                    .await
+                    .is_ok() =>
+            {
+                (Some(site.clone()), address.path.clone())
+            }
+            Some(site) => (None, format!("/{site}{}", address.path)),
+            None => (None, address.path.clone()),
+        };
+
+        let host = ncc_core::nsite_host(&address.pubkey, site.as_deref());
         return routed(format!(
             "http://{}{}{}{}",
             with_port(host),
-            address.path,
+            path,
             address.search,
             address.hash
         ));

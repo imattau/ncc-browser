@@ -2,6 +2,8 @@ package io.github.imattau.nccbrowser
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Rect
 import android.net.Uri
@@ -178,6 +180,22 @@ class ContentSurface(
         }
 
         if (accepts(url)) return false
+
+        // Clearnet stays out of the content view on purpose, but a link should still
+        // go somewhere: hand it to whatever the device uses for browsing.
+        if (scheme == "http" || scheme == "https") {
+          val opened = try {
+            container.context.startActivity(
+              Intent(Intent.ACTION_VIEW, request.url).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+            true
+          } catch (error: ActivityNotFoundException) {
+            false
+          }
+          emit(JSONObject().put("type", if (opened) "external" else "blocked").put("url", url))
+          return true
+        }
+
         emit(JSONObject().put("type", "blocked").put("url", url))
         return true
       }
