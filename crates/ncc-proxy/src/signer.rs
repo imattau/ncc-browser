@@ -57,8 +57,12 @@ pub async fn handle(state: &ProxyState, vhost: &Vhost, method: &str, body: &[u8]
     match method {
         // Reading the public key is not a signing operation: it is the page asking
         // who is logged in, and it reveals nothing that was not already requested.
-        "get-public-key" => match identity.npub() {
-            Ok(npub) => ok(json!({ "result": npub })),
+        //
+        // NIP-07 returns **hex**. Returning the npub works on clients that decode
+        // bech32 and breaks the ones that parse the string as a key (ditto reports
+        // "unpadded hex 63").
+        "get-public-key" => match identity.public_key() {
+            Ok(public_key) => ok(json!({ "result": public_key.to_hex() })),
             Err(error) => internal(error),
         },
 
@@ -190,4 +194,75 @@ fn internal(error: ncc_identity::IdentityError) -> Response {
 
 fn internal_text(detail: String) -> Response {
     json_error(StatusCode::INTERNAL_SERVER_ERROR, "signer-failed", &detail)
+}
+
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Arc;
+
+    use axum::http::StatusCode;
+
+    use super::*;
+    use crate::approvals::Approvals;
+    use crate::server::ProxyConfig;
+    use crate::vhost::Vhost;
+
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    fn state() -> (ProxyState, Vhost) {
+        let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "ncc-signer-test-{}-{id}.json",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        let identity = Arc::new(ncc_identity::IdentityStore::open(path));
+        identity.create("passphrase").expect("create");
+
+        let state = ProxyState::new(&ProxyConfig::default())
+            .with_signer(identity, Arc::new(Approvals::new(|_| {})));
+
+        let vhost = Vhost {
+            pubkey: "npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqhs2n3v"
+                .to_string(),
+            service: "web".to_string(),
+        };
+        state.tokens.remember("token", &host_key(&vhost));
+
+        (state, vhost)
+    }
+
+    #[tokio::test]
+    async fn get_public_key_returns_hex_not_bech32() {
+        let (state, vhost) = state();
+        let response = handle(&state, &vhost, "get-public-key", br#"{"token":"token"}"#).await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .expect("body");
+        let value: Value = serde_json::from_slice(&body).expect("json");
+        let result = value.get("result").and_then(Value::as_str).expect("result");
+
+        assert_eq!(result.len(), 64, "NIP-07 wants hex, got {result}");
+        assert!(result.chars().all(|character| character.is_ascii_hexdigit()));
+    }
+
+    #[tokio::test]
+    async fn a_call_without_a_token_is_refused() {
+        let (state, vhost) = state();
+        let response = handle(&state, &vhost, "get-public-key", br#"{"token":"other"}"#).await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn a_locked_identity_answers_401() {
+        let (state, vhost) = state();
+        state.identity().expect("signer").lock();
+        let response = handle(&state, &vhost, "get-public-key", br#"{"token":"token"}"#).await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
 }
