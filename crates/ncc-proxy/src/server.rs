@@ -161,6 +161,14 @@ impl ProxyState {
         &self.settings
     }
 
+    /// Drop everything cached from the network: locators, site manifests, and blobs in
+    /// memory and on disk.
+    pub fn clear_caches(&self) {
+        self.resolver.clear();
+        self.nsite.clear();
+        self.blobs.clear();
+    }
+
     /// Services the user chose to stop asking about for this session.
     pub fn is_trusted(&self, key: &str) -> bool {
         self.trusted.lock().expect("trust lock").contains(key)

@@ -75,6 +75,10 @@ class ContentSurface(
     webView?.reload()
   }
 
+  fun clearCache() {
+    webView?.clearCache(true)
+  }
+
   fun back(): Boolean {
     val web = webView ?: return false
     if (web.canGoBack()) {

@@ -68,6 +68,12 @@ fn settings_set_gossip(
 }
 
 #[tauri::command]
+fn clear_cache(state: tauri::State<'_, SignerState>) -> bool {
+    state.proxy.clear_caches();
+    true
+}
+
+#[tauri::command]
 fn identity_status(state: tauri::State<'_, SignerState>) -> Status {
     state.identity.status()
 }
@@ -232,6 +238,7 @@ pub fn run() {
             identity_unlock,
             identity_lock,
             browser_settings,
+            clear_cache,
             settings_set_relays,
             settings_set_search,
             settings_set_https,

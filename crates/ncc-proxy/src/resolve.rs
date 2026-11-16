@@ -234,6 +234,11 @@ impl Resolver {
             .collect()
     }
 
+    /// Drop every cached record and miss. Used by "clear cache".
+    pub fn clear(&self) {
+        self.cache.lock().expect("cache lock").clear();
+    }
+
     pub fn invalidate(&self, pubkey: &str, service: &str) {
         let Ok(key) = PublicKey::parse(pubkey.trim()) else {
             return;
