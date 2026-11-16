@@ -28,6 +28,16 @@
 }
 
 /*
+ * `display: flex` on a panel beats the browser's own `[hidden] { display: none }`, so
+ * every sheet and the bar painted at once with the last one on top — which is why the
+ * signer prompt appeared on launch. This restores the expected meaning of the
+ * attribute for anything that sets its own display.
+ */
+[hidden] {
+  display: none !important;
+}
+
+/*
  * A flex or grid child defaults to min-width: auto, so a long npub in the address
  * pill pushes the whole bar wider than the screen. Every text-bearing box opts out.
  */
