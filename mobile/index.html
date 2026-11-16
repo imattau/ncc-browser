@@ -51,6 +51,8 @@
       <nav class="menu-list">
         <button type="button" data-panel="appearance">Address bar</button>
         <button type="button" data-panel="relays">Relays</button>
+        <button type="button" data-panel="search">Search</button>
+        <button type="button" data-panel="security">Security</button>
         <button type="button" data-panel="identity">Identity</button>
         <button type="button" data-panel="signer-settings">Signer permissions</button>
         <button type="button" data-panel="history">History</button>
@@ -89,8 +91,59 @@
         the next lookup, no restart.
       </p>
       <textarea id="relays-input" rows="6" spellcheck="false" autocapitalize="off"></textarea>
+      <label class="check">
+        <input id="gossip" type="checkbox" />
+        Follow each identity's own relay list (NIP-65)
+      </label>
       <button id="relays-save" type="button">Save</button>
       <p id="relays-error" class="note"></p>
+    </section>
+
+    <section id="search" class="sheet" hidden>
+      <header class="sheet-head">
+        <h2>Search</h2>
+        <button type="button" class="secondary" data-panel="home">Back</button>
+      </header>
+      <p class="lede">What the address bar does with something that is not an address.</p>
+      <label class="field">
+        <span>engine</span>
+        <select id="search-engine">
+          <option value="duckduckgo">DuckDuckGo</option>
+          <option value="brave">Brave Search</option>
+          <option value="startpage">Startpage</option>
+          <option value="google">Google</option>
+          <option value="bing">Bing</option>
+          <option value="searx">SearXNG</option>
+          <option value="custom">Custom</option>
+        </select>
+      </label>
+      <label class="field">
+        <span id="search-custom-label">SearXNG instance</span>
+        <input id="search-custom" spellcheck="false" autocapitalize="off" />
+      </label>
+      <button id="search-save" type="button">Save</button>
+      <p id="search-error" class="note"></p>
+    </section>
+
+    <section id="security" class="sheet" hidden>
+      <header class="sheet-head">
+        <h2>Security</h2>
+        <button type="button" class="secondary" data-panel="home">Back</button>
+      </header>
+      <label class="field">
+        <span>secure connections</span>
+        <select id="https-mode">
+          <option value="off">Use whatever the publisher offers</option>
+          <option value="prefer">Prefer HTTPS</option>
+          <option value="only">Require HTTPS</option>
+        </select>
+      </label>
+      <label class="check">
+        <input id="warn-insecure" type="checkbox" />
+        Warn before cleartext pages
+      </label>
+      <button id="security-save" type="button">Save</button>
+      <p id="security-error" class="note"></p>
     </section>
 
     <section id="identity" class="sheet" hidden>

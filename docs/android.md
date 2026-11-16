@@ -251,6 +251,10 @@ Still to build:
 - [x] `config.json` next to the identity, owned by the proxy: validated on load and on
       write, persisted through a temp file, and read live so a relay change applies to
       the next lookup without a restart.
+- [x] Settings that change behaviour, not just persist: gossip (NIP-65 read relays are
+      merged into the lookup), HTTPS mode (require/hide cleartext endpoints and Blossom
+      servers), and the address-bar search engine, which hands anything that is not an
+      address to the system browser.
 - [x] Signer approvals show a countdown and trusted services can be revoked.
 - [x] History and bookmarks, kept in the shell's storage (200 entries).
 - [ ] Per-tab lifecycle and tab thumbnails.

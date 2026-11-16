@@ -3,7 +3,9 @@ use std::sync::Arc;
 use tauri::{Emitter, Manager};
 
 use ncc_identity::{IdentityStore, Status};
-use ncc_proxy::{ApprovalRequest, Approvals, ProxyConfig, ProxyState, Settings, SettingsStore};
+use ncc_proxy::{
+    ApprovalRequest, Approvals, HttpsMode, ProxyConfig, ProxyState, Settings, SettingsStore,
+};
 
 /// Everything the commands need. The proxy shares the same `Arc`s.
 struct SignerState {
@@ -31,6 +33,38 @@ fn settings_set_relays(
     relays: Vec<String>,
 ) -> Result<Settings, String> {
     state.proxy.settings().set_relays(relays)
+}
+
+#[tauri::command]
+fn settings_set_search(
+    state: tauri::State<'_, SignerState>,
+    engine: String,
+    custom: String,
+) -> Result<Settings, String> {
+    state.proxy.settings().set_search(engine, custom)
+}
+
+#[tauri::command]
+fn settings_set_https(
+    state: tauri::State<'_, SignerState>,
+    mode: String,
+    warn: bool,
+) -> Result<Settings, String> {
+    let mode = match mode.as_str() {
+        "off" => HttpsMode::Off,
+        "only" => HttpsMode::Only,
+        _ => HttpsMode::Prefer,
+    };
+    state.proxy.settings().set_https_mode(mode)?;
+    state.proxy.settings().set_warn_insecure(warn)
+}
+
+#[tauri::command]
+fn settings_set_gossip(
+    state: tauri::State<'_, SignerState>,
+    value: bool,
+) -> Result<Settings, String> {
+    state.proxy.settings().set_gossip(value)
 }
 
 #[tauri::command]
@@ -199,6 +233,9 @@ pub fn run() {
             identity_lock,
             browser_settings,
             settings_set_relays,
+            settings_set_search,
+            settings_set_https,
+            settings_set_gossip,
             signer_permissions,
             signer_revoke,
             signer_respond

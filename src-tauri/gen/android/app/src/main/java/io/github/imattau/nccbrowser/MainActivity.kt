@@ -1,5 +1,7 @@
 package io.github.imattau.nccbrowser
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.view.ViewGroup
 import android.webkit.JavascriptInterface
@@ -331,6 +333,19 @@ class MainActivity : TauriActivity() {
     @JavascriptInterface
     fun reload() {
       runOnUiThread { active()?.reload() }
+    }
+
+    @JavascriptInterface
+    fun openExternal(url: String) {
+      runOnUiThread {
+        try {
+          startActivity(
+            Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+          )
+        } catch (error: Exception) {
+          // No handler installed; nothing else to try.
+        }
+      }
     }
 
     @JavascriptInterface
