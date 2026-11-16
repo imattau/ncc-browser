@@ -305,13 +305,35 @@ fn pointer_directory(root: &Option<std::path::PathBuf>, name: &str) -> Option<st
     root.as_ref().map(|root| root.join(name))
 }
 
+/// The panic's own words.
+///
+/// The payload has to be downcast through the box's contents: passing `&Box<dyn Any>`
+/// as `&dyn Any` does not deref, it downcasts *the box*, which never matches — that
+/// is how every message became "a panic with no message".
 fn panic_detail(panic: &(dyn std::any::Any + Send)) -> String {
     if let Some(message) = panic.downcast_ref::<&str>() {
-        (*message).to_string()
-    } else if let Some(message) = panic.downcast_ref::<String>() {
-        message.clone()
-    } else {
-        "a panic with no message".to_string()
+        return (*message).to_string();
+    }
+    if let Some(message) = panic.downcast_ref::<String>() {
+        return message.clone();
+    }
+
+    "a panic carrying a non-text payload".to_string()
+}
+
+#[cfg(test)]
+mod panic_tests {
+    use super::*;
+
+    #[test]
+    fn a_panic_message_is_not_lost() {
+        let text = std::panic::catch_unwind(|| panic!("the manifest had no servers"))
+            .expect_err("should have panicked");
+        assert!(panic_detail(text.as_ref()).contains("no servers"));
+
+        let formatted = std::panic::catch_unwind(|| panic!("kind {}", 24133))
+            .expect_err("should have panicked");
+        assert!(panic_detail(formatted.as_ref()).contains("24133"));
     }
 }
 
@@ -354,7 +376,7 @@ async fn handle(State(state): State<Arc<ProxyState>>, request: Request) -> Respo
     {
         Ok(response) => response,
         Err(panic) => {
-            let detail = panic_detail(&panic);
+            let detail = panic_detail(panic.as_ref());
             tracing::error!("request failed: {detail}");
             crash(&detail)
         }
