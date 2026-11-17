@@ -14,6 +14,9 @@ use ncc_core::{
 };
 
 const LOCATOR_KIND: u16 = 30058;
+/// How many records to try under one `d` tag before falling through to the
+/// next candidate.
+const MAX_EVENTS_PER_D: usize = 10;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResolveError {
@@ -363,60 +366,120 @@ impl Resolver {
             return Err(ResolveError::NoRecord);
         }
 
-        // The publisher can rotate an endpoint by publishing a newer record; the
-        // newest `created_at` wins, and a tie is broken by event id so the answer is
-        // stable between requests.
-        let mut best: Option<(Event, String)> = None;
-        for event in events {
-            let Some(d_tag) = identifier(&event) else {
-                continue;
-            };
-            if !candidates.iter().any(|candidate| candidate == &d_tag) {
-                continue;
-            }
-            let newer = match &best {
-                None => true,
-                Some((current, _)) => {
-                    (event.created_at, &event.id) > (current.created_at, &current.id)
-                }
-            };
-            if newer {
-                best = Some((event, d_tag));
-            }
-        }
+        select_locator(
+            &events,
+            pubkey_input,
+            hex,
+            service,
+            &candidates,
+            now,
+            allow_ws,
+        )
+    }
+}
 
-        let Some((event, d_tag)) = best else {
-            return Err(ResolveError::NoRecord);
+/// Pick the record for `service` out of everything the relay query returned.
+///
+/// `candidates` is a specificity ladder (`<service>`, `<service>-locator`, then
+/// the default `addr` record), and that ladder decides the winner: each
+/// candidate's newest usable record is tried before the next candidate is
+/// considered. Recency never crosses a candidate boundary.
+///
+/// This used to pick the newest event across *all* candidates, which made the
+/// `addr` fallback shadow every named service on publishers that refresh it
+/// last -- and ncc-server's provisioner does exactly that (web, relay, npanel,
+/// ditto, search, then addr), so `/search` on Android resolved to the welcome
+/// page while desktop, which already walked the ladder in order, resolved it
+/// correctly. Validating each record before moving on also means an expired or
+/// malformed exact record falls through to the next candidate instead of
+/// failing the whole lookup.
+fn select_locator(
+    events: &[Event],
+    pubkey_input: &str,
+    hex: &str,
+    service: &str,
+    candidates: &[String],
+    now: i64,
+    allow_ws: bool,
+) -> Result<ResolvedService, ResolveError> {
+    let mut by_tag: HashMap<&str, Vec<&Event>> = HashMap::new();
+    for event in events {
+        let Some(d_tag) = identifier(event) else {
+            continue;
+        };
+        if let Some(candidate) = candidates.iter().find(|candidate| **candidate == d_tag) {
+            by_tag.entry(candidate.as_str()).or_default().push(event);
+        }
+    }
+    for bucket in by_tag.values_mut() {
+        // The publisher can rotate an endpoint by publishing a newer record;
+        // newest wins, and a tie is broken by event id so answers are stable.
+        bucket.sort_by(|a, b| {
+            b.created_at
+                .cmp(&a.created_at)
+                .then_with(|| a.id.cmp(&b.id))
+        });
+    }
+
+    let mut saw_expired = false;
+    let mut saw_no_endpoint = false;
+    let mut saw_invalid = false;
+
+    for candidate in candidates {
+        let Some(bucket) = by_tag.get(candidate.as_str()) else {
+            continue;
         };
 
-        let payload: Value =
-            serde_json::from_str(&event.content).map_err(|_| ResolveError::InvalidPayload)?;
-        let payload = parse_payload(&payload).ok_or(ResolveError::InvalidPayload)?;
+        for event in bucket.iter().take(MAX_EVENTS_PER_D) {
+            let payload: Value = match serde_json::from_str(&event.content) {
+                Ok(payload) => payload,
+                Err(_) => {
+                    saw_invalid = true;
+                    continue;
+                }
+            };
+            let Some(payload) = parse_payload(&payload) else {
+                saw_invalid = true;
+                continue;
+            };
 
-        let expires_at = payload_expiry(&payload, expiration_tag(&event).as_deref());
-        if expires_at <= now {
-            return Err(ResolveError::Expired);
+            let expires_at = payload_expiry(&payload, expiration_tag(event).as_deref());
+            if expires_at <= now {
+                saw_expired = true;
+                continue;
+            }
+
+            let endpoints = normalize_endpoints(
+                payload.fields.get("endpoints").unwrap_or(&Value::Null),
+                allow_ws,
+            );
+            if endpoints.is_empty() {
+                saw_no_endpoint = true;
+                continue;
+            }
+
+            return Ok(ResolvedService {
+                pubkey: pubkey_input.to_string(),
+                hex_pubkey: hex.to_string(),
+                service: service.to_string(),
+                d_tag: (*candidate).clone(),
+                d_tag_source: d_tag_source(candidate, service),
+                event_id: event.id.to_hex(),
+                updated_at: payload.updated_at,
+                expires_at,
+                endpoints: sort_endpoints(&endpoints),
+            });
         }
+    }
 
-        let endpoints = normalize_endpoints(
-            payload.fields.get("endpoints").unwrap_or(&Value::Null),
-            allow_ws,
-        );
-        if endpoints.is_empty() {
-            return Err(ResolveError::NoEndpoint);
-        }
-
-        Ok(ResolvedService {
-            pubkey: pubkey_input.to_string(),
-            hex_pubkey: hex.to_string(),
-            service: service.to_string(),
-            d_tag_source: d_tag_source(&d_tag, service),
-            d_tag,
-            event_id: event.id.to_hex(),
-            updated_at: payload.updated_at,
-            expires_at,
-            endpoints: sort_endpoints(&endpoints),
-        })
+    if saw_expired {
+        Err(ResolveError::Expired)
+    } else if saw_no_endpoint {
+        Err(ResolveError::NoEndpoint)
+    } else if saw_invalid {
+        Err(ResolveError::InvalidPayload)
+    } else {
+        Err(ResolveError::NoRecord)
     }
 }
 
@@ -452,6 +515,199 @@ pub fn unix_now() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nostr::{EventBuilder, Keys, Tag, Timestamp};
+
+    /// A signed NCC-05 locator for `d`, with one https endpoint.
+    fn locator(keys: &Keys, d: &str, created_at: i64, url: &str, ttl: i64) -> Event {
+        let payload = serde_json::json!({
+            "ttl": ttl,
+            "updated_at": created_at,
+            "endpoints": [{
+                "url": url,
+                "protocol": "https",
+                "family": "ipv4",
+                "priority": 1,
+            }],
+        });
+        EventBuilder::new(Kind::Custom(LOCATOR_KIND), payload.to_string())
+            .tags([Tag::parse(["d", d]).unwrap()])
+            .custom_created_at(Timestamp::from(created_at.max(0) as u64))
+            .sign_with_keys(keys)
+            .unwrap()
+    }
+
+    fn select(events: &[Event], service: &str, now: i64) -> Result<ResolvedService, ResolveError> {
+        let hex = "ab".repeat(32);
+        select_locator(
+            events,
+            &hex,
+            &hex,
+            service,
+            &candidate_d_tags(Some(service)),
+            now,
+            false,
+        )
+    }
+
+    // ncc-server's provisioner creates named services first and `addr` last, so
+    // `addr` is normally the newest locator on an identity. Ordering by
+    // `created_at` across every candidate made Android resolve `/search` to the
+    // welcome page; the candidate ladder must win over recency.
+    #[test]
+    fn a_refreshed_addr_record_does_not_shadow_a_named_service() {
+        let keys = Keys::generate();
+        let now = unix_now();
+
+        let search = locator(
+            &keys,
+            "search-locator",
+            now - 10,
+            "https://example.com:8447/",
+            3600,
+        );
+        let addr = locator(&keys, "addr", now - 5, "https://example.com:8443/", 3600);
+
+        let resolved = select(&[search, addr], "search", now).expect("resolves the named service");
+
+        assert_eq!(resolved.d_tag, "search-locator");
+        assert_eq!(resolved.d_tag_source, DTagSource::LocatorSuffix);
+        assert_eq!(resolved.endpoints[0].url, "https://example.com:8447/");
+    }
+
+    #[test]
+    fn an_exact_record_beats_a_newer_sidecar_suffix_record() {
+        let keys = Keys::generate();
+        let now = unix_now();
+
+        let exact = locator(&keys, "search", now - 30, "https://example.com:9000/", 3600);
+        let suffix = locator(
+            &keys,
+            "search-locator",
+            now - 5,
+            "https://example.com:8447/",
+            3600,
+        );
+
+        let resolved = select(&[exact, suffix], "search", now).expect("resolves");
+        assert_eq!(resolved.d_tag_source, DTagSource::Exact);
+        assert_eq!(resolved.endpoints[0].url, "https://example.com:9000/");
+    }
+
+    #[test]
+    fn newest_record_wins_within_one_candidate() {
+        let keys = Keys::generate();
+        let now = unix_now();
+
+        let older = locator(
+            &keys,
+            "search-locator",
+            now - 30,
+            "https://old.example/",
+            3600,
+        );
+        let newer = locator(
+            &keys,
+            "search-locator",
+            now - 5,
+            "https://new.example/",
+            3600,
+        );
+
+        let resolved = select(&[older, newer], "search", now).expect("resolves");
+        assert_eq!(resolved.endpoints[0].url, "https://new.example/");
+    }
+
+    // A broken exact/suffix record must not fail the lookup when a lower
+    // candidate is still usable.
+    #[test]
+    fn an_expired_named_record_falls_through_to_addr() {
+        let keys = Keys::generate();
+        let now = unix_now();
+
+        let expired = locator(
+            &keys,
+            "search-locator",
+            now - 100,
+            "https://old.example/",
+            10,
+        );
+        let addr = locator(&keys, "addr", now - 5, "https://example.com:8443/", 3600);
+
+        let resolved = select(&[expired, addr], "search", now).expect("falls back to addr");
+        assert_eq!(resolved.d_tag, "addr");
+        assert_eq!(resolved.d_tag_source, DTagSource::Default);
+    }
+
+    #[test]
+    fn a_malformed_named_record_falls_through_to_the_next_candidate() {
+        let keys = Keys::generate();
+        let now = unix_now();
+
+        let broken = EventBuilder::new(Kind::Custom(LOCATOR_KIND), "not json")
+            .tags([Tag::parse(["d", "search-locator"]).unwrap()])
+            .custom_created_at(Timestamp::from((now - 5).max(0) as u64))
+            .sign_with_keys(&keys)
+            .unwrap();
+        let addr = locator(&keys, "addr", now - 10, "https://example.com:8443/", 3600);
+
+        let resolved = select(&[broken, addr], "search", now).expect("falls back to addr");
+        assert_eq!(resolved.d_tag, "addr");
+    }
+
+    #[test]
+    fn the_default_service_uses_only_the_addr_record() {
+        let keys = Keys::generate();
+        let now = unix_now();
+
+        let addr = locator(&keys, "addr", now - 5, "https://example.com:8443/", 3600);
+        let web = locator(
+            &keys,
+            "web-locator",
+            now - 1,
+            "https://example.com:8443/",
+            3600,
+        );
+
+        let resolved = select(&[addr, web], "addr", now).expect("resolves the root");
+        assert_eq!(resolved.d_tag, "addr");
+        assert_eq!(resolved.d_tag_source, DTagSource::Exact);
+    }
+
+    #[test]
+    fn nothing_usable_reports_why() {
+        let keys = Keys::generate();
+        let now = unix_now();
+
+        let expired = locator(
+            &keys,
+            "search-locator",
+            now - 100,
+            "https://old.example/",
+            10,
+        );
+        assert_eq!(
+            select(&[expired], "search", now).unwrap_err(),
+            ResolveError::Expired
+        );
+
+        let no_endpoints = EventBuilder::new(
+            Kind::Custom(LOCATOR_KIND),
+            serde_json::json!({ "ttl": 600, "updated_at": now, "endpoints": [] }).to_string(),
+        )
+        .tags([Tag::parse(["d", "search-locator"]).unwrap()])
+        .custom_created_at(Timestamp::from((now - 5).max(0) as u64))
+        .sign_with_keys(&keys)
+        .unwrap();
+        assert_eq!(
+            select(&[no_endpoints], "search", now).unwrap_err(),
+            ResolveError::NoEndpoint
+        );
+
+        assert_eq!(
+            select(&[], "search", now).unwrap_err(),
+            ResolveError::NoRecord
+        );
+    }
 
     /// A directory no other test can delete: tests run in parallel.
     fn directory() -> PathBuf {
@@ -506,7 +762,7 @@ mod tests {
     async fn a_record_survives_a_restart() {
         let directory = directory();
         let hex = nostr::Keys::generate().public_key().to_hex();
-        let key = format!("{hex}:web");
+        let key = format!("{hex}:web:web");
 
         store(&directory, &key, unix_now() + 30, &record(&hex));
 
@@ -523,7 +779,7 @@ mod tests {
     async fn an_expired_record_is_not_used() {
         let directory = directory();
         let hex = nostr::Keys::generate().public_key().to_hex();
-        let key = format!("{hex}:web");
+        let key = format!("{hex}:web:web");
 
         store(&directory, &key, unix_now() - 1, &record(&hex));
 
