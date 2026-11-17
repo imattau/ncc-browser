@@ -41,6 +41,9 @@ struct AppDataDir(std::path::PathBuf);
 /// The password vault. It needs the identity and the settings store, not the proxy.
 struct VaultHandle(Arc<VaultService>);
 
+/// Bookmark, history and open-tab sync. Same identity and relays as the vault.
+struct SyncHandle(Arc<ncc_proxy::sync::SyncService>);
+
 #[tauri::command]
 fn proxy_port(state: tauri::State<'_, ProxyPort>) -> Option<u16> {
     state.0
@@ -196,6 +199,25 @@ fn vault_forget_never_save(
     origin: String,
 ) -> Result<Settings, String> {
     state.proxy.settings().remove_never_save(&origin)
+}
+
+/// One sync exchange: the shell hands over what it has for each category that is on,
+/// and gets the merged result back to store.
+#[tauri::command]
+async fn sync_exchange(
+    sync: tauri::State<'_, SyncHandle>,
+    request: ncc_proxy::sync::SyncRequest,
+) -> Result<ncc_proxy::sync::SyncResponse, String> {
+    sync.0.exchange(request).await
+}
+
+#[tauri::command]
+async fn sync_remove_device(
+    sync: tauri::State<'_, SyncHandle>,
+    device: ncc_vault::sync::DeviceInfo,
+    now: u64,
+) -> Result<(), String> {
+    sync.0.remove_device(device, now).await
 }
 
 /// Called when the shell becomes visible again: pulls the relay copy, throttled.
@@ -673,6 +695,8 @@ pub fn run() {
             tor_prepare,
             settings_set_tor,
             vault_status,
+            sync_exchange,
+            sync_remove_device,
             vault_unlock,
             vault_lock,
             vault_list,
@@ -836,6 +860,10 @@ pub fn run() {
                 data_dir.join("vault").join("cache.json"),
             ));
 
+            app.manage(SyncHandle(Arc::new(ncc_proxy::sync::SyncService::new(
+                identity.clone(),
+                settings.clone(),
+            ))));
             app.manage(TorProxyPort(tor_port));
             app.manage(VaultHandle(vault_service));
             app.manage(TorHandle(tor));

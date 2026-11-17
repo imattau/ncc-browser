@@ -8,6 +8,7 @@ import {
   KeyRound,
   Palette,
   Puzzle,
+  RefreshCw,
   RotateCcw,
   Vault,
   Search,
@@ -36,6 +37,7 @@ import { AppearanceSettings } from './AppearanceSettings'
 import { AgentSettings } from './AgentSettings'
 import { ExtensionSettings } from './ExtensionSettings'
 import { PasswordSettings } from './PasswordSettings'
+import { SyncSettings } from './SyncSettings'
 
 export type SettingsSection =
   | 'general'
@@ -43,6 +45,7 @@ export type SettingsSection =
   | 'security'
   | 'identity'
   | 'passwords'
+  | 'sync'
   | 'extensions'
   | 'agent'
   | 'trusted'
@@ -63,6 +66,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string; icon: typeof KeyRoun
   { id: 'security', label: 'Security', icon: Shield },
   { id: 'identity', label: 'Identity & signer', icon: KeyRound },
   { id: 'passwords', label: 'Passwords', icon: Vault },
+  { id: 'sync', label: 'Sync', icon: RefreshCw },
   { id: 'extensions', label: 'Extensions', icon: Puzzle },
   { id: 'agent', label: 'Agent control', icon: Bot },
   { id: 'trusted', label: 'Trusted services', icon: ShieldCheck },
@@ -1397,6 +1401,10 @@ export function SettingsPage({
               onDraftUsed={onPasswordDraftUsed}
               onOpenIdentity={() => setSection('identity')}
             />
+          ) : null}
+
+          {section === 'sync' ? (
+            <SyncSettings identity={identity} onOpenIdentity={() => setSection('identity')} />
           ) : null}
 
           {section === 'extensions' ? <ExtensionSettings /> : null}

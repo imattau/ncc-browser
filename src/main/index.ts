@@ -28,6 +28,9 @@ import { ExtensionStorage } from './extensions/storage'
 import { PasswordCache } from './passwords/cache'
 import { electronClipboard, electronFileDialogs, registerPasswordIpc } from './passwords/ipc'
 import { PasswordService } from './passwords/service'
+import { SyncPrefsStore } from './sync/prefs'
+import { SyncService } from './sync/service'
+import { registerSyncIpc } from './sync/ipc'
 import { EndpointHealth } from './ncc/health'
 import { closeSharedPool, NccResolver, signerFromSecret, type LocatorSigner } from './ncc/resolver'
 import { NsiteBlobs } from './nsite/blob'
@@ -315,8 +318,9 @@ app.whenReady().then(async () => {
   )
 
   const bookmarks = new BookmarkStore(join(app.getPath('userData'), 'bookmarks.json'))
+  const history = new HistoryStore(join(app.getPath('userData'), 'history.json'))
   const omnibox = new OmniboxService({
-    history: new HistoryStore(join(app.getPath('userData'), 'history.json')),
+    history,
     bookmarks,
     config: () => config.get()
   })
@@ -391,6 +395,27 @@ app.whenReady().then(async () => {
   registerPasswordIpc(passwordService, { shell })
   shell.window.webContents.on('did-finish-load', () => passwordService.clearOverlays())
   shell.window.on('focus', () => void passwordService.onWindowFocus())
+
+  const browserShell = shell
+  const syncService = new SyncService({
+    prefs: new SyncPrefsStore(join(app.getPath('userData'), 'sync.json')),
+    identity,
+    relays: relayPool,
+    resolveRelays: (pubkey) => passwordService.relaysFor(pubkey),
+    bookmarks,
+    history,
+    tabs: () => browserShell.syncTabs(),
+    platform: process.platform === 'darwin' ? 'mac' : process.platform === 'win32' ? 'windows' : 'linux',
+    notify: (status) => {
+      if (browserShell.window.isDestroyed()) return
+      browserShell.sendToChrome('ncc:sync-status', status)
+      browserShell.sendToChrome('ncc:bookmarks', bookmarks.list())
+    }
+  })
+  browserShell.onTabsChanged = () => syncService.tabsChanged()
+  registerSyncIpc(syncService, { shell: browserShell, openTab: (url) => browserShell.newTab(url) })
+  browserShell.window.on('focus', () => syncService.onWindowFocus())
+  syncService.start()
 
   nip07Service = new Nip07Service({
     identity,

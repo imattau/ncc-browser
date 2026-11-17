@@ -1,5 +1,6 @@
 import type { AutomationState } from './automation'
 import type { CommandId } from './commands'
+import type { SyncPrefsPatch, SyncStatus } from './sync-status'
 import type {
   ExtensionInstallResult,
   ExtensionsState
@@ -131,6 +132,12 @@ export interface NccApi {
     useOnionSearch: boolean
   }): Promise<SetRelaysResult>
   setAppearance(appearance: Partial<AppearanceConfig>): Promise<SetAppearanceResult>
+  syncStatus(): Promise<SyncStatus>
+  syncNow(): Promise<SyncStatus>
+  syncConfigure(patch: SyncPrefsPatch): Promise<SyncStatus>
+  syncRemoveDevice(id: string): Promise<SyncStatus>
+  syncOpenTab(url: string): Promise<void>
+  onSyncStatus(listener: (status: SyncStatus) => void): () => void
   passwordsStatus(): Promise<PasswordVaultStatus>
   passwordsContext(): Promise<PasswordContext>
   passwordsUnlock(): Promise<PasswordVaultStatus>

@@ -809,6 +809,21 @@ export class BrowserShell {
     this.syncState()
   }
 
+  /** Set by sync: called whenever the set of tabs or their addresses may have changed. */
+  onTabsChanged: (() => void) | null = null
+
+  /** Normal tabs as sync publishes them. Private and Tor tabs are never included. */
+  syncTabs(): { url: string; title: string; lastActive: number }[] {
+    const now = Date.now()
+    return this.tabs
+      .filter((tab) => tab.kind === 'normal' && tab.mode !== 'blank' && tab.displayUrl)
+      .map((tab) => ({
+        url: tab.displayUrl,
+        title: tabTitle(tab),
+        lastActive: tab.id === this.activeId ? now : 0
+      }))
+  }
+
   /** Flush tabs and geometry immediately (quit path). */
   saveSessionNow(): void {
     if (this.saveTimer) {
@@ -1565,6 +1580,7 @@ export class BrowserShell {
   private scheduleSessionSave(): void {
     if (this.saveTimer) clearTimeout(this.saveTimer)
     this.saveTimer = setTimeout(() => this.saveSessionNow(), 600)
+    this.onTabsChanged?.()
   }
 
   private contentBounds(): { x: number; y: number; width: number; height: number } {

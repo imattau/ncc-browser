@@ -15,6 +15,7 @@
 
 pub mod cache;
 pub mod generator;
+pub mod sync;
 pub mod totp;
 
 use serde::{Deserialize, Serialize};

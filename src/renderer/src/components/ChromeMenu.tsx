@@ -2,6 +2,8 @@ import { useEffect, useRef } from 'react'
 import { Bookmark as BookmarkIcon, Smartphone, X } from 'lucide-react'
 import { COMMANDS, COMMAND_ORDER, type CommandId } from '@shared/commands'
 import type { Bookmark, IdentityStatus, NavState } from '@shared/types'
+import type { SyncDevice } from '@shared/sync-status'
+import { DeviceIcon } from './SyncSettings'
 import { cn } from '../lib/cn'
 import { useFocusTrap } from '../lib/useFocusTrap'
 
@@ -12,6 +14,8 @@ interface ChromeMenuProps {
   onCommand: (command: CommandId) => void
   onOpenBookmark: (url: string) => void
   onRemoveBookmark: (url: string) => void
+  devices?: SyncDevice[]
+  onOpenDeviceTab?: (url: string) => void
   onClose: () => void
 }
 
@@ -22,6 +26,8 @@ export function ChromeMenu({
   onCommand,
   onOpenBookmark,
   onRemoveBookmark,
+  devices = [],
+  onOpenDeviceTab,
   onClose
 }: ChromeMenuProps) {
   const ref = useRef<HTMLDivElement>(null)
@@ -157,6 +163,40 @@ export function ChromeMenu({
             ) : null}
           </div>
         ) : null}
+
+        {devices.map((device) => (
+          <div
+            key={device.id}
+            data-sync-device={device.id}
+            className="mt-1 border-t border-[color:var(--color-line)] px-1.5 pb-1 pt-1.5"
+          >
+            <p className="flex items-center gap-1.5 px-2 py-1 text-ui-95 font-semibold uppercase tracking-[0.08em] text-[color:var(--color-faint)]">
+              <DeviceIcon platform={device.platform} className="h-3 w-3" />
+              <span className="truncate">{device.name}</span>
+            </p>
+            {device.tabs.length === 0 ? (
+              <p className="px-2 py-1 text-ui-105 text-[color:var(--color-faint)]">No open tabs</p>
+            ) : null}
+            {device.tabs.slice(0, 8).map((tab) => (
+              <button
+                key={tab.url}
+                type="button"
+                role="menuitem"
+                data-sync-tab-url={tab.url}
+                title={tab.url}
+                onClick={() => onOpenDeviceTab?.(tab.url)}
+                className="flex w-full min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-ui-12 text-[color:var(--color-text-strong)] hover:bg-[color:var(--color-hover)]"
+              >
+                <span className="truncate">{tab.title}</span>
+              </button>
+            ))}
+            {device.tabs.length > 8 ? (
+              <p className="px-2 py-1 text-ui-105 text-[color:var(--color-faint)]">
+                +{device.tabs.length - 8} more…
+              </p>
+            ) : null}
+          </div>
+        ))}
       </div>
     </div>
   )

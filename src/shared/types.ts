@@ -552,6 +552,8 @@ export interface Bookmark {
   title: string
   /** Epoch milliseconds. */
   createdAt: number
+  /** Epoch milliseconds of the last edit; older files only have `createdAt`. */
+  updatedAt?: number
 }
 
 /** Reasons the chrome needs the whole window surface, hiding content views. */

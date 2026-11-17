@@ -1006,6 +1006,11 @@ export class PasswordService {
     return provider
   }
 
+  /** The relays sync uses: the same set the vault does, so one setting covers both. */
+  relaysFor(pubkey: string): Promise<string[]> {
+    return this.resolveRelays(pubkey, false)
+  }
+
   private async resolveRelays(pubkey: string, force: boolean): Promise<string[]> {
     if (this.resolvedRelays && !force) return this.resolvedRelays
     const config = this.deps.config.get().passwords

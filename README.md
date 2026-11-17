@@ -190,7 +190,8 @@ working while the remote page has focus.
 - **History** — the toolbar and `Ctrl+H` list every entry in the active tab; selecting
   one jumps straight to it. History is per tab and can be cleared from the panel.
 - **Bookmarks** — the star in the address bar toggles the current page; the hamburger
-  menu lists bookmarks with remove buttons. They are local to this browser.
+  menu lists bookmarks with remove buttons. They are local unless **Sync** is on (see
+  [Sync](#sync)).
 - **Session restore** — normal tabs, the active tab and window geometry are saved to
   `userData/session.json` and restored on the next launch. Private and Tor tabs are never
   restored; only addresses are stored.
@@ -309,7 +310,8 @@ dropdown always states what Enter will do:
   tabs** is on, otherwise the engine's normal URL over the tab's fixed proxy.
 - **History** lives in `userData/history.json`: normal tabs only, deduplicated with visit
   counts, capped at 3000 entries and 180 days. Private and Tor tabs are never recorded,
-  and Settings → Security clears it.
+  and Settings → Security clears it. With history sync on, clearing also clears it on
+  your other devices.
 
 ---
 
@@ -502,6 +504,43 @@ Tor updates are security updates. The version and per-asset SHA-256 pins live in
 [`scripts/tor-version.json`](./scripts/tor-version.json); `npm run tor:fetch` stages them
 for local packaging, and the release workflow downloads the same pins. The staged bundle
 ships Tor's BSD licence and a source notice alongside the binary.
+
+---
+
+## Sync
+
+Settings → Sync keeps **bookmarks**, **open tabs** and **history** in step across the
+desktop and Android builds. Each is its own switch, and all of them are off until you
+turn them on. Passwords sync separately, in their own vault.
+
+- **Encrypted to you.** Every document is a NIP-78 event (kind 30078) whose content is
+  NIP-44 encrypted to your own key, stored on the same relays the password vault uses
+  (the dedicated vault relay if set, otherwise your relays). Relays see an event's size
+  and when it changes, not what is in it. It needs a signing identity: a remote signer
+  works on desktop, a locally stored identity on Android.
+- **Separate documents.** Bookmarks are `ncc-browser/bookmarks/v1`. History is one
+  document per week, `ncc-browser/history/v1/<week>`, for the last eight weeks only.
+  Open tabs are `ncc-browser/tabs/v1/<device id>`, one per device and written only by
+  that device, so two devices never overwrite each other.
+- **Merging.** Bookmarks merge by address and the newer edit wins; a removal is kept as
+  a tombstone for 90 days so it reaches a device that was offline. History merges by
+  address (newest visit, larger count), and clearing history records a watermark that
+  every device applies. The rules live in `crates/ncc-vault/src/sync.rs` and
+  `src/shared/sync.ts`, which run the same test vectors
+  (`test/fixtures/sync-vectors.json`).
+- **What never syncs.** Private and Tor tabs: no address, no title, no history. Entries
+  with other schemes (such as `nsite://`) stay on the device.
+- **Where it shows up.** Other devices' tabs appear at the end of the browser menu on
+  desktop and under the normal tabs in the Android tab switcher; tapping one opens it
+  in a new tab. Settings → Sync lists your devices, lets you rename this one and remove
+  another (it returns the next time that device syncs).
+- **When it runs.** At startup, when the window regains focus (at most every 30
+  seconds), every five minutes, and about fifteen seconds after a change. Nothing is
+  queued: what still needs sending is whatever differs from the relays at the next
+  sync.
+- **Checking it works.** `test/sync-live.test.ts` and the ignored Rust test
+  `sync::tests::live_round_trip_with_the_desktop_build` run the two builds against a
+  real relay (`nak serve`); their doc comments give the commands.
 
 ---
 
@@ -1010,8 +1049,8 @@ or SmartScreen prompts. The Flatpak bundle declares the flathub
   shared background can still exfiltrate private page content; Tor tabs never run
   extensions. See [`docs/extensions.md`](./docs/extensions.md).
 - **Session restore stores addresses only** — no scroll position, form state or POST
-  results. Bookmarks and sessions are local to this profile and are not synced over
-  Nostr.
+  results. Bookmarks, history and open tab addresses leave the device only when the
+  matching switch in Settings → Sync is on; sessions themselves are not synced.
 - **The title bar is app-drawn.** The window is frameless on every platform, so window
   controls and dragging are part of the chrome rather than the OS theme. Native context
   menus and OS dialogs still follow the system theme even when Light or Dark is pinned.

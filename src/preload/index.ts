@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { NccApi } from '@shared/api'
+import type { SyncStatus } from '@shared/sync-status'
 import type { AutomationState } from '@shared/automation'
 import type { ExtensionsState } from '@shared/extensions'
 import { readAppearanceBootArgument } from '@shared/appearance'
@@ -76,6 +77,19 @@ const api: NccApi = {
   reResolveSite: () => ipcRenderer.invoke('ncc:re-resolve-site'),
   setSearchConfig: (config) => ipcRenderer.invoke('ncc:set-search-config', config),
   setAppearance: (appearance) => ipcRenderer.invoke('ncc:set-appearance', appearance),
+  syncStatus: () => ipcRenderer.invoke('ncc:sync-status'),
+  syncNow: () => ipcRenderer.invoke('ncc:sync-now'),
+  syncConfigure: (patch) => ipcRenderer.invoke('ncc:sync-configure', patch),
+  syncRemoveDevice: (id) => ipcRenderer.invoke('ncc:sync-remove-device', id),
+  syncOpenTab: (url) => ipcRenderer.invoke('ncc:sync-open-tab', url),
+  onSyncStatus: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, status: SyncStatus): void =>
+      listener(status)
+    ipcRenderer.on('ncc:sync-status', handler)
+    return () => {
+      ipcRenderer.removeListener('ncc:sync-status', handler)
+    }
+  },
   passwordsStatus: () => ipcRenderer.invoke('ncc:password-status'),
   passwordsContext: () => ipcRenderer.invoke('ncc:password-context'),
   passwordsUnlock: () => ipcRenderer.invoke('ncc:password-unlock'),

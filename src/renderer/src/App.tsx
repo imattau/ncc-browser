@@ -16,6 +16,7 @@ import type {
   TabHistory
 } from '@shared/types'
 import { ChromeMenu } from './components/ChromeMenu'
+import type { SyncDevice } from '@shared/sync-status'
 import { DownloadsPanel } from './components/DownloadsPanel'
 import { HistoryPanel } from './components/HistoryPanel'
 import { PasswordsPanel } from './components/PasswordsPanel'
@@ -58,6 +59,7 @@ export function App() {
   const [hint, setHint] = useState<string | null>(null)
   const [downloads, setDownloads] = useState<DownloadNotice[]>([])
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([])
+  const [syncDevices, setSyncDevices] = useState<SyncDevice[]>([])
   const [identity, setIdentity] = useState<IdentityStatus | null>(null)
   const [signerRequests, setSignerRequests] = useState<SignerRequest[]>([])
   const signerRequest = signerRequests[0] ?? null
@@ -297,9 +299,14 @@ export function App() {
       if (alive) setBookmarks(next)
     })
     const offBookmarks = window.ncc.onBookmarks(setBookmarks)
+    void window.ncc.syncStatus().then((next) => {
+      if (alive) setSyncDevices(next.devices)
+    })
+    const offSync = window.ncc.onSyncStatus((next) => setSyncDevices(next.devices))
     return () => {
       alive = false
       offBookmarks()
+      offSync()
     }
   }, [])
 
@@ -619,6 +626,11 @@ export function App() {
           onCommand={runCommand}
           onOpenBookmark={openBookmark}
           onRemoveBookmark={removeBookmark}
+          devices={syncDevices}
+          onOpenDeviceTab={(url) => {
+            closeOverlay()
+            void window.ncc.syncOpenTab(url)
+          }}
           onClose={closeOverlay}
         />
       ) : null}

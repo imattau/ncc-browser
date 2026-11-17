@@ -5,6 +5,11 @@ is not a daily driver.
 
 ## New in this build
 
+- Sync between your phone and the desktop build. Settings → Sync can keep bookmarks,
+  open tabs and history in step, each with its own switch, all off until you turn them
+  on. Everything is encrypted to your own Nostr key before it leaves the phone, and
+  private and Tor tabs are never included. Tabs open on your other devices appear under
+  your normal tabs in the tab switcher. It needs an identity stored on this phone.
 - Fixes onion addresses opening to a blank screen. Tor tabs now allow requests to the
   listener port in their own starting URL, even before the shell's port handoff is
   available.

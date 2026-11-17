@@ -28,6 +28,7 @@ pub mod resolve;
 pub mod server;
 pub mod settings;
 pub mod signer;
+pub mod sync;
 pub mod vault;
 pub mod vhost;
 

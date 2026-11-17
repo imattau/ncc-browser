@@ -1,0 +1,525 @@
+{
+  "bookmarks": [
+    {
+      "name": "union, newest first",
+      "now": 100,
+      "local": {
+        "v": 1,
+        "updatedAt": 10,
+        "entries": [
+          {
+            "url": "https://a.example/",
+            "title": "A",
+            "createdAt": 10,
+            "updatedAt": 10
+          }
+        ]
+      },
+      "remote": {
+        "v": 1,
+        "updatedAt": 20,
+        "entries": [
+          {
+            "url": "ncc://npub1xyz/web",
+            "title": "B",
+            "createdAt": 20,
+            "updatedAt": 20
+          }
+        ]
+      },
+      "expect": {
+        "v": 1,
+        "updatedAt": 20,
+        "entries": [
+          {
+            "url": "ncc://npub1xyz/web",
+            "title": "B",
+            "createdAt": 20,
+            "updatedAt": 20
+          },
+          {
+            "url": "https://a.example/",
+            "title": "A",
+            "createdAt": 10,
+            "updatedAt": 10
+          }
+        ]
+      }
+    },
+    {
+      "name": "the newer edit wins",
+      "now": 100,
+      "local": {
+        "v": 1,
+        "updatedAt": 30,
+        "entries": [
+          {
+            "url": "https://a.example/",
+            "title": "New",
+            "createdAt": 10,
+            "updatedAt": 30
+          }
+        ]
+      },
+      "remote": {
+        "v": 1,
+        "updatedAt": 20,
+        "entries": [
+          {
+            "url": "https://a.example/",
+            "title": "Old",
+            "createdAt": 10,
+            "updatedAt": 20
+          }
+        ]
+      },
+      "expect": {
+        "v": 1,
+        "updatedAt": 30,
+        "entries": [
+          {
+            "url": "https://a.example/",
+            "title": "New",
+            "createdAt": 10,
+            "updatedAt": 30
+          }
+        ]
+      }
+    },
+    {
+      "name": "a newer delete beats an older edit",
+      "now": 100,
+      "local": {
+        "v": 1,
+        "updatedAt": 40,
+        "entries": [
+          {
+            "url": "https://a.example/",
+            "title": "A",
+            "createdAt": 10,
+            "updatedAt": 40,
+            "deleted": true
+          }
+        ]
+      },
+      "remote": {
+        "v": 1,
+        "updatedAt": 30,
+        "entries": [
+          {
+            "url": "https://a.example/",
+            "title": "Edited",
+            "createdAt": 10,
+            "updatedAt": 30
+          }
+        ]
+      },
+      "expect": {
+        "v": 1,
+        "updatedAt": 40,
+        "entries": [
+          {
+            "url": "https://a.example/",
+            "title": "A",
+            "createdAt": 10,
+            "updatedAt": 40,
+            "deleted": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "a delete wins a tie",
+      "now": 100,
+      "local": {
+        "v": 1,
+        "updatedAt": 5,
+        "entries": [
+          {
+            "url": "https://a.example/",
+            "title": "A",
+            "createdAt": 1,
+            "updatedAt": 5
+          }
+        ]
+      },
+      "remote": {
+        "v": 1,
+        "updatedAt": 5,
+        "entries": [
+          {
+            "url": "https://a.example/",
+            "title": "A",
+            "createdAt": 1,
+            "updatedAt": 5,
+            "deleted": true
+          }
+        ]
+      },
+      "expect": {
+        "v": 1,
+        "updatedAt": 5,
+        "entries": [
+          {
+            "url": "https://a.example/",
+            "title": "A",
+            "createdAt": 1,
+            "updatedAt": 5,
+            "deleted": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "old tombstones are dropped",
+      "now": 2000000000000,
+      "local": {
+        "v": 1,
+        "updatedAt": 1,
+        "entries": [
+          {
+            "url": "https://a.example/",
+            "title": "A",
+            "createdAt": 1,
+            "updatedAt": 1,
+            "deleted": true
+          }
+        ]
+      },
+      "remote": {
+        "v": 1,
+        "updatedAt": 0,
+        "entries": []
+      },
+      "expect": {
+        "v": 1,
+        "updatedAt": 1,
+        "entries": []
+      }
+    },
+    {
+      "name": "unsafe and untitled entries are cleaned",
+      "now": 100,
+      "local": {
+        "v": 1,
+        "updatedAt": 9,
+        "entries": [
+          {
+            "url": "javascript:alert(1)",
+            "title": "x",
+            "createdAt": 1,
+            "updatedAt": 9
+          },
+          {
+            "url": "https://a.example/",
+            "title": "  ",
+            "createdAt": 3,
+            "updatedAt": 9
+          }
+        ]
+      },
+      "remote": {
+        "v": 1,
+        "updatedAt": 0,
+        "entries": []
+      },
+      "expect": {
+        "v": 1,
+        "updatedAt": 9,
+        "entries": [
+          {
+            "url": "https://a.example/",
+            "title": "https://a.example/",
+            "createdAt": 3,
+            "updatedAt": 9
+          }
+        ]
+      }
+    }
+  ],
+  "history": [
+    {
+      "name": "union with the larger count and newer title",
+      "week": 5,
+      "local": {
+        "v": 1,
+        "week": 5,
+        "clearedBefore": 0,
+        "entries": [
+          {
+            "url": "https://a.example/",
+            "title": "Old title",
+            "visits": 3,
+            "lastVisit": 100
+          },
+          {
+            "url": "ncc://npub1xyz/web",
+            "title": "B",
+            "visits": 1,
+            "lastVisit": 50
+          }
+        ]
+      },
+      "remote": {
+        "v": 1,
+        "week": 5,
+        "clearedBefore": 0,
+        "entries": [
+          {
+            "url": "https://a.example/",
+            "title": "New title",
+            "visits": 2,
+            "lastVisit": 200
+          }
+        ]
+      },
+      "expect": {
+        "v": 1,
+        "week": 5,
+        "clearedBefore": 0,
+        "entries": [
+          {
+            "url": "https://a.example/",
+            "title": "New title",
+            "visits": 3,
+            "lastVisit": 200
+          },
+          {
+            "url": "ncc://npub1xyz/web",
+            "title": "B",
+            "visits": 1,
+            "lastVisit": 50
+          }
+        ]
+      }
+    },
+    {
+      "name": "the clear watermark removes older visits on both sides",
+      "week": 5,
+      "local": {
+        "v": 1,
+        "week": 5,
+        "clearedBefore": 120,
+        "entries": [
+          {
+            "url": "https://a.example/",
+            "title": "A",
+            "visits": 3,
+            "lastVisit": 100
+          }
+        ]
+      },
+      "remote": {
+        "v": 1,
+        "week": 5,
+        "clearedBefore": 0,
+        "entries": [
+          {
+            "url": "ncc://npub1xyz/web",
+            "title": "B",
+            "visits": 1,
+            "lastVisit": 150
+          },
+          {
+            "url": "https://a.example/",
+            "title": "A",
+            "visits": 2,
+            "lastVisit": 90
+          }
+        ]
+      },
+      "expect": {
+        "v": 1,
+        "week": 5,
+        "clearedBefore": 120,
+        "entries": [
+          {
+            "url": "ncc://npub1xyz/web",
+            "title": "B",
+            "visits": 1,
+            "lastVisit": 150
+          }
+        ]
+      }
+    },
+    {
+      "name": "bad rows are dropped and counts are at least one",
+      "week": 5,
+      "local": {
+        "v": 1,
+        "week": 5,
+        "clearedBefore": 0,
+        "entries": [
+          {
+            "url": "file:///etc/passwd",
+            "title": "x",
+            "visits": 1,
+            "lastVisit": 10
+          },
+          {
+            "url": "https://a.example/",
+            "title": "",
+            "visits": 0,
+            "lastVisit": 10
+          }
+        ]
+      },
+      "remote": {
+        "v": 1,
+        "week": 5,
+        "clearedBefore": 0,
+        "entries": []
+      },
+      "expect": {
+        "v": 1,
+        "week": 5,
+        "clearedBefore": 0,
+        "entries": [
+          {
+            "url": "https://a.example/",
+            "title": "https://a.example/",
+            "visits": 1,
+            "lastVisit": 10
+          }
+        ]
+      }
+    }
+  ],
+  "weeks": [
+    {
+      "name": "only weeks inside the window leave the device",
+      "now": 6048000000,
+      "clearedBefore": 0,
+      "entries": [
+        {
+          "url": "https://a.example/",
+          "title": "A",
+          "visits": 2,
+          "lastVisit": 5961600000
+        },
+        {
+          "url": "ncc://npub1xyz/web",
+          "title": "B",
+          "visits": 1,
+          "lastVisit": 3456000000
+        },
+        {
+          "url": "https://old.example/",
+          "title": "Old",
+          "visits": 1,
+          "lastVisit": 86400000
+        }
+      ],
+      "expect": [
+        {
+          "v": 1,
+          "week": 6,
+          "clearedBefore": 0,
+          "entries": [
+            {
+              "url": "ncc://npub1xyz/web",
+              "title": "B",
+              "visits": 1,
+              "lastVisit": 3456000000
+            }
+          ]
+        },
+        {
+          "v": 1,
+          "week": 10,
+          "clearedBefore": 0,
+          "entries": [
+            {
+              "url": "https://a.example/",
+              "title": "A",
+              "visits": 2,
+              "lastVisit": 5961600000
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a clear reaches every week in the window",
+      "now": 6048000000,
+      "clearedBefore": 3500000000,
+      "entries": [
+        {
+          "url": "https://a.example/",
+          "title": "A",
+          "visits": 2,
+          "lastVisit": 5961600000
+        },
+        {
+          "url": "ncc://npub1xyz/web",
+          "title": "B",
+          "visits": 1,
+          "lastVisit": 3456000000
+        },
+        {
+          "url": "https://old.example/",
+          "title": "Old",
+          "visits": 1,
+          "lastVisit": 86400000
+        }
+      ],
+      "expect": [
+        {
+          "v": 1,
+          "week": 3,
+          "clearedBefore": 3500000000,
+          "entries": []
+        },
+        {
+          "v": 1,
+          "week": 4,
+          "clearedBefore": 3500000000,
+          "entries": []
+        },
+        {
+          "v": 1,
+          "week": 5,
+          "clearedBefore": 3500000000,
+          "entries": []
+        },
+        {
+          "v": 1,
+          "week": 6,
+          "clearedBefore": 3500000000,
+          "entries": []
+        },
+        {
+          "v": 1,
+          "week": 7,
+          "clearedBefore": 3500000000,
+          "entries": []
+        },
+        {
+          "v": 1,
+          "week": 8,
+          "clearedBefore": 3500000000,
+          "entries": []
+        },
+        {
+          "v": 1,
+          "week": 9,
+          "clearedBefore": 3500000000,
+          "entries": []
+        },
+        {
+          "v": 1,
+          "week": 10,
+          "clearedBefore": 3500000000,
+          "entries": [
+            {
+              "url": "https://a.example/",
+              "title": "A",
+              "visits": 2,
+              "lastVisit": 5961600000
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

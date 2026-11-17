@@ -1,13 +1,15 @@
 /**
  * Local browsing history for address-bar suggestions.
  *
- * Only normal tabs are ever recorded. Private and Tor sessions never touch this file,
- * and nothing is published or synced. Titles are user-visible page titles, not NCC
- * resolution details.
+ * Only normal tabs are ever recorded. Private and Tor sessions never touch this file.
+ * Nothing leaves the device unless history sync is switched on, and then only the last
+ * few weeks as NIP-44 documents encrypted to the person's own key (`src/main/sync`).
+ * Titles are user-visible page titles, not NCC resolution details.
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
+import type { SyncVisit } from '@shared/sync'
 
 export interface BrowsingEntry {
   url: string
@@ -20,6 +22,8 @@ export interface BrowsingEntry {
 interface HistoryFile {
   version: 1
   entries: BrowsingEntry[]
+  /** Visits at or before this time were cleared; sync spreads that to other devices. */
+  clearedBefore?: number
 }
 
 const FILE_VERSION = 1
@@ -56,6 +60,9 @@ function isEntry(value: unknown): value is BrowsingEntry {
 
 export class HistoryStore {
   private entries: BrowsingEntry[] | null = null
+  private cleared = 0
+  /** Called after every change a person made, so sync can follow. */
+  onChange: (() => void) | null = null
 
   constructor(
     private readonly filePath: string,
@@ -119,8 +126,60 @@ export class HistoryStore {
   }
 
   clear(): void {
+    this.cleared = this.now()
     this.entries = []
     this.flush(this.entries)
+  }
+
+  get clearedBefore(): number {
+    this.load()
+    return this.cleared
+  }
+
+  /** Entries in the shape sync merges. */
+  syncEntries(): SyncVisit[] {
+    return this.load().map((entry) => ({
+      url: entry.url,
+      title: entry.title,
+      visits: entry.visits,
+      lastVisit: entry.lastVisit
+    }))
+  }
+
+  /** Adopt a merged history. Returns true when anything changed. */
+  applySync(entries: SyncVisit[], clearedBefore: number): boolean {
+    const current = this.load()
+    const byUrl = new Map<string, BrowsingEntry>(current.map((entry) => [entry.url, entry]))
+    const cleared = Math.max(this.cleared, clearedBefore)
+    let changed = cleared !== this.cleared
+    this.cleared = cleared
+    for (const entry of entries) {
+      if (entry.lastVisit <= cleared || !isRecordableUrl(entry.url)) continue
+      const existing = byUrl.get(entry.url)
+      if (!existing) {
+        byUrl.set(entry.url, { ...entry })
+        changed = true
+        continue
+      }
+      if (
+        entry.lastVisit > existing.lastVisit ||
+        entry.visits > existing.visits ||
+        (entry.lastVisit === existing.lastVisit && entry.title !== existing.title)
+      ) {
+        existing.visits = Math.max(existing.visits, entry.visits)
+        if (entry.lastVisit >= existing.lastVisit) existing.title = entry.title
+        existing.lastVisit = Math.max(existing.lastVisit, entry.lastVisit)
+        changed = true
+      }
+    }
+    const next = [...byUrl.values()].filter((entry) => entry.lastVisit > cleared)
+    if (next.length !== byUrl.size) changed = true
+    if (!changed) return false
+    next.sort((a, b) => b.lastVisit - a.lastVisit)
+    this.entries = next
+    this.prune(this.entries, this.now())
+    this.flush(this.entries, false)
+    return true
   }
 
   private load(): BrowsingEntry[] {
@@ -131,6 +190,10 @@ export class HistoryStore {
       const parsed = JSON.parse(readFileSync(this.filePath, 'utf8')) as Partial<HistoryFile>
       if (parsed.version !== FILE_VERSION || !Array.isArray(parsed.entries)) return this.entries
       this.entries = parsed.entries.filter(isEntry).slice(0, MAX_HISTORY_ENTRIES)
+      this.cleared =
+        typeof parsed.clearedBefore === 'number' && Number.isFinite(parsed.clearedBefore)
+          ? parsed.clearedBefore
+          : 0
     } catch (error) {
       console.warn('[history] ignoring unreadable history file:', error)
     }
@@ -145,8 +208,12 @@ export class HistoryStore {
     if (entries.length > MAX_HISTORY_ENTRIES) entries.length = MAX_HISTORY_ENTRIES
   }
 
-  private flush(entries: BrowsingEntry[]): void {
-    const payload: HistoryFile = { version: FILE_VERSION, entries }
+  private flush(entries: BrowsingEntry[], notify = true): void {
+    const payload: HistoryFile = {
+      version: FILE_VERSION,
+      entries,
+      ...(this.cleared > 0 ? { clearedBefore: this.cleared } : {})
+    }
     try {
       mkdirSync(dirname(this.filePath), { recursive: true })
       const tmp = `${this.filePath}.tmp`
@@ -155,5 +222,6 @@ export class HistoryStore {
     } catch (error) {
       console.warn('[history] could not write history:', error)
     }
+    if (notify) this.onChange?.()
   }
 }

@@ -630,6 +630,14 @@ textarea {
   flex: 1;
 }
 
+.switch-row > span small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: calc(13px * var(--text-scale));
+  line-height: 1.4;
+}
+
 input.switch {
   appearance: none;
   -webkit-appearance: none;
@@ -1466,6 +1474,17 @@ body[data-bar='top'] .home-bar {
 .list-row .sug {
   flex: 1;
   min-width: 0;
+}
+
+/* A device in the sync list: icon, name and detail, then remove. */
+.list-row > .i:first-child {
+  flex: none;
+  margin: 0 12px 0 4px;
+  color: var(--muted);
+}
+
+.list-row > .row-text {
+  padding: 10px 0;
 }
 
 /* ───────────────────────────── Motion ───────────────────────────── */

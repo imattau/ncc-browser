@@ -29,6 +29,8 @@
         <symbol id="i-settings" viewBox="0 0 24 24"><path d="M21 4h-7" /><path d="M10 4H3" /><path d="M21 12h-9" /><path d="M8 12H3" /><path d="M21 20h-5" /><path d="M12 20H3" /><path d="M14 2v4" /><path d="M8 10v4" /><path d="M16 18v4" /></symbol>
         <symbol id="i-share" viewBox="0 0 24 24"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="m8.59 13.51 6.83 3.98" /><path d="m15.41 6.51-6.82 3.98" /></symbol>
         <symbol id="i-copy" viewBox="0 0 24 24"><rect width="14" height="14" x="8" y="8" rx="2" ry="2" /><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" /></symbol>
+        <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" /><path d="M21 3v5h-5" /><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" /><path d="M8 16H3v5" /></symbol>
+        <symbol id="i-phone" viewBox="0 0 24 24"><rect width="14" height="20" x="5" y="2" rx="2" /><path d="M12 18h.01" /></symbol>
         <symbol id="i-monitor" viewBox="0 0 24 24"><rect width="20" height="14" x="2" y="3" rx="2" /><path d="M8 21h8" /><path d="M12 17v4" /></symbol>
         <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6" /></symbol>
         <symbol id="i-up" viewBox="0 0 24 24"><path d="m18 15-6-6-6 6" /></symbol>
@@ -259,6 +261,11 @@
           <button class="row" type="button" data-panel="passwords">
             <span class="row-icon"><svg class="i"><use href="#i-key" /></svg></span>
             <span class="row-text"><b>Passwords</b><small id="sub-passwords">Saved logins</small></span>
+            <svg class="i chev"><use href="#i-chevron" /></svg>
+          </button>
+          <button class="row" type="button" data-panel="sync">
+            <span class="row-icon"><svg class="i"><use href="#i-refresh" /></svg></span>
+            <span class="row-text"><b>Sync</b><small id="sub-sync">Bookmarks, tabs and history</small></span>
             <svg class="i chev"><use href="#i-chevron" /></svg>
           </button>
         </div>
@@ -574,6 +581,46 @@
         <button id="edit-save" class="btn block" type="button">Save login</button>
         <button id="edit-delete" class="btn tonal block" type="button">Delete login</button>
         <p id="edit-note" class="status" role="status"></p>
+      </div>
+    </section>
+
+    <section id="sync" class="screen" hidden>
+      <header class="appbar">
+        <button class="ib" type="button" data-back aria-label="Back"><svg class="i"><use href="#i-back" /></svg></button>
+        <h2>Sync</h2>
+      </header>
+      <div class="body">
+        <p class="hint">
+          Keep bookmarks, open tabs and history in step with your other devices. Everything is
+          encrypted to your own Nostr key before it leaves this phone and stored on your relays,
+          so only you can read it. Private and Tor tabs are never shared. Passwords sync
+          separately, in their own vault.
+        </p>
+        <p id="sync-identity" class="status" role="status" hidden>
+          Sync is encrypted to your identity. Create or unlock one under Your identity first.
+        </p>
+        <label class="switch-row">
+          <span>Bookmarks<small>Removing one here removes it everywhere.</small></span>
+          <input id="sync-bookmarks" class="switch" type="checkbox" role="switch" />
+        </label>
+        <label class="switch-row">
+          <span>Open tabs<small>Lets your other devices open the tabs you have here.</small></span>
+          <input id="sync-tabs" class="switch" type="checkbox" role="switch" />
+        </label>
+        <label class="switch-row">
+          <span>History<small>The last eight weeks. Clearing history clears it on every device. Relays can see when it changes, not what is in it.</small></span>
+          <input id="sync-history" class="switch" type="checkbox" role="switch" />
+        </label>
+        <button id="sync-now" class="btn tonal block" type="button">Sync now</button>
+        <p id="sync-state" class="status" role="status"></p>
+
+        <label class="field">
+          <span>This device</span>
+          <input id="sync-device-name" type="text" maxlength="80" autocomplete="off" />
+        </label>
+
+        <p class="section-label">Your other devices</p>
+        <div id="sync-devices" class="card"></div>
       </div>
     </section>
 

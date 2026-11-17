@@ -1,0 +1,195 @@
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { describe, expect, it } from 'vitest'
+import {
+  finalizeEvent,
+  generateSecretKey,
+  getPublicKey,
+  nip44,
+  type Event,
+  type EventTemplate,
+  type Filter
+} from 'nostr-tools'
+import { BookmarkStore } from '../src/main/bookmarks'
+import { HistoryStore } from '../src/main/history'
+import { SyncPrefsStore } from '../src/main/sync/prefs'
+import { SyncService } from '../src/main/sync/service'
+import type { SyncStatus } from '../src/shared/sync-status'
+import type { SyncTab } from '../src/shared/sync'
+
+const sk = generateSecretKey()
+const pk = getPublicKey(sk)
+const key = nip44.getConversationKey(sk, pk)
+
+const provider = {
+  getPublicKey: async () => pk,
+  signEvent: async (template: EventTemplate) => finalizeEvent(template, sk),
+  nip44Encrypt: async (_peer: string, plaintext: string) => nip44.encrypt(plaintext, key),
+  nip44Decrypt: async (_peer: string, ciphertext: string) => nip44.decrypt(ciphertext, key)
+}
+
+/** One in-memory relay shared by every "device", replacing events by `d` like a relay does. */
+function relay() {
+  const store = new Map<string, Event>()
+  const published: string[] = []
+  const query = async (_relays: string[], filter: Filter): Promise<Event[]> =>
+    [...store.values()].filter(
+      (event) =>
+        event.kind === filter.kinds?.[0] &&
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === filter['#t']?.[0])
+    )
+  return {
+    store,
+    published,
+    pool: {
+      query,
+      queryAuth: query,
+      publishWithAuth: async (_url: string, event: Event): Promise<string> => {
+        const d = event.tags.find((tag) => tag[0] === 'd')?.[1] ?? ''
+        const current = store.get(d)
+        if (!current || current.created_at <= event.created_at) store.set(d, event)
+        published.push(d)
+        return 'ok'
+      }
+    }
+  }
+}
+
+function device(
+  shared: ReturnType<typeof relay>,
+  name: string,
+  platform: string,
+  clock: { now: number },
+  tabs: SyncTab[] = []
+) {
+  const dir = mkdtempSync(join(tmpdir(), 'ncc-sync-'))
+  const bookmarks = new BookmarkStore(join(dir, 'bookmarks.json'), () => clock.now)
+  const history = new HistoryStore(join(dir, 'history.json'), () => clock.now)
+  const prefs = new SyncPrefsStore(join(dir, 'sync.json'))
+  const statuses: SyncStatus[] = []
+  const service = new SyncService({
+    prefs,
+    identity: { provider: () => provider },
+    relays: shared.pool,
+    resolveRelays: async () => ['wss://relay.test'],
+    bookmarks,
+    history,
+    tabs: () => tabs,
+    notify: (status) => statuses.push(status),
+    platform,
+    now: () => clock.now
+  })
+  prefs.update({ deviceName: name })
+  return { bookmarks, history, prefs, service, statuses }
+}
+
+const all = { bookmarks: true, tabs: true, history: true }
+
+describe('SyncService', () => {
+  it('does nothing until a category is switched on', async () => {
+    const shared = relay()
+    const clock = { now: 1_800_000_000_000 }
+    const a = device(shared, 'Laptop', 'linux', clock)
+    a.bookmarks.add('https://a.example/', 'A')
+    await a.service.syncNow()
+    expect(shared.published).toEqual([])
+  })
+
+  it('shares bookmarks, history and tabs between two devices', async () => {
+    const shared = relay()
+    const clock = { now: 1_800_000_000_000 }
+    const a = device(shared, 'Laptop', 'linux', clock, [
+      { url: 'https://tab.example/', title: 'A tab', lastActive: clock.now }
+    ])
+    const b = device(shared, 'Phone', 'android', clock)
+
+    a.bookmarks.add('https://a.example/', 'A')
+    a.history.record('https://visited.example/', 'Visited')
+    await a.service.configure({ categories: all })
+    expect(shared.published.some((d) => d.includes('bookmarks'))).toBe(true)
+    expect(shared.published.some((d) => d.includes('history'))).toBe(true)
+    expect(shared.published.some((d) => d.includes('tabs'))).toBe(true)
+
+    // The relay only ever holds ciphertext.
+    for (const event of shared.store.values()) {
+      expect(event.content).not.toContain('a.example')
+      expect(event.content).not.toContain('visited.example')
+    }
+
+    await b.service.configure({ categories: all })
+    expect(b.bookmarks.list().map((entry) => entry.url)).toEqual(['https://a.example/'])
+    expect(b.history.list().map((entry) => entry.url)).toEqual(['https://visited.example/'])
+    const devices = b.service.status().devices
+    expect(devices.map((entry) => entry.name)).toEqual(['Laptop'])
+    expect(devices[0]?.tabs).toEqual([{ url: 'https://tab.example/', title: 'A tab' }])
+  })
+
+  it('carries a bookmark removal and a history clear to the other device', async () => {
+    const shared = relay()
+    const clock = { now: 1_800_000_000_000 }
+    const a = device(shared, 'Laptop', 'linux', clock)
+    const b = device(shared, 'Phone', 'android', clock)
+    a.bookmarks.add('https://a.example/', 'A')
+    a.history.record('https://visited.example/', 'Visited')
+    await a.service.configure({ categories: all })
+    await b.service.configure({ categories: all })
+    expect(b.bookmarks.list()).toHaveLength(1)
+
+    clock.now += 60_000
+    b.bookmarks.remove('https://a.example/')
+    b.history.clear()
+    await b.service.syncNow()
+
+    clock.now += 60_000
+    await a.service.syncNow()
+    expect(a.bookmarks.list()).toEqual([])
+    expect(a.history.list()).toEqual([])
+  })
+
+  it('does not publish again when nothing changed', async () => {
+    const shared = relay()
+    const clock = { now: 1_800_000_000_000 }
+    const a = device(shared, 'Laptop', 'linux', clock)
+    a.bookmarks.add('https://a.example/', 'A')
+    await a.service.configure({ categories: { bookmarks: true } })
+    const count = shared.published.length
+    clock.now += 60_000
+    await a.service.syncNow()
+    expect(shared.published.length).toBe(count)
+  })
+
+  it('never publishes a category that is off', async () => {
+    const shared = relay()
+    const clock = { now: 1_800_000_000_000 }
+    const a = device(shared, 'Laptop', 'linux', clock)
+    a.history.record('https://visited.example/', 'Visited')
+    a.bookmarks.add('https://a.example/', 'A')
+    await a.service.configure({ categories: { bookmarks: true } })
+    expect(shared.published.every((d) => d.includes('bookmarks'))).toBe(true)
+  })
+
+  it('ignores a forged event signed by someone else', async () => {
+    const shared = relay()
+    const clock = { now: 1_800_000_000_000 }
+    const a = device(shared, 'Laptop', 'linux', clock)
+    const other = generateSecretKey()
+    const forged = finalizeEvent(
+      {
+        kind: 30078,
+        created_at: 2_000_000_000,
+        tags: [
+          ['d', 'ncc-browser/bookmarks/v1'],
+          ['t', 'ncc-browser/sync']
+        ],
+        content: 'junk'
+      },
+      other
+    )
+    shared.store.set('ncc-browser/bookmarks/v1', forged)
+    a.bookmarks.add('https://a.example/', 'A')
+    await a.service.configure({ categories: { bookmarks: true } })
+    expect(a.service.status().error).toBeNull()
+    expect(a.bookmarks.list()).toHaveLength(1)
+  })
+})
