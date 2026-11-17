@@ -3,7 +3,7 @@
 **Alpha.** An early build published so the browser can be tested on a real device. It
 is not a daily driver.
 
-## Fixes in 0.33.8
+## Fixes in 0.33.9
 
 - Profile pictures now load for the images people actually use. The app previously gave
   up on anything over 256 KB (most avatars), sent no User-Agent (some image hosts then
