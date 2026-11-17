@@ -14,7 +14,7 @@ name = "ncc_navigator_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2.7.4" }
+tauri-build = { version = "2.7.4", features = [] }
 
 [dependencies]
 jni = "0.21.1"
@@ -26,7 +26,7 @@ ncc-vault = { path = "../crates/ncc-vault" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 log = "0.4"
-tauri = { version = "2.12.5" }
+tauri = { version = "2.12.5", features = [] }
 tauri-plugin-log = "2"
 tokio = { version = "1", features = ["net", "rt"] }
 url = "2"
