@@ -118,6 +118,9 @@ pub struct Settings {
     /// The SOCKS endpoint for `local` mode. Validated on the way in, because a proxy
     /// URL that does not parse would leave Tor tabs with no route and no reason.
     pub tor_socks: String,
+    /// Build the Tor route when the app starts, so the first Tor tab does not wait.
+    /// Off means Tor stays untouched until a Tor tab asks for it.
+    pub tor_on_launch: bool,
     /// The password manager. The vault's data lives elsewhere; these are its rules.
     pub passwords: PasswordSettings,
 }
@@ -140,6 +143,7 @@ impl Default for Settings {
             search_engine_custom: String::new(),
             tor_mode: TorMode::default(),
             tor_socks: "socks5h://127.0.0.1:9050".to_string(),
+            tor_on_launch: true,
             passwords: PasswordSettings::default(),
         }
     }
@@ -388,6 +392,12 @@ impl SettingsStore {
         self.apply(settings)
     }
 
+    pub fn set_tor_on_launch(&self, value: bool) -> Result<Settings, String> {
+        let mut settings = self.get();
+        settings.tor_on_launch = value;
+        self.apply(settings)
+    }
+
     pub fn set_passwords(&self, passwords: PasswordSettings) -> Result<Settings, String> {
         let mut settings = self.get();
         settings.passwords = passwords;
@@ -512,6 +522,16 @@ mod tests {
             .set_search("nonsense".into(), String::new())
             .expect("fallback");
         assert_eq!(fallback.search_engine, "duckduckgo");
+    }
+
+    #[test]
+    fn tor_starts_on_launch_by_default_and_can_be_turned_off() {
+        let store = SettingsStore::in_memory(Settings::default());
+        assert!(store.get().tor_on_launch);
+        assert!(!store.set_tor_on_launch(false).expect("off").tor_on_launch);
+        // An older settings file has no such field and gets the default.
+        let old: Settings = serde_json::from_str("{}").expect("parse");
+        assert!(old.tor_on_launch);
     }
 
     #[test]

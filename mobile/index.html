@@ -490,13 +490,20 @@
           <span>SOCKS proxy</span>
           <input id="tor-socks" type="text" inputmode="url" autocomplete="off" spellcheck="false" />
         </label>
+        <label class="switch-row">
+          <span>Start Tor when the app opens</span>
+          <input id="tor-on-launch" class="switch" type="checkbox" role="switch" />
+        </label>
+        <p class="hint">
+          On, Tor tabs are ready straight away. Off, the app never contacts the Tor
+          network until you open a Tor tab.
+        </p>
         <button id="tor-save" class="btn block" type="button">Save</button>
         <button id="tor-refresh" class="btn tonal block" type="button">Check again</button>
         <p id="tor-note" class="status" role="status"></p>
         <p class="hint">
-          Tor tabs load .onion sites only, and nothing they fetch is cached or written
-          down. Signal, mail and telephone links still leave the app; clearnet links in
-          a Tor tab are refused rather than fetched.
+          Tor tabs load .onion and https:// sites through Tor, and nothing they fetch is
+          cached or written down. Signal, mail and telephone links still leave the app.
         </p>
       </div>
     </section>

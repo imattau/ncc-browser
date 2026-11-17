@@ -1450,8 +1450,8 @@ async function navigate(text, { newTab = false, private: isPrivate = false, tor 
   if (onion) {
     if (!torPort) return { error: 'Tor is not available in this build.' }
 
-    // Tor starts when the app launches, so this is normally a no-op; it also restarts
-    // a route that failed.
+    // Tor starts at launch unless that setting is off; either way this starts it if
+    // it is not running, and restarts a route that failed.
     try {
       await invoke('tor_prepare')
     } catch {
@@ -2999,6 +2999,7 @@ async function loadTor() {
     browserSettings = await invoke('browser_settings')
     byId('tor-mode').value = browserSettings.torMode === 'local' ? 'local' : 'auto'
     byId('tor-socks').value = browserSettings.torSocks
+    byId('tor-on-launch').checked = browserSettings.torOnLaunch !== false
   } catch (error) {
     byId('tor-note').textContent = String(error)
   }
@@ -3010,6 +3011,9 @@ async function saveTor() {
     browserSettings = await invoke('settings_set_tor', {
       mode: byId('tor-mode').value,
       socks: byId('tor-socks').value.trim()
+    })
+    browserSettings = await invoke('settings_set_tor_on_launch', {
+      value: byId('tor-on-launch').checked
     })
     byId('tor-note').textContent = 'Saved. The new route is used once it is ready.'
     await refreshTorState()

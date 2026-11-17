@@ -493,6 +493,21 @@ async fn settings_set_tor(
 }
 
 #[tauri::command]
+fn settings_set_tor_on_launch(
+    state: tauri::State<'_, SignerState>,
+    tor_handle: tauri::State<'_, TorHandle>,
+    value: bool,
+) -> Result<Settings, String> {
+    let saved = state.proxy.settings().set_tor_on_launch(value)?;
+    if value {
+        if let Some(tor) = tor_handle.0.as_ref() {
+            tor.prepare();
+        }
+    }
+    Ok(saved)
+}
+
+#[tauri::command]
 fn settings_set_gossip(
     state: tauri::State<'_, SignerState>,
     value: bool,
@@ -1059,6 +1074,7 @@ pub fn run() {
             protection_filters_status,
             protection_update_filters,
             settings_set_gossip,
+            settings_set_tor_on_launch,
             signer_permissions,
             signer_trust,
             site_forget_trust,
@@ -1168,8 +1184,10 @@ pub fn run() {
 
             // Start building the route now, so the first Tor tab finds it ready instead
             // of waiting on bootstrap. `prepare` is idempotent and returns at once.
-            if let Some(tor) = tor.as_ref() {
-                tor.prepare();
+            if settings.get().tor_on_launch {
+                if let Some(tor) = tor.as_ref() {
+                    tor.prepare();
+                }
             }
 
             let mut tor_state: Option<Arc<ProxyState>> = None;
