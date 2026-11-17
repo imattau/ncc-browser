@@ -1525,6 +1525,28 @@ export function SettingsPage({
                 </p>
               </div>
 
+              <a
+                href="https://armada.buzz/invite/naddr1qvzqqqyzz5pzqcqnl9zh37eh4xc4sqgnpvu3escpyxln2c68dd56whn7fu72yje6qqqqtnvsan#BAFVF1BNlW240eS5UPbcx66r"
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-3 rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-4 transition-colors hover:border-[color:var(--color-text-soft)] hover:bg-[color:var(--color-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
+              >
+                <img
+                  src="https://armada.buzz/favicon.ico"
+                  alt=""
+                  aria-hidden="true"
+                  className="h-10 w-10 rounded-lg"
+                />
+                <span className="min-w-0">
+                  <span className="block text-ui-12 font-medium text-[color:var(--color-text-strong)]">
+                    Discuss on Armada
+                  </span>
+                  <span className="mt-0.5 block text-ui-11 text-[color:var(--color-muted)]">
+                    Join the Nostr Navigator community
+                  </span>
+                </span>
+              </a>
+
               <div className="space-y-3 rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-4 text-ui-115 leading-relaxed text-[color:var(--color-muted)]">
                 <p>
                   An <span className="font-mono text-[color:var(--color-text)]">ncc://npub…/service</span>{' '}
