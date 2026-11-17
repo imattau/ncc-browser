@@ -22,6 +22,7 @@ pub mod cache;
 pub mod inject;
 pub mod nsite;
 pub mod onion;
+pub mod own_relays;
 pub mod pins;
 pub mod relay;
 pub mod resolve;

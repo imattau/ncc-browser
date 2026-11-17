@@ -506,6 +506,10 @@
           <span>Vault relay (optional)</span>
           <input id="vault-relay" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="wss://relay.example" />
         </label>
+        <label class="switch-row">
+          <span>Also use my own relay list (NIP-65)<small>Passwords and sync also use the relays you publish to, so they match the desktop build. A vault relay above replaces both.</small></span>
+          <input id="vault-nip65" class="switch" type="checkbox" role="switch" />
+        </label>
         <button id="vault-save-config" class="btn block" type="button">Save settings</button>
         <p id="vault-note" class="status" role="status"></p>
 

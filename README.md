@@ -514,8 +514,10 @@ desktop and Android builds. Each is its own switch, and all of them are off unti
 turn them on. Passwords sync separately, in their own vault.
 
 - **Encrypted to you.** Every document is a NIP-78 event (kind 30078) whose content is
-  NIP-44 encrypted to your own key, stored on the same relays the password vault uses
-  (the dedicated vault relay if set, otherwise your relays). Relays see an event's size
+  NIP-44 encrypted to your own key, stored on the same relays the password vault uses:
+  the dedicated vault relay if one is set, otherwise your configured relays plus the
+  write relays from your own NIP-65 relay list (on by default; Settings → Passwords on
+  either build turns it off). Relays see an event's size
   and when it changes, not what is in it. It needs a signing identity: a remote signer
   works on desktop, a locally stored identity on Android.
 - **Separate documents.** Bookmarks are `ncc-browser/bookmarks/v1`. History is one

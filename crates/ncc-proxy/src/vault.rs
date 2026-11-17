@@ -21,6 +21,7 @@ use ncc_vault::{
     VAULT_VERSION,
 };
 
+use crate::own_relays::OwnRelays;
 use crate::relay::{self, Signer};
 use crate::settings::SettingsStore;
 
@@ -45,6 +46,7 @@ pub struct VaultStatus {
     pub auto_lock_minutes: u32,
     pub offer_save: bool,
     pub vault_relay: String,
+    pub use_nip65: bool,
     pub never_save: Vec<String>,
     pub error: Option<String>,
 }
@@ -121,6 +123,7 @@ struct State {
 pub struct VaultService {
     identity: Arc<IdentityStore>,
     settings: Arc<SettingsStore>,
+    own_relays: OwnRelays,
     cache: Mutex<PasswordCache>,
     state: Mutex<State>,
     now: Arc<dyn Fn() -> u64 + Send + Sync>,
@@ -144,6 +147,7 @@ impl VaultService {
         Self {
             identity,
             settings,
+            own_relays: OwnRelays::default(),
             cache: Mutex::new(PasswordCache::open(cache_path)),
             state: Mutex::new(State::default()),
             now,
@@ -219,22 +223,21 @@ impl VaultService {
             auto_lock_minutes: settings.auto_lock_minutes,
             offer_save: settings.offer_save,
             vault_relay: settings.vault_relay,
+            use_nip65: settings.use_nip65,
             never_save: settings.never_save,
             error: state.error.clone(),
         }
     }
 
-    /// The relays the vault uses: a dedicated one if configured, otherwise the browser's
-    /// own list. NIP-65 write-relay discovery is not implemented on this shell, so the
-    /// configured list is the honest answer.
+    /// The relays shown in the settings: what is known without asking anyone.
     fn relays(&self) -> Vec<String> {
-        let settings = self.settings.get();
-        let dedicated = settings.passwords.vault_relay.trim();
-        if dedicated.is_empty() {
-            settings.relays
-        } else {
-            vec![dedicated.to_string()]
-        }
+        self.own_relays.known(&self.settings.get())
+    }
+
+    /// The relays to talk to: a dedicated vault relay alone, otherwise the configured
+    /// list plus your own NIP-65 write relays (see `own_relays`).
+    async fn network_relays(&self, pubkey: &str) -> Vec<String> {
+        self.own_relays.resolve(&self.settings.get(), pubkey).await
     }
 
     fn require_pubkey(&self) -> Result<String, String> {
@@ -784,7 +787,7 @@ impl VaultService {
     /// Merge the newest relay copy into memory. Called before a write, so a save never
     /// clobbers an entry another device added.
     async fn ensure_latest(&self, pubkey: &str) {
-        let relays = self.relays();
+        let relays = self.network_relays(pubkey).await;
         if relays.is_empty() {
             return;
         }
@@ -834,7 +837,7 @@ impl VaultService {
     /// Pull the relay copy and publish the union when the remote had entries we lacked.
     async fn sync(&self, publish_merged: bool) -> Result<(), String> {
         let pubkey = self.require_pubkey()?;
-        let relays = self.relays();
+        let relays = self.network_relays(&pubkey).await;
         if relays.is_empty() {
             return Ok(());
         }
@@ -1001,7 +1004,7 @@ impl VaultService {
             ));
         }
 
-        let relays = self.relays();
+        let relays = self.network_relays(pubkey).await;
         if relays.is_empty() {
             return Err("No vault relay is configured".to_string());
         }

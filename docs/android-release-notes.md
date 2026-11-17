@@ -5,6 +5,10 @@ is not a daily driver.
 
 ## New in this build
 
+- Passwords and sync now also use your own relay list (NIP-65), as the desktop build
+  does, so a login or bookmark saved on one device is looked for on the relays the
+  other device published to. It is on by default; Settings → Passwords has a switch,
+  and a vault relay still overrides everything.
 - Password sync now tells you when it could not reach a relay. Before, unlocking with
   no relay reachable looked like a successful sync.
 - A login saved while you were offline is now sent as soon as a relay is reachable

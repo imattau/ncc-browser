@@ -21,6 +21,7 @@ use ncc_vault::sync::{
     DEVICE_STALE_MS, SYNC_CLIENT, SYNC_KIND, SYNC_TAG, SYNC_VERSION,
 };
 
+use crate::own_relays::OwnRelays;
 use crate::relay::{self, Signer};
 use crate::settings::SettingsStore;
 
@@ -227,6 +228,7 @@ fn same<T: Serialize>(a: &T, b: &T) -> bool {
 pub struct SyncService {
     identity: Arc<IdentityStore>,
     settings: Arc<SettingsStore>,
+    own_relays: OwnRelays,
     last_created: Mutex<HashMap<String, u64>>,
     last_tabs_key: Mutex<Option<String>>,
     busy: tokio::sync::Mutex<()>,
@@ -237,21 +239,17 @@ impl SyncService {
         Self {
             identity,
             settings,
+            own_relays: OwnRelays::default(),
             last_created: Mutex::new(HashMap::new()),
             last_tabs_key: Mutex::new(None),
             busy: tokio::sync::Mutex::new(()),
         }
     }
 
-    /// The same relays the vault uses, so one setting covers both.
-    fn relays(&self) -> Vec<String> {
-        let settings = self.settings.get();
-        let dedicated = settings.passwords.vault_relay.trim();
-        if dedicated.is_empty() {
-            settings.relays
-        } else {
-            vec![dedicated.to_string()]
-        }
+    /// The same relays the vault uses (a dedicated vault relay, or the configured list
+    /// plus your NIP-65 write relays), so one setting covers both.
+    async fn relays(&self, pubkey: &str) -> Vec<String> {
+        self.own_relays.resolve(&self.settings.get(), pubkey).await
     }
 
     fn signer(&self) -> Signer {
@@ -274,7 +272,7 @@ impl SyncService {
     pub async fn exchange(&self, request: SyncRequest) -> Result<SyncResponse, String> {
         let _guard = self.busy.lock().await;
         let pubkey = self.pubkey()?;
-        let relays = self.relays();
+        let relays = self.relays(&pubkey).await;
         if relays.is_empty() {
             return Err("No relay is configured for sync".to_string());
         }
@@ -315,7 +313,7 @@ impl SyncService {
     pub async fn remove_device(&self, device: DeviceInfo, now: u64) -> Result<(), String> {
         let _guard = self.busy.lock().await;
         let pubkey = self.pubkey()?;
-        let relays = self.relays();
+        let relays = self.relays(&pubkey).await;
         let latest = self.fetch(&relays, &pubkey).await?;
         {
             let mut created = self.last_created();

@@ -44,6 +44,9 @@ pub struct PasswordSettings {
     pub offer_save: bool,
     /// When set, the vault uses only this relay and skips the browser's list.
     pub vault_relay: String,
+    /// Also use the write relays from your own NIP-65 relay list for the vault and sync,
+    /// as the desktop build does.
+    pub use_nip65: bool,
     /// Origins the user chose never to save for.
     pub never_save: Vec<String>,
 }
@@ -54,6 +57,7 @@ impl Default for PasswordSettings {
             auto_lock_minutes: 15,
             offer_save: true,
             vault_relay: String::new(),
+            use_nip65: true,
             never_save: Vec::new(),
         }
     }

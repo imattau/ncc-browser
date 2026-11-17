@@ -2994,6 +2994,7 @@ async function loadPasswords() {
     byId('vault-lock-minutes').value = String(vaultStatus.autoLockMinutes)
     byId('vault-offer-save').checked = vaultStatus.offerSave
     byId('vault-relay').value = vaultStatus.vaultRelay || ''
+    byId('vault-nip65').checked = vaultStatus.useNip65 !== false
     renderNeverSave(vaultStatus.neverSave || [])
     set(
       'sub-passwords',
@@ -3107,6 +3108,7 @@ async function saveVaultConfig() {
       ),
       offerSave: byId('vault-offer-save').checked,
       vaultRelay: byId('vault-relay').value.trim(),
+      useNip65: byId('vault-nip65').checked,
       neverSave: vaultStatus?.neverSave || []
     }
     await invoke('vault_config', { passwords })
