@@ -4,8 +4,9 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { McpHandler } from '../src/main/automation/mcp'
 import { AutomationServer } from '../src/main/automation/server'
-import { ApprovalGate } from '../src/main/automation/gate'
+import { ApprovalGate, ApprovalPendingError } from '../src/main/automation/gate'
 import { siteOf } from '../src/main/automation/site'
+import { TOOLS } from '../src/main/automation/tools'
 import type {
   AutomationContents,
   AutomationGate,
@@ -229,6 +230,48 @@ describe('ApprovalGate', () => {
       instance.authorize('https://a.test', 'type')
     ])
     expect(count()).toBe(1)
+  })
+
+  it('reports a still-open prompt instead of blocking, and lists it', async () => {
+    let answer: (decision: SignerDecision) => void = () => undefined
+    const instance = new ApprovalGate(
+      { request: () => new Promise<SignerDecision>((resolve) => (answer = resolve)) },
+      { waitMs: 10, now: () => 1000 }
+    )
+    await expect(instance.authorize('https://a.test', 'navigate')).rejects.toBeInstanceOf(
+      ApprovalPendingError
+    )
+    expect(instance.pending()).toEqual([{ site: 'https://a.test', action: 'navigate', since: 1000 }])
+
+    // The same prompt is reused on a repeat call, and the user's answer is honoured.
+    const repeat = instance.authorize('https://a.test', 'navigate')
+    answer({ allow: true, remember: true })
+    expect(await repeat).toBe(true)
+    expect(instance.pending()).toEqual([])
+    expect(instance.grants()).toEqual(['https://a.test'])
+  })
+
+  it('exposes status and revoke tools that cannot grant access', async () => {
+    const real = new ApprovalGate(
+      { request: async () => ({ allow: true, remember: true }) },
+      { waitMs: 0 }
+    )
+    await real.authorize('https://a.test', 'click')
+    const handler = new McpHandler(fakeHost().host, real, { name: 't', version: '0' })
+    const call = async (name: string, args: Record<string, unknown> = {}) =>
+      (await handler.handle(rpc('tools/call', { name, arguments: args })))?.result as {
+        isError?: boolean
+        content: Array<{ text: string }>
+      }
+
+    const status = await call('approvals_status')
+    expect(JSON.parse(status.content[0]!.text).allowedForSession).toEqual(['https://a.test'])
+    expect((await call('approvals_revoke', { site: 'https://never.test' })).isError).toBe(true)
+    expect((await call('approvals_revoke', { site: 'https://a.test' })).isError).toBeUndefined()
+    expect(real.grants()).toEqual([])
+
+    const names = TOOLS.map((tool) => tool.name)
+    expect(names.some((name) => /approve|allow|grant/i.test(name))).toBe(false)
   })
 
   it('blocks tool calls when the gate denies', async () => {

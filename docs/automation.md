@@ -31,7 +31,12 @@ XDG_CONFIG_HOME=/tmp/ncc-scratch NCC_AUTOMATION=1 npm run dev
 
 `tabs_list`, `tab_new`, `tab_close`, `navigate`, `read_page` (numbered interactive
 elements), `get_page_text`, `get_console_logs`, `screenshot`, `click`, `hover`, `type`,
-`press_key`, `scroll`, `evaluate`.
+`press_key`, `scroll`, `evaluate`, `approvals_status`, `approvals_revoke`.
+
+`approvals_status` lists the sites allowed for the session and the Agent control prompts
+still waiting for the user. `approvals_revoke` withdraws a session grant. Neither can
+grant access: there is deliberately no tool to answer a prompt, so only the user can allow
+an agent onto a site.
 
 `get_console_logs` returns recent renderer console messages and main-frame load errors
 captured in memory for the tab (up to 300 entries). It only returns entries from the
@@ -46,6 +51,10 @@ that one pending action; ticking **Allow for this session** also remembers the s
 the browser quits. **Deny** (or no answer in two minutes) returns an error telling the
 agent not to retry. Navigating to another site asks again. `tabs_list` and `tab_close`
 never prompt.
+
+A tool call waits up to 25 seconds for the answer. If the prompt is still open it returns
+an error saying so, and leaves the prompt in place; the agent should ask the user to answer
+it and then repeat the call. Repeat calls reuse the same prompt.
 
 `NCC_AUTOMATION_AUTO_APPROVE=1` skips the prompt, for scripted tests only. **Stop agent**
 in Settings revokes every session grant at once; each site can also be revoked on its own.

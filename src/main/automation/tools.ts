@@ -85,6 +85,42 @@ async function pointFor(
 
 export const TOOLS: ToolDefinition[] = [
   {
+    name: 'approvals_status',
+    description:
+      'Show which sites the user has allowed this agent to control for the session, and which Agent control prompts are still waiting for the user. Read-only: only the user can answer a prompt, in the browser window. Use it to tell the user what they need to approve.',
+    inputSchema: { type: 'object', properties: {} },
+    run: async (_host, _args, gate) => {
+      const now = Date.now()
+      return json({
+        pending: (gate.pending?.() ?? []).map((entry) => ({
+          site: entry.site,
+          firstAction: entry.action,
+          waitingSeconds: Math.max(0, Math.round((now - entry.since) / 1000))
+        })),
+        allowedForSession: gate.grants?.() ?? []
+      })
+    }
+  },
+  {
+    name: 'approvals_revoke',
+    description:
+      'Withdraw this agent\'s session access to a site, so the user is asked again next time. Use it when you are finished with a site. It cannot grant access.',
+    inputSchema: {
+      type: 'object',
+      properties: { site: { type: 'string', description: 'A site from approvals_status.allowedForSession.' } },
+      required: ['site']
+    },
+    run: async (_host, args, gate) => {
+      const site = str(args, 'site')
+      if (!site) return fail('site is required.')
+      const granted = gate.grants?.() ?? []
+      const key = granted.includes(site) ? site : siteOf(site)
+      if (!granted.includes(key)) return fail(`No session access is held for ${site}.`)
+      gate.revoke?.(key)
+      return text(`revoked ${key}`)
+    }
+  },
+  {
     name: 'tabs_list',
     description:
       'List open browser tabs (id, url, title, active). Only ordinary tabs are listed; private and Tor tabs are never exposed.',

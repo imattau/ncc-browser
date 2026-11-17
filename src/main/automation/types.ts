@@ -71,7 +71,22 @@ export interface ToolDefinition {
   ): Promise<ToolResult>
 }
 
-/** Asks the user whether an agent may act on a site. Resolves true when allowed. */
+export interface PendingApproval {
+  site: string
+  /** The first action the agent attempted on the site. */
+  action: string
+  /** Epoch milliseconds when the prompt was raised. */
+  since: number
+}
+
+/**
+ * Asks the user whether an agent may act on a site. Resolves true when allowed and false
+ * when denied. Agents can look at prompts and revoke grants, but there is deliberately no
+ * way here to answer a prompt: only the user can allow access.
+ */
 export interface AutomationGate {
   authorize(site: string, action: string): Promise<boolean>
+  pending?(): PendingApproval[]
+  grants?(): string[]
+  revoke?(site: string): void
 }
