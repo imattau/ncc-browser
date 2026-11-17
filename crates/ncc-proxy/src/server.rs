@@ -554,7 +554,10 @@ async fn handle_inner(state: &ProxyState, request: Request) -> Response {
         return crate::signer::handle(state, &vhost, signer_method, &body).await;
     }
 
-    if vhost.kind == crate::vhost::HostKind::Onion {
+    if matches!(
+        vhost.kind,
+        crate::vhost::HostKind::Onion | crate::vhost::HostKind::Clearnet
+    ) {
         if !state.is_tor_listener() {
             return crate::onion::needs_tor_page(&authority);
         }
@@ -1067,6 +1070,26 @@ async fn route(state: &ProxyState, authority: &str, query: &str) -> Response {
     if let Some(input) = onion_input {
         if let Ok(url) = url::Url::parse(&input) {
             let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
+
+            // The Tor listener also opens ordinary sites, fetched through Tor. They
+            // are https-only: the exit sees plain http, so it is upgraded.
+            if state.is_tor_listener()
+                && !is_onion_host(&host)
+                && crate::vhost::is_clearnet_host(&host)
+            {
+                return routed(format!(
+                    "http://{}{}{}{}",
+                    with_port(crate::vhost::clearnet_vhost_host(&host, url.port())),
+                    url.path(),
+                    url.query()
+                        .map(|query| format!("?{query}"))
+                        .unwrap_or_default(),
+                    url.fragment()
+                        .map(|fragment| format!("#{fragment}"))
+                        .unwrap_or_default()
+                ));
+            }
+
             if is_onion_host(&host) {
                 if !state.is_tor_listener() {
                     return json_error(

@@ -21,6 +21,9 @@ pub enum HostKind {
     Nsite,
     /// `<onion>.onion.localhost`: an onion site, served through Tor.
     Onion,
+    /// `<host>.tor.localhost`: an ordinary https site, fetched through Tor by a Tor
+    /// tab. The upstream host (`example.com`, or `example.com:8443`) is in `onion`.
+    Clearnet,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,6 +48,7 @@ impl Vhost {
                 None => format!("nsite://{}", self.pubkey),
             },
             HostKind::Onion => format!("onion://{}", self.onion.as_deref().unwrap_or_default()),
+            HostKind::Clearnet => format!("https://{}", self.onion.as_deref().unwrap_or_default()),
         }
     }
 }
@@ -70,6 +74,35 @@ pub fn parse_vhost(host: &str) -> Option<Vhost> {
             site: None,
             onion: Some(onion),
             kind: HostKind::Onion,
+        });
+    }
+
+    // `<host>[.p<port>].tor.localhost` is a clearnet site reached through Tor.
+    if let Some(label) = host.strip_suffix(".tor.localhost") {
+        let (name, port) = match label.rsplit_once('.') {
+            Some((name, last))
+                if last.len() > 1
+                    && last.starts_with('p')
+                    && last[1..].bytes().all(|byte| byte.is_ascii_digit()) =>
+            {
+                (name, last[1..].parse::<u16>().ok().filter(|port| *port != 0)?.into())
+            }
+            _ => (label, 0u16),
+        };
+        if !is_clearnet_host(name) {
+            return None;
+        }
+        let upstream = if port == 0 || port == 443 {
+            name.to_string()
+        } else {
+            format!("{name}:{port}")
+        };
+        return Some(Vhost {
+            pubkey: String::new(),
+            service: String::new(),
+            site: None,
+            onion: Some(upstream),
+            kind: HostKind::Clearnet,
         });
     }
 
@@ -123,6 +156,38 @@ pub fn parse_vhost(host: &str) -> Option<Vhost> {
         onion: None,
         kind: HostKind::Ncc,
     })
+}
+
+/// A DNS name a Tor tab may be sent to: dotted labels of letters, digits and hyphens,
+/// and a TLD that is not all digits (which rules out IPv4 literals). Onion names have
+/// their own vhost, and `.localhost`/`.local` can only be the reader's own network.
+pub fn is_clearnet_host(host: &str) -> bool {
+    let host = host.trim_end_matches('.');
+    if host.is_empty() || host.len() > 253 || !host.contains('.') {
+        return false;
+    }
+    if host.ends_with(".onion") || host.ends_with(".localhost") || host.ends_with(".local") {
+        return false;
+    }
+    let labels: Vec<&str> = host.split('.').collect();
+    if labels.last().is_some_and(|tld| tld.bytes().all(|b| b.is_ascii_digit())) {
+        return false;
+    }
+    labels.iter().all(|label| {
+        !label.is_empty()
+            && label.len() <= 63
+            && !label.starts_with('-')
+            && !label.ends_with('-')
+            && label.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    })
+}
+
+/// The vhost authority (without listener port) for a clearnet site.
+pub fn clearnet_vhost_host(host: &str, port: Option<u16>) -> String {
+    match port {
+        Some(port) if port != 443 => format!("{host}.p{port}.tor.localhost"),
+        _ => format!("{host}.tor.localhost"),
+    }
 }
 
 /// The host a shell should load for an onion site.
@@ -196,6 +261,30 @@ mod tests {
         assert!(parse_vhost(&format!("{NPUB}.MyBlog.nsite.localhost")).is_some());
         assert!(parse_vhost(&format!("{NPUB}.trailing-.nsite.localhost")).is_none());
         assert!(parse_vhost("example.nsite.localhost").is_none());
+    }
+
+    #[test]
+    fn maps_clearnet_hosts() {
+        let plain = parse_vhost("example.com.tor.localhost:47822").expect("plain");
+        assert_eq!(plain.kind, HostKind::Clearnet);
+        assert_eq!(plain.onion.as_deref(), Some("example.com"));
+        assert_eq!(plain.identity_key(), "https://example.com");
+
+        let ported = parse_vhost("a.example.com.p8443.tor.localhost").expect("port");
+        assert_eq!(ported.onion.as_deref(), Some("a.example.com:8443"));
+        assert_eq!(clearnet_vhost_host("a.example.com", Some(8443)), "a.example.com.p8443.tor.localhost");
+        assert_eq!(clearnet_vhost_host("example.com", Some(443)), "example.com.tor.localhost");
+
+        for bad in [
+            "tor.localhost",
+            "localhost.tor.localhost",
+            "1.2.3.4.tor.localhost",
+            "foo.local.tor.localhost",
+            "-a.example.com.tor.localhost",
+            "nodots.tor.localhost",
+        ] {
+            assert!(parse_vhost(bad).is_none(), "{bad}");
+        }
     }
 
     #[test]

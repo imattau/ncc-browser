@@ -65,7 +65,7 @@ const KIND_INFO = {
     info: 'This tab is loaded through Tor. It leaves no history or saved icons.',
     newLabel: 'New Tor tab',
     short: 'New Tor',
-    note: 'Tor tabs open .onion addresses and search through an onion search engine, all through Tor.'
+    note: 'Tor tabs open .onion and https:// addresses, and search through an onion search engine, all through Tor.'
   }
 }
 
@@ -276,6 +276,14 @@ function displayAddress(url) {
       return `http://${host}${parsed.pathname}${parsed.search}`
     }
 
+    if (parsed.hostname.endsWith('.tor.localhost')) {
+      // A website a Tor tab opened: `<host>[.p<port>].tor.localhost` is its https address.
+      const m = /^(.+?)(?:\.p(\d+))?\.tor\.localhost$/.exec(parsed.hostname)
+      if (m) {
+        return `https://${m[1]}${m[2] ? `:${m[2]}` : ''}${parsed.pathname}${parsed.search}`
+      }
+    }
+
     if (parsed.hostname.endsWith('.nsite.localhost')) {
       // pubkey.site.nsite.localhost, or pubkey.nsite.localhost for the root site.
       const labels = parsed.hostname.split('.')
@@ -425,6 +433,15 @@ function isOnionPage(url) {
   }
 }
 
+/** A website a Tor tab loaded through the Tor listener. */
+function isTorWebPage(url) {
+  try {
+    return new URL(url).hostname.endsWith('.tor.localhost')
+  } catch {
+    return false
+  }
+}
+
 /** A page loaded straight from the web: no record to ask the proxy about. */
 function isClearnetPage(url) {
   try {
@@ -461,6 +478,8 @@ async function securityFor(url) {
   }
 
   if (isOnionPage(url)) return 'onion'
+  // The listener checks the certificate against the web roots before serving anything.
+  if (isTorWebPage(url)) return 'tls'
 
   if (!proxyPort) return 'unknown'
   const key = parsed.host
@@ -1139,7 +1158,7 @@ function openOmnibox({ newTab = false, private: isPrivate = false, tor = false }
     text.append(strong, document.createTextNode(` — ${KIND_INFO[kind].note}`))
     note.append(icon(KIND_INFO[kind].icon), text)
   }
-  byId('address').placeholder = tor ? 'Search or enter a .onion address' : 'Search or enter address'
+  byId('address').placeholder = tor ? 'Search or enter a .onion or https:// address' : 'Search or enter address'
   renderSuggestions('')
   content.expand(true)
   applyLayout()
@@ -1195,9 +1214,14 @@ function renderSuggestions(query) {
             { primary: `Open ${q}`, secondary: 'Nostr address' },
             { iconName: 'globe', onClick: () => void submitOmnibox() }
           )
+        : torMode && torWebUrl(q)
+          ? suggestionRow(
+              { primary: `Open ${q}`, secondary: 'Website · loaded through Tor' },
+              { iconName: 'onion', onClick: () => void submitOmnibox() }
+            )
         : torMode && kind === 'external'
           ? suggestionRow(
-              { primary: `Can't open ${q}`, secondary: 'Tor tabs open .onion addresses and searches only' },
+              { primary: `Can't open ${q}`, secondary: 'Tor tabs open .onion and https:// addresses and searches only' },
               { iconName: 'onion', onClick: () => void submitOmnibox() }
             )
           : torMode
@@ -1422,12 +1446,12 @@ async function navigate(text, { newTab = false, private: isPrivate = false, tor 
   // An onion address always belongs in a Tor tab, whether it was typed there or in
   // a normal one. Turning the current tab into a Tor tab is not possible: the kind is
   // fixed when the tab is built, and its listener decides what it may fetch.
-  const onion = onionUrl(input)
+  const onion = onionUrl(input) || (tor ? torWebUrl(input) : null)
   if (onion) {
     if (!torPort) return { error: 'Tor is not available in this build.' }
 
-    // Opening the first Tor tab is what starts Tor. Nothing contacts the network on
-    // launch, and a session that never opens an onion never does either.
+    // Tor starts when the app launches, so this is normally a no-op; it also restarts
+    // a route that failed.
     try {
       await invoke('tor_prepare')
     } catch {
@@ -1467,7 +1491,7 @@ async function navigate(text, { newTab = false, private: isPrivate = false, tor 
     if (classifyInput(input) === 'search') {
       return navigate(torSearchUrl(input), { newTab, tor: true })
     }
-    return { error: 'A Tor tab opens .onion addresses and searches only.' }
+    return { error: 'A Tor tab opens .onion and https:// addresses and searches only.' }
   }
 
   const kind = classifyInput(input)
@@ -1560,9 +1584,36 @@ function onionUrl(value) {
   }
 }
 
+/**
+ * An ordinary website a Tor tab may open: `https://` or a bare host name. It is
+ * fetched through Tor by the listener, never by the WebView. Plain `http://` is
+ * upgraded, since an exit relay would see it.
+ */
+function torWebUrl(value) {
+  const text = value.trim()
+  if (/\s/.test(text) || /^(ncc|nsite):/i.test(text)) return null
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(text) && !/^https?:\/\//i.test(text)) return null
+  if (!/^https?:\/\//i.test(text) && classifyInput(text) !== 'external') return null
+  try {
+    const url = new URL(/^https?:\/\//i.test(text) ? text : `https://${text}`)
+    const host = url.hostname.toLowerCase()
+    if (host.endsWith('.onion') || !host.includes('.')) return null
+    if (/^[\d.]+$/.test(host) || host.includes(':') || host.startsWith('[')) return null
+    if (host.endsWith('.local') || host.endsWith('.localhost')) return null
+    url.protocol = 'https:'
+    return url
+  } catch {
+    return null
+  }
+}
+
 /** The virtual host for an onion URL, when the proxy cannot be asked. */
 function onionTarget(url, port) {
   const host = url.hostname.toLowerCase()
+  if (!host.endsWith('.onion')) {
+    const label = url.port && url.port !== '443' ? `${host}.p${url.port}` : host
+    return { url: `http://${label}.tor.localhost:${port}${url.pathname}${url.search}${url.hash}` }
+  }
   return { url: `http://${host}.localhost:${port}${url.pathname}${url.search}${url.hash}` }
 }
 
@@ -1850,6 +1901,8 @@ async function loadInfo() {
   try {
     const data = isOnionPage(activeUrl)
       ? onionInfo(activeUrl)
+      : isTorWebPage(activeUrl)
+        ? { kind: 'clearnet', host: new URL(displayAddress(activeUrl)).host, secure: true }
       : isClearnetPage(activeUrl)
         ? clearnetInfo(activeUrl)
         : await fetchInfo(activeUrl)

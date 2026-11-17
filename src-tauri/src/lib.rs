@@ -1166,6 +1166,12 @@ pub fn run() {
             })
             .ok();
 
+            // Start building the route now, so the first Tor tab finds it ready instead
+            // of waiting on bootstrap. `prepare` is idempotent and returns at once.
+            if let Some(tor) = tor.as_ref() {
+                tor.prepare();
+            }
+
             let mut tor_state: Option<Arc<ProxyState>> = None;
             let tor_port = tor.as_ref().and_then(|tor| {
                 let mut config = proxy_config(None, Some(settings.clone()));

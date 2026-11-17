@@ -358,7 +358,7 @@ impl VaultService {
             if host.ends_with(".nsite.localhost") {
                 return Err("Passwords are not available for nsites.".to_string());
             }
-            if host.ends_with(".onion.localhost") {
+            if host.ends_with(".onion.localhost") || host.ends_with(".tor.localhost") {
                 return Err("Passwords are unavailable in Tor tabs.".to_string());
             }
             let vhost = crate::vhost::parse_vhost(&host)

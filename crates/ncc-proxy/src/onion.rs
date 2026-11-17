@@ -30,7 +30,7 @@ use url::Url;
 use ncc_core::is_onion_host;
 
 use crate::server::{inject_shim, is_document_request, request_headers, ProxyState, TorProgress};
-use crate::vhost::Vhost;
+use crate::vhost::{clearnet_vhost_host, is_clearnet_host, parse_vhost, HostKind, Vhost};
 
 /// Documents above this are handed through untouched. Rewriting means holding the
 /// whole body, so the limit is the same one the NCC injection path uses.
@@ -52,33 +52,64 @@ const HOP_BY_HOP: &[&str] = &[
 /// `'self'` is the onion vhost. Inline scripts are allowed because rewriting a page
 /// without breaking it requires that; external scripts are not, which is what stops
 /// a page from fetching a clearnet resource and revealing the reader's address.
-fn policy() -> &'static str {
-    "default-src 'self'; \
-     script-src 'self' 'unsafe-inline' 'unsafe-eval'; \
-     style-src 'self' 'unsafe-inline'; \
-     img-src 'self' data: blob:; \
-     font-src 'self' data:; \
-     media-src 'self' data: blob:; \
-     connect-src 'self'; \
-     frame-src 'self'; \
-     worker-src 'self' blob:; \
-     form-action 'self'; \
-     base-uri 'none'; \
-     object-src 'none'"
+fn policy(context: &Context) -> String {
+    // A clearnet page may reference other sites, but only as other vhosts of this
+    // listener, which fetch through Tor as well. A reference the rewriter missed (a
+    // URL a script builds) names a real host and is refused by the browser.
+    let hosts = match (context.clearnet, context.port) {
+        (false, _) => String::new(),
+        (true, Some(port)) => {
+            format!(" http://*.tor.localhost:{port} http://*.onion.localhost:{port}")
+        }
+        (true, None) => " http://*.tor.localhost http://*.onion.localhost".to_string(),
+    };
+    format!(
+        "default-src 'self'{hosts}; \
+         script-src 'self'{hosts} 'unsafe-inline' 'unsafe-eval'; \
+         style-src 'self'{hosts} 'unsafe-inline'; \
+         img-src 'self'{hosts} data: blob:; \
+         font-src 'self'{hosts} data:; \
+         media-src 'self'{hosts} data: blob:; \
+         connect-src 'self'{hosts}; \
+         frame-src 'self'{hosts}; \
+         worker-src 'self' blob:; \
+         form-action 'self'{hosts}; \
+         base-uri 'none'; \
+         object-src 'none'"
+    )
 }
 
 /// Where rewritten references should point.
 #[derive(Debug, Clone)]
 struct Context {
     port: Option<u16>,
+    /// A clearnet page: references to other sites go to their own Tor vhost instead
+    /// of the blocked page.
+    clearnet: bool,
 }
 
 impl Context {
-    fn new(authority: &str) -> Self {
+    fn new(authority: &str, clearnet: bool) -> Self {
         let port = authority
             .rsplit_once(':')
             .and_then(|(_, port)| port.parse::<u16>().ok());
-        Self { port }
+        Self { port, clearnet }
+    }
+
+    /// The vhost origin for any host a reference names, or `None` when this page may
+    /// not reach it. Onions always can; clearnet only from a clearnet page.
+    fn target_origin(&self, host: &str, upstream_port: Option<u16>) -> Option<String> {
+        if is_onion_host(host) {
+            return Some(self.origin(host));
+        }
+        if !self.clearnet || !is_clearnet_host(host) {
+            return None;
+        }
+        let vhost = clearnet_vhost_host(host, upstream_port);
+        Some(match self.port {
+            Some(port) => format!("http://{vhost}:{port}"),
+            None => format!("http://{vhost}"),
+        })
     }
 
     fn origin(&self, onion: &str) -> String {
@@ -200,6 +231,7 @@ pub async fn serve(
     headers: &HeaderMap,
     body: &[u8],
 ) -> Response {
+    let clearnet = vhost.kind == HostKind::Clearnet;
     let Some(site) = vhost.onion.clone() else {
         return page(
             StatusCode::BAD_REQUEST,
@@ -234,6 +266,8 @@ pub async fn serve(
         let url = Url::parse(&target).map_err(|_| target.clone());
         let upstream = url.as_ref().ok().map(|url| {
             let mut upstream = request_headers(headers, url, true);
+            unproxy_header(&mut upstream, header::ORIGIN, false);
+            unproxy_header(&mut upstream, header::REFERER, true);
             // Documents and stylesheets are rewritten, which needs the text, not a
             // compressed stream.
             upstream.remove(header::ACCEPT_ENCODING);
@@ -252,7 +286,7 @@ pub async fn serve(
         }
     };
 
-    let first = if is_https_only(&site) {
+    let first = if clearnet || is_https_only(&site) {
         "https"
     } else {
         "http"
@@ -293,7 +327,7 @@ pub async fn serve(
     };
 
     let status = response.status();
-    let context = Context::new(authority);
+    let context = Context::new(authority, clearnet);
     let mut outgoing = HeaderMap::new();
 
     for (name, value) in response.headers() {
@@ -344,7 +378,8 @@ pub async fn serve(
     );
     outgoing.insert(
         header::CONTENT_SECURITY_POLICY,
-        HeaderValue::from_static(policy()),
+        HeaderValue::from_str(&policy(&context))
+            .unwrap_or_else(|_| HeaderValue::from_static("default-src 'self'")),
     );
     outgoing.insert(
         HeaderName::from_static("x-content-type-options"),
@@ -424,10 +459,9 @@ fn rewrite_location(location: &str, context: &Context) -> String {
         return blocked(location);
     }
     let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
-    if !is_onion_host(&host) {
+    let Some(mut target) = context.target_origin(&host, url.port()) else {
         return blocked(location);
-    }
-    let mut target = context.origin(&host);
+    };
     target.push_str(url.path());
     if let Some(query) = url.query() {
         target.push('?');
@@ -563,20 +597,38 @@ fn rewrite_reference(value: &str, context: &Context) -> String {
 
     let (authority, tail) = split_authority(rest);
     let authority = authority.rsplit('@').next().unwrap_or(authority);
-    let authority = authority
-        .rsplit_once(':')
-        .filter(|(_, port)| port.parse::<u16>().is_ok())
-        .map(|(host, _)| host)
-        .unwrap_or(authority)
-        .to_ascii_lowercase();
+    let (authority, port) = match authority.rsplit_once(':') {
+        Some((host, port)) if port.parse::<u16>().is_ok() => (host, port.parse::<u16>().ok()),
+        _ => (authority, None),
+    };
+    let authority = authority.to_ascii_lowercase();
 
-    if !is_onion_host(&authority) {
+    let Some(mut target) = context.target_origin(&authority, port) else {
         return blocked(value);
-    }
-
-    let mut target = context.origin(&authority);
+    };
     target.push_str(tail);
     target
+}
+
+/// Turn a vhost origin in a request header back into the real site it stands for, so
+/// an upstream server sees `https://example.com` rather than a loopback name it cannot
+/// know. Anything that is not one of our vhosts is dropped rather than forwarded.
+fn unproxy_header(headers: &mut HeaderMap, name: HeaderName, keep_path: bool) {
+    let Some(value) = headers.get(&name).and_then(|v| v.to_str().ok()).map(str::to_string)
+    else {
+        return;
+    };
+    headers.remove(&name);
+    let Ok(url) = Url::parse(&value) else { return };
+    let Some(vhost) = url.host_str().and_then(parse_vhost) else {
+        return;
+    };
+    let Some(site) = vhost.onion else { return };
+    let scheme = if vhost.kind == HostKind::Clearnet { "https" } else { "http" };
+    let path = if keep_path { url.path() } else { "" };
+    if let Ok(rebuilt) = HeaderValue::from_str(&format!("{scheme}://{site}{path}")) {
+        headers.insert(name, rebuilt);
+    }
 }
 
 fn split_authority(value: &str) -> (&str, &str) {
@@ -789,7 +841,55 @@ mod tests {
     const OTHER: &str = "abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwx.onion";
 
     fn context() -> Context {
-        Context::new("127.0.0.1:47822")
+        Context::new("127.0.0.1:47822", false)
+    }
+
+    fn web_context() -> Context {
+        Context::new("127.0.0.1:47822", true)
+    }
+
+    #[test]
+    fn clearnet_pages_keep_references_inside_tor_vhosts() {
+        let context = web_context();
+        assert_eq!(
+            rewrite_reference("https://cdn.example.com/a.js", &context),
+            "http://cdn.example.com.tor.localhost:47822/a.js"
+        );
+        assert_eq!(
+            rewrite_reference("//img.example.org:8443/x.png?y=1", &context),
+            "http://img.example.org.p8443.tor.localhost:47822/x.png?y=1"
+        );
+        assert!(rewrite_reference(&format!("http://{SITE}/"), &context)
+            .starts_with(&format!("http://{SITE}.onion.localhost:47822")));
+        // Not reachable even from a clearnet page.
+        assert!(rewrite_reference("http://127.0.0.1/", &context).starts_with("/__ncc/blocked"));
+        assert!(rewrite_reference("http://192.168.0.1:80/", &context).starts_with("/__ncc/blocked"));
+        // And an onion page still cannot reach the clearnet.
+        assert!(rewrite_reference("https://example.com/", &Context::new("h:1", false))
+            .starts_with("/__ncc/blocked"));
+    }
+
+    #[test]
+    fn clearnet_policy_only_allows_our_vhosts() {
+        let policy = policy(&web_context());
+        assert!(policy.contains("connect-src 'self' http://*.tor.localhost:47822"));
+        assert!(!policy.contains("https:"));
+        assert!(!super::policy(&context()).contains("tor.localhost"));
+    }
+
+    #[test]
+    fn upstream_origin_and_referer_name_the_real_site() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::ORIGIN, HeaderValue::from_static("http://a.example.com.tor.localhost:47822"));
+        headers.insert(header::REFERER, HeaderValue::from_static("http://a.example.com.p8443.tor.localhost:47822/p?q=1"));
+        unproxy_header(&mut headers, header::ORIGIN, false);
+        unproxy_header(&mut headers, header::REFERER, true);
+        assert_eq!(headers[header::ORIGIN], "https://a.example.com");
+        assert_eq!(headers[header::REFERER], "https://a.example.com:8443/p");
+
+        headers.insert(header::ORIGIN, HeaderValue::from_static("http://evil.test"));
+        unproxy_header(&mut headers, header::ORIGIN, false);
+        assert!(headers.get(header::ORIGIN).is_none());
     }
 
     #[test]
@@ -883,7 +983,7 @@ mod tests {
 
     #[test]
     fn every_document_forbids_external_resources() {
-        let policy = policy();
+        let policy = policy(&context());
         assert!(policy.contains("default-src 'self'"));
         assert!(policy.contains("connect-src 'self'"));
         assert!(policy.contains("base-uri 'none'"));
