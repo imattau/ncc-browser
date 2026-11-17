@@ -3,6 +3,21 @@
 **Alpha.** An early build published so the browser can be tested on a real device. It
 is not a daily driver.
 
+## Fixed in this build
+
+- Named services no longer resolve to the default `addr` record just because that
+  record was refreshed more recently. `/search` and the other services open their own
+  endpoint instead of the welcome page, matching the desktop build.
+- Moving between services in the same tab no longer leaves a blank page until a
+  reload. Ad blocking had been treating the page being left as the initiator of a
+  top-level navigation and blocking it as third-party.
+- Pages that keep their script policy in a `<meta>` CSP (npanel) load their own
+  scripts again. The injected NIP-07 shim no longer narrows that policy to its own
+  nonce, and a header without a script directive is left alone.
+- Settings → Relays accepts an `ncc://` address (`ncc://<npub>` or
+  `ncc://<npub>/<service>`) and resolves it to the relay's published `ws`/`wss`
+  endpoint before saving.
+
 ## New in this build
 
 - Fixed `ncc://` and `nsite://` links that could change the address bar without loading
