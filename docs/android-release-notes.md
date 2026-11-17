@@ -5,6 +5,11 @@ is not a daily driver.
 
 ## New in this build
 
+- Sign-in with a Nostr extension now works on ordinary websites such as nostr.com.
+  Before, only NCC and nsite pages could see `window.nostr`, so a site on the regular
+  web reported that no NIP-07 extension was found. Each site is asked before it can read
+  your public key or sign. Private and Tor tabs sign with a throwaway key kept in memory,
+  never your own.
 - Tracker and ad protection is now available in Settings → Security: Off, Standard or
   Strict. Strict adds privacy lists and blocks third-party cookies. Site information
   shows the protection level and blocked-request count, and lets you allow or restore

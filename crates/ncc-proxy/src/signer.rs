@@ -36,10 +36,65 @@ pub async fn handle(state: &ProxyState, vhost: &Vhost, method: &str, body: &[u8]
         );
     }
 
+    dispatch(state, &key, false, method, &parsed).await
+}
+
+/// A request from an ordinary web page (`https://nostr.com`), which the proxy never
+/// serves, so there is no document token. The caller is the Android shell: the origin
+/// comes from the WebView's own message listener, which is the one place a page cannot
+/// lie about it. Returns the HTTP-style status and the JSON body.
+///
+/// Unlike a service the user opened by address, a website is asked about every time it
+/// wants the public key too, until they choose to trust it.
+pub async fn handle_web(
+    state: &ProxyState,
+    origin: &str,
+    method: &str,
+    body: &[u8],
+) -> (u16, String) {
+    let valid = origin.len() <= 256
+        && (origin.starts_with("https://") || origin.starts_with("http://"))
+        && !origin.contains(char::is_whitespace);
+    if !valid {
+        let response = json_error(StatusCode::BAD_REQUEST, "bad-origin", "Unknown page origin.");
+        return into_parts(response).await;
+    }
+
+    let parsed: Value = serde_json::from_slice(body).unwrap_or(Value::Null);
+    let response = dispatch(state, origin, true, method, &parsed).await;
+    into_parts(response).await
+}
+
+async fn into_parts(response: Response) -> (u16, String) {
+    let status = response.status().as_u16();
+    let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap_or_default();
+    (status, String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// Everything after the caller has been identified. `key` is the unit trust is
+/// granted to: `ncc://npub/service` for a service, or an origin for a website.
+async fn dispatch(
+    state: &ProxyState,
+    key: &str,
+    ask_for_public_key: bool,
+    method: &str,
+    parsed: &Value,
+) -> Response {
+    let parsed = parsed.clone();
     // A remote signer answers for the identity. There is no local prompt in that
     // mode: the bunker asks its own user, and that is the only answer that can
     // produce a signature, so asking twice would be asking the same question again.
     if let Some(bunker) = state.remote() {
+        // The bunker asks about signatures, but nothing asks before a website learns
+        // who the user is, so that one question is asked here.
+        if ask_for_public_key
+            && method == "get-public-key"
+            && !approved(state, key, method, None, String::new()).await
+        {
+            return declined();
+        }
         return remote(state, &bunker, method, &parsed).await;
     }
 
@@ -68,10 +123,15 @@ pub async fn handle(state: &ProxyState, vhost: &Vhost, method: &str, body: &[u8]
         // NIP-07 returns **hex**. Returning the npub works on clients that decode
         // bech32 and breaks the ones that parse the string as a key (ditto reports
         // "unpadded hex 63").
-        "get-public-key" => match identity.public_key() {
-            Ok(public_key) => ok(json!({ "result": public_key.to_hex() })),
-            Err(error) => internal(error),
-        },
+        "get-public-key" => {
+            if ask_for_public_key && !approved(state, key, method, None, String::new()).await {
+                return declined();
+            }
+            match identity.public_key() {
+                Ok(public_key) => ok(json!({ "result": public_key.to_hex() })),
+                Err(error) => internal(error),
+            }
+        }
 
         "get-relays" => relays(state),
 
@@ -88,7 +148,7 @@ pub async fn handle(state: &ProxyState, vhost: &Vhost, method: &str, body: &[u8]
                 .take(PREVIEW_CHARS)
                 .collect::<String>();
 
-            if !approved(state, vhost, method, kind, preview).await {
+            if !approved(state, key, method, kind, preview).await {
                 return declined();
             }
 
@@ -117,7 +177,7 @@ pub async fn handle(state: &ProxyState, vhost: &Vhost, method: &str, body: &[u8]
                 format!("{}…", text.chars().take(32).collect::<String>())
             };
 
-            if !approved(state, vhost, method, None, preview).await {
+            if !approved(state, key, method, None, preview).await {
                 return declined();
             }
 
@@ -227,13 +287,12 @@ fn unreachable_signer(detail: &str) -> Response {
 
 async fn approved(
     state: &ProxyState,
-    vhost: &Vhost,
+    key: &str,
     method: &str,
     kind: Option<u16>,
     preview: String,
 ) -> bool {
-    let key = host_key(vhost);
-    if state.is_trusted(&key) {
+    if state.is_trusted(key) {
         return true;
     }
 
@@ -245,10 +304,16 @@ async fn approved(
         .ask(
             ApprovalRequest {
                 id: String::new(),
-                service: key,
+                service: key.to_string(),
                 method: method.to_string(),
                 kind,
                 preview,
+                // A private or Tor listener signs with a key that exists only in
+                // memory, so nothing it is told can be remembered.
+                ephemeral: state
+                    .identity()
+                    .map(|identity| identity.path().is_none())
+                    .unwrap_or(false),
             },
             APPROVAL_TIMEOUT,
         )
@@ -318,6 +383,30 @@ mod tests {
         state.tokens.remember("token", &host_key(&vhost));
 
         (state, vhost)
+    }
+
+    #[tokio::test]
+    async fn a_website_origin_is_checked_and_asked_about_the_public_key() {
+        let (state, _vhost) = state();
+
+        let (status, _) = handle_web(&state, "nostr.com", "get-public-key", b"{}").await;
+        assert_eq!(status, 400, "an origin must be http(s)");
+
+        // A trusted origin is let through; an untrusted one would wait on a prompt.
+        let state = ProxyState::new(&ProxyConfig::default()).with_signer(
+            Arc::new(ncc_identity::IdentityStore::ephemeral()),
+            Arc::new(Approvals::new(|_| {})),
+        );
+        state.trust("https://nostr.com");
+        let (status, body) =
+            handle_web(&state, "https://nostr.com", "get-public-key", b"{}").await;
+        assert_eq!(status, 200, "{body}");
+        let value: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(value["result"].as_str().map(str::len), Some(64));
+
+        let (status, body) = handle_web(&state, "https://nostr.com", "sign-event",
+            br#"{"params":{"kind":1,"content":"hi","tags":[],"created_at":1}}"#).await;
+        assert_eq!(status, 200, "{body}");
     }
 
     #[tokio::test]

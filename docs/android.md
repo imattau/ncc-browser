@@ -160,6 +160,17 @@ inline script, so the proxy adds a nonce to `script-src` and `'self'` to
 `connect-src`, and nothing else. That is a real weakening of the page's own policy,
 and it is the price of not having a preload.
 
+**Ordinary websites.** Pages the proxy does not serve (`https://nostr.com`) get the same
+`window.nostr` from a document-start script plus `WebViewCompat.addWebMessageListener`
+(`ContentSurface.kt`). The listener reports the frame's real origin, which is the key for
+approvals and trust (`https://nostr.com`); the page cannot choose it. Only the top-level
+frame is served, never `*.localhost`. The call reaches Rust through `nativeNip07` and
+`signer::handle_web`. A website is asked about the public key as well as signatures. A
+private tab uses the private listener's in-memory key and a Tor tab the Tor listener's,
+so neither can reach the person's own key, and "don't ask again" is not offered for them.
+
+(The next paragraph is the original design note from before the signer existed.)
+
 The signer itself is not implemented yet: calls answer `501 signer-not-configured`
 once the token checks out, which is where identity storage, NIP-46 and approvals plug
 in.

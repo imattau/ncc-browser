@@ -3653,15 +3653,21 @@ async function setupIdentity(tauri) {
 function describeSignerMethod(request) {
   const kind = request.kind ? ` (kind ${request.kind})` : ''
   switch (request.method) {
+    case 'get-public-key':
     case 'getPublicKey':
       return 'Wants to read your public key'
+    case 'sign-event':
     case 'signEvent':
       return `Wants you to sign an event${kind}`
     case 'nip04.encrypt':
     case 'nip44.encrypt':
+    case 'nip04-encrypt':
+    case 'nip44-encrypt':
       return 'Wants to encrypt a message with your key'
     case 'nip04.decrypt':
     case 'nip44.decrypt':
+    case 'nip04-decrypt':
+    case 'nip44-decrypt':
       return 'Wants to decrypt a message with your key'
     default:
       return `${request.method}${kind}`
@@ -3680,6 +3686,12 @@ function showSigner(request) {
   byId('signer-preview').textContent = request.preview || '(nothing to show)'
   byId('signer-preview').hidden = !request.preview
   byId('signer-remember').checked = false
+  // A throwaway key has nothing worth remembering a decision for.
+  const rememberRow = byId('signer-remember').closest('.switch-row')
+  if (rememberRow) rememberRow.hidden = request.ephemeral === true
+  byId('signer-title').textContent = request.ephemeral
+    ? 'Request (throwaway key)'
+    : 'Signature request'
   byId('signer-bar').style.width = '100%'
   tickSigner()
   content?.expand(true)

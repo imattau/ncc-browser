@@ -66,6 +66,65 @@ pub extern "system" fn Java_io_github_imattau_nccbrowser_ContentSurface_nativeCl
     ncc_proxy::protection::clear_session_exceptions(&kind);
 }
 
+/// The three listeners' states, so a signer call from a clearnet page can reach the
+/// one that belongs to its tab: the person's identity for a normal tab, a throwaway
+/// key for a private tab, another for Tor.
+struct SignerRoutes {
+    normal: Arc<ProxyState>,
+    private: Option<Arc<ProxyState>>,
+    tor: Option<Arc<ProxyState>>,
+}
+
+static SIGNER_ROUTES: std::sync::OnceLock<SignerRoutes> = std::sync::OnceLock::new();
+
+/// NIP-07 for a page the proxy does not serve. Blocks until answered (including a
+/// user's approval), so the caller runs it off the main thread. The origin comes from
+/// the WebView's message listener, never from the page.
+///
+/// Returns `{"status":<http status>,"body":<json text>}`.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_imattau_nccbrowser_ContentSurface_nativeNip07(
+    mut env: jni::JNIEnv,
+    _this: jni::objects::JObject,
+    kind: jni::objects::JString,
+    origin: jni::objects::JString,
+    method: jni::objects::JString,
+    body: jni::objects::JString,
+) -> jni::sys::jstring {
+    let mut read = |value: jni::objects::JString| -> String {
+        env.get_string(&value).map(String::from).unwrap_or_default()
+    };
+    let kind = read(kind);
+    let origin = read(origin);
+    let method = read(method);
+    let body = read(body);
+
+    let (status, text) = match SIGNER_ROUTES.get() {
+        None => (503, r#"{"code":"not-ready","message":"The signer is not ready yet."}"#.to_string()),
+        Some(routes) => {
+            let state = match kind.as_str() {
+                "private" => routes.private.clone(),
+                "tor" => routes.tor.clone(),
+                _ => Some(routes.normal.clone()),
+            };
+            match state {
+                None => (503, r#"{"code":"no-signer","message":"This kind of tab has no signer."}"#.to_string()),
+                Some(state) => tauri::async_runtime::block_on(ncc_proxy::signer::handle_web(
+                    &state,
+                    &origin,
+                    &method,
+                    body.as_bytes(),
+                )),
+            }
+        }
+    };
+
+    let reply = serde_json::json!({ "status": status, "body": text }).to_string();
+    env.new_string(reply)
+        .map(|text| text.into_raw())
+        .unwrap_or(std::ptr::null_mut())
+}
+
 /// Everything the commands need. The proxy shares the same `Arc`s.
 struct SignerState {
     identity: Arc<IdentityStore>,
@@ -937,6 +996,7 @@ pub fn run() {
             })
             .ok();
 
+            let mut tor_state: Option<Arc<ProxyState>> = None;
             let tor_port = tor.as_ref().and_then(|tor| {
                 let mut config = proxy_config(None, Some(settings.clone()));
                 config.tor_proxy = Some(tor.socks_url().to_string());
@@ -947,6 +1007,7 @@ pub fn run() {
                         approvals.clone(),
                     ),
                 );
+                tor_state = Some(listener.clone());
                 match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     start_proxy(listener, None)
                 })) {
@@ -959,6 +1020,12 @@ pub fn run() {
                         None
                     }
                 }
+            });
+
+            let _ = SIGNER_ROUTES.set(SignerRoutes {
+                normal: proxy.clone(),
+                private: Some(private_proxy.clone()),
+                tor: tor_state,
             });
 
             app.manage(ProxyPort(port));

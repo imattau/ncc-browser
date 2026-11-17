@@ -22,6 +22,9 @@ pub struct ApprovalRequest {
     pub method: String,
     pub kind: Option<u16>,
     pub preview: String,
+    /// Signing with a throwaway key: there is nothing worth remembering a choice for.
+    #[serde(default)]
+    pub ephemeral: bool,
 }
 
 type Notify = Box<dyn Fn(ApprovalRequest) + Send + Sync>;
@@ -88,6 +91,7 @@ mod tests {
             method: "sign-event".into(),
             kind: Some(1),
             preview: "hello".into(),
+            ephemeral: false,
         }
     }
 
