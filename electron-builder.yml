@@ -7,15 +7,20 @@ directories:
   output: release
   buildResources: build
 
-# The main and renderer bundles are self-contained (nostr-tools is inlined), so no
-# production node_modules are shipped.
+# The main and renderer bundles are self-contained (nostr-tools is inlined), apart
+# from adblock-rs, whose JavaScript loader and native binding are required at runtime.
 files:
   - out/**/*
   - package.json
   - '!**/*.map'
   - '!node_modules/**/*'
+  - node_modules/adblock-rs/package.json
+  - node_modules/adblock-rs/js/index.js
+  - node_modules/adblock-rs/js/index.node
 
 asar: true
+asarUnpack:
+  - node_modules/adblock-rs/**/*.node
 compression: normal
 npmRebuild: false
 removePackageScripts: true

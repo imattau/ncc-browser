@@ -1,6 +1,6 @@
 {
   "name": "ncc-browser",
-  "version": "0.32.0",
+  "version": "0.32.1",
   "private": true,
   "description": "A desktop browser that resolves services through Nostr Community Convention NCC-05 instead of DNS",
   "main": "./out/main/index.js",
