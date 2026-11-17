@@ -789,8 +789,8 @@ impl VaultService {
             return;
         }
 
-        let remote = self.fetch_remote(&relays, pubkey).await;
-        let Some(remote) = remote else {
+        // Offline is fine here: a save goes ahead locally and is retried by the next sync.
+        let Ok(Some(remote)) = self.fetch_remote(&relays, pubkey).await else {
             return;
         };
 
@@ -870,30 +870,43 @@ impl VaultService {
         pubkey: &str,
         publish_merged: bool,
     ) -> Result<(), String> {
-        let Some(remote) = self.fetch_remote(relays, pubkey).await else {
+        // No relay answering is a failure, not an empty vault: calling it "synced" would
+        // hide that a login never left the device.
+        let remote = self.fetch_remote(relays, pubkey).await?;
+
+        // A save that no relay accepted is retried here, whatever the relays hold.
+        let (local, was_pending, cached_id) = {
+            let state = self.secure();
+            (
+                state.vault.clone().unwrap_or_default(),
+                state.cached.as_ref().is_some_and(|cached| cached.pending),
+                state.cached.as_ref().map(|cached| cached.event.id),
+            )
+        };
+
+        let Some(remote) = remote else {
+            // The relays have no vault yet: send ours if there is anything in it.
+            if publish_merged && (was_pending || !local.entries.is_empty()) {
+                let (_, error) = self.publish(pubkey, local).await?;
+                if let Some(error) = error {
+                    return Err(error);
+                }
+            }
             return Ok(());
         };
 
+        if cached_id == Some(remote.id) && !was_pending {
+            return Ok(());
+        }
+
         let remote_vault = decrypt(&self.identity, pubkey, &remote)?;
-        let (merged, changed) = {
-            let state = self.secure();
-            let local = state.vault.clone().unwrap_or_default();
-            if state
-                .cached
-                .as_ref()
-                .map(|cached| cached.event.id == remote.id)
-                .unwrap_or(false)
-            {
-                return Ok(());
-            }
-            merge_vaults(&local, &remote_vault)
-        };
+        let (merged, changed) = merge_vaults(&local, &remote_vault);
 
         {
             let mut state = self.secure();
             state.vault = Some(merged.clone());
             state.last_created_at = state.last_created_at.max(remote.created_at.as_secs());
-            if !changed {
+            if !changed && !was_pending {
                 state.cached = Some(CachedVault {
                     event: remote,
                     pending: false,
@@ -902,9 +915,10 @@ impl VaultService {
             }
         }
 
-        if changed && publish_merged {
-            // The remote copy won something, so the union has to go back out or the
-            // other device would keep offering its older entry.
+        if (changed || was_pending) && publish_merged {
+            // Either the remote copy won something, so the union has to go back out or
+            // the other device would keep offering its older entry, or an earlier
+            // publish never reached a relay.
             let (_, error) = self.publish(pubkey, merged).await?;
             if let Some(error) = error {
                 return Err(error);
@@ -914,7 +928,13 @@ impl VaultService {
         Ok(())
     }
 
-    async fn fetch_remote(&self, relays: &[String], pubkey: &str) -> Option<nostr::Event> {
+    /// The newest vault event any relay holds. `Err` only when no relay answered at all;
+    /// `Ok(None)` means they answered and have none.
+    async fn fetch_remote(
+        &self,
+        relays: &[String],
+        pubkey: &str,
+    ) -> Result<Option<nostr::Event>, String> {
         let signer = self.signer();
         let filter = vault_filter(pubkey);
         let attempts = relays
@@ -924,20 +944,31 @@ impl VaultService {
         let results = futures_util::future::join_all(attempts).await;
 
         let mut valid: Vec<nostr::Event> = Vec::new();
+        let mut answered = 0;
+        let mut first_error = None;
         for result in results {
             match result {
-                Ok(events) => valid.extend(events.into_iter().filter(|event| {
-                    event.kind.as_u16() as u64 == VAULT_KIND
-                        && event.pubkey.to_hex() == pubkey
-                        && event.content.len() <= 1_000_000
-                        && event.tags.iter().any(|tag| {
-                            let parts = tag.as_slice();
-                            parts.len() >= 2 && parts[0] == "d" && parts[1] == VAULT_D
-                        })
-                        && event.verify().is_ok()
-                })),
-                Err(error) => tracing::debug!(target: "ncc_proxy::vault", "{error}"),
+                Ok(events) => {
+                    answered += 1;
+                    valid.extend(events.into_iter().filter(|event| {
+                        event.kind.as_u16() as u64 == VAULT_KIND
+                            && event.pubkey.to_hex() == pubkey
+                            && event.content.len() <= 1_000_000
+                            && event.tags.iter().any(|tag| {
+                                let parts = tag.as_slice();
+                                parts.len() >= 2 && parts[0] == "d" && parts[1] == VAULT_D
+                            })
+                            && event.verify().is_ok()
+                    }))
+                }
+                Err(error) => {
+                    tracing::debug!(target: "ncc_proxy::vault", "{error}");
+                    first_error.get_or_insert(error);
+                }
             }
+        }
+        if answered == 0 {
+            return Err(first_error.unwrap_or_else(|| "No relay answered".to_string()));
         }
 
         valid.sort_by(|a, b| {
@@ -946,7 +977,7 @@ impl VaultService {
                 .cmp(&a.created_at.as_secs())
                 .then_with(|| a.id.to_hex().cmp(&b.id.to_hex()))
         });
-        valid.into_iter().next()
+        Ok(valid.into_iter().next())
     }
 
     fn signer(&self) -> Signer {
@@ -1018,7 +1049,13 @@ impl VaultService {
 
         let error = if pending {
             Some(match accepted {
-                0 => format!("No relay accepted the vault ({} tried)", relays.len()),
+                0 => format!(
+                    "No relay accepted the vault ({} tried){}",
+                    relays.len(),
+                    first_error
+                        .map(|error| format!(": {error}"))
+                        .unwrap_or_default()
+                ),
                 accepted => format!(
                     "{accepted} of {} relays accepted the vault{}",
                     relays.len(),
@@ -1365,5 +1402,202 @@ mod tests {
         let secret = TotpSecret::parse("JBSWY3DP").unwrap();
         let code = secret.code(7000 * 1000);
         assert_eq!(code.code.len(), 6);
+    }
+
+    /// A relay in this process that keeps the newest event per `d` tag, enough for the
+    /// vault to publish to and read from.
+    async fn memory_relay() -> (String, Arc<Mutex<HashMap<String, Value>>>) {
+        use futures_util::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::Message;
+
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let url = format!("ws://127.0.0.1:{}", listener.local_addr().unwrap().port());
+        let store: Arc<Mutex<HashMap<String, Value>>> = Arc::new(Mutex::new(HashMap::new()));
+        let shared = store.clone();
+        tokio::spawn(async move {
+            loop {
+                let Ok((stream, _)) = listener.accept().await else {
+                    return;
+                };
+                let store = shared.clone();
+                tokio::spawn(async move {
+                    let Ok(mut socket) = tokio_tungstenite::accept_async(stream).await else {
+                        return;
+                    };
+                    while let Some(Ok(Message::Text(text))) = socket.next().await {
+                        let Ok(value) = serde_json::from_str::<Value>(&text) else {
+                            continue;
+                        };
+                        match value.get(0).and_then(Value::as_str) {
+                            Some("EVENT") => {
+                                let event = value[1].clone();
+                                let d = event["tags"]
+                                    .as_array()
+                                    .and_then(|tags| {
+                                        tags.iter()
+                                            .find(|tag| tag[0] == "d")
+                                            .map(|tag| tag[1].to_string())
+                                    })
+                                    .unwrap_or_default();
+                                let id = event["id"].clone();
+                                store.lock().unwrap().insert(d, event);
+                                let _ = socket
+                                    .send(Message::Text(
+                                        json!(["OK", id, true, ""]).to_string().into(),
+                                    ))
+                                    .await;
+                            }
+                            Some("REQ") => {
+                                let sub = value[1].clone();
+                                let events: Vec<Value> =
+                                    store.lock().unwrap().values().cloned().collect();
+                                for event in events {
+                                    let _ = socket
+                                        .send(Message::Text(
+                                            json!(["EVENT", sub, event]).to_string().into(),
+                                        ))
+                                        .await;
+                                }
+                                let _ = socket
+                                    .send(Message::Text(json!(["EOSE", sub]).to_string().into()))
+                                    .await;
+                            }
+                            _ => {}
+                        }
+                    }
+                });
+            }
+        });
+        (url, store)
+    }
+
+    fn draft(origin: &str, user: &str) -> Draft {
+        Draft {
+            id: None,
+            origin: origin.into(),
+            title: String::new(),
+            username: user.into(),
+            password: "secret".into(),
+            notes: String::new(),
+            totp: String::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_relay_that_cannot_be_reached_is_reported_not_called_synced() {
+        let vault = service(3000);
+        let status = vault.unlock().await;
+        assert!(
+            status.error.is_some(),
+            "unlocking against a dead relay must say the relay copy was not fetched: {status:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_login_saved_offline_reaches_the_relay_on_the_next_sync() {
+        let (url, store) = memory_relay().await;
+        let settings = settings(); // starts with a dead relay
+        let dir = std::env::temp_dir().join(format!("ncc-vault-offline-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let vault = VaultService::with_clock(
+            identity(),
+            settings.clone(),
+            dir.join("cache.json"),
+            Arc::new(|| 4000),
+        );
+        vault.unlock().await;
+        let outcome = vault.save(draft("https://offline.example", "alice")).await;
+        assert!(outcome.ok && outcome.pending, "{outcome:?}");
+        assert!(store.lock().unwrap().is_empty());
+
+        // Back online.
+        settings.set_relays(vec![url]).unwrap();
+        vault.sync(true).await.unwrap();
+        assert_eq!(
+            store.lock().unwrap().len(),
+            1,
+            "a pending save has to be published once a relay is reachable"
+        );
+    }
+
+    /// Cross-implementation check against a real relay, with `test/password-live.test.ts`:
+    ///
+    /// ```text
+    /// nak serve --port 10547 &
+    /// export NCC_SYNC_RELAY=ws://127.0.0.1:10547 NCC_SYNC_NSEC=<hex>
+    /// NCC_VAULT_PHASE=1 cargo test -p ncc-proxy vault::tests::live -- --ignored
+    /// npx vitest run test/password-live.test.ts
+    /// NCC_VAULT_PHASE=2 cargo test -p ncc-proxy vault::tests::live -- --ignored
+    /// ```
+    #[tokio::test]
+    #[ignore = "needs a relay and a key: see the doc comment"]
+    async fn live_round_trip_with_the_desktop_build() {
+        let (Ok(relay), Ok(nsec), Ok(phase)) = (
+            std::env::var("NCC_SYNC_RELAY"),
+            std::env::var("NCC_SYNC_NSEC"),
+            std::env::var("NCC_VAULT_PHASE"),
+        ) else {
+            panic!("set NCC_SYNC_RELAY, NCC_SYNC_NSEC and NCC_VAULT_PHASE");
+        };
+        let dir = std::env::temp_dir().join(format!("ncc-vault-live-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let identity = Arc::new(IdentityStore::open(dir.join("identity.json")));
+        identity
+            .import(
+                &ncc_identity::PassphraseEnvelope::new("test-passphrase"),
+                &nsec,
+            )
+            .unwrap();
+        let settings = Arc::new(SettingsStore::in_memory(crate::settings::Settings {
+            relays: vec![relay],
+            ..Default::default()
+        }));
+        let vault = VaultService::new(identity, settings, dir.join("cache.json"));
+        let status = vault.unlock().await;
+        assert!(status.unlocked, "{status:?}");
+
+        if phase == "1" {
+            let outcome = vault
+                .save(Draft {
+                    id: None,
+                    origin: "https://phone.example".into(),
+                    title: "Phone login".into(),
+                    username: "alice".into(),
+                    password: "phone password with spaces ".into(),
+                    notes: "from android".into(),
+                    totp: String::new(),
+                })
+                .await;
+            assert!(outcome.ok && !outcome.pending, "{outcome:?}");
+        } else {
+            // The desktop has merged and added its own login.
+            let origins: Vec<_> = vault
+                .list()
+                .iter()
+                .map(|entry| entry.origin.clone())
+                .collect();
+            assert!(
+                origins.contains(&"https://phone.example".to_string()),
+                "{origins:?}"
+            );
+            assert!(
+                origins.contains(&"https://desktop.example".to_string()),
+                "{origins:?}"
+            );
+            let desktop = vault
+                .matches("https://desktop.example/login", "normal")
+                .unwrap()
+                .into_iter()
+                .next()
+                .expect("the desktop login matches its own origin");
+            let credentials = vault
+                .fill(&desktop.id, "https://desktop.example/login", "normal")
+                .unwrap();
+            assert_eq!(credentials.username, "bob");
+            assert_eq!(credentials.password, "desktop-secret");
+        }
     }
 }

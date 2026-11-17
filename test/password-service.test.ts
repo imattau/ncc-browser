@@ -287,5 +287,42 @@ describe('PasswordService', () => {
     expect(code.code).toMatch(/^\d{6}$/)
     expect(code.period).toBe(30)
   })
-})
 
+  it('says so when no relay answers, and retries an offline save once one does', async () => {
+    const relayStore = new Map<string, Event>()
+    let online = false
+    const query = async (_relays: string[], filter: Filter): Promise<Event[]> => {
+      const d = filter['#d']?.[0]
+      const event = d ? relayStore.get(d) : undefined
+      return event ? [event] : []
+    }
+    const relays = {
+      query,
+      queryAuth: query,
+      queryAuthReport: async (relayUrls: string[], filter: Filter) => ({
+        events: await query(relayUrls, filter),
+        answered: online ? 1 : 0
+      }),
+      publishWithAuth: async (_url: string, event: Event): Promise<string> => {
+        if (!online) throw new Error('offline')
+        const d = event.tags.find((tag) => tag[0] === 'd')?.[1]
+        if (d) relayStore.set(d, event)
+        return 'ok'
+      }
+    }
+    const h = harness({ relays, relayStore } as never)
+    const unlocked = await h.service.unlock()
+    expect(unlocked.error).toMatch(/No relay answered/)
+
+    const saved = await h.service.saveEntry(draft)
+    expect(saved.ok).toBe(true)
+    expect(saved.pending).toBe(true)
+    expect(relayStore.size).toBe(0)
+
+    online = true
+    const synced = await h.service.syncNow()
+    expect(synced.error).toBeNull()
+    expect(synced.pending).toBe(false)
+    expect(relayStore.size).toBe(1)
+  })
+})

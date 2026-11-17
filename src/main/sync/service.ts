@@ -210,7 +210,18 @@ export class SyncService {
     if (relays.length === 0) throw new Error('No relay is configured for sync')
     const now = this.now()
     const onauth = (template: EventTemplate): Promise<Event> => this.signAuth(provider, template)
-    const fetched = await this.deps.relays.queryAuth(relays, syncFilter(pubkey), onauth)
+    let fetched: Event[]
+    if (this.deps.relays.queryAuthReport) {
+      const report = await this.deps.relays.queryAuthReport(relays, syncFilter(pubkey), onauth)
+      // Nothing answered: stop here instead of calling the data up to date, and instead of
+      // waiting on every relay again to publish.
+      if (report.answered === 0 && report.events.length === 0) {
+        throw new Error(`No relay answered (${relays.length} tried)`)
+      }
+      fetched = report.events
+    } else {
+      fetched = await this.deps.relays.queryAuth(relays, syncFilter(pubkey), onauth)
+    }
     const latest = latestByD(fetched, pubkey)
     for (const [d, event] of latest) {
       this.lastCreated.set(d, Math.max(this.lastCreated.get(d) ?? 0, event.created_at))

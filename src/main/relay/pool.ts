@@ -71,23 +71,40 @@ export class RelayPool {
   ): Promise<Event[]> {
     this.track(relays)
     if (!onauth) return this.query(relays, filter)
-    return new Promise<Event[]>((resolve) => {
+    return (await this.queryAuthReport(relays, filter, onauth)).events
+  }
+
+  /**
+   * Like `queryAuth`, but also says how many relays actually answered (reached the end
+   * of their stored events). Zero means none was reachable, which is different from
+   * "reachable and holding nothing": a caller that treats the two alike reports a dead
+   * relay as an up-to-date copy.
+   */
+  async queryAuthReport(
+    relays: string[],
+    filter: Filter,
+    onauth?: (event: EventTemplate) => Promise<Event>
+  ): Promise<{ events: Event[]; answered: number }> {
+    this.track(relays)
+    return new Promise((resolve) => {
       const events: Event[] = []
+      let answered = 0
       let finished = false
       const finish = (): void => {
         if (finished) return
         finished = true
-        resolve(events)
+        resolve({ events, answered })
       }
       const timeout = setTimeout(finish, 6_000)
       timeout.unref?.()
       this.instance().subscribeEose(relays, filter, {
         onevent: (event) => events.push(event),
-        onclose: () => {
+        onclose: (reasons) => {
           clearTimeout(timeout)
+          answered = countAnswered(reasons)
           finish()
         },
-        onauth: onauth as never
+        ...(onauth ? { onauth: onauth as never } : {})
       })
     })
   }
@@ -152,4 +169,17 @@ export class RelayPool {
   private track(urls: string[]): void {
     for (const url of urls) this.known.add(url)
   }
+}
+
+/** The close reason nostr-tools reports for a relay that finished sending its events. */
+const EOSE_REASON = 'closed automatically on eose'
+
+/** How many relays reached EOSE. Anything else is a connection failure or a refusal. */
+export function countAnswered(reasons: unknown): number {
+  if (!Array.isArray(reasons)) return 0
+  return reasons.filter(
+    (entry) =>
+      (typeof entry === 'string' ? entry : (entry as { reason?: unknown } | null)?.reason) ===
+      EOSE_REASON
+  ).length
 }

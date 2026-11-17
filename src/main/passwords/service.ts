@@ -86,6 +86,12 @@ export interface PasswordRelayPoolLike {
     filter: Filter,
     onauth?: (event: EventTemplate) => Promise<Event>
   ): Promise<Event[]>
+  /** Optional: also reports how many relays answered, so a dead relay is not "up to date". */
+  queryAuthReport?(
+    relays: string[],
+    filter: Filter,
+    onauth?: (event: EventTemplate) => Promise<Event>
+  ): Promise<{ events: Event[]; answered: number }>
   publishWithAuth(
     url: string,
     event: Event,
@@ -952,11 +958,21 @@ export class PasswordService {
   ): Promise<Event | null> {
     if (relays.length === 0) return null
     const onauth = (template: EventTemplate): Promise<Event> => this.signAuth(provider, template)
-    const events = await this.deps.relays.queryAuth(
-      relays,
-      passwordVaultFilter(pubkey),
-      onauth
-    )
+    let events: Event[]
+    if (this.deps.relays.queryAuthReport) {
+      const report = await this.deps.relays.queryAuthReport(
+        relays,
+        passwordVaultFilter(pubkey),
+        onauth
+      )
+      // Nothing answered: say so, rather than treating it as a relay with no vault.
+      if (report.answered === 0 && report.events.length === 0) {
+        throw new Error(`No relay answered (${relays.length} tried)`)
+      }
+      events = report.events
+    } else {
+      events = await this.deps.relays.queryAuth(relays, passwordVaultFilter(pubkey), onauth)
+    }
     const valid = events
       .filter(
         (event) =>

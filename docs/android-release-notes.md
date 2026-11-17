@@ -5,6 +5,10 @@ is not a daily driver.
 
 ## New in this build
 
+- Password sync now tells you when it could not reach a relay. Before, unlocking with
+  no relay reachable looked like a successful sync.
+- A login saved while you were offline is now sent as soon as a relay is reachable
+  again. Before, it stayed on the phone until you saved something else.
 - Sync between your phone and the desktop build. Settings → Sync can keep bookmarks,
   open tabs and history in step, each with its own switch, all off until you turn them
   on. Everything is encrypted to your own Nostr key before it leaves the phone, and

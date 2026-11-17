@@ -150,7 +150,10 @@ pub fn plan(request: &SyncRequest, remote: &Remote, own_tabs_key: Option<&str>) 
 
     if let Some(tabs) = &request.tabs {
         let key = tabs_key(&request.device, tabs);
-        let own_published = remote.tabs.iter().any(|doc| doc.device.id == request.device.id);
+        let own_published = remote
+            .tabs
+            .iter()
+            .any(|doc| doc.device.id == request.device.id);
         if own_tabs_key != Some(key.as_str()) || !own_published {
             let doc = TabsDoc {
                 v: SYNC_VERSION,
@@ -296,7 +299,11 @@ impl SyncService {
             }
         }
         if let Some(tabs) = &request.tabs {
-            if plan.publish.iter().any(|(d, _)| d.starts_with("ncc-browser/tabs/")) {
+            if plan
+                .publish
+                .iter()
+                .any(|(d, _)| d.starts_with("ncc-browser/tabs/"))
+            {
                 *self.last_tabs_key() = Some(tabs_key(&request.device, tabs));
             }
         }
@@ -624,10 +631,9 @@ mod tests {
 
         let week = week_of(NOW - 1000);
         let mut remote = Remote::default();
-        remote.history.insert(
-            week,
-            normalize_history(&first.publish[0].1, week),
-        );
+        remote
+            .history
+            .insert(week, normalize_history(&first.publish[0].1, week));
         assert!(plan(&request, &remote, None).publish.is_empty());
     }
 
@@ -715,7 +721,10 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let identity = Arc::new(IdentityStore::open(dir.join("identity.json")));
         identity
-            .import(&ncc_identity::PassphraseEnvelope::new("test-passphrase"), &nsec)
+            .import(
+                &ncc_identity::PassphraseEnvelope::new("test-passphrase"),
+                &nsec,
+            )
             .unwrap();
         let settings = Arc::new(SettingsStore::in_memory(crate::settings::Settings {
             relays: vec![relay],
@@ -772,8 +781,14 @@ mod tests {
                 .iter()
                 .map(|entry| entry.url.clone())
                 .collect();
-            assert!(urls.contains(&"https://phone.example/".to_string()), "{urls:?}");
-            assert!(urls.contains(&"https://desktop.example/".to_string()), "{urls:?}");
+            assert!(
+                urls.contains(&"https://phone.example/".to_string()),
+                "{urls:?}"
+            );
+            assert!(
+                urls.contains(&"https://desktop.example/".to_string()),
+                "{urls:?}"
+            );
             let history: Vec<_> = response
                 .history
                 .unwrap()
@@ -781,10 +796,16 @@ mod tests {
                 .iter()
                 .map(|entry| entry.url.clone())
                 .collect();
-            assert!(history.contains(&"https://desktop.example/visited".to_string()), "{history:?}");
+            assert!(
+                history.contains(&"https://desktop.example/visited".to_string()),
+                "{history:?}"
+            );
             assert_eq!(response.devices.len(), 1, "{:?}", response.devices);
             assert_eq!(response.devices[0].name, "Desktop");
-            assert_eq!(response.devices[0].tabs[0].url, "https://desktop.example/tab");
+            assert_eq!(
+                response.devices[0].tabs[0].url,
+                "https://desktop.example/tab"
+            );
         }
     }
 }

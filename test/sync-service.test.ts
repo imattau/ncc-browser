@@ -192,4 +192,35 @@ describe('SyncService', () => {
     expect(a.service.status().error).toBeNull()
     expect(a.bookmarks.list()).toHaveLength(1)
   })
+
+  it('reports an unreachable relay instead of calling the data synced', async () => {
+    const shared = relay()
+    const clock = { now: 1_800_000_000_000 }
+    const a = device(shared, 'Laptop', 'linux', clock)
+    const dead = {
+      ...shared.pool,
+      queryAuthReport: async () => ({ events: [] as Event[], answered: 0 })
+    }
+    const dir = mkdtempSync(join(tmpdir(), 'ncc-sync-dead-'))
+    const bookmarks = new BookmarkStore(join(dir, 'b.json'), () => clock.now)
+    bookmarks.add('https://a.example/', 'A')
+    const prefs = new SyncPrefsStore(join(dir, 's.json'))
+    const service = new SyncService({
+      prefs,
+      identity: { provider: () => provider },
+      relays: dead,
+      resolveRelays: async () => ['wss://relay.test'],
+      bookmarks,
+      history: new HistoryStore(join(dir, 'h.json'), () => clock.now),
+      tabs: () => [],
+      notify: () => {},
+      platform: 'linux',
+      now: () => clock.now
+    })
+    const status = await service.configure({ categories: { bookmarks: true } })
+    expect(status.error).toMatch(/No relay answered/)
+    expect(status.lastSyncedAt).toBeNull()
+    expect(shared.published).toEqual([])
+    expect(a.bookmarks.list()).toEqual([])
+  })
 })
