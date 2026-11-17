@@ -5,6 +5,9 @@ is not a daily driver.
 
 ## New in this build
 
+- Fixed `ncc://` and `nsite://` links that could change the address bar without loading
+  the destination. Links now resolve through the current page's proxy port, and links
+  explicitly opened in a new window create a browser tab.
 - Fixed fullscreen on embedded video players: pressing fullscreen no longer leaves a
   black screen. The video fills the screen and Back leaves fullscreen.
 - Fixed ad and tracker filter lists never downloading on Android: Settings → Security

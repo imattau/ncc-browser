@@ -355,6 +355,7 @@ class MainActivity : TauriActivity() {
         },
         ::onTabEvent,
         ::startDownload,
+        { target -> openTab(target, reuseActive = false, isPrivate = isPrivate, isTor = isTor) },
       )
       if (!tab.open(url)) {
         tab.destroy()
@@ -383,6 +384,7 @@ class MainActivity : TauriActivity() {
       { proxyPortNumber },
       ::onTabEvent,
       ::startDownload,
+      { target -> openTab(target, reuseActive = false) },
     )
     if (!tab.accepts(url)) {
       tab.destroy()
