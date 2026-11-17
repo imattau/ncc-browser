@@ -2780,6 +2780,28 @@ function applyAccent(value) {
   applyChoiceAttribute('accent', value, ['blue', 'violet', 'green', 'amber'], 'ncc.accent', 'violet')
 }
 
+/** Auto follows the system: gesture navigation already has a swipe-back. */
+function applyBackButton(value) {
+  const choice = ['auto', 'show', 'hide'].includes(value) ? value : 'auto'
+  let gestures = false
+  try {
+    gestures = choice === 'auto' && content?.isGestureNavigation?.() === true
+  } catch {
+    gestures = false
+  }
+  const hidden = choice === 'hide' || gestures
+  if (hidden) document.documentElement.dataset.backHidden = 'true'
+  else delete document.documentElement.dataset.backHidden
+  try {
+    globalThis.localStorage?.setItem('ncc.back-button', choice)
+  } catch {
+    // Applies for this run only.
+  }
+  for (const button of document.querySelectorAll('button[data-back-button]')) {
+    button.setAttribute('aria-checked', String(button.dataset.backButton === choice))
+  }
+}
+
 function applyDensity(value) {
   applyChoiceAttribute('density', value, ['comfortable', 'compact'], 'ncc.density', 'comfortable')
 }
@@ -3899,6 +3921,9 @@ function wireChrome() {
   document.querySelectorAll('[data-density]').forEach((button) => {
     button.addEventListener('click', () => applyDensity(button.dataset.density))
   })
+  document.querySelectorAll('[data-back-button]').forEach((button) => {
+    button.addEventListener('click', () => applyBackButton(button.dataset.backButton))
+  })
   byId('reduce-motion').addEventListener('change', (event) => applyReduceMotion(event.target.checked))
   byId('appearance-reset').addEventListener('click', () => {
     applyTheme('system')
@@ -3906,6 +3931,7 @@ function wireChrome() {
     applyTextSize('default')
     applyAccent('violet')
     applyDensity('comfortable')
+    applyBackButton('auto')
     applyReduceMotion(false)
   })
 
@@ -3921,6 +3947,7 @@ async function main() {
   applyTextSize(readSetting('ncc.text-size', 'default'))
   applyAccent(readSetting('ncc.accent', 'violet'))
   applyDensity(readSetting('ncc.density', 'comfortable'))
+  applyBackButton(readSetting('ncc.back-button', 'auto'))
   applyReduceMotion(readSetting('ncc.reduce-motion', 'false'))
   renderCounts()
   renderPill()

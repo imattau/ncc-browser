@@ -798,6 +798,17 @@ class MainActivity : TauriActivity() {
       runOnUiThread { this@MainActivity.navigateBack() }
     }
 
+    /** True when the system navigates by swipe gestures (Android 10+, mode 2). */
+    @JavascriptInterface
+    fun isGestureNavigation(): Boolean {
+      if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
+      return try {
+        android.provider.Settings.Secure.getInt(contentResolver, "navigation_mode", 0) == 2
+      } catch (_: Exception) {
+        false
+      }
+    }
+
     @JavascriptInterface
     fun back() {
       runOnUiThread { active()?.back() }

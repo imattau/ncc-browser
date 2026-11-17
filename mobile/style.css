@@ -184,6 +184,11 @@ body[data-bar='top'] .strip {
   transition: background 0.12s;
 }
 
+/* Gesture navigation (or the person's choice) makes the strip's arrow redundant. */
+:root[data-back-hidden='true'] #bar-back {
+  display: none;
+}
+
 .ib.small {
   width: 36px;
   height: 36px;
@@ -424,6 +429,7 @@ body[data-bar='top'] #progress {
 }
 
 .choice-grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.choice-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .choice-grid.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .choice-grid button {
   min-height: 40px;
@@ -447,6 +453,12 @@ body[data-bar='top'] #progress {
 .choice-grid button[data-accent='violet'] { --swatch: #7c3aed; }
 .choice-grid button[data-accent='green'] { --swatch: #15803d; }
 .choice-grid button[data-accent='amber'] { --swatch: #b45309; }
+.appearance-note {
+  margin: 0;
+  font-size: 0.85em;
+  color: var(--muted, var(--text-2, inherit));
+}
+
 .appearance-preview {
   margin: 10px 0 0;
   padding: 10px;
