@@ -178,6 +178,24 @@ pub fn cosmetic_selectors(url: &str, kind: &str) -> Vec<String> {
         .collect()
 }
 
+/// The URL a network check should treat as the request's initiator.
+///
+/// A main-frame document has no embedding source: the "source" the WebView hands
+/// us is the page being left. Judging a navigation as third-party therefore lets
+/// a generic `$third-party` rule block it -- uBO's
+/// `||localhost^$third-party,domain=~127.0.0.1|...` did exactly that on every
+/// cross-service NCC navigation (its loopback exceptions cover literal
+/// `127.0.0.1`/`[::1]`, not `<npub>.<service>.localhost`), replacing the new
+/// page with an empty document until it was reloaded. Subresources keep the real
+/// source, where third-party classification is meaningful.
+fn request_source<'a>(url: &'a str, source: &'a str, request_type: &str) -> &'a str {
+    if request_type == "document" || source.is_empty() {
+        url
+    } else {
+        source
+    }
+}
+
 pub fn check_request(
     url: &str,
     source: &str,
@@ -210,7 +228,7 @@ pub fn check_request(
     }
     let Ok(request) = Request::new(
         url,
-        if source.is_empty() { url } else { source },
+        request_source(url, source, request_type),
         request_type,
         method,
     ) else {
@@ -335,5 +353,32 @@ pub async fn refresh_lists_if_stale(cache_dir: &Path) {
     });
     if !fresh {
         refresh_lists(cache_dir).await;
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Mirrors the uBO rule that blanked every cross-service navigation in the
+    // Android shell: a generic third-party block aimed at `localhost` catches
+    // `<npub>.<service>.localhost` when the page being left is treated as the
+    // source of a top-level document request.
+    #[test]
+    fn a_document_is_never_judged_as_third_party() {
+        let engine = compile(&["||localhost^$third-party,domain=~127.0.0.1".to_string()]);
+        let url = "http://npub1jm9hmal09kwgvy22fgsem3f6csrde6h398vw5ur8jp9hym4nn85q3kwygn.search.localhost:41407/";
+        let previous = "http://npub1jm9hmal09kwgvy22fgsem3f6csrde6h398vw5ur8jp9hym4nn85q3kwygn.npanel.localhost:41407/";
+
+        let old_behaviour = Request::new(url, previous, "document", "get").unwrap();
+        assert!(engine.check_network_request(&old_behaviour).should_block());
+
+        let fixed = Request::new(url, request_source(url, previous, "document"), "document", "get").unwrap();
+        assert!(!engine.check_network_request(&fixed).should_block());
+
+        // Subresources still carry the page as their source.
+        assert_eq!(request_source(url, previous, "script"), previous);
+        assert_eq!(request_source(url, "", "image"), url);
     }
 }
