@@ -5,6 +5,9 @@ is not a daily driver.
 
 ## New in this build
 
+- Fixes onion addresses opening to a blank screen. Tor tabs now allow requests to the
+  listener port in their own starting URL, even before the shell's port handoff is
+  available.
 - Fixes NCC pages failing with "Could not automatically determine the process-level
   CryptoProvider", most often after coming back from the background or restarting. The
   secure connection to relays had no TLS provider chosen once Tor support was added to
