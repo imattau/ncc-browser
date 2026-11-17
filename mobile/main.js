@@ -136,6 +136,7 @@ const PANELS = [
   'sync',
   'password-fill',
   'password-save',
+  'share-nostr',
   'password-edit',
   'storage',
   'identity',
@@ -805,6 +806,7 @@ function showPanel(name) {
   if (name === 'sync') renderSync()
   if (name === 'password-fill') void renderPasswordFill()
   if (name === 'password-save') renderPasswordSave()
+  if (name === 'share-nostr') renderShareNostr()
   if (name === 'password-edit') renderPasswordEdit()
   if (name === 'appearance') renderAppearanceSub()
   if (name === 'history') renderHistory()
@@ -1701,6 +1703,9 @@ function renderMenu() {
   byId('menu-forward').disabled = !active?.canGoForward
   byId('menu-reload').disabled = !hasPage
   byId('menu-share').disabled = !hasPage
+  const nostr = shareNostrState(active, hasPage)
+  byId('menu-share-nostr').setAttribute('aria-disabled', String(!nostr.ok))
+  byId('menu-share-nostr-note').textContent = nostr.ok ? '' : nostr.why
   byId('menu-bookmark').disabled = !hasPage
   byId('menu-find').setAttribute('aria-disabled', String(!hasPage))
   byId('menu-copy').setAttribute('aria-disabled', String(!hasPage))
@@ -1735,6 +1740,11 @@ function wireMenu() {
   act('menu-share', () => {
     content.share(displayAddress(activeUrl))
     closePanel()
+  })
+  act('menu-share-nostr', () => {
+    const active = tabs.find((tab) => tab.id === activeTabId)
+    if (!shareNostrState(active, tabs.length > 0 && activeUrl !== '').ok) return
+    showPanel('share-nostr')
   })
   act('menu-new', () => openOmnibox({ newTab: true }))
   act('menu-private', () => openOmnibox({ newTab: true, private: true }))
@@ -3409,6 +3419,66 @@ async function respondSave(action) {
   }
 }
 
+/* ───────────────────────────── Share to Nostr ───────────────────────────── */
+
+/** A public post: normal tabs only, and only with an unlocked identity. */
+function shareNostrState(tab, hasPage) {
+  if (!hasPage || !tab) return { ok: false, why: 'Open a page first' }
+  if (tab.kind !== 'normal') return { ok: false, why: 'Normal tabs only' }
+  if (!identity?.initialised || !identity?.unlocked) return { ok: false, why: 'Sign in first' }
+  return { ok: true, why: '' }
+}
+
+let sharing = false
+
+function renderShareNostr() {
+  sharing = false
+  byId('share-comment').value = ''
+  byId('share-comment').disabled = false
+  byId('share-post').disabled = false
+  byId('share-post').textContent = 'Post'
+  byId('share-note').textContent = ''
+  const title = activeTitle ? `${activeTitle}\n` : ''
+  byId('share-preview').textContent = `${title}${displayAddress(activeUrl)}`
+  byId('share-preview').style.whiteSpace = 'pre-wrap'
+  byId('share-who').textContent = `Posts publicly as ${shortId(identity?.npub || '')} to your relays.`
+}
+
+async function postShareNostr() {
+  if (sharing) return
+  const tab = tabs.find((entry) => entry.id === activeTabId)
+  if (!shareNostrState(tab, !!activeUrl).ok) return
+  sharing = true
+  const note = byId('share-note')
+  const button = byId('share-post')
+  button.disabled = true
+  button.textContent = 'Posting…'
+  note.textContent = ''
+  try {
+    const result = await invoke('share_nostr', {
+      kind: tab.kind || 'normal',
+      url: displayAddress(activeUrl),
+      title: activeTitle || '',
+      comment: byId('share-comment').value
+    })
+    if (result.accepted > 0) {
+      note.textContent = `Posted to ${result.accepted} of ${result.relays} relays.`
+      button.textContent = 'Done'
+      byId('share-comment').disabled = true
+      setTimeout(() => {
+        if (!byId('share-nostr').hidden) closePanel()
+      }, 1500)
+      return
+    }
+    note.textContent = `No relay accepted the post${result.error ? `: ${result.error}` : '.'}`
+  } catch (error) {
+    note.textContent = String(error)
+  }
+  sharing = false
+  button.disabled = false
+  button.textContent = 'Retry'
+}
+
 /**
  * A submitted login the native hook reported. Only a normal tab can get here: the hook
  * is not installed in private or Tor tabs.
@@ -3924,6 +3994,7 @@ function wireChrome() {
   byId('save-accept').addEventListener('click', () => void respondSave('save'))
   byId('save-never').addEventListener('click', () => void respondSave('never'))
   byId('save-dismiss').addEventListener('click', () => void respondSave('dismiss'))
+  byId('share-post').addEventListener('click', () => void postShareNostr())
 
   // Coming back to the app is a reasonable moment to pull the relay copy; the vault
   // throttles it to once every 30 seconds.

@@ -158,6 +158,7 @@ struct VaultHandle(Arc<VaultService>);
 
 /// Bookmark, history and open-tab sync. Same identity and relays as the vault.
 struct SyncHandle(Arc<ncc_proxy::sync::SyncService>);
+struct ShareHandle(Arc<ncc_proxy::share::ShareService>);
 
 #[tauri::command]
 fn proxy_port(state: tauri::State<'_, ProxyPort>) -> Option<u16> {
@@ -324,6 +325,18 @@ async fn sync_exchange(
     request: ncc_proxy::sync::SyncRequest,
 ) -> Result<ncc_proxy::sync::SyncResponse, String> {
     sync.0.exchange(request).await
+}
+
+/// Post a page to Nostr as a public note. Normal tabs only; the shell asks first.
+#[tauri::command]
+async fn share_nostr(
+    share: tauri::State<'_, ShareHandle>,
+    kind: String,
+    url: String,
+    title: String,
+    comment: String,
+) -> Result<ncc_proxy::share::ShareOutcome, String> {
+    share.0.post(&kind, &url, &title, &comment).await
 }
 
 #[tauri::command]
@@ -870,6 +883,7 @@ pub fn run() {
             vault_status,
             sync_exchange,
             sync_remove_device,
+            share_nostr,
             vault_unlock,
             vault_lock,
             vault_list,
@@ -1053,6 +1067,10 @@ pub fn run() {
             ));
 
             app.manage(SyncHandle(Arc::new(ncc_proxy::sync::SyncService::new(
+                identity.clone(),
+                settings.clone(),
+            ))));
+            app.manage(ShareHandle(Arc::new(ncc_proxy::share::ShareService::new(
                 identity.clone(),
                 settings.clone(),
             ))));

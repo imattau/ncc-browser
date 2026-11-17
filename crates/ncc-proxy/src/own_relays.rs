@@ -106,6 +106,19 @@ impl OwnRelays {
             return settings.relays.clone();
         }
 
+        self.lookup(settings, pubkey).await
+    }
+
+    /// The relays for a public post: the configured list plus your NIP-65 write relays.
+    /// A dedicated vault relay is private storage, so it is never used here.
+    pub async fn resolve_public(&self, settings: &Settings, pubkey: &str) -> Vec<String> {
+        if settings.relays.is_empty() {
+            return Vec::new();
+        }
+        self.lookup(settings, pubkey).await
+    }
+
+    async fn lookup(&self, settings: &Settings, pubkey: &str) -> Vec<String> {
         let cached = {
             let cache = self.cache();
             cache.as_ref().and_then(|lookup| {

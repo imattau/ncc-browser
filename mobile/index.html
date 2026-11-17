@@ -577,6 +577,23 @@
       </div>
     </section>
 
+    <section id="share-nostr" class="screen" hidden>
+      <header class="appbar">
+        <button class="ib" type="button" data-back aria-label="Back"><svg class="i"><use href="#i-back" /></svg></button>
+        <h2>Share to Nostr</h2>
+      </header>
+      <div class="body">
+        <p id="share-preview" class="hint"></p>
+        <label class="field">
+          <span>Comment (optional)</span>
+          <textarea id="share-comment" rows="4" maxlength="2000" placeholder="Add a comment"></textarea>
+        </label>
+        <p id="share-who" class="hint"></p>
+        <button id="share-post" class="btn block" type="button">Post</button>
+        <p id="share-note" class="status" role="status"></p>
+      </div>
+    </section>
+
     <section id="password-edit" class="screen" hidden>
       <header class="appbar">
         <button class="ib" type="button" data-back aria-label="Back"><svg class="i"><use href="#i-back" /></svg></button>
@@ -805,6 +822,9 @@
           </button>
         </div>
         <div class="menu-rows">
+          <button id="menu-share-nostr" class="row" type="button">
+            <svg class="i"><use href="#i-share" /></svg><span class="row-text"><b>Share to Nostr</b><small id="menu-share-nostr-note"></small></span>
+          </button>
           <button id="menu-new" class="row" type="button">
             <svg class="i"><use href="#i-plus" /></svg><span class="row-text"><b>New tab</b></span>
           </button>

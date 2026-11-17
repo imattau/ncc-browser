@@ -29,6 +29,7 @@ pub mod relay;
 pub mod resolve;
 pub mod server;
 pub mod settings;
+pub mod share;
 pub mod signer;
 pub mod sync;
 pub mod vault;

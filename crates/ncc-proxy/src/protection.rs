@@ -10,7 +10,6 @@ use std::{
 };
 
 use adblock::{Engine, FilterSet, lists::ParseOptions, request::Request};
-use futures_util::{StreamExt, stream};
 
 use crate::settings::{ProtectionLevel, ProtectionSettings};
 
@@ -259,6 +258,28 @@ pub fn load_cached_lists(cache_dir: &Path) {
     }
 }
 
+/// Download one list into the cache; the file name when it could not be updated.
+async fn fetch_list(
+    client: reqwest::Client,
+    cache_dir: std::path::PathBuf,
+    file: &'static str,
+    url: &'static str,
+) -> Option<&'static str> {
+    let result = async {
+        let response = client.get(url).send().await.ok()?;
+        if !response.status().is_success() { return None; }
+        let body = response.text().await.ok()?;
+        if !(100..=12_000_000).contains(&body.len()) { return None; }
+        let temporary = cache_dir.join(format!("{file}.tmp"));
+        if std::fs::write(&temporary, &body).is_err()
+            || std::fs::rename(&temporary, cache_dir.join(file)).is_err() {
+            return None;
+        }
+        Some(())
+    }.await;
+    result.is_none().then_some(file)
+}
+
 /// Loads cached lists immediately, then refreshes them from maintained upstreams.
 pub async fn refresh_lists(cache_dir: &Path) {
     let _ = std::fs::create_dir_all(cache_dir);
@@ -276,30 +297,18 @@ pub async fn refresh_lists(cache_dir: &Path) {
         if let Ok(mut status) = filter_status_store().write() { status.updating = false; status.error = Some("Could not start the filter-list updater".into()); }
         return;
     };
-    let failures: Vec<&'static str> = stream::iter(LISTS.iter())
-        .map(|list| {
-            let client = client.clone();
-            let cache_dir = cache_dir.to_path_buf();
-            async move {
-                let result = async {
-                    let response = client.get(list.url).send().await.ok()?;
-                    if !response.status().is_success() { return None; }
-                    let body = response.text().await.ok()?;
-                    if !(100..=12_000_000).contains(&body.len()) { return None; }
-                    let temporary = cache_dir.join(format!("{}.tmp", list.file));
-                    if std::fs::write(&temporary, &body).is_err()
-                        || std::fs::rename(&temporary, cache_dir.join(list.file)).is_err() {
-                        return None;
-                    }
-                    Some(())
-                }.await;
-                result.is_none().then_some(list.file)
-            }
-        })
-        .buffer_unordered(3)
-        .filter_map(|failure| async move { failure })
-        .collect()
-        .await;
+    // A named async fn rather than a closure returning an async block: the closure form
+    // trips rustc's "FnOnce is not general enough" error once the future is spawned.
+    // Three at a time, without a stream adapter: those lose the 'static lifetimes and
+    // then fail the Send bound.
+    let mut failures: Vec<&'static str> = Vec::new();
+    for batch in LISTS.chunks(3) {
+        let downloads = batch
+            .iter()
+            .map(|list| fetch_list(client.clone(), cache_dir.to_path_buf(), list.file, list.url))
+            .collect::<Vec<_>>();
+        failures.extend(futures_util::future::join_all(downloads).await.into_iter().flatten());
+    }
     load_cached_lists(cache_dir);
     if let Ok(mut status) = filter_status_store().write() {
         status.updating = false;
