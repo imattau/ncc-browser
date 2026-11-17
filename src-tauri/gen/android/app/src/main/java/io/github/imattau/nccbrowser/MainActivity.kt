@@ -190,6 +190,8 @@ class MainActivity : TauriActivity() {
 
     val callback = object : OnBackPressedCallback(true) {
       override fun handleOnBackPressed() {
+        // A fullscreen video comes first: back leaves it, not the page.
+        if (active()?.hideFullscreen() == true) return
         // Panels, find-in-page and the signer prompt belong to the shell; ask it first
         // so back closes the sheet in front instead of navigating the page behind it.
         val view = shell
