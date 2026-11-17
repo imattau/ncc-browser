@@ -1625,6 +1625,17 @@ async function main() {
     )
     const generalShot = await chrome.send('Page.captureScreenshot', { format: 'png' })
     writeFileSync(join(ARTIFACTS, 'settings-general.png'), Buffer.from(generalShot.data, 'base64'))
+    await evaluate(chrome, 'document.querySelector(\'[data-settings-section="sync"]\').click()')
+    await waitForText(chrome, 'Sync now', 40)
+    check(
+      'settings page exposes sync, off by default',
+      (await evaluate(
+        chrome,
+        'document.querySelectorAll("[data-sync-category]").length === 3 && [...document.querySelectorAll("[data-sync-category]")].every((box) => !box.checked)'
+      )) === true
+    )
+    const syncShot = await chrome.send('Page.captureScreenshot', { format: 'png' })
+    writeFileSync(join(ARTIFACTS, 'settings-sync.png'), Buffer.from(syncShot.data, 'base64'))
     await evaluate(chrome, 'document.querySelector(\'[data-settings-section="security"]\').click()')
     await waitForText(chrome, 'Secure connections', 40)
     check(
