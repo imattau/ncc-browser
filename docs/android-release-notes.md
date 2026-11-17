@@ -3,6 +3,12 @@
 **Alpha.** An early build published so the browser can be tested on a real device. It
 is not a daily driver.
 
+## Fixes in 0.33.6
+
+- Fixed the Home profile avatar being blocked by the Android WebView's content policy.
+  The image is now fetched by the app, size and type checked, and cached locally so it
+  appears on later launches without contacting the image host again.
+
 ## New in 0.33.5
 
 - Home is available from the … menu without closing open tabs. The Home page keeps

@@ -3720,8 +3720,9 @@ dependencies = [
 
 [[package]]
 name = "ncc-navigator"
-version = "0.33.4"
+version = "0.33.6"
 dependencies = [
+ "base64 0.23.1",
  "jni 0.21.1",
  "log",
  "ncc-core",

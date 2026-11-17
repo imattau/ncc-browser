@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use base64::Engine as _;
 use tauri::{Emitter, Manager};
 
 use ncc_identity::{IdentityStore, KeyEnvelope, PassphraseEnvelope, Status};
@@ -674,6 +675,64 @@ async fn wallet_http(
     Ok(text)
 }
 
+/// Download a small HTTPS profile image in the trusted shell and return a data URL.
+/// The renderer can then keep the bytes in its local profile cache and never needs
+/// to load a remote image directly.
+#[tauri::command]
+async fn profile_picture_data(url: String) -> Result<Option<String>, String> {
+    const MAX_BYTES: usize = 256 * 1024;
+    let parsed = url::Url::parse(&url).map_err(|_| "Invalid profile picture URL".to_string())?;
+    if parsed.scheme() != "https" {
+        return Err("Profile pictures must use HTTPS".into());
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(8))
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if attempt.url().scheme() == "https" && attempt.previous().len() < 5 {
+                attempt.follow()
+            } else {
+                attempt.stop()
+            }
+        }))
+        .build()
+        .map_err(|error| error.to_string())?;
+    let mut response = client.get(parsed).send().await.map_err(|error| error.to_string())?;
+    if !response.status().is_success()
+        || response.content_length().is_some_and(|length| length > MAX_BYTES as u64)
+    {
+        return Ok(None);
+    }
+
+    let mime = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(';').next())
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    if !matches!(mime.as_str(), "image/jpeg" | "image/png" | "image/webp" | "image/gif" | "image/avif") {
+        return Ok(None);
+    }
+
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|error| error.to_string())? {
+        if bytes.len().saturating_add(chunk.len()) > MAX_BYTES {
+            return Ok(None);
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    if bytes.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(format!(
+        "data:{mime};base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    )))
+}
+
 const MONERO_WALLET_RECORD: &str = "monero-wallet.json";
 
 #[tauri::command]
@@ -1034,6 +1093,7 @@ pub fn run() {
             sync_exchange,
             sync_remove_device,
             share_nostr,
+            profile_picture_data,
             vault_unlock,
             vault_lock,
             vault_list,
