@@ -3,6 +3,13 @@
 **Alpha.** An early build published so the browser can be tested on a real device. It
 is not a daily driver.
 
+## New in 0.33.5
+
+- Home is available from the … menu without closing open tabs. The Home page keeps
+  Shortcuts and adds separate NCC Services and Nsites sections, with bookmarks before
+  recent visits in each section.
+- Share to Nostr now supports `nsite://` links as well as `ncc://` and web addresses.
+
 ## New in 0.33.4
 
 - Tor tabs now open ordinary `https://` sites (and bare host names) through Tor, not

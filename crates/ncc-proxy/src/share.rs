@@ -40,18 +40,18 @@ fn is_tracking(name: &str) -> bool {
         )
 }
 
-/// The address to post: web addresses lose tracking parameters; `ncc://` goes as it is.
+/// The address to post: web addresses lose tracking parameters; NCC and Nsite addresses go as-is.
 pub fn clean_url(input: &str) -> Result<String, String> {
     let value = input.trim();
     if value.is_empty() || value.len() > MAX_URL {
         return Err("This page has no shareable address".to_string());
     }
     let lower = value.to_ascii_lowercase();
-    if lower.starts_with("ncc://") {
+    if lower.starts_with("ncc://") || lower.starts_with("nsite://") {
         return Ok(value.to_string());
     }
     if !(lower.starts_with("https://") || lower.starts_with("http://")) {
-        return Err("Only web and ncc:// pages can be shared".to_string());
+        return Err("Only web, ncc:// and nsite:// pages can be shared".to_string());
     }
     let mut url = url::Url::parse(value).map_err(|_| "This page has no shareable address".to_string())?;
     let kept: Vec<(String, String)> = url

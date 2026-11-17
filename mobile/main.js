@@ -289,7 +289,7 @@ function displayAddress(url) {
       const labels = parsed.hostname.split('.')
       const pubkey = labels[0]
       const site = labels.length === 4 ? labels[1] : null
-      return `nsite://${pubkey}${site ? `/${site}` : ''}${parsed.pathname}`
+      return `nsite://${pubkey}${site ? `/${site}` : ''}${parsed.pathname}${parsed.search}${parsed.hash}`
     }
 
     if (!parsed.hostname.endsWith('.localhost')) return url
@@ -903,6 +903,20 @@ function shortcutEntries() {
   return out
 }
 
+/** Bookmarks lead each address family, followed by its newest visits. */
+function homeEntries(scheme) {
+  const matches = (entry) => String(entry.address || '').toLowerCase().startsWith(`${scheme}://`)
+  const seen = new Set()
+  const out = []
+  for (const entry of [...readList(BOOKMARKS_KEY), ...readList(HISTORY_KEY)]) {
+    if (!matches(entry) || seen.has(entry.address)) continue
+    seen.add(entry.address)
+    out.push(entry)
+    if (out.length >= 8) break
+  }
+  return out
+}
+
 /* ───────────────────────────── Profile (kind 0) ───────────────────────────── */
 
 const PROFILE_KEY = 'ncc.profiles'
@@ -1099,13 +1113,24 @@ function renderHomeIdentity() {
 
 function renderHome() {
   renderHomeIdentity()
-  const container = byId('shortcuts')
-  container.textContent = ''
-
   const entries = shortcutEntries()
   const suggested = readList(BOOKMARKS_KEY).length + readList(HISTORY_KEY).length === 0
   set('shortcuts-label', suggested ? 'Suggested' : 'Shortcuts')
+  renderHomeTiles(byId('shortcuts'), entries)
 
+  for (const [scheme, sectionId, listId] of [
+    ['ncc', 'home-ncc-section', 'home-ncc'],
+    ['nsite', 'home-nsites-section', 'home-nsites']
+  ]) {
+    const section = byId(sectionId)
+    const categoryEntries = homeEntries(scheme)
+    section.hidden = categoryEntries.length === 0
+    renderHomeTiles(byId(listId), categoryEntries)
+  }
+}
+
+function renderHomeTiles(container, entries) {
+  container.textContent = ''
   for (const entry of entries) {
     const label = labelFor(entry)
     const tile = document.createElement('button')
@@ -1785,6 +1810,7 @@ function wireMenu() {
     content.forward()
     closePanel()
   })
+  act('menu-home', () => showPanel('home'))
   act('menu-reload', () => {
     content.reload()
     closePanel()
