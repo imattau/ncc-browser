@@ -360,11 +360,31 @@ fn browser_settings(state: tauri::State<'_, SignerState>) -> Settings {
 }
 
 #[tauri::command]
-fn settings_set_relays(
+async fn settings_set_relays(
     state: tauri::State<'_, SignerState>,
     relays: Vec<String>,
 ) -> Result<Settings, String> {
-    state.proxy.settings().set_relays(relays)
+    // Android settings accept the same ncc:// identity form as desktop. Resolve it
+    // through NCC-05 in relay mode before persisting the concrete websocket URL.
+    let mut resolved = Vec::with_capacity(relays.len());
+    for relay in relays {
+        let value = relay.trim();
+        if value.to_ascii_lowercase().starts_with("ncc://") {
+            let address = ncc_core::parse_ncc_address(value).map_err(|error| error.to_string())?;
+            let bare_identity = !value[6..].trim_end_matches('/').contains('/');
+            let service = if bare_identity { "relay" } else { &address.service };
+            let record = state.proxy.resolver().resolve_relay(&address.pubkey, service).await
+                .map_err(|error| error.to_string())?;
+            let endpoint = record.endpoints.iter()
+                .filter(|endpoint| endpoint.protocol == "wss" || endpoint.protocol == "ws")
+                .min_by_key(|endpoint| (endpoint.protocol != "wss", endpoint.priority))
+                .ok_or_else(|| format!("{value} does not publish a ws:// or wss:// relay endpoint"))?;
+            resolved.push(endpoint.url.trim_end_matches('/').to_string());
+        } else {
+            resolved.push(value.to_string());
+        }
+    }
+    state.proxy.settings().set_relays(resolved)
 }
 
 #[tauri::command]

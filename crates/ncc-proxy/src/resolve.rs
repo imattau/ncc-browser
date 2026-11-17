@@ -119,9 +119,27 @@ impl Resolver {
         pubkey_input: &str,
         service: &str,
     ) -> Result<ResolvedService, ResolveError> {
+        self.resolve_with_transport(pubkey_input, service, false).await
+    }
+
+    /// Resolve a relay locator, allowing ws(s) endpoints in the NCC-05 record.
+    pub async fn resolve_relay(
+        &self,
+        pubkey_input: &str,
+        service: &str,
+    ) -> Result<ResolvedService, ResolveError> {
+        self.resolve_with_transport(pubkey_input, service, true).await
+    }
+
+    async fn resolve_with_transport(
+        &self,
+        pubkey_input: &str,
+        service: &str,
+        allow_ws: bool,
+    ) -> Result<ResolvedService, ResolveError> {
         let key = PublicKey::parse(pubkey_input.trim()).map_err(|_| ResolveError::InvalidPubkey)?;
         let hex = key.to_hex();
-        let cache_key = format!("{hex}:{service}");
+        let cache_key = format!("{hex}:{service}:{}", if allow_ws { "relay" } else { "web" });
         let now = unix_now();
         if let Some(entry) = self.cached(&cache_key, now) {
             return entry;
@@ -137,7 +155,7 @@ impl Resolver {
         }
 
         let result = self
-            .query(key, &hex, pubkey_input.trim(), service, now)
+            .query(key, &hex, pubkey_input.trim(), service, now, allow_ws)
             .await;
 
         let cached_for = match &result {
@@ -301,7 +319,9 @@ impl Resolver {
         let Ok(key) = PublicKey::parse(pubkey.trim()) else {
             return;
         };
-        crate::lock(&self.cache).remove(&format!("{}:{service}", key.to_hex()));
+        let mut cache = crate::lock(&self.cache);
+        let prefix = format!("{}:{service}:", key.to_hex());
+        cache.retain(|cache_key, _| !cache_key.starts_with(&prefix));
     }
 
     async fn query(
@@ -311,6 +331,7 @@ impl Resolver {
         pubkey_input: &str,
         service: &str,
         now: i64,
+        allow_ws: bool,
     ) -> Result<ResolvedService, ResolveError> {
         let candidates = candidate_d_tags(Some(service));
         let filter = Filter::new()
@@ -379,7 +400,7 @@ impl Resolver {
 
         let endpoints = normalize_endpoints(
             payload.fields.get("endpoints").unwrap_or(&Value::Null),
-            false,
+            allow_ws,
         );
         if endpoints.is_empty() {
             return Err(ResolveError::NoEndpoint);
