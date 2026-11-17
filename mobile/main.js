@@ -1101,13 +1101,49 @@ async function loadProfile() {
   }
 }
 
+/** Scale an image data URL to a small square avatar. Null if it cannot be decoded. */
+function shrinkPicture(dataUrl, size = 192) {
+  return new Promise((resolve) => {
+    const image = new Image()
+    image.onload = () => {
+      try {
+        const side = Math.min(image.naturalWidth, image.naturalHeight)
+        if (!side) return resolve(null)
+        const canvas = document.createElement('canvas')
+        canvas.width = canvas.height = Math.min(size, side)
+        const context = canvas.getContext('2d')
+        context.drawImage(
+          image,
+          (image.naturalWidth - side) / 2,
+          (image.naturalHeight - side) / 2,
+          side,
+          side,
+          0,
+          0,
+          canvas.width,
+          canvas.height
+        )
+        const webp = canvas.toDataURL('image/webp', 0.85)
+        resolve(isCachedPictureData(webp) ? webp : canvas.toDataURL('image/jpeg', 0.85))
+      } catch {
+        resolve(null)
+      }
+    }
+    image.onerror = () => resolve(null)
+    image.src = dataUrl
+  })
+}
+
 async function cacheProfilePicture(hex, url) {
   const requestKey = `${hex}|${url}`
   if (profilePictureRequests.has(requestKey)) return
   profilePictureRequests.add(requestKey)
   try {
-    const pictureData = await invoke('profile_picture_data', { url })
-    if (!pictureData || npubToHex(identity?.npub) !== hex) return
+    const downloaded = await invoke('profile_picture_data', { url })
+    if (!downloaded || npubToHex(identity?.npub) !== hex) return
+    // Avatars are shown small; keep a compact copy so the local cache stays within quota.
+    const pictureData = await shrinkPicture(downloaded)
+    if (!pictureData) return
     if (!saveProfilePicture(hex, url, pictureData)) return
     profile = readProfiles()[hex] || null
     renderHomeIdentity()

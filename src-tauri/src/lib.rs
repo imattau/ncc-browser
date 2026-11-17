@@ -685,19 +685,30 @@ async fn wallet_http(
     Ok(text)
 }
 
+fn sniff_image_mime(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) { Some("image/jpeg") }
+    else if bytes.starts_with(b"\x89PNG\r\n\x1a\n") { Some("image/png") }
+    else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") { Some("image/gif") }
+    else if bytes.len() > 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" { Some("image/webp") }
+    else if bytes.len() > 12 && &bytes[4..8] == b"ftyp" && (&bytes[8..12] == b"avif" || &bytes[8..12] == b"avis") { Some("image/avif") }
+    else { None }
+}
+
 /// Download a small HTTPS profile image in the trusted shell and return a data URL.
 /// The renderer can then keep the bytes in its local profile cache and never needs
 /// to load a remote image directly.
 #[tauri::command]
 async fn profile_picture_data(url: String) -> Result<Option<String>, String> {
-    const MAX_BYTES: usize = 256 * 1024;
+    const MAX_BYTES: usize = 4 * 1024 * 1024;
     let parsed = url::Url::parse(&url).map_err(|_| "Invalid profile picture URL".to_string())?;
     if parsed.scheme() != "https" {
         return Err("Profile pictures must use HTTPS".into());
     }
 
+    // Some image hosts refuse requests that carry no User-Agent.
     let client = with_webpki_roots(reqwest::Client::builder())
-        .timeout(std::time::Duration::from_secs(8))
+        .user_agent(concat!("NostrNavigator/", env!("CARGO_PKG_VERSION")))
+        .timeout(std::time::Duration::from_secs(15))
         .redirect(reqwest::redirect::Policy::custom(|attempt| {
             if attempt.url().scheme() == "https" && attempt.previous().len() < 5 {
                 attempt.follow()
@@ -722,10 +733,6 @@ async fn profile_picture_data(url: String) -> Result<Option<String>, String> {
         .unwrap_or("")
         .trim()
         .to_ascii_lowercase();
-    if !matches!(mime.as_str(), "image/jpeg" | "image/png" | "image/webp" | "image/gif" | "image/avif") {
-        return Ok(None);
-    }
-
     let mut bytes = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(|error| error.to_string())? {
         if bytes.len().saturating_add(chunk.len()) > MAX_BYTES {
@@ -733,9 +740,12 @@ async fn profile_picture_data(url: String) -> Result<Option<String>, String> {
         }
         bytes.extend_from_slice(&chunk);
     }
-    if bytes.is_empty() {
+    // Trust the bytes over the header: hosts often label images as octet-stream.
+    let Some(mime) = sniff_image_mime(&bytes).or_else(|| {
+        matches!(mime.as_str(), "image/jpeg" | "image/png" | "image/webp" | "image/gif" | "image/avif").then_some(mime.as_str())
+    }) else {
         return Ok(None);
-    }
+    };
 
     Ok(Some(format!(
         "data:{mime};base64,{}",

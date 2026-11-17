@@ -3,6 +3,14 @@
 **Alpha.** An early build published so the browser can be tested on a real device. It
 is not a daily driver.
 
+## Fixes in 0.33.8
+
+- Profile pictures now load for the images people actually use. The app previously gave
+  up on anything over 256 KB (most avatars), sent no User-Agent (some image hosts then
+  refuse the request) and rejected images labelled with the wrong content type. It now
+  accepts up to 4 MB, identifies itself, checks the image bytes, and keeps a small
+  192-pixel copy so the local cache stays tiny.
+
 ## Fixes in 0.33.7
 
 - Fixed the profile picture never appearing on Home when signed in. The app's image
