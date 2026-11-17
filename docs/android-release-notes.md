@@ -3,6 +3,12 @@
 **Alpha.** An early build published so the browser can be tested on a real device. It
 is not a daily driver.
 
+## Fixes in 0.33.3
+
+- Wallet screens now focus on the selected currency's balance, send action, receive
+  QR and address; transaction history and network settings are tucked away.
+- Locked Monero wallets show one concise identity-access message.
+
 ## Fixes in 0.33.2
 
 - Wallets now explain that access follows the unlocked local Nostr identity; there is

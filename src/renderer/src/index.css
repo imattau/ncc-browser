@@ -107,6 +107,22 @@
  * Text sizing scales only glyphs: `--ui-font-scale` multiplies the size inside
  * each `text-ui-*` utility, so padding, gaps and fixed chrome heights stay put.
  */
+.wallet-simple-view { display: grid; justify-items: center; gap: 24px; padding: 14px 0 6px; }
+.wallet-simple-balance { text-align: center; }
+.wallet-simple-balance p { margin: 0; font: 700 40px/1.15 ui-sans-serif, system-ui, sans-serif; letter-spacing: -0.04em; }
+.wallet-simple-balance span { display: block; margin-top: 5px; color: var(--color-muted); font-size: 13px; }
+.wallet-primary-send { display: inline-flex; align-items: center; gap: 9px; border: 1px solid var(--color-line); border-radius: 999px; padding: 10px 22px; color: var(--color-text-strong); background: transparent; font-size: 14px; font-weight: 600; }
+.wallet-primary-send:disabled { opacity: .4; }
+.wallet-receive-simple { display: grid; justify-items: center; gap: 18px; width: 100%; margin-top: 1px; }
+.wallet-receive-qr { width: min(300px, 72vw); aspect-ratio: 1; border-radius: 22px; background: #fff; padding: 14px; }
+.wallet-address-pill { display: inline-flex; align-items: center; justify-content: center; gap: 10px; max-width: 100%; border: 1px solid var(--color-line); border-radius: 999px; padding: 11px 16px; color: var(--color-muted); background: transparent; font: 13px ui-monospace, monospace; }
+.wallet-address-pill span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wallet-transactions-simple { color: var(--color-muted); font-size: 13px; }
+.wallet-transactions-simple summary { display: flex; justify-content: center; gap: 8px; cursor: pointer; list-style: none; padding: 8px; }
+.wallet-transactions-simple summary::-webkit-details-marker { display: none; }
+.wallet-transactions-simple[open] summary { color: var(--color-text-strong); }
+.wallet-monero-simple { display: grid; gap: 18px; border: 0; background: transparent; }
+.wallet-monero-simple .wallet-simple-balance { margin-top: -12px; }
 :root {
   --ui-font-scale: 1;
 }

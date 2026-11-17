@@ -77,9 +77,9 @@ async function readSnapshot() {
   const confirmed = Math.max(0, stats.chain_stats.funded_txo_sum - stats.chain_stats.spent_txo_sum)
   const mempool = Math.max(0, stats.mempool_stats.funded_txo_sum - stats.mempool_stats.spent_txo_sum)
   byId('wallet-balance').textContent = `${btcText(confirmed + mempool)} BTC`
-  byId('wallet-pending').textContent = `Pending: ${btcText(mempool)} BTC`
+  byId('wallet-pending').textContent = `Available · ${btcText(mempool)} BTC pending`
   byId('wallet-address').textContent = currentAddress
-  byId('wallet-qr').src = await QRCode.toDataURL(`bitcoin:${currentAddress}`, { width: 200, margin: 1 })
+  byId('wallet-qr').src = await QRCode.toDataURL(`bitcoin:${currentAddress}`, { width: 300, margin: 1 })
   byId('wallet-qr').hidden = false
   const tip = Number(await api(btcUrl('/blocks/tip/height')).catch(() => '0'))
   showTransactions(Array.isArray(txs) ? txs.map((tx) => {
@@ -93,6 +93,8 @@ async function readSnapshot() {
 export async function loadWallet() {
   byId('wallet-esplora').value = localStorage.getItem('ncc.wallet.esplora') || DEFAULT_ESPLORA
   byId('wallet-open-identity').hidden = true
+  byId('wallet-xmr-note').textContent = ''
+  message('')
   if (selectedCurrency === 'XMR') { await loadMoneroWallet(); return }
   await closeMoneroWallet()
   byId('wallet-note').textContent = 'Loading Bitcoin wallet…'
@@ -100,7 +102,7 @@ export async function loadWallet() {
   try { await getBitcoinIdentity() }
   catch {
     byId('wallet-open-identity').hidden = false
-    message('Wallets use your unlocked local Nostr identity; there is no separate wallet password. Set up or unlock your identity to continue.')
+    message('Wallet access follows your identity lock. There is no separate wallet password.')
     return
   }
   try { await readSnapshot(); message('') }
@@ -125,7 +127,7 @@ async function loadMoneroWallet() {
       byId('wallet-xmr-create').disabled = true
       byId('wallet-xmr-restore').disabled = true
       byId('wallet-open-identity').hidden = false
-      byId('wallet-xmr-note').textContent = 'Monero opens with your unlocked local Nostr identity; there is no separate wallet password.'
+      message('Wallet access follows your identity lock. There is no separate wallet password.')
       return
     }
     byId('wallet-open-identity').hidden = true
@@ -147,7 +149,7 @@ async function renderMoneroSnapshot(snapshot) {
   byId('wallet-xmr-balance').textContent = snapshot.balance
   byId('wallet-xmr-unlocked').textContent = snapshot.unlocked
   byId('wallet-xmr-address').textContent = snapshot.address
-  byId('wallet-xmr-qr').src = await QRCode.toDataURL(`monero:${snapshot.address}`, { width: 200, margin: 1 })
+  byId('wallet-xmr-qr').src = await QRCode.toDataURL(`monero:${snapshot.address}`, { width: 300, margin: 1 })
   byId('wallet-xmr-qr').hidden = false
   const list = byId('wallet-xmr-transactions'); list.replaceChildren()
   if (!snapshot.transactions.length) { list.textContent = 'No Monero transactions found.'; return }

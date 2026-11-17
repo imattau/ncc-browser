@@ -515,23 +515,21 @@
         <p id="wallet-note" class="status" role="status"></p>
         <button id="wallet-open-identity" class="btn tonal" type="button" data-panel="identity" hidden>Set up or unlock identity</button>
         <section id="wallet-bitcoin">
-          <article class="wallet-card">
-            <small>Available balance</small>
+          <article class="wallet-card wallet-balance-card">
             <strong id="wallet-balance">— BTC</strong>
-            <small id="wallet-pending">Pending: — BTC</small>
-            <div class="wallet-actions">
-              <button id="wallet-open-send" class="btn" type="button">Send</button>
-              <button id="wallet-copy-address" class="btn tonal" type="button">Copy address</button>
+            <small id="wallet-pending">Available · — BTC pending</small>
+            <div class="wallet-actions wallet-actions-centered">
+              <button id="wallet-open-send" class="btn wallet-send-pill" type="button">Send</button>
             </div>
             <div class="wallet-receive">
               <img id="wallet-qr" alt="Bitcoin receive address QR code" hidden />
-              <code id="wallet-address">Unlock a local identity to view your address.</code>
+              <button id="wallet-copy-address" class="wallet-address-pill" type="button" aria-label="Copy Bitcoin receive address"><code id="wallet-address">Unlock identity to view address</code><span aria-hidden="true">▢</span></button>
             </div>
           </article>
-          <article class="wallet-card">
-            <h3>Recent transactions</h3>
+          <details class="wallet-card wallet-transactions-card">
+            <summary>Transactions <span aria-hidden="true">⌄</span></summary>
             <div id="wallet-transactions" class="wallet-transactions">No transactions yet.</div>
-          </article>
+          </details>
           <details class="wallet-settings">
             <summary>Bitcoin data service</summary>
             <label>Esplora-compatible URL<input id="wallet-esplora" type="url" inputmode="url" /></label>
@@ -551,19 +549,19 @@
           </section>
         </section>
         <section id="wallet-monero" hidden>
-          <article class="wallet-card">
-            <div class="wallet-heading"><div><h3>Monero</h3><p class="hint">Wallet keys stay on this device. The daemon never receives your view key, but can see your IP and scan requests.</p></div><button id="wallet-xmr-refresh" class="btn tonal" type="button">Refresh</button></div>
-            <p class="wallet-balance"><span id="wallet-xmr-balance">—</span> XMR</p><p class="hint">Unlocked: <span id="wallet-xmr-unlocked">—</span> XMR</p>
-            <label>Monero daemon URL<input id="wallet-xmr-daemon" type="url" inputmode="url" /></label>
+          <article class="wallet-card wallet-monero-card">
+            <div class="wallet-heading"><div></div><button id="wallet-xmr-refresh" class="btn tonal" type="button">Refresh</button></div>
+            <p class="wallet-balance"><span id="wallet-xmr-balance">—</span> XMR</p><p class="hint wallet-xmr-unlocked">Available · <span id="wallet-xmr-unlocked">—</span> XMR unlocked</p>
+            <details class="wallet-settings"><summary>Monero sync settings</summary><label>Daemon URL<input id="wallet-xmr-daemon" type="url" inputmode="url" /></label><p>The remote daemon can see your IP and scan requests. Wallet keys stay on this device.</p></details>
             <div id="wallet-xmr-setup">
               <button id="wallet-xmr-create" class="btn" type="button">Create wallet</button>
               <details><summary>Restore wallet</summary><label>25-word recovery seed<textarea id="wallet-xmr-restore-seed" rows="3" autocomplete="off" autocapitalize="none" spellcheck="false"></textarea></label><label>Restore from block height<input id="wallet-xmr-restore-height" type="number" min="0" value="0" /></label><button id="wallet-xmr-restore" class="btn tonal" type="button">Continue</button></details>
             </div>
             <div id="wallet-xmr-backup" hidden><p class="wallet-warning">Write these 25 words down in order. Anyone with this seed can spend your Monero.</p><ol id="wallet-xmr-words" class="wallet-seed-words"></ol><label>Enter word <span id="wallet-xmr-word-number"></span> to confirm your backup<input id="wallet-xmr-word-answer" autocomplete="off" autocapitalize="none" /></label><label>Wallet sync mode<select id="wallet-xmr-sync"><option value="local">This device only</option><option value="encrypted-relay">Encrypted Nostr relay sync</option></select></label><button id="wallet-xmr-backup-confirm" class="btn" type="button">I backed up my seed</button></div>
-            <div id="wallet-xmr-receive" hidden><code id="wallet-xmr-address"></code><img id="wallet-xmr-qr" alt="Monero receive address QR code" hidden /><button id="wallet-xmr-copy" class="btn tonal" type="button">Copy address</button><button id="wallet-xmr-open-send" class="btn" type="button">Send</button></div>
+            <div id="wallet-xmr-receive" class="wallet-receive wallet-xmr-receive" hidden><button id="wallet-xmr-open-send" class="btn wallet-send-pill" type="button">Send</button><img id="wallet-xmr-qr" alt="Monero receive address QR code" hidden /><button id="wallet-xmr-copy" class="wallet-address-pill" type="button" aria-label="Copy Monero receive address"><code id="wallet-xmr-address"></code><span aria-hidden="true">▢</span></button></div>
             <div id="wallet-xmr-send" hidden><label>Destination address<input id="wallet-xmr-send-address" autocomplete="off" autocapitalize="none" spellcheck="false" /></label><label>Amount in XMR<input id="wallet-xmr-send-amount" inputmode="decimal" autocomplete="off" /></label><div id="wallet-xmr-send-preview" class="wallet-send-preview" hidden></div><button id="wallet-xmr-send-review" class="btn tonal" type="button">Review fee</button><button id="wallet-xmr-send-confirm" class="btn danger" type="button" hidden>Confirm and send</button><button id="wallet-xmr-send-cancel" class="btn tonal" type="button">Cancel</button></div>
           </article>
-          <article class="wallet-card"><h3>Recent Monero transactions</h3><div id="wallet-xmr-transactions" class="wallet-transactions">No transactions yet.</div></article>
+          <details class="wallet-card wallet-transactions-card"><summary>Transactions <span aria-hidden="true">⌄</span></summary><div id="wallet-xmr-transactions" class="wallet-transactions">No transactions yet.</div></details>
           <p id="wallet-xmr-note" class="hint" role="status"></p>
         </section>
       </div>

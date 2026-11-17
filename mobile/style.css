@@ -1964,6 +1964,35 @@ body[data-kind='tor'] .pill-kind {
 .wallet-settings input, #wallet-send input { width: 100%; min-height: 42px; border: 1px solid var(--line); border-radius: 10px; padding: 10px; color: var(--text); background: var(--bg); font: 12px ui-monospace, monospace; }
 .wallet-send-preview { display: grid; gap: 5px; border-radius: 12px; padding: 12px; background: var(--surface-2); overflow-wrap: anywhere; font-size: 12px; }
 .wallet-send-preview p { color: var(--text); }
+
+/* Wallet home: keep the first view focused on balance, send and receive. */
+.wallet-body { justify-items: center; gap: 18px; padding: 12px 18px 28px; }
+.wallet-currencies { display: flex; width: fit-content; max-width: 100%; border-radius: 999px; }
+.wallet-currency { min-height: 38px; padding: 0 17px; border-radius: 999px; }
+#wallet-note:empty { display: none; }
+#wallet-bitcoin, #wallet-monero { width: 100%; }
+#wallet-bitcoin > .wallet-card:first-child,
+.wallet-monero-card { display: grid; justify-items: center; gap: 14px; border: 0; padding: 10px 0 4px; background: transparent; box-shadow: none; }
+.wallet-balance-card > strong, .wallet-monero-card .wallet-balance { margin: 4px 0 0; text-align: center; font: 700 40px/1.15 ui-sans-serif, system-ui, sans-serif; letter-spacing: -.04em; }
+.wallet-balance-card > small { text-align: center; }
+.wallet-actions-centered { justify-content: center; }
+.wallet-send-pill { flex: 0 0 auto !important; min-width: 112px; min-height: 44px !important; border: 1px solid var(--line); border-radius: 999px; color: var(--text); background: transparent; }
+.wallet-receive { display: grid; justify-items: center; gap: 16px; width: 100%; border: 0; padding: 4px 0 0; }
+.wallet-receive img, #wallet-xmr-qr { width: min(300px, 74vw); max-width: 100%; border-radius: 22px; padding: 12px; }
+.wallet-address-pill { display: flex; align-items: center; justify-content: center; gap: 10px; width: min(100%, 440px); min-height: 44px; border: 1px solid var(--line); border-radius: 999px; padding: 8px 14px; color: var(--muted); background: transparent; }
+.wallet-address-pill code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 13px ui-monospace, monospace; }
+.wallet-address-pill span { flex: 0 0 auto; font-size: 17px; }
+.wallet-transactions-card { border: 0; padding: 0 4px; background: transparent; box-shadow: none; }
+.wallet-transactions-card summary { display: flex; justify-content: center; gap: 8px; cursor: pointer; list-style: none; color: var(--muted); font-size: 13px; }
+.wallet-transactions-card summary::-webkit-details-marker { display: none; }
+.wallet-transactions-card[open] summary { color: var(--text); }
+.wallet-transactions-card .wallet-transactions { padding-top: 8px; }
+.wallet-monero-card .wallet-heading { width: 100%; justify-content: flex-end; }
+.wallet-monero-card .wallet-xmr-unlocked { margin: -12px 0 0; text-align: center; }
+.wallet-monero-card #wallet-xmr-setup { width: 100%; }
+.wallet-monero-card #wallet-xmr-receive { display: grid; }
+.wallet-monero-card .wallet-settings { width: 100%; box-shadow: none; }
+.wallet-monero-card .wallet-settings summary { cursor: pointer; }
 .btn.danger { background: var(--bad); color: white; }
 .wallet-heading { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
 .wallet-balance { color: var(--text) !important; font: 700 27px/1.2 ui-monospace, monospace; }
@@ -1974,4 +2003,5 @@ body[data-kind='tor'] .pill-kind {
 #wallet-xmr-receive { display: grid; gap: 10px; padding-top: 14px; border-top: 1px solid var(--line); }
 #wallet-xmr-address { overflow-wrap: anywhere; font-size: 11px; color: var(--muted); }
 #wallet-xmr-qr { width: 188px; max-width: 60vw; justify-self: center; border-radius: 12px; background: white; padding: 8px; }
+#wallet-xmr-qr { width: min(300px, 74vw); max-width: 100%; border-radius: 22px; padding: 12px; }
 #wallet-xmr-send { display: grid; gap: 10px; border-top: 1px solid var(--line); padding-top: 14px; }
