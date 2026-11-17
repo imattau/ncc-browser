@@ -5,6 +5,8 @@ is not a daily driver.
 
 ## New in this build
 
+- Fixed fullscreen on embedded video players: pressing fullscreen no longer leaves a
+  black screen. The video fills the screen and Back leaves fullscreen.
 - Fixed ad and tracker filter lists never downloading on Android: Settings → Security
   stayed at 0 lists. They now update, and the list count is 6 (an empty Brave list was
   dropped).
