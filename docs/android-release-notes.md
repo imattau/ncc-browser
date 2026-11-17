@@ -5,6 +5,17 @@ is not a daily driver.
 
 ## New in this build
 
+- Share to Nostr. The menu has a new Share to Nostr item, separate from the normal
+  Share. It posts a public note with the page address and an optional comment of your
+  own, signed with your key. It goes to your configured relays and your own relay list
+  (NIP-65), never to a vault relay. It only works in normal tabs while you are signed in,
+  and nothing is posted until you tap Post. Tracking parameters such as `utm_*` and
+  `fbclid` are removed from web links; `ncc://` addresses are posted as they are.
+- A new Appearance setting, Back button, can hide the back arrow in the address bar to
+  give the address more room. Auto hides it when the phone uses gesture navigation,
+  Show always keeps it, Hide always removes it. Forward stays in the menu, and
+  Back is the system gesture.
+
 - Ad and tracker protection now uses maintained Brave, EasyList and uBlock filters.
   Standard blocks the common ad lists; Strict adds privacy lists. Cached lists work
   offline, Android can update them from Settings → Security, and cosmetic rules run
