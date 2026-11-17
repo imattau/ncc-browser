@@ -5,6 +5,12 @@ is not a daily driver.
 
 ## New in this build
 
+- Ad and tracker protection now uses maintained Brave, EasyList and uBlock filters.
+  Standard blocks the common ad lists; Strict adds privacy lists. Cached lists work
+  offline, Android can update them from Settings → Security, and cosmetic rules run
+  before page scripts on supported WebView versions. Video and other media requests
+  are classified using WebView request metadata where available.
+
 - Sign-in with a Nostr extension now works on ordinary websites such as nostr.com.
   Before, only NCC and nsite pages could see `window.nostr`, so a site on the regular
   web reported that no NIP-07 extension was found. Each site is asked before it can read

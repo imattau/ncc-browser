@@ -6,25 +6,66 @@ use std::{
         OnceLock, RwLock,
         atomic::{AtomicU64, Ordering},
     },
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use adblock::{Engine, FilterSet, lists::ParseOptions, request::Request};
+use futures_util::{StreamExt, stream};
 
 use crate::settings::{ProtectionLevel, ProtectionSettings};
 
-const FALLBACK_FILTERS: &str =
-    "||doubleclick.net^\n||googlesyndication.com^\n||google-analytics.com^\n||facebook.net^\n";
-const LISTS: &[(&str, &str)] = &[
-    ("easylist.txt", "https://easylist.to/easylist/easylist.txt"),
-    (
-        "easyprivacy.txt",
-        "https://easylist.to/easylist/easyprivacy.txt",
-    ),
-    (
-        "privacy.txt",
-        "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/privacy.txt",
-    ),
+// Keep a useful baseline available before the full lists download on first launch,
+// and whenever the device is offline. Standard must still block the major ad networks
+// in that state instead of silently acting like protection is disabled.
+const FALLBACK_FILTERS: &str = "||doubleclick.net^\n\
+||googlesyndication.com^\n\
+||googleadservices.com^\n\
+||adservice.google.com^\n\
+||pagead2.googlesyndication.com^\n\
+||google-analytics.com^\n\
+||facebook.net^\n\
+||adnxs.com^\n\
+||adsrvr.org^\n\
+||taboola.com^\n\
+||outbrain.com^\n\
+||criteo.com^\n\
+||rubiconproject.com^\n\
+||pubmatic.com^\n\
+||openx.net^\n\
+||casalemedia.com^\n\
+||smartadserver.com^\n\
+||amazon-adsystem.com^\n\
+||moatads.com^\n\
+||scorecardresearch.com^\n\
+||advertising.com^\n\
+||adcolony.com^\n\
+||unityads.unity3d.com^\n";
+struct FilterList { file: &'static str, url: &'static str, privacy: bool }
+const LISTS: &[FilterList] = &[
+    FilterList { file: "easylist.txt", url: "https://easylist.to/easylist/easylist.txt", privacy: false },
+    FilterList { file: "ubo-filters.txt", url: "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/filters.txt", privacy: false },
+    FilterList { file: "brave-specific.txt", url: "https://raw.githubusercontent.com/brave/adblock-lists/master/brave-lists/brave-specific.txt", privacy: false },
+    FilterList { file: "brave-unbreak.txt", url: "https://raw.githubusercontent.com/brave/adblock-lists/master/brave-lists/brave-unbreak.txt", privacy: false },
+    FilterList { file: "brave-android.txt", url: "https://raw.githubusercontent.com/brave/adblock-lists/master/brave-lists/brave-android-specific.txt", privacy: false },
+    FilterList { file: "easyprivacy.txt", url: "https://easylist.to/easylist/easyprivacy.txt", privacy: true },
+    FilterList { file: "ubo-privacy.txt", url: "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/privacy.txt", privacy: true },
 ];
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FilterStatus {
+    pub loaded_lists: usize,
+    pub total_lists: usize,
+    pub updating: bool,
+    pub updated_at: Option<u64>,
+    pub error: Option<String>,
+}
+
+impl Default for FilterStatus {
+    fn default() -> Self {
+        Self { loaded_lists: 0, total_lists: LISTS.len(), updating: false, updated_at: None, error: None }
+    }
+}
 
 static STANDARD_ENGINE: OnceLock<RwLock<Engine>> = OnceLock::new();
 static STRICT_ENGINE: OnceLock<RwLock<Engine>> = OnceLock::new();
@@ -33,6 +74,7 @@ static BLOCKED: AtomicU64 = AtomicU64::new(0);
 static SESSION_EXCEPTIONS: OnceLock<
     RwLock<std::collections::HashMap<String, std::collections::HashSet<String>>>,
 > = OnceLock::new();
+static FILTER_STATUS: OnceLock<RwLock<FilterStatus>> = OnceLock::new();
 
 fn standard_engine() -> &'static RwLock<Engine> {
     STANDARD_ENGINE.get_or_init(|| RwLock::new(compile(&[FALLBACK_FILTERS.to_string()])))
@@ -44,6 +86,14 @@ fn strict_engine() -> &'static RwLock<Engine> {
 
 fn config() -> &'static RwLock<ProtectionSettings> {
     CONFIG.get_or_init(|| RwLock::new(ProtectionSettings::default()))
+}
+
+fn filter_status_store() -> &'static RwLock<FilterStatus> {
+    FILTER_STATUS.get_or_init(|| RwLock::new(FilterStatus::default()))
+}
+
+pub fn filter_status() -> FilterStatus {
+    filter_status_store().read().map(|status| status.clone()).unwrap_or_default()
 }
 
 fn compile(lists: &[String]) -> Engine {
@@ -110,11 +160,17 @@ pub fn has_exception(kind: &str, origin: &str) -> bool {
         .unwrap_or(false)
 }
 
-pub fn cosmetic_selectors(url: &str) -> Vec<String> {
-    if level() == ProtectionLevel::Off {
+pub fn cosmetic_selectors(url: &str, kind: &str) -> Vec<String> {
+    let selected_level = level();
+    if selected_level == ProtectionLevel::Off {
         return Vec::new();
     }
-    let Ok(resources) = standard_engine().read() else {
+    let origin = url::Url::parse(url).ok().map(|value| value.origin().ascii_serialization());
+    if origin.as_ref().is_some_and(|origin| has_exception(kind, origin)) {
+        return Vec::new();
+    }
+    let engine = if selected_level == ProtectionLevel::Strict { strict_engine() } else { standard_engine() };
+    let Ok(resources) = engine.read() else {
         return Vec::new();
     };
     resources
@@ -177,56 +233,95 @@ pub fn check_request(
     blocked
 }
 
-/// Loads saved lists immediately, then refreshes them from their maintained upstreams.
+/// Load the last known good rules synchronously before any WebView can navigate.
+pub fn load_cached_lists(cache_dir: &Path) {
+    let mut standard = vec![FALLBACK_FILTERS.to_string()];
+    let mut strict = vec![FALLBACK_FILTERS.to_string()];
+    let mut loaded_lists = 0;
+    let mut updated_at = None;
+    for list in LISTS {
+        let path = cache_dir.join(list.file);
+        if let Ok(text) = std::fs::read_to_string(&path) {
+            if text.len() < 100 || text.len() > 12_000_000 { continue; }
+            if list.privacy { strict.push(text); } else { standard.push(text.clone()); strict.push(text); }
+            loaded_lists += 1;
+            if let Ok(modified) = std::fs::metadata(path).and_then(|metadata| metadata.modified()) {
+                let stamp = modified.duration_since(UNIX_EPOCH).ok().map(|duration| duration.as_secs());
+                updated_at = updated_at.max(stamp);
+            }
+        }
+    }
+    if let Ok(mut current) = standard_engine().write() { *current = compile(&standard); }
+    if let Ok(mut current) = strict_engine().write() { *current = compile(&strict); }
+    if let Ok(mut status) = filter_status_store().write() {
+        status.loaded_lists = loaded_lists;
+        status.updated_at = updated_at;
+    }
+}
+
+/// Loads cached lists immediately, then refreshes them from maintained upstreams.
 pub async fn refresh_lists(cache_dir: &Path) {
     let _ = std::fs::create_dir_all(cache_dir);
-    let mut loaded = Vec::new();
-    for (file, _) in LISTS {
-        if let Ok(text) = std::fs::read_to_string(cache_dir.join(file)) {
-            loaded.push(text);
-        }
+    {
+        let Ok(mut status) = filter_status_store().write() else { return; };
+        if status.updating { return; }
+        status.updating = true;
+        status.error = None;
     }
-    if !loaded.is_empty() {
-        let standard = compile(&loaded[..loaded.len().min(2)]);
-        let strict = compile(&loaded);
-        if let Ok(mut current) = standard_engine().write() {
-            *current = standard;
-        }
-        if let Ok(mut current) = strict_engine().write() {
-            *current = strict;
-        }
-    }
+    load_cached_lists(cache_dir);
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(20))
         .build();
-    let Ok(client) = client else { return };
-    let mut fresh = Vec::new();
-    for (file, url) in LISTS {
-        let result = async {
-            let response = client.get(*url).send().await.ok()?;
-            if !response.status().is_success() {
-                return None;
+    let Ok(client) = client else {
+        if let Ok(mut status) = filter_status_store().write() { status.updating = false; status.error = Some("Could not start the filter-list updater".into()); }
+        return;
+    };
+    let failures: Vec<&'static str> = stream::iter(LISTS.iter())
+        .map(|list| {
+            let client = client.clone();
+            let cache_dir = cache_dir.to_path_buf();
+            async move {
+                let result = async {
+                    let response = client.get(list.url).send().await.ok()?;
+                    if !response.status().is_success() { return None; }
+                    let body = response.text().await.ok()?;
+                    if !(100..=12_000_000).contains(&body.len()) { return None; }
+                    let temporary = cache_dir.join(format!("{}.tmp", list.file));
+                    if std::fs::write(&temporary, &body).is_err()
+                        || std::fs::rename(&temporary, cache_dir.join(list.file)).is_err() {
+                        return None;
+                    }
+                    Some(())
+                }.await;
+                result.is_none().then_some(list.file)
             }
-            let body = response.text().await.ok()?;
-            if !(100..=12_000_000).contains(&body.len()) {
-                return None;
-            }
-            let _ = std::fs::write(cache_dir.join(file), &body);
-            Some(body)
-        }
+        })
+        .buffer_unordered(3)
+        .filter_map(|failure| async move { failure })
+        .collect()
         .await;
-        if let Some(text) = result {
-            fresh.push(text);
+    load_cached_lists(cache_dir);
+    if let Ok(mut status) = filter_status_store().write() {
+        status.updating = false;
+        if failures.is_empty() {
+            status.error = None;
+        } else {
+            status.error = Some(format!("Could not update {} of {} lists; saved lists remain active", failures.len(), LISTS.len()));
         }
     }
-    if !fresh.is_empty() {
-        let standard = compile(&fresh[..fresh.len().min(2)]);
-        let strict = compile(&fresh);
-        if let Ok(mut current) = standard_engine().write() {
-            *current = standard;
-        }
-        if let Ok(mut current) = strict_engine().write() {
-            *current = strict;
-        }
+}
+
+/// Keep list downloads bounded on startup while refreshing missing/stale lists daily.
+pub async fn refresh_lists_if_stale(cache_dir: &Path) {
+    let now = SystemTime::now();
+    let fresh = LISTS.iter().all(|list| {
+        std::fs::metadata(cache_dir.join(list.file))
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|modified| now.duration_since(modified).ok())
+            .is_some_and(|age| age < std::time::Duration::from_secs(24 * 60 * 60))
+    });
+    if !fresh {
+        refresh_lists(cache_dir).await;
     }
 }

@@ -625,10 +625,14 @@ tab always proxies all traffic.
 Settings → **Security** controls the HTTPS policy:
 
 It also sets **tracker and ad protection** to Off, Standard (default), or Strict. The
-browser filters known requests using EasyList and EasyPrivacy, applies cosmetic hiding,
-and gives each HTTP(S) site an allow/restore control in Site information. Strict mode
-adds privacy filters and blocks cross-origin cookies; optional external script blocking
-is available in the same settings page. Site permission requests for location, camera,
+browser filters known requests using EasyList, uBlock Origin and Brave-maintained lists,
+and gives each HTTP(S) site
+an allow/restore control in Site information. Strict mode adds privacy filters and
+blocks cross-origin cookies; filter lists can be refreshed from Android Security
+settings. Optional external script blocking is available in the same settings page.
+On Android, cosmetic rules run at document start on WebView versions that support the
+hook; older providers use a later fallback.
+Site permission requests for location, camera,
 and microphone are prompted and remembered for the current browser session on desktop
 and the current tab on Android. Android uses the system WebView request callback; its redirect and resource-type details are less
 complete than Electron's. Fingerprinting resistance is limited to platform-supported

@@ -1,17 +1,31 @@
 import { app, type Session } from 'electron'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import adblock from 'adblock-rs'
 import { DEFAULT_PROTECTION } from '@shared/types'
 import type { ConfigStore } from './config'
 import type { TabKind } from '@shared/types'
 
-const LISTS = [
+const STANDARD_LISTS = [
   ['easylist', 'https://easylist.to/easylist/easylist.txt'],
-  ['easyprivacy', 'https://easylist.to/easylist/easyprivacy.txt'],
-  ['privacy', 'https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/privacy.txt']
+  ['ubo-filters', 'https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/filters.txt'],
+  ['brave-specific', 'https://raw.githubusercontent.com/brave/adblock-lists/master/brave-lists/brave-specific.txt'],
+  ['brave-unbreak', 'https://raw.githubusercontent.com/brave/adblock-lists/master/brave-lists/brave-unbreak.txt']
 ] as const
-const FALLBACK = '||doubleclick.net^\n||googlesyndication.com^\n||google-analytics.com^\n||facebook.net^\n'
+const PRIVACY_LISTS = [
+  ['easyprivacy', 'https://easylist.to/easylist/easyprivacy.txt'],
+  ['ubo-privacy', 'https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/privacy.txt']
+] as const
+const LISTS = [...STANDARD_LISTS, ...PRIVACY_LISTS] as const
+const FALLBACK = [
+  '||doubleclick.net^', '||googlesyndication.com^', '||googleadservices.com^',
+  '||adservice.google.com^', '||pagead2.googlesyndication.com^',
+  '||google-analytics.com^', '||facebook.net^', '||adnxs.com^', '||adsrvr.org^',
+  '||taboola.com^', '||outbrain.com^', '||criteo.com^', '||rubiconproject.com^',
+  '||pubmatic.com^', '||openx.net^', '||casalemedia.com^', '||smartadserver.com^',
+  '||amazon-adsystem.com^', '||moatads.com^', '||scorecardresearch.com^',
+  '||advertising.com^'
+].join('\n')
 
 type Engine = InstanceType<typeof adblock.Engine>
 
@@ -99,7 +113,8 @@ export class ProtectionService {
     if (this.settings().level === 'off') return ''
     try { if (this.isExcepted(new URL(url).origin, kind)) return '' } catch { return '' }
     try {
-      const result = this.standard.urlCosmeticResources(url)
+      const engine = this.settings().level === 'strict' ? this.strict : this.standard
+      const result = engine.urlCosmeticResources(url)
       const selectors = Array.isArray(result.hide_selectors) ? result.hide_selectors : []
       if (!selectors.length) return ''
       return `(()=>{const s=${JSON.stringify(selectors.join(','))};const apply=()=>{try{document.querySelectorAll(s).forEach(e=>e.remove())}catch{}};apply();new MutationObserver(apply).observe(document.documentElement,{childList:true,subtree:true})})()`
@@ -140,24 +155,30 @@ export class ProtectionService {
   }
 
   private install(lists: string[]): void {
-    const usable = lists.filter(Boolean)
-    if (!usable.length) return
-    this.standard = buildEngine(usable.slice(0, 2))
-    this.strict = buildEngine(usable)
+    const standard = lists.slice(0, STANDARD_LISTS.length).filter(Boolean)
+    const strict = lists.filter(Boolean)
+    this.standard = buildEngine([FALLBACK, ...standard])
+    this.strict = buildEngine([FALLBACK, ...strict])
   }
 
   private async refreshLists(): Promise<void> {
-    const lists: string[] = []
-    for (const [name, url] of LISTS) {
+    const fresh = LISTS.every(([name]) => {
+      try { return Date.now() - statSync(join(this.dataDir, `${name}.txt`)).mtimeMs < 24 * 60 * 60 * 1000 } catch { return false }
+    })
+    if (fresh) return
+    const lists = LISTS.map(([name]) => {
+      try { return readFileSync(join(this.dataDir, `${name}.txt`), 'utf8') } catch { return '' }
+    })
+    await Promise.all(LISTS.map(async ([name, url], index) => {
       try {
         const response = await fetch(url, { signal: AbortSignal.timeout(15_000) })
-        if (!response.ok) continue
+        if (!response.ok) return
         const body = await response.text()
-        if (body.length < 100 || body.length > 12_000_000) continue
+        if (body.length < 100 || body.length > 12_000_000) return
         writeFileSync(join(this.dataDir, `${name}.txt`), body, 'utf8')
-        lists.push(body)
+        lists[index] = body
       } catch { /* retain the last known good lists */ }
-    }
-    if (lists.length) this.install(lists)
+    }))
+    this.install(lists)
   }
 }

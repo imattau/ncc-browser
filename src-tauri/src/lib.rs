@@ -50,9 +50,11 @@ pub extern "system" fn Java_io_github_imattau_nccbrowser_ContentSurface_nativeCo
     mut env: jni::JNIEnv,
     _this: jni::objects::JObject,
     url: jni::objects::JString,
+    kind: jni::objects::JString,
 ) -> jni::sys::jstring {
     let url = env.get_string(&url).map(|text| String::from(text)).unwrap_or_default();
-    let selectors = ncc_proxy::protection::cosmetic_selectors(&url);
+    let kind = env.get_string(&kind).map(|text| String::from(text)).unwrap_or_default();
+    let selectors = ncc_proxy::protection::cosmetic_selectors(&url, &kind);
     env.new_string(selectors.join(",")).map(|text| text.into_raw()).unwrap_or(std::ptr::null_mut())
 }
 
@@ -421,6 +423,17 @@ fn protection_status(state: tauri::State<'_, SignerState>, origin: Option<String
     };
     let origin = origin.and_then(|value| url::Url::parse(&value).ok()).map(|value| value.origin().ascii_serialization()).unwrap_or_default();
     ProtectionStatus { level: level.to_string(), blocked: ncc_proxy::protection::blocked_count(), excepted: ncc_proxy::protection::has_exception(kind.as_deref().unwrap_or("normal"), &origin) }
+}
+
+#[tauri::command]
+fn protection_filters_status() -> ncc_proxy::protection::FilterStatus {
+    ncc_proxy::protection::filter_status()
+}
+
+#[tauri::command]
+async fn protection_update_filters(dir: tauri::State<'_, AppDataDir>) -> Result<ncc_proxy::protection::FilterStatus, String> {
+    ncc_proxy::protection::refresh_lists(&dir.0.join("protection")).await;
+    Ok(ncc_proxy::protection::filter_status())
 }
 
 #[tauri::command]
@@ -889,6 +902,8 @@ pub fn run() {
             settings_set_protection,
             settings_set_protection_exception,
             protection_status,
+            protection_filters_status,
+            protection_update_filters,
             settings_set_gossip,
             signer_permissions,
             signer_trust,
@@ -921,8 +936,9 @@ pub fn run() {
             let settings = Arc::new(SettingsStore::open(data_dir.join("config.json")));
             ncc_proxy::protection::set_config(settings.get().protection.clone());
             let filter_cache = data_dir.join("protection");
+            ncc_proxy::protection::load_cached_lists(&filter_cache);
             tauri::async_runtime::spawn(async move {
-                ncc_proxy::protection::refresh_lists(&filter_cache).await;
+                ncc_proxy::protection::refresh_lists_if_stale(&filter_cache).await;
             });
 
             // Staying unlocked is a setting, so it applies before anything asks. A file

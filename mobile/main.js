@@ -2853,6 +2853,42 @@ async function loadSecurity() {
   } catch (error) {
     byId('security-error').textContent = String(error)
   }
+  try {
+    renderProtectionFilterStatus(await invoke('protection_filters_status'))
+  } catch (error) {
+    byId('protection-filter-status').textContent = `Filter list status unavailable: ${String(error)}`
+  }
+}
+
+function renderProtectionFilterStatus(status) {
+  const label = byId('protection-filter-status')
+  const button = byId('protection-update-lists')
+  if (!label || !button) return
+  button.disabled = status.updating === true
+  if (status.updating) {
+    label.textContent = `Updating lists (${status.loadedLists} of ${status.totalLists} cached)`
+    setTimeout(() => {
+      void invoke('protection_filters_status').then(renderProtectionFilterStatus).catch(() => {})
+    }, 2000)
+    return
+  }
+  const updated = status.updatedAt
+    ? ` Most recent list download: ${new Date(status.updatedAt * 1000).toLocaleString()}.`
+    : ' No downloaded lists yet; built-in ad rules are active.'
+  label.textContent = `${status.loadedLists} of ${status.totalLists} downloaded filter lists active.${updated}${status.error ? ` ${status.error}.` : ''}`
+}
+
+async function updateProtectionFilterLists() {
+  const button = byId('protection-update-lists')
+  const label = byId('protection-filter-status')
+  if (button) button.disabled = true
+  if (label) label.textContent = 'Updating filter lists…'
+  try {
+    renderProtectionFilterStatus(await invoke('protection_update_filters'))
+  } catch (error) {
+    if (button) button.disabled = false
+    if (label) label.textContent = `Filter list update failed: ${String(error)}`
+  }
 }
 
 function torStateText(status) {
@@ -3871,6 +3907,7 @@ function wireChrome() {
       byId('search-engine').value === 'custom' ? 'Template with %s' : 'SearXNG instance'
   })
   byId('security-save').addEventListener('click', () => void saveSecurity())
+  byId('protection-update-lists').addEventListener('click', () => void updateProtectionFilterLists())
   byId('tor-save').addEventListener('click', () => void saveTor())
   byId('tor-refresh').addEventListener('click', () => void refreshTorState())
 
