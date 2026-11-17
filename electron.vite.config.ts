@@ -13,7 +13,7 @@ export default defineConfig({
     // inlined rather than externalised.
     plugins: [
       externalizeDepsPlugin({
-        exclude: ['nostr-tools', '@nostrify/nostrify', 'socks-proxy-agent', 'ws']
+        exclude: ['nostr-tools', '@nostrify/nostrify', '@scure/btc-signer', 'socks-proxy-agent', 'ws']
       })
     ],
     resolve: { alias: sharedAlias },
