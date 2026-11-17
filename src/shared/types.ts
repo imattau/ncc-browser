@@ -592,7 +592,8 @@ export const OVERLAY_REASONS = [
   'site-info',
   'insecure',
   'passwords',
-  'password-save'
+  'password-save',
+  'wallet'
 ] as const
 
 export type OverlayReason = (typeof OVERLAY_REASONS)[number]

@@ -2403,6 +2403,42 @@ async function main() {
     await evaluate(chrome, 'window.ncc.closeTab()')
     await sleep(300)
 
+    await evaluate(chrome, 'document.querySelector(\'button[aria-label="Menu"]\').click()')
+    await waitForText(chrome, 'Focus address bar', 40)
+    await evaluate(chrome, 'Array.from(document.querySelectorAll(\'[role="menuitem"]\')).find((item) => item.textContent.includes("Wallet"))?.click()')
+    await waitForText(chrome, 'Bitcoin', 40)
+    check('opens the wallet from the browser menu', (await evaluate(chrome, 'Boolean(document.querySelector(\'[aria-label="Wallet"]\'))')) === true)
+    await evaluate(chrome, 'localStorage.setItem("ncc.wallet.monero-daemon", "http://127.0.0.1:1")')
+    await evaluate(chrome, 'Array.from(document.querySelectorAll("button")).find((item) => item.textContent.trim() === "Monero")?.click()')
+    await waitForText(chrome, 'Create wallet', 40)
+    check('wallet opens Monero setup', (await evaluate(chrome, 'Boolean(Array.from(document.querySelectorAll("button")).find((item) => item.textContent.trim() === "Create wallet"))')) === true)
+    await evaluate(chrome, 'Array.from(document.querySelectorAll("button")).find((item) => item.textContent.trim() === "Create wallet")?.click()')
+    await waitForText(chrome, 'I backed up my seed', 120)
+    check('Monero wallet2 creates a local seed without a daemon', (await evaluate(chrome, 'document.querySelectorAll("ol li").length')) === 25)
+    const seedChallenge = await evaluate(chrome, `(() => {
+      const label = Array.from(document.querySelectorAll('label')).find((item) => item.textContent.includes('Enter word'))
+      const index = Number(label.textContent.match(/word (\\d+)/i)[1]) - 1
+      return { index: index + 1, word: document.querySelectorAll('ol li')[index].textContent.replace(/^\\d+\\s*/, '').trim() }
+    })()`)
+    await evaluate(chrome, `(() => {
+      const input = Array.from(document.querySelectorAll('label')).find((item) => item.textContent.includes('Enter word')).querySelector('input')
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
+      setter.call(input, ${JSON.stringify(seedChallenge.word)})
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })()`)
+    await evaluate(chrome, 'Array.from(document.querySelectorAll("button")).find((item) => item.textContent.trim() === "I backed up my seed")?.click()')
+    const moneroRecord = await evaluate(chrome, `(async () => {
+      for (let attempt = 0; attempt < 50; attempt++) {
+        const record = await window.ncc.walletLoadMoneroRecord()
+        if (record) return { words: record.seed.trim().split(/\\s+/).length, backupConfirmed: record.backupConfirmed, address: record.address }
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+      return null
+    })()`)
+    check('encrypts and reloads the checked Monero seed locally', moneroRecord?.words === 25 && moneroRecord.backupConfirmed === true && moneroRecord.address.startsWith('4'))
+    await evaluate(chrome, 'document.querySelector(\'button[aria-label="Close wallet"]\').click()')
+    await sleep(250)
+
     const unbookmarked = await evaluate(
       chrome,
       `window.ncc.removeBookmark(${JSON.stringify(bookmarked[0].url)})`

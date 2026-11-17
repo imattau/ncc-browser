@@ -24,6 +24,7 @@ import { PasswordSavePrompt } from './components/PasswordSavePrompt'
 import { type PopoverAnchor } from './components/Popover'
 import { InsecureWarning, SecurityBanner } from './components/SecurityNotice'
 import { SettingsPage, type SettingsSection } from './components/SettingsPage'
+import { WalletPanel } from './components/WalletPanel'
 import { SignerPrompt } from './components/SignerPrompt'
 import { SiteInfoPanel } from './components/SiteInfoPanel'
 import { TabOverflowMenu } from './components/TabOverflowMenu'
@@ -608,6 +609,8 @@ export function App() {
             passwordDraftOrigin={passwordDraftOrigin}
             onPasswordDraftUsed={() => setPasswordDraftOrigin(null)}
           />
+        ) : overlay === 'wallet' ? (
+          <WalletPanel onClose={closeOverlay} />
         ) : state.mode === 'blank' ? (
           <Welcome
             onOpenSettings={() => openSettings('general')}
@@ -624,6 +627,7 @@ export function App() {
           identity={identity}
           bookmarks={bookmarks}
           onCommand={runCommand}
+          onOpenWallet={() => showOverlay('wallet')}
           onOpenBookmark={openBookmark}
           onRemoveBookmark={removeBookmark}
           devices={syncDevices}

@@ -246,6 +246,45 @@ impl SyncService {
         }
     }
 
+    /// Read or replace the single NIP-78 encrypted Monero wallet record. The record is
+    /// already private JSON at this boundary; only its NIP-44 ciphertext is published.
+    pub async fn monero_wallet_record(&self, replacement: Option<Value>) -> Result<Option<Value>, String> {
+        let _guard = self.busy.lock().await;
+        let pubkey = self.pubkey()?;
+        let relays = self.relays(&pubkey).await;
+        if relays.is_empty() {
+            return if replacement.is_some() { Err("No relay is configured for encrypted wallet sync".into()) } else { Ok(None) };
+        }
+        let signer = self.signer();
+        let filter = json!({"kinds":[30078],"authors":[pubkey],"#d":["ncc-browser/monero-wallet/v1"],"limit":20});
+        let queries = relays.iter().map(|url| relay::query_authed(url, &filter, RELAY_WAIT, &signer)).collect::<Vec<_>>();
+        let mut events = Vec::new();
+        for result in futures_util::future::join_all(queries).await {
+            if let Ok(mut page) = result { events.append(&mut page); }
+        }
+        events.retain(|event| event.kind.as_u16() == 30078 && event.pubkey.to_hex() == pubkey
+            && event.tags.iter().any(|tag| tag.as_slice().get(0).map(String::as_str) == Some("d") && tag.as_slice().get(1).map(String::as_str) == Some("ncc-browser/monero-wallet/v1"))
+            && event.content.len() <= 1_000_000 && event.verify().is_ok());
+        events.sort_by(|a, b| b.created_at.cmp(&a.created_at).then_with(|| a.id.to_hex().cmp(&b.id.to_hex())));
+
+        if let Some(record) = replacement {
+            let content = self.identity.nip44_encrypt(&pubkey, &record.to_string()).map_err(|error| error.to_string())?;
+            let remote_created = events.iter().map(|event| event.created_at.as_secs()).max().unwrap_or(0);
+            let previous = self.last_created().get("ncc-browser/monero-wallet/v1").copied().unwrap_or(0);
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+            let created_at = now.max(remote_created.saturating_add(1)).max(previous.saturating_add(1));
+            let template = json!({"kind":30078,"created_at":created_at,"tags":[["d","ncc-browser/monero-wallet/v1"]],"content":content});
+            let event = self.identity.sign_event(&template).map_err(|error| error.to_string())?;
+            let (accepted, error) = relay::publish_all(&relays, &event, &signer, RELAY_WAIT).await;
+            if accepted == 0 { return Err(error.unwrap_or_else(|| "No relay accepted the encrypted wallet record".into())); }
+            self.last_created().insert("ncc-browser/monero-wallet/v1".into(), created_at);
+            return Ok(Some(record));
+        }
+        let Some(event) = events.first() else { return Ok(None) };
+        let plaintext = self.identity.nip44_decrypt(&pubkey, &event.content).map_err(|error| error.to_string())?;
+        serde_json::from_str(&plaintext).map(Some).map_err(|error| format!("Monero wallet record is invalid: {error}"))
+    }
+
     /// The same relays the vault uses (a dedicated vault relay, or the configured list
     /// plus your NIP-65 write relays), so one setting covers both.
     async fn relays(&self, pubkey: &str) -> Vec<String> {

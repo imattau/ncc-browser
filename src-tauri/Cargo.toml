@@ -1,7 +1,7 @@
 [package]
 name = "ncc-navigator"
 description = "Nostr Navigator shell for Android"
-version = "0.32.3"
+version = "0.33.0"
 authors = ["imattau"]
 license = "MIT"
 edition = "2024"
@@ -26,6 +26,7 @@ ncc-vault = { path = "../crates/ncc-vault" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 log = "0.4"
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "socks"] }
 tauri = { version = "2.12.5", features = [] }
 tauri-plugin-log = "2"
 tokio = { version = "1", features = ["net", "rt"] }

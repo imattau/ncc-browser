@@ -3,6 +3,17 @@
 **Alpha.** An early build published so the browser can be tested on a real device. It
 is not a daily driver.
 
+## New in 0.33.0
+
+- Bitcoin wallet derived from the local Nostr identity, with balance, transaction
+  history, receive address and QR, fee preview, and an explicit send confirmation.
+- Monero wallet created or restored from its own 25-word seed. The seed backup must be
+  confirmed before the wallet record is saved. Wallet data can stay on-device or sync
+  as an encrypted Nostr record; scanning uses the configured remote daemon.
+- Wallet creation and restoration require an unlocked local identity. Remote signers
+  cannot create spend-capable wallets.
+- The New Tor tab action now sits beside the normal and private tab actions in the menu.
+
 ## Fixed in this build
 
 - Named services no longer resolve to the default `addr` record just because that

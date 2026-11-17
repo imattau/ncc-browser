@@ -9,6 +9,7 @@
  * WebViews. In a plain browser, where it does not exist, the address field falls back
  * to a fetch, which still proves the proxy and the `*.localhost` mapping.
  */
+import { closeMoneroWallet, loadWallet, wireWallet } from './wallet.js'
 
 const byId = (id) => document.getElementById(id)
 
@@ -133,6 +134,7 @@ const PANELS = [
   'security',
   'tor',
   'passwords',
+  'wallet',
   'sync',
   'password-fill',
   'password-save',
@@ -155,6 +157,7 @@ const PANEL_PARENT = {
   security: 'settings',
   tor: 'settings',
   passwords: 'settings',
+  wallet: 'settings',
   sync: 'settings',
   'password-edit': 'passwords',
   storage: 'settings',
@@ -786,6 +789,7 @@ globalThis.__nccBack = () => {
 /** Every full-window surface is the shell expanded over the page. */
 function showPanel(name) {
   if (!content) return
+  if (panel === 'wallet' && name !== 'wallet') void closeMoneroWallet()
   if (findOpen) closeFind()
   panel = name
   pendingFocus = null
@@ -803,6 +807,7 @@ function showPanel(name) {
   if (name === 'security') void loadSecurity()
   if (name === 'tor') void loadTor()
   if (name === 'passwords') void loadPasswords()
+  if (name === 'wallet') void loadWallet()
   if (name === 'sync') renderSync()
   if (name === 'password-fill') void renderPasswordFill()
   if (name === 'password-save') renderPasswordSave()
@@ -1750,6 +1755,7 @@ function wireMenu() {
   act('menu-private', () => openOmnibox({ newTab: true, private: true }))
   act('menu-tor', () => openOmnibox({ newTab: true, tor: true }))
   act('menu-passwords', () => showPanel('password-fill'))
+  act('menu-wallet', () => showPanel('wallet'))
   act('menu-find', () => {
     closePanel()
     openFind()
@@ -3965,6 +3971,7 @@ function wireChrome() {
   })
 
   wireMenu()
+  wireWallet()
   wireFind()
   wireSwipe()
   wireSheet('menu', () => closePanel())

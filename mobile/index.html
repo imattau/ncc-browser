@@ -7,6 +7,7 @@
       content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no"
     />
     <meta name="color-scheme" content="light dark" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https: http: wss: ws:" />
     <title>Nostr Navigator (alpha)</title>
     <link rel="stylesheet" href="style.css" />
   </head>
@@ -44,6 +45,7 @@
         <symbol id="i-onion" viewBox="0 0 24 24"><path d="M12 21c4.7 0 8.2-3.7 8.2-8.2C20.2 7.4 16.5 3 12 3S3.8 7.4 3.8 12.8C3.8 17.3 7.3 21 12 21Z" /><path d="M12 18.2c2.9 0 5.1-2.4 5.1-5.5 0-3.2-1.9-5.7-5.1-5.7s-5.1 2.5-5.1 5.7c0 3.1 2.2 5.5 5.1 5.5Z" /><path d="M12 15.3c1.3 0 2.2-1.1 2.2-2.7 0-1.6-.9-2.7-2.2-2.7s-2.2 1.1-2.2 2.7c0 1.6.9 2.7 2.2 2.7Z" /><path d="M12 3c0-1 .6-1.7 1.6-2" /></symbol>
         <symbol id="i-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" /></symbol>
         <symbol id="i-key" viewBox="0 0 24 24"><path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z" /><circle cx="16.5" cy="7.5" r=".5" /></symbol>
+        <symbol id="i-wallet" viewBox="0 0 24 24"><path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1" /><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4" /></symbol>
         <symbol id="i-radio" viewBox="0 0 24 24"><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9" /><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5" /><circle cx="12" cy="12" r="2" /><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5" /><path d="M19.1 4.9C23 8.8 23 15.2 19.1 19.1" /></symbol>
         <symbol id="i-database" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3" /><path d="M3 5V19A9 3 0 0 0 21 19V5" /><path d="M3 12A9 3 0 0 0 21 12" /></symbol>
         <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" /><path d="M12 2v2" /><path d="M12 20v2" /><path d="m4.93 4.93 1.41 1.41" /><path d="m17.66 17.66 1.41 1.41" /><path d="M2 12h2" /><path d="M20 12h2" /><path d="m6.34 17.66-1.41 1.41" /><path d="m19.07 4.93-1.41 1.41" /></symbol>
@@ -261,6 +263,11 @@
           <button class="row" type="button" data-panel="passwords">
             <span class="row-icon"><svg class="i"><use href="#i-key" /></svg></span>
             <span class="row-text"><b>Passwords</b><small id="sub-passwords">Saved logins</small></span>
+            <svg class="i chev"><use href="#i-chevron" /></svg>
+          </button>
+          <button class="row" type="button" data-panel="wallet">
+            <span class="row-icon"><svg class="i"><use href="#i-wallet" /></svg></span>
+            <span class="row-text"><b>Wallet</b><small>Bitcoin and Monero</small></span>
             <svg class="i chev"><use href="#i-chevron" /></svg>
           </button>
           <button class="row" type="button" data-panel="sync">
@@ -491,6 +498,73 @@
           down. Signal, mail and telephone links still leave the app; clearnet links in
           a Tor tab are refused rather than fetched.
         </p>
+      </div>
+    </section>
+
+    <section id="wallet" class="screen" hidden>
+      <header class="appbar">
+        <button class="ib" type="button" data-back aria-label="Back"><svg class="i"><use href="#i-back" /></svg></button>
+        <h2>Wallet</h2>
+        <button id="wallet-refresh" class="ib" type="button" aria-label="Refresh wallet"><svg class="i"><use href="#i-reload" /></svg></button>
+      </header>
+      <div class="body wallet-body">
+        <div class="wallet-currencies" role="tablist" aria-label="Wallet currency">
+          <button class="wallet-currency selected" type="button" data-currency="BTC">Bitcoin</button>
+          <button class="wallet-currency" type="button" data-currency="XMR">Monero</button>
+        </div>
+        <p id="wallet-note" class="status" role="status"></p>
+        <section id="wallet-bitcoin">
+          <article class="wallet-card">
+            <small>Available balance</small>
+            <strong id="wallet-balance">— BTC</strong>
+            <small id="wallet-pending">Pending: — BTC</small>
+            <div class="wallet-actions">
+              <button id="wallet-open-send" class="btn" type="button">Send</button>
+              <button id="wallet-copy-address" class="btn tonal" type="button">Copy address</button>
+            </div>
+            <div class="wallet-receive">
+              <img id="wallet-qr" alt="Bitcoin receive address QR code" hidden />
+              <code id="wallet-address">Unlock a local identity to view your address.</code>
+            </div>
+          </article>
+          <article class="wallet-card">
+            <h3>Recent transactions</h3>
+            <div id="wallet-transactions" class="wallet-transactions">No transactions yet.</div>
+          </article>
+          <details class="wallet-settings">
+            <summary>Bitcoin data service</summary>
+            <label>Esplora-compatible URL<input id="wallet-esplora" type="url" inputmode="url" /></label>
+            <p>Public services can associate this address with your IP. NCC uses Tor when a Tor route is ready.</p>
+            <button id="wallet-save-esplora" class="btn tonal" type="button">Save service</button>
+          </details>
+          <section id="wallet-send" class="wallet-card" hidden>
+            <h3>Send Bitcoin</h3>
+            <label>Destination address<input id="wallet-send-address" autocomplete="off" spellcheck="false" /></label>
+            <label>Amount in BTC<input id="wallet-send-amount" inputmode="decimal" autocomplete="off" /></label>
+            <div id="wallet-send-preview" class="wallet-send-preview" hidden></div>
+            <div class="wallet-actions">
+              <button id="wallet-send-cancel" class="btn tonal" type="button">Cancel</button>
+              <button id="wallet-send-review" class="btn" type="button">Review fee</button>
+              <button id="wallet-send-confirm" class="btn danger" type="button" hidden>Confirm and send</button>
+            </div>
+          </section>
+        </section>
+        <section id="wallet-monero" hidden>
+          <article class="wallet-card">
+            <div class="wallet-heading"><div><h3>Monero</h3><p class="hint">Wallet keys stay on this device. The daemon never receives your view key, but can see your IP and scan requests.</p></div><button id="wallet-xmr-refresh" class="btn tonal" type="button">Refresh</button></div>
+            <p class="wallet-balance"><span id="wallet-xmr-balance">—</span> XMR</p><p class="hint">Unlocked: <span id="wallet-xmr-unlocked">—</span> XMR</p>
+            <label>Monero daemon URL<input id="wallet-xmr-daemon" type="url" inputmode="url" /></label>
+            <div id="wallet-xmr-setup">
+              <button id="wallet-xmr-create" class="btn" type="button">Create wallet</button>
+              <details><summary>Restore wallet</summary><label>25-word recovery seed<textarea id="wallet-xmr-restore-seed" rows="3" autocomplete="off" autocapitalize="none" spellcheck="false"></textarea></label><label>Restore from block height<input id="wallet-xmr-restore-height" type="number" min="0" value="0" /></label><button id="wallet-xmr-restore" class="btn tonal" type="button">Continue</button></details>
+            </div>
+            <div id="wallet-xmr-backup" hidden><p class="wallet-warning">Write these 25 words down in order. Anyone with this seed can spend your Monero.</p><ol id="wallet-xmr-words" class="wallet-seed-words"></ol><label>Enter word <span id="wallet-xmr-word-number"></span> to confirm your backup<input id="wallet-xmr-word-answer" autocomplete="off" autocapitalize="none" /></label><label>Wallet sync mode<select id="wallet-xmr-sync"><option value="local">This device only</option><option value="encrypted-relay">Encrypted Nostr relay sync</option></select></label><button id="wallet-xmr-backup-confirm" class="btn" type="button">I backed up my seed</button></div>
+            <div id="wallet-xmr-receive" hidden><code id="wallet-xmr-address"></code><img id="wallet-xmr-qr" alt="Monero receive address QR code" hidden /><button id="wallet-xmr-copy" class="btn tonal" type="button">Copy address</button><button id="wallet-xmr-open-send" class="btn" type="button">Send</button></div>
+            <div id="wallet-xmr-send" hidden><label>Destination address<input id="wallet-xmr-send-address" autocomplete="off" autocapitalize="none" spellcheck="false" /></label><label>Amount in XMR<input id="wallet-xmr-send-amount" inputmode="decimal" autocomplete="off" /></label><div id="wallet-xmr-send-preview" class="wallet-send-preview" hidden></div><button id="wallet-xmr-send-review" class="btn tonal" type="button">Review fee</button><button id="wallet-xmr-send-confirm" class="btn danger" type="button" hidden>Confirm and send</button><button id="wallet-xmr-send-cancel" class="btn tonal" type="button">Cancel</button></div>
+          </article>
+          <article class="wallet-card"><h3>Recent Monero transactions</h3><div id="wallet-xmr-transactions" class="wallet-transactions">No transactions yet.</div></article>
+          <p id="wallet-xmr-note" class="hint" role="status"></p>
+        </section>
       </div>
     </section>
 
@@ -831,11 +905,14 @@
           <button id="menu-private" class="row" type="button">
             <svg class="i"><use href="#i-eye-off" /></svg><span class="row-text"><b>New private tab</b></span>
           </button>
+          <button id="menu-tor" class="row" type="button">
+            <svg class="i"><use href="#i-onion" /></svg><span class="row-text"><b>New Tor tab</b></span>
+          </button>
           <button id="menu-passwords" class="row" type="button">
             <svg class="i"><use href="#i-key" /></svg><span class="row-text"><b>Passwords</b></span>
           </button>
-          <button id="menu-tor" class="row" type="button">
-            <svg class="i"><use href="#i-onion" /></svg><span class="row-text"><b>New Tor tab</b></span>
+          <button id="menu-wallet" class="row" type="button">
+            <svg class="i"><use href="#i-wallet" /></svg><span class="row-text"><b>Wallet</b><small>Bitcoin and Monero</small></span>
           </button>
           <button id="menu-find" class="row" type="button">
             <svg class="i"><use href="#i-search" /></svg><span class="row-text"><b>Find in page</b></span>

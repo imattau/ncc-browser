@@ -14,6 +14,13 @@ use std::sync::Mutex;
 
 use argon2::{Algorithm, Argon2, Params, Version};
 use base64::Engine as _;
+use bitcoin::{
+    bip32::{DerivationPath, Fingerprint},
+    key::PrivateKey,
+    psbt::Psbt,
+    secp256k1::{Secp256k1, XOnlyPublicKey},
+    NetworkKind,
+};
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use nostr::{Event, JsonUtil, Keys, PublicKey, ToBech32, UnsignedEvent};
@@ -410,6 +417,49 @@ impl IdentityStore {
         })
     }
 
+    /// Sign matching Taproot key-path inputs in a PSBT. The PSBT must carry the
+    /// input's `tap_internal_key` and complete witness UTXO data. Inputs for other
+    /// keys remain untouched; the transaction is never finalized or broadcast here.
+    pub fn bitcoin_sign_psbt(&self, encoded_hex: &str) -> Result<String, IdentityError> {
+        let bytes = decode_hex(encoded_hex).map_err(IdentityError::Codec)?;
+        let mut psbt = Psbt::deserialize(&bytes)
+            .map_err(|error| IdentityError::Codec(format!("invalid PSBT: {error}")))?;
+        self.with_keys(|keys| {
+            let secp = Secp256k1::new();
+            let secret = bitcoin::secp256k1::SecretKey::from_slice(keys.secret_key().as_secret_bytes())
+                .map_err(|error| IdentityError::Crypto(error.to_string()))?;
+            let keypair = bitcoin::secp256k1::Keypair::from_secret_key(&secp, &secret);
+            let internal_key = XOnlyPublicKey::from_keypair(&keypair).0;
+            let private_key = PrivateKey::new(secret, NetworkKind::Main);
+            let mut key_map = std::collections::BTreeMap::new();
+            key_map.insert(internal_key, private_key);
+            let mut matching = 0usize;
+            for input in &mut psbt.inputs {
+                if input.tap_internal_key == Some(internal_key) {
+                    matching += 1;
+                    input.tap_key_origins.entry(internal_key).or_insert_with(|| {
+                        (Vec::new(), (Fingerprint::default(), DerivationPath::default()))
+                    });
+                }
+            }
+            if matching == 0 {
+                return Err(IdentityError::Crypto(
+                    "PSBT has no Taproot inputs belonging to this identity".to_string(),
+                ));
+            }
+            let signed = psbt.sign(&key_map, &secp)
+                .map_err(|(_signed, errors)| IdentityError::Crypto(format!("could not sign all matching inputs: {errors:?}")))?;
+            let signed_inputs = signed.values().map(|keys| match keys {
+                bitcoin::psbt::SigningKeys::Schnorr(keys) => keys.len(),
+                bitcoin::psbt::SigningKeys::Ecdsa(keys) => keys.len(),
+            }).sum::<usize>();
+            if signed_inputs != matching {
+                return Err(IdentityError::Crypto("not every matching input was signed".to_string()));
+            }
+            Ok(encode_hex(&psbt.serialize()))
+        })
+    }
+
     fn with_keys<T>(
         &self,
         action: impl FnOnce(&Keys) -> Result<T, IdentityError>,
@@ -517,6 +567,25 @@ fn b64() -> base64::engine::GeneralPurpose {
 
 fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn decode_hex(value: &str) -> Result<Vec<u8>, String> {
+    if value.len() % 2 != 0 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("PSBT must be even-length hexadecimal".into());
+    }
+    (0..value.len()).step_by(2).map(|index| {
+        u8::from_str_radix(&value[index..index + 2], 16).map_err(|error| error.to_string())
+    }).collect()
+}
+
+fn encode_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        output.push(HEX[(byte >> 4) as usize] as char);
+        output.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    output
 }
 
 #[cfg(unix)]

@@ -28,6 +28,8 @@ import { ExtensionStorage } from './extensions/storage'
 import { PasswordCache } from './passwords/cache'
 import { electronClipboard, electronFileDialogs, registerPasswordIpc } from './passwords/ipc'
 import { PasswordService } from './passwords/service'
+import { WalletService } from './wallet/service'
+import { registerWalletIpc } from './wallet/ipc'
 import { SyncPrefsStore } from './sync/prefs'
 import { SyncService } from './sync/service'
 import { registerSyncIpc } from './sync/ipc'
@@ -86,6 +88,7 @@ let torManager: TorManager | null = null
 let torRelays: TorRelayPool | null = null
 let relaySync: RelaySync | null = null
 let passwords: PasswordService | null = null
+let walletService: WalletService | null = null
 let extensions: ExtensionService | null = null
 
 app.whenReady().then(async () => {
@@ -403,6 +406,20 @@ app.whenReady().then(async () => {
   })
   passwords = passwordService
   registerPasswordIpc(passwordService, { shell })
+  walletService = new WalletService(
+    join(app.getPath('userData'), 'wallet-prefs.json'),
+    localIdentity,
+    identity,
+    () => config.get().preferTor ? torManager?.status().proxy ?? null : null,
+    undefined,
+    join(app.getPath('userData'), 'monero-wallet.json'),
+    () => {
+      const pubkey = identity.status().hexPubkey
+      return pubkey ? passwordService.relaysFor(pubkey) : config.get().relays.map((relay) => relay.url).filter(Boolean)
+    },
+    relayPool
+  )
+  registerWalletIpc(walletService, shell)
   shell.window.webContents.on('did-finish-load', () => passwordService.clearOverlays())
   shell.window.on('focus', () => void passwordService.onWindowFocus())
 
@@ -588,6 +605,7 @@ app.on('activate', () => {
 app.on('before-quit', () => {
   shell?.saveSessionNow()
   passwords?.dispose()
+  walletService?.dispose()
   extensions?.dispose()
   relaySync?.stop()
   closeSharedPool()

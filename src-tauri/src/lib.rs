@@ -608,6 +608,121 @@ fn identity_status(state: tauri::State<'_, SignerState>) -> Status {
     state.identity.status()
 }
 
+/// PSBT signing is exposed only to the browser chrome. The page's separate WebView
+/// cannot invoke Tauri commands and never receives the identity secret.
+#[tauri::command]
+fn bitcoin_sign_psbt(state: tauri::State<'_, SignerState>, psbt_hex: String) -> Result<String, String> {
+    if state.proxy.remote().is_some() {
+        return Err("Bitcoin spending requires the local Nostr identity".into());
+    }
+    state.identity.bitcoin_sign_psbt(&psbt_hex).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn bitcoin_public_key(state: tauri::State<'_, SignerState>) -> Result<String, String> {
+    if state.proxy.remote().is_some() {
+        return Err("Bitcoin spending requires the local Nostr identity".into());
+    }
+    state.identity.public_key().map(|key| key.to_hex()).map_err(|error| error.to_string())
+}
+
+/// Wallet HTTP requests stay in Rust. When the app has a ready Tor route, Esplora
+/// traffic follows the same route rather than falling back to the WebView network.
+#[tauri::command]
+async fn wallet_http(
+    tor: tauri::State<'_, TorHandle>,
+    url: String,
+    method: String,
+    body: Option<String>,
+) -> Result<String, String> {
+    let parsed = url::Url::parse(&url).map_err(|_| "Invalid wallet service URL".to_string())?;
+    if parsed.scheme() != "https" && !(parsed.scheme() == "http" && matches!(parsed.host_str(), Some("localhost" | "127.0.0.1"))) {
+        return Err("Wallet service URLs must use HTTPS (HTTP is allowed for localhost)".into());
+    }
+    let mut builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(20));
+    if let Some(route) = tor.0.as_ref() {
+        if matches!(route.status().state, TorState::Ready) {
+            let proxy = reqwest::Proxy::all(route.socks_url()).map_err(|error| error.to_string())?;
+            builder = builder.proxy(proxy);
+        }
+    }
+    let client = builder.build().map_err(|error| error.to_string())?;
+    let request = match method.as_str() {
+        "GET" => client.get(parsed),
+        "POST" => client.post(parsed).header("content-type", "text/plain").body(body.unwrap_or_default()),
+        _ => return Err("Unsupported wallet service method".into()),
+    };
+    let response = request.send().await.map_err(|error| format!("Wallet service request failed: {error}"))?;
+    let status = response.status();
+    let text = response.text().await.map_err(|error| error.to_string())?;
+    if !status.is_success() { return Err(format!("Wallet service returned HTTP {status}")); }
+    Ok(text)
+}
+
+const MONERO_WALLET_RECORD: &str = "monero-wallet.json";
+
+#[tauri::command]
+async fn wallet_monero_load(
+    state: tauri::State<'_, SignerState>,
+    sync: tauri::State<'_, SyncHandle>,
+    dir: tauri::State<'_, AppDataDir>,
+) -> Result<Option<serde_json::Value>, String> {
+    if state.proxy.remote().is_some() { return Err("Monero wallet backup requires a local Nostr identity".into()); }
+    let pubkey = state.identity.public_key().map_err(|error| error.to_string())?.to_hex();
+    let path = dir.0.join(MONERO_WALLET_RECORD);
+    let ciphertext = if path.exists() {
+        let data: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
+        data.get("ciphertext").and_then(|value| value.as_str()).map(str::to_owned)
+    } else { None };
+    let record = if let Some(ciphertext) = ciphertext {
+        let plaintext = state.identity.nip44_decrypt(&pubkey, &ciphertext).map_err(|error| error.to_string())?;
+        Some(serde_json::from_str(&plaintext).map_err(|error| format!("Stored Monero record is invalid: {error}"))?)
+    } else {
+        sync.0.monero_wallet_record(None).await?
+    };
+    if let Some(record) = &record {
+        if !path.exists() {
+            let plaintext = record.to_string();
+            let sealed = state.identity.nip44_encrypt(&pubkey, &plaintext).map_err(|error| error.to_string())?;
+            write_wallet_record_file(&path, &sealed)?;
+        }
+    }
+    Ok(record)
+}
+
+#[tauri::command]
+async fn wallet_monero_save(
+    state: tauri::State<'_, SignerState>,
+    sync: tauri::State<'_, SyncHandle>,
+    dir: tauri::State<'_, AppDataDir>,
+    record: serde_json::Value,
+) -> Result<(), String> {
+    if state.proxy.remote().is_some() { return Err("Monero wallet backup requires a local Nostr identity".into()); }
+    if record.get("version").and_then(|value| value.as_u64()) != Some(1)
+        || record.get("backupConfirmed").and_then(|value| value.as_bool()) != Some(true)
+        || record.get("seed").and_then(|value| value.as_str()).map_or(true, str::is_empty)
+        || record.get("address").and_then(|value| value.as_str()).map_or(true, str::is_empty) {
+        return Err("The Monero seed backup check must be complete before saving".into());
+    }
+    let pubkey = state.identity.public_key().map_err(|error| error.to_string())?.to_hex();
+    let plaintext = record.to_string();
+    let sealed = state.identity.nip44_encrypt(&pubkey, &plaintext).map_err(|error| error.to_string())?;
+    write_wallet_record_file(&dir.0.join(MONERO_WALLET_RECORD), &sealed)?;
+    if record.get("syncChoice").and_then(|value| value.as_str()) == Some("encrypted-relay") {
+        sync.0.monero_wallet_record(Some(record)).await?;
+    }
+    Ok(())
+}
+
+fn write_wallet_record_file(path: &std::path::Path, ciphertext: &str) -> Result<(), String> {
+    let parent = path.parent().ok_or_else(|| "Monero wallet storage path is invalid".to_string())?;
+    std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let temp = path.with_extension("json.tmp");
+    let bytes = serde_json::to_vec(&serde_json::json!({"version":1,"ciphertext":ciphertext})).map_err(|error| error.to_string())?;
+    std::fs::write(&temp, bytes).map_err(|error| error.to_string())?;
+    std::fs::rename(temp, path).map_err(|error| error.to_string())
+}
+
 /// How the secret is sealed. On Android the keystore holds the wrapping key, so no
 /// passphrase is involved; the passphrase envelope is only used elsewhere, and to
 /// migrate a file written before the keystore existed.
@@ -923,6 +1038,11 @@ pub fn run() {
             bunker_status,
             bunker_disconnect,
             identity_status,
+            bitcoin_sign_psbt,
+            bitcoin_public_key,
+            wallet_http,
+            wallet_monero_load,
+            wallet_monero_save,
             identity_create,
             identity_import,
             identity_unlock,

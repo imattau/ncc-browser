@@ -954,9 +954,12 @@ See [soapbox.pub/mkstack](https://soapbox.pub/mkstack).
 
 ## Packaging and releases
 
-Releases are built by [`.github/workflows/release.yml`](./.github/workflows/release.yml)
-from a version tag. The workflow runs the typecheck and unit tests once, then builds on
-three runners and attaches every artifact to a single GitHub release:
+Desktop releases are built by [`.github/workflows/release.yml`](./.github/workflows/release.yml)
+from a `v*` tag. The workflow runs the typecheck and unit tests once, then builds on
+three runners and attaches every artifact to a single GitHub release. Android releases
+use the separate [`.github/workflows/android.yml`](./.github/workflows/android.yml)
+pipeline and an `android-v*` tag; it builds and attaches the signed arm64 APK to its own
+GitHub release:
 
 | Platform | Artifacts |
 | --- | --- |
@@ -964,12 +967,15 @@ three runners and attaches every artifact to a single GitHub release:
 | macOS | `ncc-browser-<version>-mac-x64.dmg` / `-arm64.dmg` and matching `.zip` |
 | Windows | `ncc-browser-<version>-win-x64-setup.exe` (NSIS) |
 
-The release job also uploads `SHA256SUMS.txt`. Pushing a tag is the whole release flow:
+The desktop release job and Android release both upload checksums. After committing the
+release version and notes, push both tags to publish desktop and Android together:
 
 ```bash
-npm version minor --no-git-tag-version   # or edit package.json
-git commit -am "Release v0.12.1"
-git tag -a v0.12.1 -m "Nostr Navigator v0.12.1"
+npm version 0.33.0 --no-git-tag-version
+node scripts/android-version.mjs
+git commit -am "Release v0.33.0"
+git tag -a v0.33.0 -m "Nostr Navigator v0.33.0"
+git tag -a android-v0.33.0 -m "Nostr Navigator Android v0.33.0"
 git push origin main --follow-tags
 ```
 

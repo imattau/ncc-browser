@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { Bookmark as BookmarkIcon, Smartphone, X } from 'lucide-react'
+import { Bookmark as BookmarkIcon, Smartphone, WalletCards, X } from 'lucide-react'
 import { COMMANDS, COMMAND_ORDER, type CommandId } from '@shared/commands'
 import type { Bookmark, IdentityStatus, NavState } from '@shared/types'
 import type { SyncDevice } from '@shared/sync-status'
@@ -12,6 +12,7 @@ interface ChromeMenuProps {
   identity: IdentityStatus | null
   bookmarks: Bookmark[]
   onCommand: (command: CommandId) => void
+  onOpenWallet: () => void
   onOpenBookmark: (url: string) => void
   onRemoveBookmark: (url: string) => void
   devices?: SyncDevice[]
@@ -24,6 +25,7 @@ export function ChromeMenu({
   identity,
   bookmarks,
   onCommand,
+  onOpenWallet,
   onOpenBookmark,
   onRemoveBookmark,
   devices = [],
@@ -85,6 +87,12 @@ export function ChromeMenu({
               {identity.npub.slice(0, 18)}…{identity.npub.slice(-6)}
             </p>
           ) : null}
+        </div>
+
+        <div className="px-1.5 pt-1.5">
+          <button type="button" role="menuitem" onClick={onOpenWallet} className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-ui-12 text-[color:var(--color-text-strong)] hover:bg-[color:var(--color-hover)]">
+            <WalletCards className="h-4 w-4 text-[color:var(--color-accent)]" /> Wallet
+          </button>
         </div>
 
         {COMMAND_ORDER.map((group) => {

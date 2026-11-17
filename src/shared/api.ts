@@ -48,6 +48,7 @@ import type {
   TorMode,
   TorStatus
 } from './types'
+import type { BitcoinSendPreview, MoneroWalletRecord, WalletSnapshot, WalletStatus } from './wallet'
 
 export interface SetRelaysResult {
   ok: boolean
@@ -165,6 +166,15 @@ export interface NccApi {
     mode: 'merge' | 'skip' | 'add'
   ): Promise<PasswordSaveResult>
   passwordsExport(format: 'encrypted' | 'csv'): Promise<PasswordExportResult>
+  walletStatus(): Promise<WalletStatus>
+  walletSnapshot(): Promise<WalletSnapshot>
+  walletSettings(): Promise<{ esploraUrl: string; privacyNotice: string }>
+  walletSetSettings(config: { esploraUrl: string }): Promise<{ esploraUrl: string; privacyNotice: string }>
+  walletPrepareBitcoinSend(address: string, amount: string): Promise<BitcoinSendPreview>
+  walletConfirmBitcoinSend(token: string): Promise<{ txid: string }>
+  walletLoadMoneroRecord(): Promise<MoneroWalletRecord | null>
+  walletSaveMoneroRecord(record: MoneroWalletRecord): Promise<void>
+  walletDeleteMoneroRecord(): Promise<void>
   onPasswordStatus(listener: (status: PasswordVaultStatus) => void): () => void
   onPasswordContext(listener: (context: PasswordContext) => void): () => void
   onPasswordSaveRequest(listener: (request: PasswordSaveRequest) => void): () => void
