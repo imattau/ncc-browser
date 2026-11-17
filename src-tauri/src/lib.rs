@@ -642,6 +642,16 @@ fn bitcoin_public_key(state: tauri::State<'_, SignerState>) -> Result<String, St
     state.identity.public_key().map(|key| key.to_hex()).map_err(|error| error.to_string())
 }
 
+/// Name the TLS roots explicitly: reqwest's default builds a platform verifier, which
+/// panics or fails on Android (no JVM context). Falls back to the default if the roots
+/// cannot be built.
+fn with_webpki_roots(builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
+    match ncc_proxy::pins::webpki_tls_config() {
+        Ok(tls) => builder.use_preconfigured_tls(tls),
+        Err(_) => builder,
+    }
+}
+
 /// Wallet HTTP requests stay in Rust. When the app has a ready Tor route, Esplora
 /// traffic follows the same route rather than falling back to the WebView network.
 #[tauri::command]
@@ -655,7 +665,7 @@ async fn wallet_http(
     if parsed.scheme() != "https" && !(parsed.scheme() == "http" && matches!(parsed.host_str(), Some("localhost" | "127.0.0.1"))) {
         return Err("Wallet service URLs must use HTTPS (HTTP is allowed for localhost)".into());
     }
-    let mut builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(20));
+    let mut builder = with_webpki_roots(reqwest::Client::builder()).timeout(std::time::Duration::from_secs(20));
     if let Some(route) = tor.0.as_ref() {
         if matches!(route.status().state, TorState::Ready) {
             let proxy = reqwest::Proxy::all(route.socks_url()).map_err(|error| error.to_string())?;
@@ -686,7 +696,7 @@ async fn profile_picture_data(url: String) -> Result<Option<String>, String> {
         return Err("Profile pictures must use HTTPS".into());
     }
 
-    let client = reqwest::Client::builder()
+    let client = with_webpki_roots(reqwest::Client::builder())
         .timeout(std::time::Duration::from_secs(8))
         .redirect(reqwest::redirect::Policy::custom(|attempt| {
             if attempt.url().scheme() == "https" && attempt.previous().len() < 5 {

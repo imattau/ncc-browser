@@ -3,6 +3,14 @@
 **Alpha.** An early build published so the browser can be tested on a real device. It
 is not a daily driver.
 
+## Fixes in 0.33.7
+
+- Fixed the profile picture never appearing on Home when signed in. The app's image
+  download used a TLS setup that does not work on Android, so it failed quietly and the
+  letter avatar stayed. It now uses the same certificate roots as the rest of the app.
+- Fixed the app logo on the Home page showing as a broken image before sign-in.
+- Wallet service requests (Bitcoin balance, history and fees) use the same fix.
+
 ## Fixes in 0.33.6
 
 - Fixed the Home profile avatar being blocked by the Android WebView's content policy.
