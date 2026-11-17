@@ -5,6 +5,9 @@ is not a daily driver.
 
 ## New in this build
 
+- Fixed ad and tracker filter lists never downloading on Android: Settings → Security
+  stayed at 0 lists. They now update, and the list count is 6 (an empty Brave list was
+  dropped).
 - Share to Nostr. The menu has a new Share to Nostr item, separate from the normal
   Share. It posts a public note with the page address and an optional comment of your
   own, signed with your key. It goes to your configured relays and your own relay list

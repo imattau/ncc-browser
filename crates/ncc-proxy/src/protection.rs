@@ -44,7 +44,6 @@ const LISTS: &[FilterList] = &[
     FilterList { file: "easylist.txt", url: "https://easylist.to/easylist/easylist.txt", privacy: false },
     FilterList { file: "ubo-filters.txt", url: "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/filters.txt", privacy: false },
     FilterList { file: "brave-specific.txt", url: "https://raw.githubusercontent.com/brave/adblock-lists/master/brave-lists/brave-specific.txt", privacy: false },
-    FilterList { file: "brave-unbreak.txt", url: "https://raw.githubusercontent.com/brave/adblock-lists/master/brave-lists/brave-unbreak.txt", privacy: false },
     FilterList { file: "brave-android.txt", url: "https://raw.githubusercontent.com/brave/adblock-lists/master/brave-lists/brave-android-specific.txt", privacy: false },
     FilterList { file: "easyprivacy.txt", url: "https://easylist.to/easylist/easyprivacy.txt", privacy: true },
     FilterList { file: "ubo-privacy.txt", url: "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/privacy.txt", privacy: true },
@@ -290,9 +289,13 @@ pub async fn refresh_lists(cache_dir: &Path) {
         status.error = None;
     }
     load_cached_lists(cache_dir);
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(20))
-        .build();
+    // Name the roots: reqwest's default builds a platform verifier, which panics on
+    // Android (no JVM context), killing the update and leaving it stuck at 0 lists.
+    let builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(20));
+    let client = match crate::pins::webpki_tls_config() {
+        Ok(tls) => builder.use_preconfigured_tls(tls).build(),
+        Err(_) => builder.build(),
+    };
     let Ok(client) = client else {
         if let Ok(mut status) = filter_status_store().write() { status.updating = false; status.error = Some("Could not start the filter-list updater".into()); }
         return;
