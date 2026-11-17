@@ -3,6 +3,15 @@
 **Alpha.** An early build published so the browser can be tested on a real device. It
 is not a daily driver.
 
+## New in 0.33.4
+
+- Tor tabs now open ordinary `https://` sites (and bare host names) through Tor, not
+  just `.onion` addresses. Pages are fetched by the app over Tor, so your address is
+  not revealed; scripts that build their own URLs at runtime may not work.
+- Tor starts when the app opens, so the first Tor tab loads straight away. This is a
+  setting (Settings → Tor → Start Tor when the app opens), on by default; turn it off
+  to keep Tor idle until a Tor tab is opened.
+
 ## Fixes in 0.33.3
 
 - Wallet screens now focus on the selected currency's balance, send action, receive
