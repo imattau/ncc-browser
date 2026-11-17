@@ -6,7 +6,7 @@ import { MoneroWalletSession, type MoneroSendPreview, type MoneroSnapshot } from
 
 function asError(error: unknown): string { return error instanceof Error ? error.message : String(error) }
 
-export function MoneroWalletPanel() {
+export function MoneroWalletPanel({ onOpenIdentitySettings }: { onOpenIdentitySettings: () => void }) {
   const session = useRef<MoneroWalletSession | null>(null)
   if (!session.current) session.current = new MoneroWalletSession()
   const [snapshot, setSnapshot] = useState<MoneroSnapshot | null>(null)
@@ -20,7 +20,7 @@ export function MoneroWalletPanel() {
   const [daemonUrl, setDaemonUrl] = useState(() => localStorage.getItem('ncc.wallet.monero-daemon') || DEFAULT_MONERO_DAEMON_URL)
   const [qr, setQr] = useState('')
   const [busy, setBusy] = useState(false)
-  const [identityReady, setIdentityReady] = useState(false)
+  const [identityReady, setIdentityReady] = useState<boolean | null>(null)
   const [scanning, setScanning] = useState(false)
   const [message, setMessage] = useState('')
   const [sendAddress, setSendAddress] = useState('')
@@ -32,7 +32,7 @@ export function MoneroWalletPanel() {
     void window.ncc.walletStatus().then(async (status) => {
       if (!alive) return
       setIdentityReady(status.identityReady)
-      if (!status.identityReady) { setMessage('Unlock a local Nostr identity before creating or restoring a Monero wallet.'); return null }
+      if (!status.identityReady) { setMessage('Monero uses your unlocked local Nostr identity; there is no separate wallet password.'); return null }
       return window.ncc.walletLoadMoneroRecord()
     }).then(async (found) => {
       if (!alive || !found) return
@@ -138,7 +138,8 @@ export function MoneroWalletPanel() {
         <label className="mt-3 block text-ui-11">Wallet sync mode<select className="mt-1 w-full rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-panel)] p-3" value={syncChoice} onChange={(event) => setSyncChoice(event.target.value as 'local' | 'encrypted-relay')}><option value="local">This device only</option><option value="encrypted-relay">Encrypted Nostr relay sync</option></select></label>
         <div className="mt-4 flex justify-end gap-2"><button className="rounded-lg border border-[color:var(--color-line)] px-4 py-2 text-ui-11" onClick={() => { setDraftSeed(''); setMessage('') }}>Cancel</button><button disabled={busy || !challengeAnswer} className="rounded-lg bg-[color:var(--color-accent)] px-4 py-2 text-ui-11 font-semibold text-white disabled:opacity-50" onClick={() => void confirmBackup()}>I backed up my seed</button></div>
       </> : <>
-        <p className="mt-4 text-ui-11">Create a new Monero wallet or restore one with its 25-word recovery seed.</p>
+        <p className="mt-4 text-ui-11">Your unlocked local Nostr identity opens this wallet; there is no separate wallet password. Create a wallet or restore one with its 25-word recovery seed.</p>
+        {identityReady === false ? <button className="mt-3 rounded-lg border border-[color:var(--color-line)] px-4 py-2 text-ui-11" onClick={onOpenIdentitySettings}>Set up or unlock identity</button> : null}
         <label className="mt-3 block text-ui-11">Monero daemon URL<input className="mt-1 w-full rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-panel)] p-3 font-mono text-ui-10" value={daemonUrl} onChange={(event) => setDaemonUrl(event.target.value)} /></label>
         <button disabled={busy || !daemonUrl || !identityReady} className="mt-3 rounded-lg bg-[color:var(--color-accent)] px-4 py-2 text-ui-11 font-semibold text-white disabled:opacity-50" onClick={() => void createDraft()}>Create wallet</button>
         <details className="mt-4"><summary className="cursor-pointer text-ui-11">Restore a wallet</summary><textarea className="mt-3 min-h-24 w-full rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-panel)] p-3 font-mono text-ui-10" placeholder="Enter the 25-word Monero recovery seed" value={restoreSeed} onChange={(event) => setRestoreSeed(event.target.value)} /><label className="mt-2 block text-ui-11">Restore from block height<input type="number" min="0" className="mt-1 w-full rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-panel)] p-3" value={restoreHeight} onChange={(event) => setRestoreHeight(event.target.value)} /></label><button disabled={busy || !identityReady} className="mt-3 rounded-lg border border-[color:var(--color-line)] px-4 py-2 text-ui-11" onClick={beginRestore}>Continue to backup check</button></details>

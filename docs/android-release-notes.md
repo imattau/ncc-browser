@@ -3,6 +3,14 @@
 **Alpha.** An early build published so the browser can be tested on a real device. It
 is not a daily driver.
 
+## Fixes in 0.33.2
+
+- Wallets now explain that access follows the unlocked local Nostr identity; there is
+  no separate wallet password. Locked Bitcoin and Monero states include a direct link
+  to set up or unlock the identity.
+- Bitcoin service errors remain distinct from identity lock errors, so an unavailable
+  Esplora service does not incorrectly prompt for identity setup.
+
 ## New in 0.33.0
 
 - Bitcoin wallet derived from the local Nostr identity, with balance, transaction

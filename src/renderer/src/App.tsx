@@ -610,7 +610,7 @@ export function App() {
             onPasswordDraftUsed={() => setPasswordDraftOrigin(null)}
           />
         ) : overlay === 'wallet' ? (
-          <WalletPanel onClose={closeOverlay} />
+          <WalletPanel onClose={closeOverlay} onOpenIdentitySettings={() => openSettings('identity')} />
         ) : state.mode === 'blank' ? (
           <Welcome
             onOpenSettings={() => openSettings('general')}

@@ -4,13 +4,13 @@ import { ArrowDownToLine, ArrowUpFromLine, Copy, RefreshCw, X } from 'lucide-rea
 import type { BitcoinSendPreview, WalletSnapshot } from '@shared/wallet'
 import { MoneroWalletPanel } from './MoneroWalletPanel'
 
-type Props = { onClose: () => void }
+type Props = { onClose: () => void; onOpenIdentitySettings: () => void }
 type Settings = { esploraUrl: string; privacyNotice: string }
 
 function errorText(error: unknown): string { return error instanceof Error ? error.message : String(error) }
 function shortId(id: string): string { return `${id.slice(0, 12)}…${id.slice(-8)}` }
 
-export function WalletPanel({ onClose }: Props) {
+export function WalletPanel({ onClose, onOpenIdentitySettings }: Props) {
   const [currency, setCurrency] = useState<'BTC' | 'XMR'>('BTC')
   const [snapshot, setSnapshot] = useState<WalletSnapshot | null>(null)
   const [settings, setSettings] = useState<Settings | null>(null)
@@ -89,12 +89,12 @@ export function WalletPanel({ onClose }: Props) {
         {currency === 'BTC' ? <>
           <article className="rounded-2xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-5">
             <div className="flex items-start justify-between gap-3"><div><p className="text-ui-11 text-[color:var(--color-muted)]">Available balance</p><p className="mt-1 font-mono text-ui-24">{snapshot?.balances.find((item) => item.currency === 'BTC')?.available ?? '—'} <span className="text-ui-13">BTC</span></p><p className="mt-1 text-ui-10 text-[color:var(--color-muted)]">Pending: {snapshot?.balances.find((item) => item.currency === 'BTC')?.pending ?? '—'} BTC</p></div><button disabled={!snapshot?.status.bitcoinAvailable || busy} className="rounded-lg bg-[color:var(--color-accent)] px-4 py-2 text-ui-11 font-semibold text-white disabled:opacity-40" onClick={() => { setSendOpen(true); setPreview(null) }}><ArrowUpFromLine className="mr-1 inline h-4 w-4" />Send</button></div>
-            {snapshot?.status.bitcoinAddress ? <div className="mt-5 grid gap-4 border-t border-[color:var(--color-line)] pt-4 sm:grid-cols-[1fr_auto]"><div><p className="text-ui-11 font-semibold">Receive Bitcoin</p><p className="mt-2 break-all font-mono text-ui-10 text-[color:var(--color-muted)]">{snapshot.status.bitcoinAddress}</p><button className="mt-3 rounded-lg border border-[color:var(--color-line)] px-3 py-2 text-ui-10" onClick={() => void copy(snapshot.status.bitcoinAddress!)}><Copy className="mr-1 inline h-3 w-3" />Copy address</button></div>{qr ? <img src={qr} alt="QR code for Bitcoin receive address" className="h-36 w-36 rounded-lg bg-white p-2" /> : null}</div> : <p className="mt-4 rounded-lg bg-[color:var(--color-hover)] p-3 text-ui-11">{snapshot?.status.error ?? 'Loading wallet status…'}</p>}
+            {snapshot?.status.bitcoinAddress ? <div className="mt-5 grid gap-4 border-t border-[color:var(--color-line)] pt-4 sm:grid-cols-[1fr_auto]"><div><p className="text-ui-11 font-semibold">Receive Bitcoin</p><p className="mt-2 break-all font-mono text-ui-10 text-[color:var(--color-muted)]">{snapshot.status.bitcoinAddress}</p><button className="mt-3 rounded-lg border border-[color:var(--color-line)] px-3 py-2 text-ui-10" onClick={() => void copy(snapshot.status.bitcoinAddress!)}><Copy className="mr-1 inline h-3 w-3" />Copy address</button></div>{qr ? <img src={qr} alt="QR code for Bitcoin receive address" className="h-36 w-36 rounded-lg bg-white p-2" /> : null}</div> : <div className="mt-4 rounded-lg bg-[color:var(--color-hover)] p-3 text-ui-11"><p>{snapshot?.status.identityReady === false ? 'Wallets use your unlocked local Nostr identity; there is no separate wallet password.' : snapshot?.status.error ?? 'Loading wallet status…'}</p>{snapshot?.status.identityReady === false ? <button className="mt-3 rounded-lg border border-[color:var(--color-line)] px-3 py-2 text-ui-10" onClick={onOpenIdentitySettings}>Set up or unlock identity</button> : null}</div>}
           </article>
           <article className="rounded-2xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-5"><div className="mb-3 flex items-center justify-between"><h2 className="text-ui-13 font-semibold">Recent transactions</h2><button className="text-ui-10 text-[color:var(--color-accent)]" onClick={() => setPrefsOpen((value) => !value)}>Service settings</button></div>
             {snapshot?.transactions.filter((tx) => tx.currency === 'BTC').length ? <ul className="divide-y divide-[color:var(--color-line)]">{snapshot.transactions.filter((tx) => tx.currency === 'BTC').map((tx) => <li key={tx.id} className="flex items-center justify-between gap-3 py-3"><div><p className="font-mono text-ui-11">{shortId(tx.id)}</p><p className="text-ui-10 text-[color:var(--color-muted)]">{tx.direction} · {tx.status} · {tx.confirmations} confirmations</p></div><span className="font-mono text-ui-11">{tx.direction === 'incoming' ? '+' : '−'}{tx.amount} BTC</span></li>)}</ul> : <p className="py-5 text-center text-ui-11 text-[color:var(--color-muted)]">{busy ? 'Loading…' : 'No Bitcoin transactions found.'}</p>}
           </article>
-        </> : <MoneroWalletPanel />}
+        </> : <MoneroWalletPanel onOpenIdentitySettings={onOpenIdentitySettings} />}
         {message ? <p role="status" className="rounded-lg border border-[color:var(--color-line)] p-3 text-ui-11">{message}</p> : null}
         {settings ? <p className="text-ui-10 text-[color:var(--color-muted)]">Bitcoin data service: {settings.esploraUrl}. {settings.privacyNotice}</p> : null}
       </div>

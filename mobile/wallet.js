@@ -92,10 +92,17 @@ async function readSnapshot() {
 
 export async function loadWallet() {
   byId('wallet-esplora').value = localStorage.getItem('ncc.wallet.esplora') || DEFAULT_ESPLORA
+  byId('wallet-open-identity').hidden = true
   if (selectedCurrency === 'XMR') { await loadMoneroWallet(); return }
   await closeMoneroWallet()
   byId('wallet-note').textContent = 'Loading Bitcoin wallet…'
   byId('wallet-qr').hidden = true
+  try { await getBitcoinIdentity() }
+  catch {
+    byId('wallet-open-identity').hidden = false
+    message('Wallets use your unlocked local Nostr identity; there is no separate wallet password. Set up or unlock your identity to continue.')
+    return
+  }
   try { await readSnapshot(); message('') }
   catch (error) { message(error instanceof Error ? error.message : String(error)) }
 }
@@ -117,9 +124,11 @@ async function loadMoneroWallet() {
     catch {
       byId('wallet-xmr-create').disabled = true
       byId('wallet-xmr-restore').disabled = true
-      byId('wallet-xmr-note').textContent = 'Unlock a local Nostr identity in Settings before creating or restoring a Monero wallet.'
+      byId('wallet-open-identity').hidden = false
+      byId('wallet-xmr-note').textContent = 'Monero opens with your unlocked local Nostr identity; there is no separate wallet password.'
       return
     }
+    byId('wallet-open-identity').hidden = true
     byId('wallet-xmr-create').disabled = false
     byId('wallet-xmr-restore').disabled = false
     moneroRecord = await window.__TAURI__.core.invoke('wallet_monero_load')
