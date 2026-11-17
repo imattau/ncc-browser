@@ -54,6 +54,8 @@ import {
 } from './sessions'
 import { TransportPolicy } from './ncc/transport'
 import { HttpPolicy } from './security'
+import { ProtectionService } from './protection'
+import { installSitePermissionPrompts } from './site-permissions'
 import { TorGuard } from './tor/guard'
 import { TorManager } from './tor/manager'
 import { TorRelayPool } from './tor/relay'
@@ -88,6 +90,7 @@ let extensions: ExtensionService | null = null
 
 app.whenReady().then(async () => {
   const config = new ConfigStore()
+  const protection = new ProtectionService(config)
   // Resolve light/dark before any window exists so the first paint is correct.
   applyThemeSource(config.get().appearance.theme)
   const pins = new PinStore()
@@ -201,11 +204,15 @@ app.whenReady().then(async () => {
 
   const content = createContentSessions()
   contentSessions = content
-  for (const value of Object.values(content)) installCertificatePinning(value, pins)
+  for (const [kind, value] of [['normal', content.normal], ['private', content.private], ['tor', content.tor]] as const) {
+    installCertificatePinning(value, pins)
+    protection.installCookiePolicy(value, kind)
+  }
 
   const torGuard = new TorGuard()
-  torGuard.install(content.normal)
-  torGuard.install(content.private)
+  torGuard.install(content.normal, (details) => protection.shouldBlock(details, 'normal'))
+  torGuard.install(content.private, (details) => protection.shouldBlock(details, 'private'))
+  torGuard.install(content.tor, (details) => protection.shouldBlock(details, 'tor'))
 
   const transport = new TransportPolicy(() => config.get().preferTor)
   const torSessionProxy = new TorSessionProxy([content.normal, content.private], [content.tor])
@@ -268,6 +275,7 @@ app.whenReady().then(async () => {
 
   const releaseSession = (kind: TabKind): void => {
     if (kind === 'normal') return
+    protection.clearSession(kind)
     nip07Service?.clearEphemeral(kind)
     extensions?.onSessionReleased(kind)
     httpPolicies[kind].clearEphemeral()
@@ -361,6 +369,7 @@ app.whenReady().then(async () => {
     transport,
     tor,
     torGuard,
+    protectionScriptForUrl: (url, kind) => protection.cosmeticScript(url, kind),
     health,
     preferTor: () => config.get().preferTor,
     appearance: () => config.get().appearance,
@@ -371,6 +380,7 @@ app.whenReady().then(async () => {
     extensionContextItems: (url) => extensions?.contextMenuItems(url) ?? [],
     invalidateSite
   })
+  installSitePermissionPrompts([content.normal, content.private, content.tor], () => shell!.window)
 
   const approvals = new ApprovalBroker({
     send: (channel, payload) => {
@@ -506,6 +516,7 @@ app.whenReady().then(async () => {
   registerIpc({
     shell,
     config,
+    protection,
     resolvers,
     pins,
     relayPins,

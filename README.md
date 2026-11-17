@@ -624,6 +624,16 @@ tab always proxies all traffic.
 
 Settings → **Security** controls the HTTPS policy:
 
+It also sets **tracker and ad protection** to Off, Standard (default), or Strict. The
+browser filters known requests using EasyList and EasyPrivacy, applies cosmetic hiding,
+and gives each HTTP(S) site an allow/restore control in Site information. Strict mode
+adds privacy filters and blocks cross-origin cookies; optional external script blocking
+is available in the same settings page. Site permission requests for location, camera,
+and microphone are prompted and remembered for the current browser session on desktop
+and the current tab on Android. Android uses the system WebView request callback; its redirect and resource-type details are less
+complete than Electron's. Fingerprinting resistance is limited to platform-supported
+controls and is not equivalent to Brave's browser-engine changes.
+
 - **Off** — navigate HTTP normally; the amber warning bar still appears.
 - **Prefer HTTPS** — try HTTPS first. If it fails, fall back to HTTP after the optional
   interstitial. This is the default.

@@ -423,6 +423,19 @@
       </header>
       <div class="body">
         <label class="field">
+          <span>Tracker and ad protection</span>
+          <select id="protection-level">
+            <option value="off">Off</option>
+            <option value="standard">Standard</option>
+            <option value="strict">Strict</option>
+          </select>
+        </label>
+        <label class="switch-row">
+          <span>Block external page scripts</span>
+          <input id="block-scripts" class="switch" type="checkbox" role="switch" />
+        </label>
+        <p class="hint">Strict mode blocks more tracker rules and third-party cookies. Some sites may need an exception.</p>
+        <label class="field">
           <span>Secure connections</span>
           <select id="https-mode">
             <option value="off">Use whatever the publisher offers</option>

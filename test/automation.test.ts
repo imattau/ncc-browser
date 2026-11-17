@@ -242,3 +242,17 @@ describe('ApprovalGate', () => {
     expect(result.content[0]?.text).toContain('did not allow')
   })
 })
+
+describe('keyEvents', () => {
+  it('sends a char event for Enter so forms submit', async () => {
+    const { keyEvents } = await import('../src/main/automation/key-events')
+    expect(keyEvents('Enter', [])).toEqual([
+      { type: 'keyDown', keyCode: 'Enter' },
+      { type: 'char', keyCode: '\r' },
+      { type: 'keyUp', keyCode: 'Enter' }
+    ])
+    expect(keyEvents('a', []).map((e) => e.type)).toEqual(['keyDown', 'char', 'keyUp'])
+    expect(keyEvents('Escape', []).map((e) => e.type)).toEqual(['keyDown', 'keyUp'])
+    expect(keyEvents('a', ['control']).map((e) => e.type)).toEqual(['keyDown', 'keyUp'])
+  })
+})

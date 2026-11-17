@@ -21,6 +21,32 @@ export type TorMode = 'auto' | 'local'
 /** HTTPS policy for clearnet navigation and published NCC endpoints. */
 export type HttpsMode = 'off' | 'prefer' | 'only'
 
+export type ProtectionLevel = 'off' | 'standard' | 'strict'
+
+export interface ProtectionConfig {
+  level: ProtectionLevel
+  blockScripts: boolean
+  /** Site origins the user has explicitly exempted from content filtering. */
+  siteExceptions: string[]
+}
+
+export const DEFAULT_PROTECTION: ProtectionConfig = {
+  level: 'standard',
+  blockScripts: false,
+  siteExceptions: []
+}
+
+export function normalizeProtection(input: unknown): ProtectionConfig {
+  const value = input && typeof input === 'object' ? (input as Partial<ProtectionConfig>) : {}
+  return {
+    level: value.level === 'off' || value.level === 'strict' ? value.level : 'standard',
+    blockScripts: value.blockScripts === true,
+    siteExceptions: Array.isArray(value.siteExceptions)
+      ? [...new Set(value.siteExceptions.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0))].slice(-200)
+      : []
+  }
+}
+
 export const DEFAULT_HTTPS_MODE: HttpsMode = 'prefer'
 
 export const DEFAULT_TOR_SOCKS = 'socks5://127.0.0.1:9050'
@@ -622,6 +648,8 @@ export interface AppConfig {
   torSocks: string
   /** How aggressively to upgrade or require HTTPS. */
   httpsMode: HttpsMode
+  /** Tracker/ad filtering, independent of the HTTPS policy. */
+  protection?: ProtectionConfig
   /** Show a blocking interstitial before loading HTTP pages. */
   warnInsecure: boolean
   /** Origins/keys the user has allowed over HTTP. */

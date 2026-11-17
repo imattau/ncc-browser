@@ -81,6 +81,7 @@ export interface ShellDeps {
   transport: TransportPolicy
   tor: TorManager
   torGuard: TorGuard
+  protectionScriptForUrl?: (url: string, kind: TabKind) => string
   health: EndpointHealth
   preferTor: () => boolean
   appearance: () => AppearanceConfig
@@ -940,10 +941,9 @@ export class BrowserShell {
     void this.forceReload()
   }
 
-  /** New HTTPS/warning policy applies to NCC tabs immediately; web tabs on next load. */
+  /** Apply transport and content-protection changes to every open page. */
   applySecuritySettings(): void {
     for (const tab of this.tabs) {
-      if (tab.mode !== 'ncc') continue
       tab.view.webContents.reloadIgnoringCache()
     }
     this.syncState()
@@ -1269,6 +1269,9 @@ export class BrowserShell {
 
     contents.on('did-stop-loading', () => {
       tab.loading = false
+      const url = contents.isDestroyed() ? '' : contents.getURL()
+      const script = url ? this.deps.protectionScriptForUrl?.(url, tab.kind) ?? '' : ''
+      if (script) void contents.executeJavaScript(script, true).catch(() => undefined)
       this.scheduleSessionSave()
       this.syncState()
     })

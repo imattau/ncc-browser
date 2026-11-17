@@ -48,6 +48,39 @@ Three things that are easy to trip over again:
 - `android-actions/setup-android@v3` is unusable: it runs `sdkmanager tools`, which
   Google removed.
 
+## Local setup
+
+The project-local toolchain lives in the ignored `.android-toolchain/` directory. It
+matches the Android workflow: Temurin Java 21, Android platform 37.2, build-tools
+37.0.0, NDK 27.2.12479018, and the Rust Android targets for arm64 and x86_64. The
+Android Emulator and an API 37 x86_64 system image are included for device-free
+debugging. Android Studio is not required.
+
+Load the environment in each shell before building or using `adb`:
+
+```bash
+source scripts/android-env.sh
+npx tauri android build --ci --debug --apk --target x86_64
+```
+
+The checked-in release workflow still builds the production arm64 APK. The x86_64
+build is for the emulator. Start the headless virtual device with:
+
+```bash
+scripts/android-emulator.sh
+```
+
+The emulator command stays attached while the device is running. In another shell,
+install and launch a debug APK with `adb install -r <apk>` and
+`adb shell monkey -p io.github.imattau.nccbrowser.debug 1`. Android logs are available
+with `adb logcat`; stop the emulator with Ctrl-C in its terminal. Emulator data, logs,
+SDK, Gradle caches and downloads all remain under `.android-toolchain/`.
+
+The emulator script uses hardware acceleration when `/dev/kvm` is available and
+readable, and falls back to software CPU emulation otherwise. This machine's host
+kernel has KVM loaded, but the device is not passed into this workspace container, so
+emulator startup is slower here.
+
 ## Decisions
 
 | Decision | Value | Why |
@@ -263,7 +296,7 @@ passphrase and rewritten with the device envelope.
       schemes (`mailto:`, `tel:`, `intent:`) leave the app, and a tab takes the proxy
       port from the shell instead of reading it off the page URL.
 - [x] Signer approvals show a countdown and trusted services can be revoked.
-- [x] History and bookmarks, kept in the shell's storage (200 entries).
+- [x] History and bookmarks, kept in the shell's storage (500 history entries). Optional sync with the desktop build: see Sync in the README.
 - [x] Private tabs: a second proxy listener with no cache directory and a key that
       exists only in memory, so no record, manifest, blob or signature is written down.
       The separate port is also a separate origin, so private tabs have their own
@@ -315,7 +348,7 @@ passphrase and rewritten with the device envelope.
       approvals and a prompt in the shell. NIP-46 is still missing.
 - [ ] NIP-07 inside iframes (`sec-fetch-dest: iframe`) is deliberately not injected;
       revisit if a real service needs it.
-- [ ] Emulator run of the built APK.
+- [x] Emulator run of the built x86_64 debug APK (API 37).
 
 ## Passwords
 

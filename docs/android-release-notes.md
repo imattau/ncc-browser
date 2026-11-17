@@ -5,6 +5,12 @@ is not a daily driver.
 
 ## New in this build
 
+- Tracker and ad protection is now available in Settings → Security: Off, Standard or
+  Strict. Strict adds privacy lists and blocks third-party cookies. Site information
+  shows the protection level and blocked-request count, and lets you allow or restore
+  protection for that site. Optional external-script blocking is also available.
+- Sites now ask before using location, camera or microphone. Android still shows its
+  system permission prompt when the app needs access.
 - Passwords and sync now also use your own relay list (NIP-65), as the desktop build
   does, so a login or bookmark saved on one device is looked for on the relays the
   other device published to. It is on by default; Settings → Passwords has a switch,

@@ -477,8 +477,14 @@ class MainActivity : TauriActivity() {
     target.destroy()
 
     // The last private or Tor tab takes its session with it.
-    if (target.isTor && tabs.none { it.isTor }) Profiles.wipe(Profiles.TOR)
-    if (target.isPrivate && tabs.none { it.isPrivate }) Profiles.wipe(Profiles.PRIVATE)
+    if (target.isTor && tabs.none { it.isTor }) {
+      target.clearProtectionSession()
+      Profiles.wipe(Profiles.TOR)
+    }
+    if (target.isPrivate && tabs.none { it.isPrivate }) {
+      target.clearProtectionSession()
+      Profiles.wipe(Profiles.PRIVATE)
+    }
 
     if (tabs.isEmpty()) {
       activeId = null
@@ -960,6 +966,11 @@ class MainActivity : TauriActivity() {
       val value = position ?: return
       runOnUiThread { applyBarPosition(value) }
     }
+  }
+
+  override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+    super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+    PermissionRequestBridge.resolve(requestCode, grantResults)
   }
 
   override fun onDestroy() {

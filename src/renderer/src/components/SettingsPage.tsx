@@ -18,13 +18,14 @@ import {
   Smartphone,
   Trash2
 } from 'lucide-react'
-import { DEFAULT_APPEARANCE, DEFAULT_RELAYS, DEFAULT_TOR_SOCKS } from '@shared/types'
+import { DEFAULT_APPEARANCE, DEFAULT_RELAYS, DEFAULT_TOR_SOCKS, DEFAULT_PROTECTION } from '@shared/types'
 import { SEARCH_ENGINES, type SearchEngineId } from '@shared/search'
 import { formatBytes, type CacheInfo } from '@shared/site-data'
 import type {
   AppInfo,
   AppearanceConfig,
   HttpsMode,
+  ProtectionLevel,
   IdentityStatus,
   RelayEntry,
   SignerPermission,
@@ -200,6 +201,8 @@ export function SettingsPage({
   const [torBusy, setTorBusy] = useState(false)
   const [httpsMode, setHttpsMode] = useState<HttpsMode>('prefer')
   const [warnInsecure, setWarnInsecure] = useState(false)
+  const [protectionLevel, setProtectionLevel] = useState<ProtectionLevel>('standard')
+  const [blockScripts, setBlockScripts] = useState(false)
   const [httpExceptions, setHttpExceptions] = useState<string[]>([])
   const [searchEngine, setSearchEngine] = useState<SearchEngineId>('duckduckgo')
   const [searchCustom, setSearchCustom] = useState('')
@@ -258,6 +261,8 @@ export function SettingsPage({
       setTorStatus(tor)
       setHttpsMode(config.httpsMode)
       setWarnInsecure(config.warnInsecure)
+      setProtectionLevel(config.protection?.level ?? DEFAULT_PROTECTION.level)
+      setBlockScripts(config.protection?.blockScripts ?? false)
       setHttpExceptions(config.httpExceptions ?? [])
       setSearchEngine(config.searchEngine)
       setSearchCustom(config.searchEngineCustom)
@@ -408,7 +413,7 @@ export function SettingsPage({
       return
     }
 
-    const securityResult = await window.ncc.setSecurityConfig({ httpsMode, warnInsecure })
+    const securityResult = await window.ncc.setSecurityConfig({ httpsMode, warnInsecure, protection: { level: protectionLevel, blockScripts } })
     if (!securityResult.ok) {
       setLoading(false)
       setError(securityResult.error ?? 'Could not save security settings')
@@ -442,6 +447,8 @@ export function SettingsPage({
       setTorSocks(config.torSocks)
       setHttpsMode(config.httpsMode)
       setWarnInsecure(config.warnInsecure)
+      setProtectionLevel(config.protection?.level ?? 'standard')
+      setBlockScripts(config.protection?.blockScripts ?? false)
       setHttpExceptions(config.httpExceptions ?? [])
       setSearchEngine(config.searchEngine)
       setSearchCustom(config.searchEngineCustom)
@@ -454,7 +461,7 @@ export function SettingsPage({
   const saveSecurity = async (): Promise<void> => {
     setLoading(true)
     setError(null)
-    const result = await window.ncc.setSecurityConfig({ httpsMode, warnInsecure })
+    const result = await window.ncc.setSecurityConfig({ httpsMode, warnInsecure, protection: { level: protectionLevel, blockScripts } })
     setLoading(false)
     if (!result.ok) {
       setError(result.error ?? 'Could not save security settings')
@@ -463,6 +470,8 @@ export function SettingsPage({
     if (result.config) {
       setHttpsMode(result.config.httpsMode)
       setWarnInsecure(result.config.warnInsecure)
+      setProtectionLevel(result.config.protection?.level ?? 'standard')
+      setBlockScripts(result.config.protection?.blockScripts ?? false)
       setHttpExceptions(result.config.httpExceptions ?? [])
     }
     setSaved(true)
@@ -1016,6 +1025,21 @@ export function SettingsPage({
 
           {section === 'security' ? (
             <>
+              <SectionHeading
+                title="Tracking and ads"
+                hint="Filter known ads and trackers before requests leave the browser. Strict mode may break some sites."
+              />
+              <div className="mb-4 rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-4">
+                <label htmlFor="protection-level" className="mb-1.5 block text-ui-105 font-semibold uppercase tracking-wide text-[color:var(--color-muted)]">Protection level</label>
+                <select id="protection-level" value={protectionLevel} onChange={(event) => { setProtectionLevel(event.target.value as ProtectionLevel); setSaved(false) }} className="w-full rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-field)] px-3 py-2 text-ui-12 text-[color:var(--color-text)]">
+                  <option value="off">Off</option>
+                  <option value="standard">Standard</option>
+                  <option value="strict">Strict</option>
+                </select>
+                <label className="mt-3 flex items-center gap-2 text-ui-12 text-[color:var(--color-text)]"><input type="checkbox" checked={blockScripts} onChange={(event) => { setBlockScripts(event.target.checked); setSaved(false) }} /> Block external scripts (may prevent sites from working)</label>
+                <button type="button" onClick={() => void saveSecurity()} disabled={loading} className="mt-3 rounded-lg bg-[color:var(--color-accent)] px-3.5 py-1.5 text-ui-115 font-semibold text-[color:var(--color-on-accent)] disabled:opacity-60">Save protection settings</button>
+              </div>
+
               <SectionHeading
                 title="Secure connections"
                 hint="Prefer or require HTTPS, and decide how plaintext HTTP is warned about."

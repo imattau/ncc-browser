@@ -1,6 +1,6 @@
 {
   "name": "ncc-browser",
-  "version": "0.30.2",
+  "version": "0.31.0",
   "private": true,
   "description": "A desktop browser that resolves services through Nostr Community Convention NCC-05 instead of DNS",
   "main": "./out/main/index.js",
@@ -32,6 +32,7 @@
   "dependencies": {
     "@nostrify/nostrify": "^0.55.1",
     "@tauri-apps/api": "^2.12.4",
+    "adblock-rs": "^0.13.3",
     "lucide-react": "^0.545.0",
     "nostr-tools": "^2.26.0",
     "react": "^19.3.1",

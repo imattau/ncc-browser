@@ -35,6 +35,33 @@ pub enum HttpsMode {
     Only,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProtectionLevel {
+    Off,
+    #[default]
+    Standard,
+    Strict,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ProtectionSettings {
+    pub level: ProtectionLevel,
+    pub block_scripts: bool,
+    pub site_exceptions: Vec<String>,
+}
+
+impl Default for ProtectionSettings {
+    fn default() -> Self {
+        Self {
+            level: ProtectionLevel::Standard,
+            block_scripts: false,
+            site_exceptions: Vec::new(),
+        }
+    }
+}
+
 /// Password manager settings. Defaults mirror the desktop build.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -77,6 +104,7 @@ pub struct Settings {
     /// Refuse services without a fresh NCC-02 anchor.
     pub anchor_required: bool,
     pub https_mode: HttpsMode,
+    pub protection: ProtectionSettings,
     /// Show an interstitial before loading a cleartext page.
     pub warn_insecure: bool,
     /// Services the user allowed over cleartext.
@@ -105,6 +133,7 @@ impl Default for Settings {
             keep_unlocked: false,
             anchor_required: false,
             https_mode: HttpsMode::default(),
+            protection: ProtectionSettings::default(),
             warn_insecure: false,
             http_exceptions: Vec::new(),
             search_engine: "duckduckgo".to_string(),
@@ -119,6 +148,10 @@ impl Default for Settings {
 impl Settings {
     /// Reject anything that would leave the browser unable to resolve.
     pub fn validate(mut self) -> Result<Self, String> {
+        self.protection.site_exceptions.retain(|site| {
+            site.starts_with("http://") || site.starts_with("https://")
+        });
+        self.protection.site_exceptions.truncate(200);
         self.relays = sanitize_relays(self.relays)?;
         if self.relays.is_empty() {
             return Err("Keep at least one relay".to_string());
@@ -320,6 +353,19 @@ impl SettingsStore {
     pub fn set_https_mode(&self, mode: HttpsMode) -> Result<Settings, String> {
         let mut settings = self.get();
         settings.https_mode = mode;
+        self.apply(settings)
+    }
+
+    pub fn set_protection(&self, protection: ProtectionSettings) -> Result<Settings, String> {
+        let mut settings = self.get();
+        settings.protection = protection;
+        settings.protection.site_exceptions = settings
+            .protection
+            .site_exceptions
+            .into_iter()
+            .filter(|site| site.starts_with("http://") || site.starts_with("https://"))
+            .take(200)
+            .collect();
         self.apply(settings)
     }
 

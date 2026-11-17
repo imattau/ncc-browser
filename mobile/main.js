@@ -1837,7 +1837,7 @@ async function loadInfo() {
       : isClearnetPage(activeUrl)
         ? clearnetInfo(activeUrl)
         : await fetchInfo(activeUrl)
-    renderInfo(data)
+    await renderInfo(data)
     appendClearSection(data)
   } catch (error) {
     body.textContent = ''
@@ -1845,7 +1845,7 @@ async function loadInfo() {
   }
 }
 
-function renderInfo(data) {
+async function renderInfo(data) {
   const head = byId('info-head')
   const body = byId('info-body')
   head.textContent = ''
@@ -1914,6 +1914,29 @@ function renderInfo(data) {
     section('Problem')
     row('Error', data.error)
     return
+  }
+
+  if (/^https?:/i.test(activeUrl)) {
+    try {
+      const origin = new URL(activeUrl).origin
+      const kind = activeKind()
+      const protection = await invoke('protection_status', { origin, kind })
+      section('Privacy protection')
+      row('Level', protection.level)
+      row('Blocked', `${protection.blocked} requests this session`)
+      const control = document.createElement('button')
+      control.type = 'button'
+      control.className = 'btn tonal block'
+      control.textContent = protection.excepted ? 'Restore tracker and ad protection for this site' : 'Allow trackers and ads on this site'
+      control.addEventListener('click', async () => {
+        try {
+          await invoke('settings_set_protection_exception', { origin, allowed: !protection.excepted, kind })
+          if (activeUrl) content.reload()
+          await loadInfo()
+        } catch (error) { message(String(error)) }
+      })
+      body.appendChild(control)
+    } catch { /* protection details are optional; page security remains visible */ }
   }
 
   if (data.kind === 'onion') {
@@ -2803,6 +2826,8 @@ async function loadSecurity() {
     browserSettings = await invoke('browser_settings')
     byId('https-mode').value = browserSettings.httpsMode
     byId('warn-insecure').checked = browserSettings.warnInsecure
+    byId('protection-level').value = browserSettings.protection?.level || 'standard'
+    byId('block-scripts').checked = browserSettings.protection?.blockScripts === true
   } catch (error) {
     byId('security-error').textContent = String(error)
   }
@@ -3361,6 +3386,14 @@ async function saveSecurity() {
       mode: byId('https-mode').value,
       warn: byId('warn-insecure').checked
     })
+    browserSettings = await invoke('settings_set_protection', {
+      protection: {
+        ...browserSettings.protection,
+        level: byId('protection-level').value,
+        blockScripts: byId('block-scripts').checked
+      }
+    })
+    if (activeUrl) content.reload()
     byId('security-error').textContent = 'Saved.'
   } catch (error) {
     byId('security-error').textContent = String(error)

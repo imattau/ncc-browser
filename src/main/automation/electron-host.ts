@@ -1,5 +1,6 @@
 import type { WebContents } from 'electron'
 import type { BrowserShell } from '../shell'
+import { keyEvents } from './key-events'
 import type {
   AutomationContents,
   AutomationDiagnostic,
@@ -19,58 +20,54 @@ const MODIFIERS: Record<string, 'shift' | 'control' | 'alt' | 'meta'> = {
   cmd: 'meta'
 }
 
-const KEY_CODES: Record<string, string> = {
-  esc: 'Escape',
-  escape: 'Escape',
-  enter: 'Return',
-  return: 'Return',
-  tab: 'Tab',
-  backspace: 'Backspace',
-  delete: 'Delete',
-  space: 'Space',
-  arrowup: 'Up',
-  arrowdown: 'Down',
-  arrowleft: 'Left',
-  arrowright: 'Right',
-  home: 'Home',
-  end: 'End',
-  pageup: 'PageUp',
-  pagedown: 'PageDown'
-}
+type Collector = () => AutomationDiagnostic[]
+const collectors = new WeakMap<WebContents, Collector>()
 
-const watched = new WeakMap<WebContents, AutomationDiagnostic[]>()
-
-function watch(contents: WebContents): AutomationDiagnostic[] {
-  const existing = watched.get(contents)
+/**
+ * Start (once per tab) buffering renderer console output and page load failures, and
+ * return an accessor for what was captured so far.
+ */
+function watch(contents: WebContents): Collector {
+  const existing = collectors.get(contents)
   if (existing) return existing
+
   const entries: AutomationDiagnostic[] = []
-  const add = (entry: AutomationDiagnostic): void => {
+  const push = (entry: AutomationDiagnostic): void => {
     entries.push(entry)
     if (entries.length > MAX_DIAGNOSTICS) entries.splice(0, entries.length - MAX_DIAGNOSTICS)
   }
+
   contents.on('console-message', (event) => {
-    const level = event.level
-    add({
+    const details = event as unknown as {
+      level?: string
+      message?: string
+      lineNumber?: number
+      sourceId?: string
+    }
+    const level = details.level
+    push({
       time: new Date().toISOString(),
       kind: 'console',
       level: level === 'warning' || level === 'error' || level === 'debug' ? level : 'info',
-      message: event.message,
-      url: event.sourceId,
-      line: event.lineNumber
+      message: String(details.message ?? ''),
+      url: details.sourceId ?? '',
+      ...(typeof details.lineNumber === 'number' ? { line: details.lineNumber } : {})
     })
   })
   contents.on('did-fail-load', (_event, code, description, url, isMainFrame) => {
-    if (!isMainFrame || code === -3) return // Ignore aborted navigations.
-    add({
+    if (code === -3) return // aborted by a newer navigation
+    push({
       time: new Date().toISOString(),
       kind: 'load-failure',
       level: 'error',
-      message: `${description} (${code})`,
+      message: `${isMainFrame ? 'Page' : 'Subframe'} failed to load: ${description} (${code})`,
       url
     })
   })
-  watched.set(contents, entries)
-  return entries
+
+  const collector: Collector = () => entries.slice()
+  collectors.set(contents, collector)
+  return collector
 }
 
 function wrap(contents: WebContents): AutomationContents {
@@ -99,16 +96,13 @@ function wrap(contents: WebContents): AutomationContents {
       await contents.insertText(value)
     },
     pressKey: async (key, modifiers) => {
-      const keyCode = KEY_CODES[key.toLowerCase()] ?? key
       const mods = modifiers.map((entry) => MODIFIERS[entry.toLowerCase()]).filter(Boolean)
       contents.focus()
-      contents.sendInputEvent({ type: 'keyDown', keyCode, modifiers: mods })
-      if (keyCode.length === 1 && !mods.some((entry) => entry === 'control' || entry === 'meta')) {
-        contents.sendInputEvent({ type: 'char', keyCode, modifiers: mods })
+      for (const event of keyEvents(key, modifiers)) {
+        contents.sendInputEvent({ ...event, modifiers: mods })
       }
-      contents.sendInputEvent({ type: 'keyUp', keyCode, modifiers: mods })
     },
-    diagnostics: () => [...diagnostics]
+    diagnostics
   }
 }
 

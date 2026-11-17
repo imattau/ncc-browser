@@ -12,6 +12,60 @@ use ncc_proxy::settings::PasswordSettings;
 use ncc_proxy::vault::VaultService;
 use ncc_tor::{Tor, TorConfig, TorMode, TorState, TorStatus};
 
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_imattau_nccbrowser_ContentSurface_nativeProtectionCheck(
+    mut env: jni::JNIEnv,
+    _this: jni::objects::JObject,
+    url: jni::objects::JString,
+    source: jni::objects::JString,
+    request_type: jni::objects::JString,
+    method: jni::objects::JString,
+    kind: jni::objects::JString,
+) -> jni::sys::jboolean {
+    let read = |env: &mut jni::JNIEnv, value: jni::objects::JString| -> String {
+        env.get_string(&value).map(|text| text.into()).unwrap_or_default()
+    };
+    let url = read(&mut env, url);
+    let source = read(&mut env, source);
+    let request_type = read(&mut env, request_type);
+    let method = read(&mut env, method);
+    let kind = read(&mut env, kind);
+    if ncc_proxy::protection::check_request(&url, &source, &request_type, &method, &kind) { 1 } else { 0 }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_imattau_nccbrowser_ContentSurface_nativeProtectionLevel(
+    _env: jni::JNIEnv,
+    _this: jni::objects::JObject,
+) -> i32 {
+    match ncc_proxy::protection::level() {
+        ncc_proxy::settings::ProtectionLevel::Off => 0,
+        ncc_proxy::settings::ProtectionLevel::Standard => 1,
+        ncc_proxy::settings::ProtectionLevel::Strict => 2,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_imattau_nccbrowser_ContentSurface_nativeCosmeticSelectors(
+    mut env: jni::JNIEnv,
+    _this: jni::objects::JObject,
+    url: jni::objects::JString,
+) -> jni::sys::jstring {
+    let url = env.get_string(&url).map(|text| String::from(text)).unwrap_or_default();
+    let selectors = ncc_proxy::protection::cosmetic_selectors(&url);
+    env.new_string(selectors.join(",")).map(|text| text.into_raw()).unwrap_or(std::ptr::null_mut())
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_imattau_nccbrowser_ContentSurface_nativeClearProtectionSession(
+    mut env: jni::JNIEnv,
+    _this: jni::objects::JObject,
+    kind: jni::objects::JString,
+) {
+    let kind = env.get_string(&kind).map(|text| String::from(text)).unwrap_or_default();
+    ncc_proxy::protection::clear_session_exceptions(&kind);
+}
+
 /// Everything the commands need. The proxy shares the same `Arc`s.
 struct SignerState {
     identity: Arc<IdentityStore>,
@@ -261,6 +315,53 @@ fn settings_set_https(
     };
     state.proxy.settings().set_https_mode(mode)?;
     state.proxy.settings().set_warn_insecure(warn)
+}
+
+#[tauri::command]
+fn settings_set_protection(
+    state: tauri::State<'_, SignerState>,
+    protection: ncc_proxy::settings::ProtectionSettings,
+) -> Result<Settings, String> {
+    let saved = state.proxy.settings().set_protection(protection)?;
+    ncc_proxy::protection::set_config(saved.protection.clone());
+    Ok(saved)
+}
+
+#[tauri::command]
+fn settings_set_protection_exception(
+    state: tauri::State<'_, SignerState>,
+    origin: String,
+    allowed: bool,
+    kind: String,
+) -> Result<Settings, String> {
+    let parsed = url::Url::parse(&origin).map_err(|error| error.to_string())?;
+    if parsed.scheme() != "http" && parsed.scheme() != "https" { return Err("Only HTTP and HTTPS sites can have protection exceptions".into()); }
+    let origin = parsed.origin().ascii_serialization();
+    if kind == "private" || kind == "tor" {
+        ncc_proxy::protection::set_session_exception(&kind, &origin, allowed);
+        return Ok(state.proxy.settings().get());
+    }
+    let mut protection = state.proxy.settings().get().protection;
+    protection.site_exceptions.retain(|entry| entry != &origin);
+    if allowed && protection.site_exceptions.len() < 200 { protection.site_exceptions.push(origin); }
+    let saved = state.proxy.settings().set_protection(protection)?;
+    ncc_proxy::protection::set_config(saved.protection.clone());
+    Ok(saved)
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProtectionStatus { level: String, blocked: u64, excepted: bool }
+
+#[tauri::command]
+fn protection_status(state: tauri::State<'_, SignerState>, origin: Option<String>, kind: Option<String>) -> ProtectionStatus {
+    let level = match state.proxy.settings().get().protection.level {
+        ncc_proxy::settings::ProtectionLevel::Off => "off",
+        ncc_proxy::settings::ProtectionLevel::Standard => "standard",
+        ncc_proxy::settings::ProtectionLevel::Strict => "strict",
+    };
+    let origin = origin.and_then(|value| url::Url::parse(&value).ok()).map(|value| value.origin().ascii_serialization()).unwrap_or_default();
+    ProtectionStatus { level: level.to_string(), blocked: ncc_proxy::protection::blocked_count(), excepted: ncc_proxy::protection::has_exception(kind.as_deref().unwrap_or("normal"), &origin) }
 }
 
 #[tauri::command]
@@ -726,6 +827,9 @@ pub fn run() {
             settings_set_relays,
             settings_set_search,
             settings_set_https,
+            settings_set_protection,
+            settings_set_protection_exception,
+            protection_status,
             settings_set_gossip,
             signer_permissions,
             signer_trust,
@@ -756,6 +860,11 @@ pub fn run() {
             }));
 
             let settings = Arc::new(SettingsStore::open(data_dir.join("config.json")));
+            ncc_proxy::protection::set_config(settings.get().protection.clone());
+            let filter_cache = data_dir.join("protection");
+            tauri::async_runtime::spawn(async move {
+                ncc_proxy::protection::refresh_lists(&filter_cache).await;
+            });
 
             // Staying unlocked is a setting, so it applies before anything asks. A file
             // that still needs a passphrase simply stays locked, and says so in status.

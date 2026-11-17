@@ -41,6 +41,8 @@ export function SiteInfoPanel({
   const failure = state.failure
   const web = state.mode === 'web'
   const [signerOrigin, setSignerOrigin] = useState<SignerOriginState | null>(null)
+  const [protectionException, setProtectionException] = useState(false)
+  const [protectionSummary, setProtectionSummary] = useState<{ level: string; blocked: number; excepted: boolean } | null>(null)
 
   const pageUrl = state.url || state.displayUrl
   useEffect(() => {
@@ -59,6 +61,17 @@ export function SiteInfoPanel({
       alive = false
     }
   }, [pageUrl])
+
+  useEffect(() => {
+    if (!web || !pageUrl) { setProtectionException(false); return }
+    let alive = true
+    void window.ncc.protectionSummary(pageUrl, state.tabKind).then((summary) => {
+      if (!alive) return
+      setProtectionException(summary.excepted)
+      setProtectionSummary(summary)
+    }).catch(() => undefined)
+    return () => { alive = false }
+  }, [pageUrl, web, state.tabKind])
 
   return (
     <Popover
@@ -88,6 +101,26 @@ export function SiteInfoPanel({
       }
     >
       <div className="space-y-3 px-2 py-1.5">
+        {web && protectionSummary ? (
+          <p className="text-ui-11 text-[color:var(--color-muted)]">
+            Protection: {protectionSummary.excepted ? 'allowed for this site' : protectionSummary.level} · {protectionSummary.blocked} blocked this session
+          </p>
+        ) : null}
+        {web && /^https?:/i.test(pageUrl) ? (
+          <button
+            type="button"
+            onClick={() => {
+              let origin = ''
+              try { origin = new URL(pageUrl).origin } catch { return }
+              void window.ncc.setProtectionException(origin, !protectionException, state.tabKind).then(() => {
+                setProtectionException(!protectionException)
+              })
+            }}
+            className="w-full rounded-lg border border-[color:var(--color-line)] px-3 py-2 text-left text-ui-12 text-[color:var(--color-text)] hover:bg-[color:var(--color-hover)]"
+          >
+            {protectionException ? 'Restore tracker and ad protection for this site' : 'Allow trackers and ads on this site'}
+          </button>
+        ) : null}
         {failure ? <FailureBlock code={failure.code} message={failure.message} /> : null}
 
         {web ? <ClearnetBlock url={state.url || state.displayUrl} /> : null}

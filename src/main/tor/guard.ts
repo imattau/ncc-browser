@@ -71,10 +71,14 @@ export class TorGuard {
     this.tabs.clear()
   }
 
-  install(session: Session): void {
+  install(session: Session, shouldBlock: (details: Electron.OnBeforeRequestListenerDetails) => boolean = () => false): void {
     session.webRequest.onBeforeRequest((details, callback) => {
       const id = details.webContentsId
       if (id !== undefined && this.tabs.has(id) && !isAllowedTorUrl(details.url)) {
+        callback({ cancel: true })
+        return
+      }
+      if (shouldBlock(details)) {
         callback({ cancel: true })
         return
       }

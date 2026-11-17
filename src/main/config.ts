@@ -11,13 +11,16 @@ import {
   DEFAULT_APPEARANCE,
   DEFAULT_HTTPS_MODE,
   DEFAULT_PASSWORD_CONFIG,
+  DEFAULT_PROTECTION,
   DEFAULT_TOR_SOCKS,
   normalizeAppearance,
   normalizePasswordConfig,
+  normalizeProtection,
   type AppearanceConfig,
   type AppConfig,
   type HttpsMode,
   type PasswordConfig,
+  type ProtectionConfig,
   type RelayEntry,
   type TorMode
 } from '@shared/types'
@@ -129,6 +132,13 @@ export class ConfigStore {
     return this.get()
   }
 
+  setProtection(value: unknown): AppConfig {
+    const protection: ProtectionConfig = normalizeProtection({ ...this.get().protection, ...(value && typeof value === 'object' ? value : {}) })
+    this.config = { ...this.get(), protection }
+    this.write()
+    return this.get()
+  }
+
   setWarnInsecure(value: unknown): AppConfig {
     this.config = { ...this.get(), warnInsecure: value === true }
     this.write()
@@ -231,6 +241,7 @@ export class ConfigStore {
             parsed.httpsMode === 'off' || parsed.httpsMode === 'only'
               ? parsed.httpsMode
               : DEFAULT_HTTPS_MODE,
+          protection: normalizeProtection(parsed.protection),
           warnInsecure: parsed.warnInsecure === true,
           httpExceptions: Array.isArray(parsed.httpExceptions)
             ? parsed.httpExceptions
@@ -261,6 +272,7 @@ export class ConfigStore {
       torMode: 'auto',
       torSocks: DEFAULT_TOR_SOCKS,
       httpsMode: DEFAULT_HTTPS_MODE,
+      protection: { ...DEFAULT_PROTECTION },
       warnInsecure: false,
       httpExceptions: [],
       searchEngine: DEFAULT_SEARCH_ENGINE,

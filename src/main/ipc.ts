@@ -1,6 +1,6 @@
 import { ipcMain, shell, app } from 'electron'
 import { COMMANDS, type CommandId } from '@shared/commands'
-import { OVERLAY_REASONS } from '@shared/types'
+import { OVERLAY_REASONS, DEFAULT_PROTECTION } from '@shared/types'
 import type { LocatorCacheStore } from './cache-store'
 import type { ConfigStore } from './config'
 import type { DownloadManager } from './downloads'
@@ -21,6 +21,7 @@ import type { PasswordService } from './passwords/service'
 import type { PermissionStore } from './signer/permissions'
 import { signerOriginFromUrl } from './signer/origin'
 import type { BrowserShell } from './shell'
+import type { ProtectionService } from './protection'
 
 export interface IpcDeps {
   shell: BrowserShell
@@ -39,6 +40,7 @@ export interface IpcDeps {
   approvals: ApprovalBroker
   downloads: DownloadManager
   passwords: PasswordService
+  protection: ProtectionService
 }
 
 export function registerIpc(deps: IpcDeps): void {
@@ -135,6 +137,14 @@ export function registerIpc(deps: IpcDeps): void {
 
   ipcMain.handle('ncc:get-state', () => deps.shell.getState())
   ipcMain.handle('ncc:get-config', () => deps.config.get())
+  ipcMain.handle('ncc:protection-summary', (_event, rawUrl: unknown, rawKind: unknown) => {
+    const url = typeof rawUrl === 'string' ? rawUrl : ''
+    const kind = rawKind === 'private' || rawKind === 'tor' ? rawKind : 'normal'
+    let origin = ''
+    try { origin = new URL(url).origin } catch { /* not a web origin */ }
+    const config = deps.config.get().protection ?? DEFAULT_PROTECTION
+    return { level: config.level, blocked: deps.protection.countFor(url), excepted: deps.protection.isExcepted(origin, kind) }
+  })
 
   ipcMain.handle('ncc:omnibox-suggest', (event, input: unknown) => {
     if (!fromChrome(event)) return []
@@ -326,14 +336,16 @@ export function registerIpc(deps: IpcDeps): void {
       if (!payload || typeof payload !== 'object') {
         return { ok: false, error: 'Invalid security settings' }
       }
-      const { httpsMode, warnInsecure } = payload as {
+      const { httpsMode, warnInsecure, protection } = payload as {
         httpsMode?: unknown
         warnInsecure?: unknown
+        protection?: unknown
       }
       const before = deps.config.get()
       deps.config.setHttpsMode(httpsMode)
-      const config = deps.config.setWarnInsecure(warnInsecure)
-      if (before.httpsMode !== config.httpsMode || before.warnInsecure !== config.warnInsecure) {
+      deps.config.setWarnInsecure(warnInsecure)
+      const config = deps.config.setProtection(protection)
+      if (before.httpsMode !== config.httpsMode || before.warnInsecure !== config.warnInsecure || JSON.stringify(before.protection) !== JSON.stringify(config.protection)) {
         deps.shell.applySecuritySettings()
       }
       return { ok: true, config }
@@ -347,6 +359,19 @@ export function registerIpc(deps: IpcDeps): void {
     const config = deps.config.removeHttpException(key)
     deps.shell.applySecuritySettings()
     return config
+  })
+
+  ipcMain.handle('ncc:set-protection-exception', (event, rawOrigin: unknown, allowed: unknown, rawKind: unknown) => {
+    if (!fromChrome(event) || typeof rawOrigin !== 'string') return deps.config.get()
+    try {
+      const origin = new URL(rawOrigin).origin
+      const kind = rawKind === 'private' || rawKind === 'tor' ? rawKind : 'normal'
+      const config = deps.protection.setSiteException(origin, allowed === true, kind)
+      deps.shell.applySecuritySettings()
+      return config
+    } catch {
+      return deps.config.get()
+    }
   })
 
   ipcMain.handle('ncc:clear-http-exceptions', () => {

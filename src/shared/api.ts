@@ -38,6 +38,7 @@ import type {
   PasswordToast,
   PasswordTotpCode,
   PasswordVaultStatus,
+  TabKind,
   RelayEntry,
   RelayLocatorOutcome,
   SignerPermission,
@@ -116,7 +117,10 @@ export interface NccApi {
   setSecurityConfig(config: {
     httpsMode: HttpsMode
     warnInsecure: boolean
+    protection?: Partial<import('./types').ProtectionConfig>
   }): Promise<SetRelaysResult>
+  setProtectionException(origin: string, allowed: boolean, kind: TabKind): Promise<AppConfig>
+  protectionSummary(url: string, kind: TabKind): Promise<{ level: import('./types').ProtectionLevel; blocked: number; excepted: boolean }>
   removeHttpException(key: string): Promise<AppConfig>
   clearHttpExceptions(): Promise<AppConfig>
   omniboxSuggest(input: string): Promise<OmniboxSuggestion[]>
