@@ -934,8 +934,11 @@ pub(crate) fn inject_shim(state: &ProxyState, vhost: &Vhost, html: &str) -> (Str
     let key = host_key(vhost);
     let injection = Injection::new(&key);
     state.tokens.remember(&injection.token, &key);
+    let injected = inject_into_html(html, &injection.script_tag());
+    // A page's own CSP may live in a meta tag (and be intersected with the
+    // response header's), so the nonce has to reach that copy as well.
     (
-        inject_into_html(html, &injection.script_tag()),
+        crate::inject::relax_meta_csps(&injected, &injection.nonce),
         injection.nonce,
     )
 }

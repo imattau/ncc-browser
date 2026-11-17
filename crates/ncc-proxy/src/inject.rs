@@ -189,6 +189,8 @@ pub fn relax_csp(csp: &str, nonce: &str) -> String {
     let mut directives: Vec<String> = Vec::new();
     let mut script_covered = false;
     let mut connect_covered = false;
+    let mut default_seen = false;
+    let mut default_none = false;
 
     for raw in csp.split(';') {
         let directive = raw.trim();
@@ -213,12 +215,14 @@ pub fn relax_csp(csp: &str, nonce: &str) -> String {
                 }
             }
             "default-src" => {
+                default_seen = true;
                 // `'none'` blocks the shim; the policy gets an explicit script-src
                 // below instead of rewriting a directive the publisher chose.
                 if sources
                     .iter()
                     .any(|source| source.eq_ignore_ascii_case("'none'"))
                 {
+                    default_none = true;
                     directives.push(directive.to_string());
                 } else {
                     script_covered = true;
@@ -240,14 +244,167 @@ pub fn relax_csp(csp: &str, nonce: &str) -> String {
         }
     }
 
-    if !script_covered {
+    // Only add a directive the page's own policy already implies. A policy that
+    // says nothing about scripts (or connections) leaves them unrestricted; adding
+    // `script-src 'nonce-…'` there would *tighten* it, and because a `<meta>` CSP is
+    // intersected with this one, it would override a page's `script-src 'self'` and
+    // blank the page. npanel ships exactly that split: `frame-ancestors 'none'` in
+    // the header, the real script policy in a meta tag.
+    if !script_covered && default_none {
         directives.push(format!("script-src 'nonce-{nonce}'"));
     }
-    if !connect_covered {
+    if !connect_covered && default_seen {
         directives.push("connect-src 'self'".to_string());
     }
 
     directives.join("; ")
+}
+
+/// Rewrite every `<meta http-equiv="content-security-policy" content="…">` with
+/// [`relax_csp`].
+///
+/// A meta policy is intersected with the response header's policy, so relaxing
+/// only the header is not enough: if the page keeps its real policy in a meta tag,
+/// the shim's nonce has to appear there too (and a header that does not mention
+/// scripts must not gain a nonce-only `script-src`, see above).
+pub fn relax_meta_csps(html: &str, nonce: &str) -> String {
+    let lower = html.to_ascii_lowercase();
+    let mut out = String::with_capacity(html.len());
+    let mut cursor = 0;
+    let mut search = 0;
+
+    while let Some(offset) = lower[search..].find("<meta") {
+        let start = search + offset;
+        let after = lower.as_bytes().get(start + 5).copied();
+        if !matches!(after, Some(byte) if byte.is_ascii_whitespace() || byte == b'/' || byte == b'>')
+        {
+            search = start + 5;
+            continue;
+        }
+        let Some(end) = find_tag_end_quoted(html, start + 5) else {
+            break;
+        };
+        if let Some(replaced) = rewrite_csp_meta_tag(&html[start..end], nonce) {
+            out.push_str(&html[cursor..start]);
+            out.push_str(&replaced);
+            cursor = end;
+        }
+        search = end;
+    }
+
+    out.push_str(&html[cursor..]);
+    out
+}
+
+/// The end of the tag starting at `from`, ignoring `>` inside quoted attribute
+/// values (a CSP source can contain one, and `content` is quoted).
+fn find_tag_end_quoted(html: &str, from: usize) -> Option<usize> {
+    let mut quote = 0u8;
+    for (index, byte) in html.as_bytes().iter().enumerate().skip(from) {
+        if quote != 0 {
+            if *byte == quote {
+                quote = 0;
+            }
+        } else if *byte == b'"' || *byte == b'\'' {
+            quote = *byte;
+        } else if *byte == b'>' {
+            return Some(index + 1);
+        }
+    }
+    None
+}
+
+struct MetaValue {
+    start: usize,
+    end: usize,
+}
+
+/// One attribute: lowercased name plus the byte range of its value.
+fn tag_attributes(tag: &str) -> Vec<(String, Option<MetaValue>)> {
+    let bytes = tag.as_bytes();
+    let mut attributes = Vec::new();
+    let mut index = 5; // past "<meta"
+
+    while index < bytes.len() {
+        while index < bytes.len() && (bytes[index].is_ascii_whitespace() || bytes[index] == b'/') {
+            index += 1;
+        }
+        if index >= bytes.len() || bytes[index] == b'>' {
+            break;
+        }
+
+        let name_start = index;
+        while index < bytes.len()
+            && !bytes[index].is_ascii_whitespace()
+            && bytes[index] != b'='
+            && bytes[index] != b'>'
+        {
+            index += 1;
+        }
+        let name = tag[name_start..index].to_ascii_lowercase();
+        while index < bytes.len() && bytes[index].is_ascii_whitespace() {
+            index += 1;
+        }
+
+        let mut value = None;
+        if index < bytes.len() && bytes[index] == b'=' {
+            index += 1;
+            while index < bytes.len() && bytes[index].is_ascii_whitespace() {
+                index += 1;
+            }
+            if index < bytes.len() && (bytes[index] == b'"' || bytes[index] == b'\'') {
+                let quote = bytes[index];
+                index += 1;
+                let start = index;
+                while index < bytes.len() && bytes[index] != quote {
+                    index += 1;
+                }
+                value = Some(MetaValue { start, end: index });
+                if index < bytes.len() {
+                    index += 1;
+                }
+            } else {
+                let start = index;
+                while index < bytes.len()
+                    && !bytes[index].is_ascii_whitespace()
+                    && bytes[index] != b'>'
+                {
+                    index += 1;
+                }
+                value = Some(MetaValue { start, end: index });
+            }
+        }
+
+        attributes.push((name, value));
+    }
+
+    attributes
+}
+
+fn rewrite_csp_meta_tag(tag: &str, nonce: &str) -> Option<String> {
+    let attributes = tag_attributes(tag);
+    let http_equiv = attributes
+        .iter()
+        .find(|(name, _)| name == "http-equiv")
+        .and_then(|(_, value)| value.as_ref())
+        .map(|value| tag[value.start..value.end].trim().to_ascii_lowercase());
+    if http_equiv.as_deref() != Some("content-security-policy") {
+        return None;
+    }
+
+    let (_, content) = attributes.iter().find(|(name, _)| name == "content")?;
+    let content = content.as_ref()?;
+    let value = &tag[content.start..content.end];
+    let relaxed = relax_csp(value, nonce);
+    if relaxed == value {
+        return None;
+    }
+
+    let mut out = String::with_capacity(tag.len() + relaxed.len());
+    out.push_str(&tag[..content.start]);
+    out.push_str(&relaxed);
+    out.push_str(&tag[content.end..]);
+    Some(out)
 }
 
 #[cfg(test)]
@@ -332,6 +489,44 @@ mod tests {
     fn does_not_duplicate_an_existing_nonce() {
         let csp = format!("script-src 'nonce-{NONCE}'");
         assert_eq!(relax_csp(&csp, NONCE).matches(NONCE).count(), 1);
+    }
+
+    #[test]
+    fn a_header_without_script_or_default_src_gains_nothing() {
+        // npanel's header: the real script policy is in a meta tag. Adding a
+        // nonce-only script-src here intersects with that meta policy and blocks
+        // every asset.
+        assert_eq!(
+            relax_csp("frame-ancestors 'none'", NONCE),
+            "frame-ancestors 'none'"
+        );
+    }
+
+    #[test]
+    fn relaxes_a_csp_meta_tag_in_the_document() {
+        let html = r#"<html><head><meta http-equiv="content-security-policy" content="default-src 'none'; script-src 'self'"><script src="/app.js"></script></head></html>"#;
+        let out = relax_meta_csps(html, NONCE);
+        assert!(
+            out.contains(&format!("script-src 'self' 'nonce-{NONCE}'")),
+            "{out}"
+        );
+        assert!(out.contains(r#"http-equiv="content-security-policy""#));
+        assert!(out.contains("connect-src 'self'"));
+        assert!(out.contains(r#"<script src="/app.js">"#));
+    }
+
+    #[test]
+    fn matches_meta_attributes_in_any_order_and_case() {
+        let html = r#"<meta content="default-src 'none'; script-src 'self'" HTTP-EQUIV="Content-Security-Policy">"#;
+        let out = relax_meta_csps(html, NONCE);
+        assert!(out.contains(&format!("'nonce-{NONCE}'")), "{out}");
+    }
+
+    #[test]
+    fn leaves_unrelated_meta_tags_alone() {
+        let html =
+            r##"<meta name="theme-color" content="#f4f4f7"><meta name="description" content="x">"##;
+        assert_eq!(relax_meta_csps(html, NONCE), html);
     }
 
     #[test]
