@@ -201,6 +201,7 @@ export interface NccApi {
   torTest(): Promise<TorStatus>
   torRestart(): Promise<TorStatus>
   identity(): Promise<IdentityStatus>
+  shareNostr(comment: string): Promise<{ accepted: number; relays: number; error?: string }>
   importIdentity(secret: string): Promise<IdentityStatus>
   generateIdentity(): Promise<IdentityStatus>
   removeIdentity(): Promise<IdentityStatus>

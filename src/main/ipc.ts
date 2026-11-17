@@ -397,6 +397,23 @@ export function registerIpc(deps: IpcDeps): void {
   })
 
   ipcMain.handle('ncc:identity-status', () => deps.identity.status())
+  ipcMain.handle('ncc:share-nostr', async (event, rawComment: unknown) => {
+    if (!fromChrome(event)) throw new Error('Not allowed')
+    const page = deps.shell.getActivePage()
+    if (!page) throw new Error('Open a page first')
+    const state = deps.shell.getState()
+    if (state.tabKind !== 'normal') throw new Error('Normal tabs only')
+    const provider = deps.identity.provider()
+    if (!provider) throw new Error('Sign in first')
+    const relays = deps.config.get().relays.map((entry) => entry.url).filter(Boolean)
+    if (!relays.length) throw new Error('No relays are configured')
+    const comment = typeof rawComment === 'string' ? rawComment.slice(0, 2000) : ''
+    const content = `${page.title && page.title !== 'New tab' ? `${page.title}\n` : ''}${page.url}${comment ? `\n\n${comment}` : ''}`
+    const eventTemplate = { kind: 1, created_at: Math.floor(Date.now() / 1000), tags: [], content }
+    const signed = await provider.signEvent(eventTemplate)
+    const results = await Promise.allSettled(relays.map((url) => deps.relayPool.publish(url, signed)))
+    return { accepted: results.filter((result) => result.status === 'fulfilled').length, relays: relays.length, error: results.every((result) => result.status === 'rejected') ? String((results[0] as PromiseRejectedResult)?.reason ?? '') : undefined }
+  })
 
   ipcMain.handle('ncc:identity-import', async (_event, secret: unknown) => {
     const status = await deps.identity.importLocal(String(secret ?? ''))

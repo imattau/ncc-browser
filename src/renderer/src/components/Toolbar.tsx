@@ -10,6 +10,7 @@ import {
   Menu,
   Puzzle,
   RotateCw,
+  Share2,
   X
 } from 'lucide-react'
 import type { ExtensionActionInfo } from '@shared/extensions'
@@ -51,6 +52,7 @@ interface ToolbarProps {
   onOpenSiteInfo: (anchor: PopoverAnchor) => void
   onOpenSettings: () => void
   onOpenMenu: () => void
+  onShareNostr: () => void
 }
 
 export function Toolbar({
@@ -77,7 +79,8 @@ export function Toolbar({
   onHistoryMenu,
   onOpenSiteInfo,
   onOpenSettings,
-  onOpenMenu
+  onOpenMenu,
+  onShareNostr
 }: ToolbarProps) {
   const activeDownloads = downloads.filter((notice) => isActiveDownload(notice.state)).length
   const security = securitySummary(state)
@@ -130,6 +133,14 @@ export function Toolbar({
         onOpenSiteInfo={onOpenSiteInfo}
         onNavigate={onNavigate}
       />
+
+      <NavButton
+        label="Share to Nostr"
+        onClick={onShareNostr}
+        disabled={state.mode === 'blank' || state.tabKind !== 'normal' || !identity?.configured}
+      >
+        <Share2 className="h-4 w-4" />
+      </NavButton>
 
       {extensionActions.map((action) => (
         <button

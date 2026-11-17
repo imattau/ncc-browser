@@ -149,6 +149,7 @@ const api: NccApi = {
   torTest: () => ipcRenderer.invoke('ncc:tor-test'),
   torRestart: () => ipcRenderer.invoke('ncc:tor-restart'),
   identity: () => ipcRenderer.invoke('ncc:identity-status'),
+  shareNostr: (comment) => ipcRenderer.invoke('ncc:share-nostr', comment),
   importIdentity: (secret) => ipcRenderer.invoke('ncc:identity-import', secret),
   generateIdentity: () => ipcRenderer.invoke('ncc:identity-generate'),
   removeIdentity: () => ipcRenderer.invoke('ncc:identity-remove'),

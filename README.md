@@ -158,7 +158,7 @@ working while the remote page has focus.
 - **Toolbar** — back/forward (right-click or hold for a jump list), reload/stop
   (the refresh button bypasses the HTTP cache), history, an address bar with local
   suggestions, search, scheme inference, a colour-coded padlock and bookmark star,
-  downloads with progress, identity key, hamburger menu.
+  Share to Nostr for normal tabs, downloads with progress, identity key, hamburger menu.
 - **Tor** — release builds bundle Tor; Settings → General has **Prefer Tor connections**
   and an automatic/local SOCKS proxy choice. With the preference off, a locator that
   publishes an onion endpoint gets an onion button in the address bar; clicking it

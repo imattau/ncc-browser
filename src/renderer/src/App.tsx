@@ -26,6 +26,7 @@ import { InsecureWarning, SecurityBanner } from './components/SecurityNotice'
 import { SettingsPage, type SettingsSection } from './components/SettingsPage'
 import { WalletPanel } from './components/WalletPanel'
 import { SignerPrompt } from './components/SignerPrompt'
+import { ShareNostrPanel } from './components/ShareNostrPanel'
 import { SiteInfoPanel } from './components/SiteInfoPanel'
 import { TabOverflowMenu } from './components/TabOverflowMenu'
 import { TabStrip } from './components/TabStrip'
@@ -588,6 +589,7 @@ export function App() {
         }}
         onOpenSettings={() => openSettings('identity')}
         onOpenMenu={() => showOverlay('menu')}
+        onShareNostr={() => showOverlay('share-nostr')}
       />
 
       {state.banner && !state.insecurePrompt && !overlay ? (
@@ -646,6 +648,16 @@ export function App() {
           onCancel={cancelDownload}
           onReveal={revealDownload}
           onClear={clearDownloads}
+        />
+      ) : null}
+
+      {overlay === 'share-nostr' ? (
+        <ShareNostrPanel
+          title={state.title}
+          url={state.displayUrl}
+          npub={identity?.npub ?? ''}
+          onClose={closeOverlay}
+          onPost={(comment) => window.ncc.shareNostr(comment)}
         />
       ) : null}
 
