@@ -173,6 +173,9 @@ const DEFAULT_ADDRESS = 'ncc://npub1zapstdvcqpkwqh0sq3685kw87mqlruv9zuck5kxk0m9e
 const ICONS_KEY = 'ncc.icons'
 const HISTORY_KEY = 'ncc.history'
 const BOOKMARKS_KEY = 'ncc.bookmarks'
+const HOME_ORDER_KEY = 'ncc.home.order'
+const HOME_HIDDEN_KEY = 'ncc.home.hidden'
+let homeEditMode = false
 /** Removed bookmarks, kept for 90 days so a removal reaches the other devices. */
 const BOOKMARKS_REMOVED_KEY = 'ncc.bookmarks.removed'
 /** Visits at or before this time were cleared; sync spreads that to the other devices. */
@@ -900,7 +903,17 @@ function shortcutEntries() {
     if (out.length >= 8) break
   }
   if (out.length === 0) out.push({ address: DEFAULT_ADDRESS, title: 'Zapstore' })
-  return out
+  return orderHomeEntries(out)
+}
+
+function orderHomeEntries(entries) {
+  const hidden = new Set(readList(HOME_HIDDEN_KEY))
+  const order = readList(HOME_ORDER_KEY)
+  return entries.filter((entry) => !hidden.has(entry.address)).sort((a, b) => {
+    const ai = order.indexOf(a.address)
+    const bi = order.indexOf(b.address)
+    return (ai < 0 ? Number.MAX_SAFE_INTEGER : ai) - (bi < 0 ? Number.MAX_SAFE_INTEGER : bi)
+  })
 }
 
 /** Bookmarks lead each address family, followed by its newest visits. */
@@ -914,7 +927,7 @@ function homeEntries(scheme) {
     out.push(entry)
     if (out.length >= 8) break
   }
-  return out
+  return orderHomeEntries(out)
 }
 
 /* ───────────────────────────── Profile (kind 0) ───────────────────────────── */
@@ -1221,14 +1234,70 @@ function renderHomeTiles(container, entries) {
     const label = labelFor(entry)
     const tile = document.createElement('button')
     tile.type = 'button'
-    tile.className = 'tile'
+    tile.className = `tile${homeEditMode ? ' editing' : ''}`
+    let pressTimer = null
+    let longPressed = false
+    tile.addEventListener('contextmenu', (event) => {
+      event.preventDefault()
+      enterHomeEditMode()
+    })
+    tile.addEventListener('pointerdown', () => {
+      longPressed = false
+      pressTimer = setTimeout(() => {
+        longPressed = true
+        enterHomeEditMode()
+      }, 550)
+    })
+    const cancelPress = () => { if (pressTimer) clearTimeout(pressTimer); pressTimer = null }
+    tile.addEventListener('pointerup', cancelPress)
+    tile.addEventListener('pointerleave', cancelPress)
     const name = document.createElement('span')
     name.textContent = label
     tile.append(avatar(label, '', entry.address), name)
-    tile.addEventListener('click', () => void submit(entry.address, { newTab: newTabMode }))
+    if (homeEditMode) {
+      const remove = document.createElement('span')
+      remove.className = 'tile-remove'
+      remove.textContent = '×'
+      remove.setAttribute('role', 'button')
+      remove.setAttribute('tabindex', '0')
+      remove.setAttribute('aria-label', `Remove ${label} shortcut`)
+      const removeTile = (event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        writeList(HOME_HIDDEN_KEY, [...new Set([...readList(HOME_HIDDEN_KEY), entry.address])])
+        renderHome()
+      }
+      remove.addEventListener('click', removeTile)
+      remove.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') removeTile(event)
+      })
+      tile.appendChild(remove)
+    }
+    tile.addEventListener('click', () => {
+      if (!longPressed && homeEditMode) {
+        const order = readList(HOME_ORDER_KEY).filter((address) => address !== entry.address)
+        writeList(HOME_ORDER_KEY, [entry.address, ...order])
+        renderHome()
+      } else if (!longPressed) {
+        void submit(entry.address, { newTab: newTabMode })
+      }
+      longPressed = false
+    })
     container.appendChild(tile)
   }
 }
+
+function enterHomeEditMode() {
+  if (homeEditMode) return
+  homeEditMode = true
+  renderHome()
+}
+
+document.addEventListener('click', (event) => {
+  if (!homeEditMode || event.target.closest?.('.tile')) return
+  homeEditMode = false
+  renderHome()
+})
 
 /* ───────────────────────────── Omnibox ───────────────────────────── */
 

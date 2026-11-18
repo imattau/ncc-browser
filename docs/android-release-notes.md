@@ -3,6 +3,12 @@
 **Alpha.** An early build published so the browser can be tested on a real device. It
 is not a daily driver.
 
+## New in 0.33.11
+
+- Long-press a home shortcut to enter edit mode. Remove several shortcuts with the X
+  controls, tap another shortcut to move it to the front, or tap outside the tiles to
+  leave edit mode.
+
 ## Fixes in 0.33.9
 
 - Profile pictures now load for the images people actually use. The app previously gave

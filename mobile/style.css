@@ -938,6 +938,35 @@ input.switch:checked::after {
   background: var(--surface-2);
 }
 
+.tile.editing {
+  position: relative;
+  animation: tile-edit-wiggle 180ms ease-in-out infinite alternate;
+}
+
+.tile-remove {
+  position: absolute;
+  top: -5px;
+  left: calc(50% + 15px);
+  width: 23px;
+  height: 23px;
+  display: grid;
+  place-items: center;
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  color: #fff;
+  background: #e04444;
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+  animation: none;
+}
+
+@keyframes tile-edit-wiggle {
+  from { transform: rotate(-1deg); }
+  to { transform: rotate(1deg); }
+}
+
 .tile span:last-child {
   width: 100%;
   font-size: calc(12px * var(--text-scale));
@@ -945,6 +974,16 @@ input.switch:checked::after {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+.tile span.tile-remove {
+  width: 23px;
+  height: 23px;
+  overflow: visible;
+  white-space: normal;
+  text-overflow: clip;
+  font-size: 19px;
+  text-align: center;
 }
 
 .avatar {
