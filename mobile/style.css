@@ -2068,10 +2068,11 @@ body[data-kind='tor'] .pill-kind {
 .wallet-balance-card > small { text-align: center; }
 .wallet-actions-centered { justify-content: center; }
 .wallet-send-pill { flex: 0 0 auto !important; min-width: 112px; min-height: 44px !important; border: 1px solid var(--line); border-radius: 999px; color: var(--text); background: transparent; }
-.wallet-receive { display: grid; justify-items: center; gap: 16px; width: 100%; border: 0; padding: 4px 0 0; }
+.wallet-receive { display: grid; grid-template-columns: minmax(0, 1fr); justify-items: center; gap: 16px; width: 100%; min-width: 0; max-width: 100%; border: 0; padding: 4px 0 0; }
+.wallet-receive > * { min-width: 0; max-width: 100%; }
 .wallet-receive img, #wallet-xmr-qr { box-sizing: border-box; width: min(188px, 60vw); max-width: 100%; height: auto; border-radius: 12px; padding: 8px; background: white; }
-.wallet-address-pill { display: flex; align-items: center; justify-content: center; gap: 10px; width: min(100%, 440px); min-height: 44px; border: 1px solid var(--line); border-radius: 999px; padding: 8px 14px; color: var(--muted); background: transparent; }
-.wallet-address-pill code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 13px ui-monospace, monospace; }
+.wallet-address-pill { box-sizing: border-box; min-width: 0; display: flex; align-items: center; justify-content: center; gap: 10px; width: min(100%, 440px); min-height: 44px; border: 1px solid var(--line); border-radius: 999px; padding: 8px 14px; color: var(--muted); background: transparent; }
+.wallet-address-pill code { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 13px ui-monospace, monospace; }
 .wallet-address-pill span { flex: 0 0 auto; font-size: 17px; }
 .wallet-transactions-card { border: 0; padding: 0 4px; background: transparent; box-shadow: none; }
 .wallet-transactions-card summary { display: flex; justify-content: center; gap: 8px; cursor: pointer; list-style: none; color: var(--muted); font-size: 13px; }
