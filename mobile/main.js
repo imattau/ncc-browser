@@ -9,7 +9,7 @@
  * WebViews. In a plain browser, where it does not exist, the address field falls back
  * to a fetch, which still proves the proxy and the `*.localhost` mapping.
  */
-import { closeMoneroWallet, loadWallet, wireWallet } from './wallet.js'
+import { closeMoneroWallet, handleNwcPageRequest, loadWallet, wireWallet } from './wallet.js'
 import './downloads.js'
 import { addressParts, avatar, displayAddress, icon, iconKey, labelFor, saveIcon, setIcon, shortId } from './address.js'
 import { createSync } from './sync.js'
@@ -480,6 +480,8 @@ globalThis.__nccTabs = (payload) => {
 globalThis.__nccContent = (state) => {
   const id = state.tab
 
+  if (state.type === 'nwc-request') return
+
   if (state.type === 'loading') progressByTab[id] = progressByTab[id] ?? 8
   if (state.type === 'progress') {
     if (state.value >= 100) delete progressByTab[id]
@@ -544,6 +546,13 @@ globalThis.__nccContent = (state) => {
   }
 
   renderPill()
+}
+
+globalThis.__nccWalletRequest = (request) => {
+  void handleNwcPageRequest(request).then(
+    (result) => window.NccContent?.resolveNwc(request.tab, request.requestId, JSON.stringify({ ok: true, result })),
+    (error) => window.NccContent?.resolveNwc(request.tab, request.requestId, JSON.stringify({ ok: false, message: error instanceof Error ? error.message : String(error) }))
+  )
 }
 
 /** A link opened from another app (we are a registered browser): open it in a new tab. */

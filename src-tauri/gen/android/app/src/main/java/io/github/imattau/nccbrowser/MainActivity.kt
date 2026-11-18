@@ -650,6 +650,7 @@ class MainActivity : TauriActivity() {
   private fun onTabEvent(payload: JSONObject) {
     val tab = tabs.firstOrNull { it.id == payload.optString("tab") }
     emitToShell("window.__nccContent", payload)
+    if (payload.optString("type") == "nwc-request") emitToShell("window.__nccWalletRequest", payload)
 
     // Title changes are what the bar shows, so the tab list follows a load.
     if (payload.optString("type") == "loaded" && tab != null) emitTabs(false)
@@ -713,6 +714,13 @@ class MainActivity : TauriActivity() {
   }
 
   inner class Bridge {
+    @JavascriptInterface
+    fun resolveNwc(tabId: String?, requestId: String?, response: String?) {
+      val tabKey = tabId ?: return
+      val requestKey = requestId ?: return
+      runOnUiThread { tabs.firstOrNull { it.id == tabKey }?.resolveNwc(requestKey, response ?: "{}") }
+    }
+
     /** The link another app asked us to open, once. */
     @JavascriptInterface
     fun takeLink(): String? {

@@ -54,5 +54,24 @@ export interface WalletSnapshot {
   receive: { currency: WalletCurrency; address: string }[]
 }
 
+export interface NwcSnapshot {
+  connected: boolean
+  alias: string | null
+  network: string | null
+  balanceMsat: number | null
+  methods: string[]
+  lud16: string | null
+}
+
+export interface NwcInvoiceLookup {
+  invoice: string
+  amountMsat: string
+  description?: string
+  descriptionHash?: string
+  expiry?: number
+  preimage?: string
+  feesPaidMsat?: string
+}
+
 export const DEFAULT_ESPLORA_URL = 'https://blockstream.info/api'
 export const DEFAULT_MONERO_DAEMON_URL = 'https://xmr-node.cakewallet.com:18081'

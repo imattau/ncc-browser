@@ -148,6 +148,27 @@ export class RelayPool {
     )
   }
 
+  waitForNwcResponse(relays: string[], walletPubkey: string, clientPubkey: string, eventId: string, timeoutMs: number): Promise<Event> {
+    this.track(relays)
+    return new Promise((resolve, reject) => {
+      let finished = false
+      const finish = (error?: Error, event?: Event): void => {
+        if (finished) return
+        finished = true
+        clearTimeout(timeout)
+        subscription.close()
+        if (error) reject(error)
+        else if (event) resolve(event)
+      }
+      const timeout = setTimeout(() => finish(new Error('NWC wallet did not respond in time')), timeoutMs)
+      const subscription = this.instance().subscribeMany(relays, {
+        kinds: [23195], authors: [walletPubkey], '#p': [clientPubkey], '#e': [eventId], limit: 1
+      }, { onevent: (event) => finish(undefined, event), onclose: () => {
+        if (!finished) finish(new Error('NWC relay closed before the wallet responded'))
+      } })
+    })
+  }
+
   /** Drop live connections for these URLs without touching the rest of the pool. */
   closeUrls(urls: string[]): void {
     if (urls.length === 0 || !this.pool) return

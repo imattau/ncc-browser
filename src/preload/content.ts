@@ -40,4 +40,27 @@ if (location.protocol === 'ncc-ext:') {
     nip04,
     nip44
   })
+
+  contextBridge.exposeInMainWorld('webln', {
+    enable: (): Promise<unknown> => ipcRenderer.invoke('nwc:page-info'),
+    getInfo: (): Promise<unknown> => ipcRenderer.invoke('nwc:page-info'),
+    getBalance: async (): Promise<{ balance: number }> => ({ balance: (await ipcRenderer.invoke('nwc:page-balance') as { balance: number }).balance / 1000 }),
+    sendPayment: (paymentRequest: string | { paymentRequest: string }): Promise<unknown> =>
+      ipcRenderer.invoke('nwc:page-pay', typeof paymentRequest === 'string' ? paymentRequest : paymentRequest.paymentRequest),
+    makeInvoice: (args: { amount: number; defaultDescription?: string }): Promise<unknown> =>
+      ipcRenderer.invoke('nwc:page-invoice', args)
+  })
+
+  // Lightning payment links are handed to NCC's in-app confirmation instead of an
+  // external wallet app. The trusted main process derives the origin from this frame.
+  document.addEventListener('click', (event) => {
+    const target = event.target instanceof Element ? event.target : null
+    const anchor = target?.closest('a[href]') as HTMLAnchorElement | null
+    const hrefInvoice = anchor && /^lightning:/i.test(anchor.href) ? anchor.href.replace(/^lightning:/i, '') : null
+    const textInvoice = target?.textContent?.slice(0, 5000).match(/\bln(?:bc|tb|bcrt)[0-9a-z]{20,}/i)?.[0] ?? null
+    const invoice = hrefInvoice ?? textInvoice
+    if (typeof invoice !== 'string' || !/^ln(?:bc|tb|bcrt)[0-9a-z]+$/i.test(invoice)) return
+    if (hrefInvoice) event.preventDefault()
+    void ipcRenderer.invoke('nwc:page-pay', invoice).catch(() => undefined)
+  }, true)
 }

@@ -2056,7 +2056,11 @@ body[data-kind='tor'] .pill-kind {
 .screen#wallet { width: 100%; min-width: 0; max-width: 100%; overflow: hidden; }
 .screen#wallet > .wallet-body { flex: 1 1 0%; width: 100%; min-width: 0; min-height: 0; max-width: 100%; grid-template-columns: minmax(0, 1fr); overflow-x: hidden; }
 .wallet-currencies { display: flex; width: fit-content; max-width: 100%; border-radius: 999px; }
-.wallet-currency { min-height: 38px; padding: 0 17px; border-radius: 999px; }
+.wallet-currency { min-width: 48px; min-height: 38px; padding: 0 10px; border-radius: 999px; }
+.currency-icon { display: grid; width: 24px; height: 24px; place-items: center; line-height: 1; }
+.bitcoin-icon { font-size: 23px; font-weight: 700; }
+.monero-icon { border: 2px solid #f26822; border-radius: 50%; color: #f26822; font-size: 13px; font-weight: 800; }
+.lightning-icon { font-size: 21px; }
 #wallet-note:empty { display: none; }
 #wallet-bitcoin, #wallet-monero { width: 100%; min-width: 0; max-width: 100%; }
 #wallet-bitcoin > *, #wallet-monero > * { min-width: 0; max-width: 100%; }

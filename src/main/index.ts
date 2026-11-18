@@ -30,6 +30,8 @@ import { electronClipboard, electronFileDialogs, registerPasswordIpc } from './p
 import { PasswordService } from './passwords/service'
 import { WalletService } from './wallet/service'
 import { registerWalletIpc } from './wallet/ipc'
+import { NwcService } from './wallet/nwc-service'
+import { registerNwcIpc } from './wallet/nwc-ipc'
 import { SyncPrefsStore } from './sync/prefs'
 import { SyncService } from './sync/service'
 import { registerSyncIpc } from './sync/ipc'
@@ -89,6 +91,7 @@ let torRelays: TorRelayPool | null = null
 let relaySync: RelaySync | null = null
 let passwords: PasswordService | null = null
 let walletService: WalletService | null = null
+let nwcService: NwcService | null = null
 let extensions: ExtensionService | null = null
 
 app.whenReady().then(async () => {
@@ -429,6 +432,18 @@ app.whenReady().then(async () => {
     relayPool
   )
   registerWalletIpc(walletService, shell)
+  nwcService = new NwcService(
+    join(app.getPath('userData'), 'nwc-connection.json'), relayPool,
+    (value) => {
+      if (!encryptionAvailable) throw new Error('Secure storage is unavailable on this system')
+      return safeStorage.encryptString(value).toString('base64')
+    },
+    (value) => {
+      if (!encryptionAvailable) throw new Error('Secure storage is unavailable on this system')
+      return safeStorage.decryptString(Buffer.from(value, 'base64'))
+    }
+  )
+  registerNwcIpc(nwcService, shell, content)
   shell.window.webContents.on('did-finish-load', () => passwordService.clearOverlays())
   shell.window.on('focus', () => void passwordService.onWindowFocus())
 
@@ -615,6 +630,7 @@ app.on('before-quit', () => {
   shell?.saveSessionNow()
   passwords?.dispose()
   walletService?.dispose()
+  nwcService?.dispose()
   extensions?.dispose()
   relaySync?.stop()
   closeSharedPool()

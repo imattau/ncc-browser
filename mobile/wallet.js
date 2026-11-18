@@ -4,6 +4,7 @@ import QRCode from 'qrcode'
 import { parsePaymentQr, scanQr } from './qr-scan.js'
 import { MoneroWalletSession } from '../src/shared/monero-wallet.ts'
 import { DEFAULT_MONERO_DAEMON_URL } from '../src/shared/wallet.ts'
+import { createMobileNwc } from './nwc.js'
 
 const DEFAULT_ESPLORA = 'https://blockstream.info/api'
 const byId = (id) => document.getElementById(id)
@@ -16,6 +17,49 @@ let moneroRecord = null
 let moneroDraftSeed = ''
 let moneroChallengeIndex = 0
 let moneroPreview = null
+let nwc = null
+
+async function loadNwc() {
+  try {
+    const uri = await window.__TAURI__.core.invoke('wallet_nwc_load')
+    nwc?.dispose(); nwc = uri ? createMobileNwc(uri) : null
+    byId('wallet-nwc-connected').hidden = !nwc
+    byId('wallet-nwc-connect-card').hidden = Boolean(nwc)
+    byId('wallet-nwc-settings').hidden = !nwc
+    if (nwc) {
+      const [info, balance] = await Promise.all([nwc.getInfo(), nwc.getBalance()])
+      byId('wallet-nwc-status').textContent = `${info.alias || 'Lightning wallet'}${info.network ? ` · ${info.network}` : ''}`
+      byId('wallet-nwc-status-detail').textContent = info.alias || 'Nostr Wallet Connect'
+      byId('wallet-nwc-balance').textContent = `${(balance.balance / 1000).toLocaleString()} sats`
+    } else byId('wallet-nwc-balance').textContent = '— sats'
+  } catch (error) {
+    byId('wallet-nwc-connect-card').hidden = Boolean(nwc)
+    byId('wallet-nwc-connected').hidden = !nwc
+    message(error instanceof Error ? error.message : String(error))
+  }
+}
+
+export async function handleNwcPageRequest(request) {
+  if (!nwc) throw new Error('Connect a Lightning wallet in Wallet first')
+  switch (request.method) {
+    case 'enable': return { enabled: true }
+    case 'get_info': return nwc.getInfo()
+    case 'get_balance': { const value = await nwc.getBalance(); return { balance: value.balance / 1000 } }
+    case 'pay_invoice': {
+      const invoice = typeof request.params === 'string' ? request.params : request.params?.paymentRequest
+      if (typeof invoice !== 'string' || !invoice) throw new Error('The page did not provide a Lightning invoice')
+      if (!window.confirm(`${request.origin} requests a Lightning payment.\n\n${invoice}\n\nPay this invoice?`)) throw new Error('Payment cancelled')
+      return nwc.payInvoice(invoice)
+    }
+    case 'make_invoice': {
+      const params = request.params || {}
+      if (!Number.isSafeInteger(params.amount) || params.amount <= 0) throw new Error('Invoice amount must be a positive number of sats')
+      const invoice = await nwc.makeInvoice({ amount: params.amount * 1000, ...(typeof params.defaultMemo === 'string' ? { description: params.defaultMemo } : {}) })
+      return { paymentRequest: invoice.invoice, ...invoice }
+    }
+    default: throw new Error('Unsupported WebLN request')
+  }
+}
 
 function message(text) { byId('wallet-note').textContent = text }
 function parseAmount(input) {
@@ -94,6 +138,12 @@ async function readSnapshot() {
 }
 
 export async function loadWallet() {
+  if (selectedCurrency === 'LN') {
+    byId('wallet-open-identity').hidden = true
+    message('')
+    await loadNwc()
+    return
+  }
   byId('wallet-esplora').value = localStorage.getItem('ncc.wallet.esplora') || DEFAULT_ESPLORA
   byId('wallet-open-identity').hidden = true
   byId('wallet-xmr-note').textContent = ''
@@ -270,7 +320,45 @@ async function confirmSend() {
 }
 
 export function wireWallet() {
+  void loadNwc()
   byId('wallet-refresh').addEventListener('click', () => void loadWallet())
+  byId('wallet-nwc-connect').addEventListener('click', async () => {
+    try {
+      const uri = byId('wallet-nwc-uri').value.trim()
+      const next = createMobileNwc(uri)
+      const info = await next.getInfo()
+      await window.__TAURI__.core.invoke('wallet_nwc_save', { uri })
+      nwc?.dispose(); nwc = next; byId('wallet-nwc-uri').value = ''
+      await loadNwc()
+      message(`${info.alias || 'Lightning wallet'} connected.`)
+    } catch (error) { message(error instanceof Error ? error.message : String(error)) }
+  })
+  byId('wallet-nwc-disconnect').addEventListener('click', async () => {
+    await window.__TAURI__.core.invoke('wallet_nwc_delete'); nwc?.dispose(); nwc = null
+    byId('wallet-nwc-connected').hidden = true; byId('wallet-nwc-settings').hidden = true; byId('wallet-nwc-connect-card').hidden = false
+    byId('wallet-nwc-receive-view').hidden = true; byId('wallet-nwc-send').hidden = true
+  })
+  byId('wallet-nwc-open-send').addEventListener('click', () => { byId('wallet-nwc-send').hidden = false; byId('wallet-nwc-invoice').focus() })
+  byId('wallet-nwc-cancel-send').addEventListener('click', () => { byId('wallet-nwc-send').hidden = true })
+  byId('wallet-nwc-pay').addEventListener('click', async () => {
+    try {
+      const invoice = byId('wallet-nwc-invoice').value.trim()
+      if (!invoice || !window.confirm(`Send this Lightning payment now?\n\n${invoice.slice(0, 160)}${invoice.length > 160 ? '…' : ''}`)) return
+      await nwc.payInvoice(invoice); byId('wallet-nwc-invoice').value = ''; byId('wallet-nwc-send').hidden = true; message('Lightning payment sent.')
+      await loadNwc()
+    } catch (error) { message(error instanceof Error ? error.message : String(error)) }
+  })
+  byId('wallet-nwc-receive').addEventListener('click', async () => {
+    try {
+      const sats = Number(window.prompt('Amount in sats'))
+      if (!Number.isSafeInteger(sats) || sats <= 0 || sats > Number.MAX_SAFE_INTEGER / 1000) return
+      const result = await nwc.makeInvoice({ amount: sats * 1000 })
+      byId('wallet-nwc-created').textContent = result.invoice
+      byId('wallet-nwc-created').onclick = async () => { try { await navigator.clipboard.writeText(result.invoice); message('Invoice copied.') } catch { message('Could not copy invoice.') } }
+      byId('wallet-nwc-qr').src = await QRCode.toDataURL(`lightning:${result.invoice}`, { width: 220, margin: 1 })
+      byId('wallet-nwc-qr').hidden = false; byId('wallet-nwc-receive-view').hidden = false
+    } catch (error) { message(error instanceof Error ? error.message : String(error)) }
+  })
   byId('wallet-copy-address').addEventListener('click', async () => {
     try { await navigator.clipboard.writeText(currentAddress); message('Address copied.') }
     catch { message('Could not copy the address.') }
@@ -306,9 +394,13 @@ export function wireWallet() {
   for (const button of document.querySelectorAll('[data-currency]')) {
     button.addEventListener('click', () => {
       selectedCurrency = button.dataset.currency
-      for (const item of document.querySelectorAll('[data-currency]')) item.classList.toggle('selected', item === button)
+      for (const item of document.querySelectorAll('[data-currency]')) {
+        item.classList.toggle('selected', item === button)
+        item.setAttribute('aria-pressed', String(item === button))
+      }
       byId('wallet-bitcoin').hidden = selectedCurrency !== 'BTC'
       byId('wallet-monero').hidden = selectedCurrency !== 'XMR'
+      byId('wallet-lightning').hidden = selectedCurrency !== 'LN'
       void loadWallet()
     })
   }

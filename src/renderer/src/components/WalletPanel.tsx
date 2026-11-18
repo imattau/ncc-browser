@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import QRCode from 'qrcode'
-import { ArrowUpFromLine, Copy, RefreshCw, X } from 'lucide-react'
-import type { BitcoinSendPreview, WalletSnapshot } from '@shared/wallet'
+import { ArrowUpFromLine, Copy, RefreshCw, X, Zap } from 'lucide-react'
+import type { BitcoinSendPreview, NwcSnapshot, WalletSnapshot } from '@shared/wallet'
 import { MoneroWalletPanel } from './MoneroWalletPanel'
 
 type Props = { onClose: () => void; onOpenIdentitySettings: () => void }
@@ -11,7 +11,7 @@ function errorText(error: unknown): string { return error instanceof Error ? err
 function shortId(id: string): string { return `${id.slice(0, 12)}…${id.slice(-8)}` }
 
 export function WalletPanel({ onClose, onOpenIdentitySettings }: Props) {
-  const [currency, setCurrency] = useState<'BTC' | 'XMR'>('BTC')
+  const [currency, setCurrency] = useState<'BTC' | 'XMR' | 'LN'>('BTC')
   const [snapshot, setSnapshot] = useState<WalletSnapshot | null>(null)
   const [settings, setSettings] = useState<Settings | null>(null)
   const [qr, setQr] = useState('')
@@ -23,8 +23,14 @@ export function WalletPanel({ onClose, onOpenIdentitySettings }: Props) {
   const [preview, setPreview] = useState<BitcoinSendPreview | null>(null)
   const [prefsOpen, setPrefsOpen] = useState(false)
   const [endpoint, setEndpoint] = useState('')
+  const [nwc, setNwc] = useState<NwcSnapshot | null>(null)
+  const [nwcUri, setNwcUri] = useState('')
+  const [lightningInvoice, setLightningInvoice] = useState('')
+  const [receiveInvoice, setReceiveInvoice] = useState('')
+  const [lightningQr, setLightningQr] = useState('')
+  const [lightningSendOpen, setLightningSendOpen] = useState(false)
 
-  const receiveAddress = useMemo(() => snapshot?.receive.find((item) => item.currency === currency)?.address ?? '', [snapshot, currency])
+  const receiveAddress = useMemo(() => snapshot?.receive.find((item) => item.currency === (currency === 'XMR' ? 'XMR' : 'BTC'))?.address ?? '', [snapshot, currency])
 
   async function refresh() {
     setBusy(true)
@@ -34,6 +40,8 @@ export function WalletPanel({ onClose, onOpenIdentitySettings }: Props) {
       setSnapshot(next)
       setSettings(prefs)
       setEndpoint(prefs.esploraUrl)
+      const nwcStatus = await window.ncc.nwcStatus()
+      setNwc(nwcStatus.connected ? await window.ncc.nwcRefresh() : nwcStatus)
     } catch (error) { setMessage(errorText(error)) }
     finally { setBusy(false) }
   }
@@ -44,6 +52,11 @@ export function WalletPanel({ onClose, onOpenIdentitySettings }: Props) {
     void QRCode.toDataURL(`bitcoin:${receiveAddress}`, { width: 300, margin: 1, color: { dark: '#101418', light: '#ffffff' } })
       .then(setQr).catch((error: unknown) => setMessage(errorText(error)))
   }, [receiveAddress])
+  useEffect(() => {
+    if (!receiveInvoice) { setLightningQr(''); return }
+    void QRCode.toDataURL(`lightning:${receiveInvoice}`, { width: 300, margin: 1, color: { dark: '#101418', light: '#ffffff' } })
+      .then(setLightningQr).catch((error: unknown) => setMessage(errorText(error)))
+  }, [receiveInvoice])
 
   async function copy(value: string) {
     try { await navigator.clipboard.writeText(value); setMessage('Copied to clipboard.') }
@@ -76,6 +89,31 @@ export function WalletPanel({ onClose, onOpenIdentitySettings }: Props) {
     finally { setBusy(false) }
   }
 
+  async function connectNwc() {
+    setBusy(true); setMessage('')
+    try { setNwc(await window.ncc.nwcConnect(nwcUri)); setNwcUri(''); setMessage('Lightning wallet connected.') }
+    catch (error) { setMessage(errorText(error)) }
+    finally { setBusy(false) }
+  }
+
+  async function payLightningInvoice() {
+    if (!lightningInvoice.trim()) return
+    if (!window.confirm(`Send this Lightning payment now?\n\n${lightningInvoice.trim().slice(0, 160)}${lightningInvoice.trim().length > 160 ? '…' : ''}`)) return
+    setBusy(true); setMessage('')
+    try { await window.ncc.nwcPay(lightningInvoice.trim()); setLightningInvoice(''); setMessage('Lightning payment sent.') }
+    catch (error) { setMessage(errorText(error)) }
+    finally { setBusy(false) }
+  }
+
+  async function createLightningInvoice() {
+    const sats = Number(window.prompt('Amount in sats'))
+    if (!Number.isSafeInteger(sats) || sats <= 0 || sats > Number.MAX_SAFE_INTEGER / 1000) return
+    setBusy(true); setMessage('')
+    try { const result = await window.ncc.nwcMakeInvoice({ amount: sats * 1000 }); setReceiveInvoice(result.invoice); setMessage('Lightning invoice created.') }
+    catch (error) { setMessage(errorText(error)) }
+    finally { setBusy(false) }
+  }
+
   return (
     <section className="absolute inset-0 z-[80] overflow-y-auto bg-[color:var(--color-panel)] text-[color:var(--color-text-strong)]" aria-label="Wallet">
       <header className="sticky top-0 z-10 flex items-center justify-between border-b border-[color:var(--color-line)] bg-[color:var(--color-panel)] px-5 py-4">
@@ -84,7 +122,7 @@ export function WalletPanel({ onClose, onOpenIdentitySettings }: Props) {
       </header>
       <div className="mx-auto max-w-xl space-y-5 px-5 py-6">
         <nav className="mx-auto flex w-fit rounded-full border border-[color:var(--color-line)] p-1" aria-label="Wallet currency">
-          {(['BTC', 'XMR'] as const).map((item) => <button key={item} className={`rounded-full px-5 py-2 text-ui-12 ${currency === item ? 'bg-[color:var(--color-hover)] text-[color:var(--color-text-strong)]' : 'text-[color:var(--color-muted)]'}`} onClick={() => setCurrency(item)}>{item === 'BTC' ? '₿  Bitcoin' : '◉  Monero'}</button>)}
+          {(['BTC', 'XMR', 'LN'] as const).map((item) => <button key={item} type="button" aria-label={item === 'BTC' ? 'Bitcoin' : item === 'XMR' ? 'Monero' : 'Lightning'} title={item === 'BTC' ? 'Bitcoin' : item === 'XMR' ? 'Monero' : 'Lightning'} aria-pressed={currency === item} className={`grid h-10 w-10 place-items-center rounded-full text-ui-18 ${currency === item ? 'bg-[color:var(--color-hover)] text-[color:var(--color-text-strong)]' : 'text-[color:var(--color-muted)]'}`} onClick={() => setCurrency(item)}>{item === 'BTC' ? <span aria-hidden="true">₿</span> : item === 'XMR' ? <span aria-hidden="true" className="grid h-6 w-6 place-items-center rounded-full border-2 border-[#f26822] text-ui-12 font-bold text-[#f26822]">M</span> : <Zap aria-hidden="true" className="h-5 w-5" />}</button>)}
         </nav>
         {currency === 'BTC' ? <>
           <section className="wallet-simple-view">
@@ -95,12 +133,23 @@ export function WalletPanel({ onClose, onOpenIdentitySettings }: Props) {
           <details className="wallet-transactions-simple"><summary>Transactions <span>⌄</span></summary>
             {snapshot?.transactions.filter((tx) => tx.currency === 'BTC').length ? <ul className="mt-3 divide-y divide-[color:var(--color-line)]">{snapshot.transactions.filter((tx) => tx.currency === 'BTC').map((tx) => <li key={tx.id} className="flex items-center justify-between gap-3 py-3"><div><p className="font-mono text-ui-11">{shortId(tx.id)}</p><p className="text-ui-10 text-[color:var(--color-muted)]">{tx.direction} · {tx.status} · {tx.confirmations} confirmations</p></div><span className="font-mono text-ui-11">{tx.direction === 'incoming' ? '+' : '−'}{tx.amount} BTC</span></li>)}</ul> : <p className="py-5 text-center text-ui-11 text-[color:var(--color-muted)]">{busy ? 'Loading…' : 'No transactions yet.'}</p>}
           </details>
-        </> : <MoneroWalletPanel onOpenIdentitySettings={onOpenIdentitySettings} />}
+        </> : currency === 'XMR' ? <MoneroWalletPanel onOpenIdentitySettings={onOpenIdentitySettings} /> : <>
+          {nwc?.connected ? <section className="wallet-simple-view">
+            <div className="wallet-simple-balance"><p>{nwc.balanceMsat === null ? '—' : (nwc.balanceMsat / 1000).toLocaleString()} sats</p><span>{nwc.alias || 'Lightning wallet'}{nwc.network ? ` · ${nwc.network}` : ''}</span></div>
+            <div className="flex flex-wrap justify-center gap-2"><button className="wallet-primary-send" onClick={() => setLightningSendOpen(true)}><ArrowUpFromLine className="h-4 w-4" />Send</button><button className="wallet-primary-send" onClick={() => void createLightningInvoice()}>Receive</button></div>
+            {lightningQr ? <div className="wallet-receive-simple"><img src={lightningQr} alt="QR code for Lightning invoice" className="wallet-receive-qr" /><button className="wallet-address-pill" onClick={() => void copy(receiveInvoice)}><span>{shortId(receiveInvoice)}</span><Copy className="h-4 w-4 shrink-0" /></button></div> : null}
+          </section> : null}
+          <details className="wallet-settings"><summary>{nwc?.connected ? 'Lightning wallet settings' : 'Connect a Lightning wallet'}</summary>
+            {nwc?.connected ? <div className="mt-3"><p className="text-ui-10 text-[color:var(--color-muted)]">{nwc.alias || 'Nostr Wallet Connect'}{nwc.network ? ` · ${nwc.network}` : ''}</p><button className="mt-2 text-ui-10 text-[color:var(--color-muted)] underline" onClick={() => void window.ncc.nwcDisconnect().then(setNwc)}>Disconnect wallet</button></div> : <div className="mt-3"><p className="text-ui-10 text-[color:var(--color-muted)]">Connect with a Nostr Wallet Connect URI.</p><label className="mt-3 block text-ui-10">NWC connection URI<input aria-label="NWC connection URI" placeholder="nostr+walletconnect://…" className="mt-1 w-full rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-panel)] p-2 font-mono text-ui-10" value={nwcUri} onChange={(event) => setNwcUri(event.target.value)} /></label><button disabled={busy || !nwcUri.trim()} className="mt-3 rounded-lg bg-[color:var(--color-accent)] px-4 py-2 text-ui-10 text-white disabled:opacity-50" onClick={() => void connectNwc()}>Connect</button></div>}
+          </details>
+        </>}
         {message ? <p role="status" className="rounded-lg border border-[color:var(--color-line)] p-3 text-ui-11">{message}</p> : null}
         {currency === 'BTC' && settings ? <details className="text-center text-ui-10 text-[color:var(--color-muted)]"><summary className="cursor-pointer">Network and privacy</summary><p className="mt-2">Bitcoin data service: {settings.esploraUrl}. {settings.privacyNotice}</p><button className="mt-2 underline" onClick={() => setPrefsOpen(true)}>Change service</button></details> : null}
       </div>
 
       {sendOpen ? <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 p-4"><div role="dialog" aria-modal="true" aria-labelledby="btc-send-title" className="w-full max-w-md rounded-2xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-5 shadow-2xl"><h2 id="btc-send-title" className="text-ui-16 font-semibold">Send Bitcoin</h2>{preview ? <><p className="mt-4 break-all font-mono text-ui-11">To: {preview.address}</p><p className="mt-3 text-ui-12">Amount: {preview.amountSats.toLocaleString()} sats</p><p className="mt-1 text-ui-12">Network fee: {preview.feeSats.toLocaleString()} sats</p><p className="mt-1 text-ui-12 font-semibold">Total: {preview.totalSats.toLocaleString()} sats</p><p className="mt-3 text-ui-10 text-[color:var(--color-muted)]">This transaction is irreversible. Review the address and amount carefully.</p></> : <div className="mt-4 space-y-3"><label className="block text-ui-11">Destination address<input autoFocus className="mt-1 w-full rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-panel)] p-3 font-mono text-ui-11" value={sendAddress} onChange={(event) => setSendAddress(event.target.value)} /></label><label className="block text-ui-11">Amount in BTC<input inputMode="decimal" className="mt-1 w-full rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-panel)] p-3 font-mono text-ui-11" value={sendAmount} onChange={(event) => setSendAmount(event.target.value)} /></label></div>}<div className="mt-5 flex justify-end gap-2"><button className="rounded-lg border border-[color:var(--color-line)] px-4 py-2 text-ui-11" onClick={() => { setSendOpen(false); setPreview(null) }}>Cancel</button>{preview ? <button disabled={busy} className="rounded-lg bg-[color:var(--color-danger)] px-4 py-2 text-ui-11 font-semibold text-white disabled:opacity-50" onClick={() => void confirm()}>Confirm and send</button> : <button disabled={busy || !sendAddress || !sendAmount} className="rounded-lg bg-[color:var(--color-accent)] px-4 py-2 text-ui-11 font-semibold text-white disabled:opacity-50" onClick={() => void prepare()}>Review fee</button>}</div></div></div> : null}
+
+      {lightningSendOpen ? <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 p-4"><div role="dialog" aria-modal="true" aria-labelledby="lightning-send-title" className="w-full max-w-md rounded-2xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-5 shadow-2xl"><h2 id="lightning-send-title" className="text-ui-16 font-semibold">Send Lightning</h2><label className="mt-4 block text-ui-11">Lightning invoice<input autoFocus className="mt-1 w-full rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-panel)] p-3 font-mono text-ui-10" value={lightningInvoice} onChange={(event) => setLightningInvoice(event.target.value)} placeholder="lnbc…" /></label><div className="mt-5 flex justify-end gap-2"><button className="rounded-lg border border-[color:var(--color-line)] px-4 py-2 text-ui-11" onClick={() => setLightningSendOpen(false)}>Cancel</button><button disabled={busy || !lightningInvoice.trim()} className="rounded-lg bg-[color:var(--color-danger)] px-4 py-2 text-ui-11 font-semibold text-white disabled:opacity-50" onClick={() => void payLightningInvoice().then(() => setLightningSendOpen(false))}>Review and pay</button></div></div></div> : null}
 
       {prefsOpen ? <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 p-4"><div role="dialog" aria-modal="true" className="w-full max-w-md rounded-2xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-5"><h2 className="text-ui-15 font-semibold">Bitcoin data service</h2><label className="mt-4 block text-ui-11">Esplora-compatible API<input className="mt-1 w-full rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-panel)] p-3 font-mono text-ui-10" value={endpoint} onChange={(event) => setEndpoint(event.target.value)} /></label><p className="mt-3 text-ui-10 text-[color:var(--color-muted)]">Public Esplora operators can associate your wallet address with your IP address. When Tor preference is enabled, NCC routes these requests through Tor.</p><div className="mt-4 flex justify-end gap-2"><button className="rounded-lg border border-[color:var(--color-line)] px-4 py-2 text-ui-11" onClick={() => setPrefsOpen(false)}>Cancel</button><button disabled={busy} className="rounded-lg bg-[color:var(--color-accent)] px-4 py-2 text-ui-11 text-white" onClick={() => void saveSettings()}>Save</button></div></div></div> : null}
     </section>

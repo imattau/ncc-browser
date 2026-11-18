@@ -1141,6 +1141,37 @@ fn write_wallet_record_file(path: &std::path::Path, ciphertext: &str) -> Result<
     std::fs::rename(temp, path).map_err(|error| error.to_string())
 }
 
+const NWC_CONNECTION_FILE: &str = "nwc-connection.json";
+
+#[tauri::command]
+#[cfg(target_os = "android")]
+fn wallet_nwc_load(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    use ncc_identity::KeyEnvelope;
+    let path = app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()).join(NWC_CONNECTION_FILE);
+    if !path.exists() { return Ok(None); }
+    let data: serde_json::Value = serde_json::from_slice(&std::fs::read(path).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
+    let ciphertext = data.get("ciphertext").and_then(|value| value.as_str()).ok_or_else(|| "Stored NWC connection is invalid".to_string())?;
+    ncc_identity::device::DeviceEnvelope.open(ciphertext).map(Some).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+#[cfg(target_os = "android")]
+fn wallet_nwc_save(app: tauri::AppHandle, uri: String) -> Result<(), String> {
+    use ncc_identity::KeyEnvelope;
+    if uri.len() > 4096 || !uri.starts_with("nostr+walletconnect://") { return Err("Invalid NWC connection URI".into()); }
+    let sealed = ncc_identity::device::DeviceEnvelope.seal(&uri).map_err(|error| error.to_string())?;
+    let path = app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()).join(NWC_CONNECTION_FILE);
+    write_wallet_record_file(&path, &sealed)
+}
+
+#[tauri::command]
+#[cfg(target_os = "android")]
+fn wallet_nwc_delete(app: tauri::AppHandle) -> Result<(), String> {
+    let path = app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir()).join(NWC_CONNECTION_FILE);
+    if path.exists() { std::fs::remove_file(path).map_err(|error| error.to_string())?; }
+    Ok(())
+}
+
 /// How the secret is sealed. On Android the keystore holds the wrapping key, so no
 /// passphrase is involved; the passphrase envelope is only used elsewhere, and to
 /// migrate a file written before the keystore existed.
@@ -1466,6 +1497,12 @@ pub fn run() {
             bitcoin_sign_psbt,
             bitcoin_public_key,
             wallet_http,
+            #[cfg(target_os = "android")]
+            wallet_nwc_load,
+            #[cfg(target_os = "android")]
+            wallet_nwc_save,
+            #[cfg(target_os = "android")]
+            wallet_nwc_delete,
             wallet_monero_load,
             wallet_monero_save,
             wallet_monero_cache_load,

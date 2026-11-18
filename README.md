@@ -1,6 +1,6 @@
 # Nostr Navigator
 
-A desktop browser that resolves services by **Nostr identity instead of DNS**.
+A cross-platform browser for desktop and Android that resolves services by **Nostr identity instead of DNS**.
 
 Type `ncc://<npub>/<service>` and the browser fetches an NCC-05 locator (kind `30058`)
 from Nostr relays, verifies the signature and TTL, and renders whatever the owner is
@@ -23,8 +23,9 @@ Nostr APIs, and packaged Linux, macOS and Windows releases.
 > **Android is alpha.** There is an early Tauri build for Android, published to
 > Zapstore for testing. It resolves locators, serves pages through a loopback proxy
 > with `k` pinning, injects a NIP-07 shim, and supports local key and NIP-46 identity
-> profiles with signer approvals. Tabs and extensions remain limited. It is not a
-> daily driver. See
+> profiles with signer approvals. The wallet supports Bitcoin, Monero, and Lightning
+> through Nostr Wallet Connect, including approved in-page Lightning payments. Tabs
+> and extensions remain limited. It is not a daily driver. See
 > [`docs/android.md`](./docs/android.md).
 
 ![Start screen](./docs/welcome.png)

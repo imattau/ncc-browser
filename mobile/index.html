@@ -278,7 +278,7 @@
           </button>
           <button class="row" type="button" data-panel="wallet">
             <span class="row-icon"><svg class="i"><use href="#i-wallet" /></svg></span>
-            <span class="row-text"><b>Wallet</b><small>Bitcoin and Monero</small></span>
+            <span class="row-text"><b>Wallet</b><small>Bitcoin, Monero and Lightning</small></span>
             <svg class="i chev"><use href="#i-chevron" /></svg>
           </button>
           <button class="row" type="button" data-panel="sync">
@@ -527,8 +527,9 @@
       </header>
       <div class="body wallet-body">
         <div class="wallet-currencies" role="tablist" aria-label="Wallet currency">
-          <button class="wallet-currency selected" type="button" data-currency="BTC">Bitcoin</button>
-          <button class="wallet-currency" type="button" data-currency="XMR">Monero</button>
+          <button class="wallet-currency selected" type="button" data-currency="BTC" aria-label="Bitcoin" title="Bitcoin" aria-pressed="true"><span aria-hidden="true" class="currency-icon bitcoin-icon">₿</span></button>
+          <button class="wallet-currency" type="button" data-currency="XMR" aria-label="Monero" title="Monero" aria-pressed="false"><span aria-hidden="true" class="currency-icon monero-icon">M</span></button>
+          <button class="wallet-currency" type="button" data-currency="LN" aria-label="Lightning" title="Lightning" aria-pressed="false"><span aria-hidden="true" class="currency-icon lightning-icon">⚡</span></button>
         </div>
         <p id="wallet-note" class="status" role="status"></p>
         <button id="wallet-open-identity" class="btn tonal" type="button" data-panel="identity" hidden>Set up or unlock identity</button>
@@ -565,6 +566,32 @@
               <button id="wallet-send-confirm" class="btn danger" type="button" hidden>Confirm and send</button>
             </div>
           </section>
+        </section>
+        <section id="wallet-lightning" hidden>
+          <article id="wallet-nwc-connected" class="wallet-card wallet-balance-card" hidden>
+            <strong id="wallet-nwc-balance">— sats</strong>
+            <small id="wallet-nwc-status" class="hint">Lightning wallet</small>
+            <div class="wallet-actions wallet-actions-centered">
+              <button id="wallet-nwc-open-send" class="btn wallet-send-pill" type="button">Send</button>
+              <button id="wallet-nwc-receive" class="btn wallet-send-pill" type="button">Receive</button>
+            </div>
+            <div id="wallet-nwc-receive-view" class="wallet-receive" hidden>
+              <img id="wallet-nwc-qr" alt="Lightning invoice QR code" hidden />
+              <button id="wallet-nwc-created" class="wallet-address-pill" type="button"></button>
+            </div>
+          </article>
+          <details id="wallet-nwc-connect-card" class="wallet-settings" hidden>
+            <summary>Connect a Lightning wallet</summary>
+            <p class="hint">Connect with a Nostr Wallet Connect URI.</p>
+            <label>NWC connection URI<input id="wallet-nwc-uri" type="password" autocomplete="off" placeholder="nostr+walletconnect://…" /></label>
+            <button id="wallet-nwc-connect" class="btn tonal" type="button">Connect</button>
+          </details>
+          <section id="wallet-nwc-send" class="wallet-card" hidden>
+            <h3>Send Lightning</h3>
+            <label>Lightning invoice<input id="wallet-nwc-invoice" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="lnbc…" /></label>
+            <div class="wallet-actions"><button id="wallet-nwc-cancel-send" class="btn tonal" type="button">Cancel</button><button id="wallet-nwc-pay" class="btn danger" type="button">Review and pay</button></div>
+          </section>
+          <details id="wallet-nwc-settings" class="wallet-settings" hidden><summary>Lightning wallet connection</summary><p id="wallet-nwc-status-detail" class="hint"></p><button id="wallet-nwc-disconnect" class="btn tonal" type="button">Disconnect</button></details>
         </section>
         <section id="wallet-monero" hidden>
           <article class="wallet-card wallet-monero-card">
@@ -935,7 +962,7 @@
             <svg class="i"><use href="#i-key" /></svg><span class="row-text"><b>Passwords</b></span>
           </button>
           <button id="menu-wallet" class="row" type="button">
-            <svg class="i"><use href="#i-wallet" /></svg><span class="row-text"><b>Wallet</b><small>Bitcoin and Monero</small></span>
+            <svg class="i"><use href="#i-wallet" /></svg><span class="row-text"><b>Wallet</b><small>Bitcoin, Monero and Lightning</small></span>
           </button>
           <button id="menu-find" class="row" type="button">
             <svg class="i"><use href="#i-search" /></svg><span class="row-text"><b>Find in page</b></span>

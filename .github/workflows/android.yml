@@ -1,8 +1,8 @@
 name: Android
 
-# Deliberately separate from `release.yml` until the Android build is a supported
-# artifact: a desktop release tag must not be able to fail on an unfinished mobile
-# job. Once M3 lands, fold this into `release.yml` so one tag ships every platform.
+# The supported version release is built by `release.yml`, which publishes Android
+# and desktop artifacts together. Keep this Android-only workflow for manual builds
+# and legacy `android-v*` tags.
 on:
   push:
     tags: ['android-v*']

@@ -49,7 +49,7 @@ import type {
   TorMode,
   TorStatus
 } from './types'
-import type { BitcoinSendPreview, MoneroWalletRecord, WalletSnapshot, WalletStatus } from './wallet'
+import type { BitcoinSendPreview, MoneroWalletRecord, NwcInvoiceLookup, NwcSnapshot, WalletSnapshot, WalletStatus } from './wallet'
 
 export interface SetRelaysResult {
   ok: boolean
@@ -176,6 +176,13 @@ export interface NccApi {
   walletLoadMoneroRecord(): Promise<MoneroWalletRecord | null>
   walletSaveMoneroRecord(record: MoneroWalletRecord): Promise<void>
   walletDeleteMoneroRecord(): Promise<void>
+  nwcStatus(): Promise<NwcSnapshot>
+  nwcConnect(uri: string): Promise<NwcSnapshot>
+  nwcDisconnect(): Promise<NwcSnapshot>
+  nwcRefresh(): Promise<NwcSnapshot>
+  nwcPay(invoice: string): Promise<{ preimage?: string; feesPaidMsat?: string }>
+  nwcMakeInvoice(params: { amount: number; description?: string; expiry?: number }): Promise<{ invoice: string; amountMsat: string; description?: string; expiry?: number }>
+  nwcLookupInvoice(params: { payment_hash?: string; invoice?: string }): Promise<NwcInvoiceLookup>
   onPasswordStatus(listener: (status: PasswordVaultStatus) => void): () => void
   onPasswordContext(listener: (context: PasswordContext) => void): () => void
   onPasswordSaveRequest(listener: (request: PasswordSaveRequest) => void): () => void

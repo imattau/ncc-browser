@@ -1,5 +1,12 @@
 # Nostr Navigator for Android
 
+## New in 0.33.23
+
+- Added a Lightning wallet tab with Nostr Wallet Connect, balance refresh, invoice
+  creation, and in-app payments. Pages can request Lightning payments through WebLN;
+  each payment requires user approval.
+- Bitcoin, Monero, and Lightning wallet tabs now use currency icons.
+
 ## Fixes in 0.33.20
 
 - The Monero wallet now shows Send, the QR code and address above the sync settings, matching
