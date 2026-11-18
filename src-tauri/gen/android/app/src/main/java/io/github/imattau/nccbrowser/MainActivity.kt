@@ -129,7 +129,7 @@ class MainActivity : TauriActivity() {
   private fun captureLink(intent: Intent?) {
     if (intent?.action != Intent.ACTION_VIEW) return
     val uri = intent.data ?: return
-    if (uri.scheme != "http" && uri.scheme != "https") return
+    if (uri.scheme?.lowercase() !in setOf("http", "https", "ncc", "nsite")) return
     pendingLink = uri.toString()
     // Handled: a later configuration change must not replay it.
     intent.data = null

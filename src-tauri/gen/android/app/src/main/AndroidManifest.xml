@@ -36,6 +36,14 @@
                 <data android:scheme="http" />
                 <data android:scheme="https" />
             </intent-filter>
+            <!-- NCC and nsite addresses open straight in the browser. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="ncc" />
+                <data android:scheme="nsite" />
+            </intent-filter>
         </activity>
 
         <provider

@@ -10,6 +10,7 @@
 - Monero shows its address and QR code before the first scan finishes.
 - Links opened from other apps (when NCC Browser is the default browser) now open in a new
   tab instead of just launching the app.
+- `ncc://` and `nsite://` links from other apps open in NCC Browser.
 - Restoring a Monero wallet explains that the restore height controls how long the first scan takes.
 
 ## Fixes in 0.33.17

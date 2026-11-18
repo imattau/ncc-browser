@@ -794,6 +794,8 @@ function openExternalLink() {
   if (!content || typeof content.takeLink !== 'function') return
   const link = content.takeLink()
   if (!link) return
+  // NCC and nsite addresses need the local proxy; navigate() resolves them.
+  if (/^(ncc|nsite):/i.test(link)) { void navigate(link, { newTab: true }); return }
   // Straight to a new tab: `tabs` may not have caught up with the restored ones yet.
   // Onion links still go through navigate() so they land in a Tor tab.
   if (/^https?:\/\/[^/?#]*\.onion(?:[:/?#]|$)/i.test(link)) void navigate(link, { newTab: true })
