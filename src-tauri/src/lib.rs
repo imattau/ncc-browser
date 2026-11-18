@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use base64::Engine as _;
 use tauri::{Emitter, Manager};
@@ -135,6 +135,66 @@ struct SignerState {
     proxy: Arc<ProxyState>,
     /// The session file for a remote signer, when one has been connected.
     sessions: ncc_proxy::bunker::Sessions,
+    remote_sessions_dir: std::path::PathBuf,
+    remote_profiles: Mutex<std::collections::HashMap<String, Arc<ncc_proxy::bunker::Bunker>>>,
+    profile_prefs: ProfilePrefs,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct IdentityProfileInfo {
+    id: String,
+    mode: String,
+    npub: Option<String>,
+    active: bool,
+    is_default: bool,
+    unlocked: bool,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct IdentityProfilesInfo {
+    identities: Vec<IdentityProfileInfo>,
+    active_id: Option<String>,
+    default_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+struct ProfilePrefsFile {
+    version: u32,
+    active_id: Option<String>,
+    default_id: Option<String>,
+    #[serde(default)]
+    remote_npubs: std::collections::HashMap<String, String>,
+}
+
+struct ProfilePrefs {
+    path: std::path::PathBuf,
+    value: Mutex<ProfilePrefsFile>,
+}
+
+impl ProfilePrefs {
+    fn open(path: std::path::PathBuf) -> Self {
+        let value = std::fs::read(&path).ok()
+            .and_then(|bytes| serde_json::from_slice::<ProfilePrefsFile>(&bytes).ok())
+            .filter(|value| value.version == 1).unwrap_or_default();
+        Self { path, value: Mutex::new(ProfilePrefsFile { version: 1, ..value }) }
+    }
+
+    fn snapshot(&self) -> ProfilePrefsFile { self.value.lock().expect("profile prefs").clone() }
+
+    fn update(&self, update: impl FnOnce(&mut ProfilePrefsFile)) -> Result<(), String> {
+        let mut value = self.value.lock().expect("profile prefs");
+        update(&mut value);
+        value.version = 1;
+        write_json_atomic(&self.path, &*value)
+    }
+}
+
+fn write_json_atomic(path: &std::path::Path, value: &impl serde::Serialize) -> Result<(), String> {
+    if let Some(parent) = path.parent() { std::fs::create_dir_all(parent).map_err(|e| e.to_string())?; }
+    let temp = path.with_extension("tmp");
+    let bytes = serde_json::to_vec_pretty(value).map_err(|e| e.to_string())?;
+    std::fs::write(&temp, bytes).map_err(|e| e.to_string())?;
+    std::fs::rename(temp, path).map_err(|e| e.to_string())
 }
 
 /// The loopback port the NCC proxy is listening on, once it started.
@@ -529,6 +589,62 @@ struct BunkerInfo {
     relays: Vec<String>,
 }
 
+fn bunker_profile_id(remote_pubkey: &str) -> String { format!("nip46:{remote_pubkey}") }
+fn local_profile_id(pubkey: &str) -> String { format!("local:{pubkey}") }
+fn remote_session_path(state: &SignerState, remote_pubkey: &str) -> Result<std::path::PathBuf, String> {
+    if remote_pubkey.len() != 64 || !remote_pubkey.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("Invalid remote signer profile key".into());
+    }
+    Ok(state.remote_sessions_dir.join(format!("{remote_pubkey}.json")))
+}
+
+fn identity_profiles_info(state: &SignerState) -> IdentityProfilesInfo {
+    let prefs = state.profile_prefs.snapshot();
+    let local_profiles = state.identity.profiles();
+    let mut identities: Vec<IdentityProfileInfo> = local_profiles.iter().map(|profile| IdentityProfileInfo {
+        id: local_profile_id(&profile.id), mode: "local".into(), npub: Some(profile.npub.clone()),
+        active: false, is_default: false, unlocked: profile.unlocked,
+    }).collect();
+
+    let mut remote_ids = std::collections::HashSet::new();
+    if let Ok(entries) = std::fs::read_dir(&state.remote_sessions_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|value| value.to_str()) != Some("json") { continue; }
+            let Some(remote_pubkey) = path.file_stem().and_then(|value| value.to_str()).filter(|value| value.len() == 64) else { continue };
+            remote_ids.insert(remote_pubkey.to_string());
+            let id = bunker_profile_id(remote_pubkey);
+            let live_npub = state.remote_profiles.lock().expect("remote profiles").get(remote_pubkey)
+                .and_then(|bunker| bunker.user_npub());
+            identities.push(IdentityProfileInfo { id, mode: "nip46".into(),
+                npub: live_npub.or_else(|| prefs.remote_npubs.get(remote_pubkey).cloned()),
+                active: false, is_default: false, unlocked: true });
+        }
+    }
+
+    if let Some((target, _client)) = state.sessions.load(envelope(None).as_ref()) {
+        if remote_ids.insert(target.remote_pubkey.clone()) {
+            let remote_pubkey = target.remote_pubkey;
+            identities.push(IdentityProfileInfo { id: bunker_profile_id(&remote_pubkey), mode: "nip46".into(),
+                npub: prefs.remote_npubs.get(&remote_pubkey).cloned(), active: false, is_default: false, unlocked: true });
+        }
+    }
+
+    let mut active_id = prefs.active_id.clone();
+    if active_id.is_none() {
+        active_id = state.proxy.remote().map(|bunker| bunker_profile_id(&bunker.target().remote_pubkey))
+            .or_else(|| local_profiles.iter().find(|profile| profile.active).map(|profile| local_profile_id(&profile.id)));
+    }
+    let default_id = prefs.default_id.clone().or_else(|| active_id.clone())
+        .or_else(|| local_profiles.iter().find(|profile| profile.default).map(|profile| local_profile_id(&profile.id)));
+    for profile in &mut identities {
+        profile.active = active_id.as_deref() == Some(&profile.id);
+        profile.is_default = default_id.as_deref() == Some(&profile.id);
+    }
+    identities.sort_by(|a, b| b.is_default.cmp(&a.is_default).then_with(|| a.id.cmp(&b.id)));
+    IdentityProfilesInfo { identities, active_id, default_id }
+}
+
 fn bunker_info(remote: Option<&ncc_proxy::bunker::Bunker>) -> BunkerInfo {
     let Some(bunker) = remote else {
         return BunkerInfo {
@@ -555,13 +671,23 @@ async fn bunker_connect(
     state: tauri::State<'_, SignerState>,
     url: String,
 ) -> Result<BunkerInfo, String> {
+    let prior_default = identity_profiles_info(&state).default_id;
     let target = ncc_proxy::bunker::parse_bunker(&url)?;
+    let remote_id = target.remote_pubkey.clone();
     let bunker = Arc::new(ncc_proxy::bunker::Bunker::generate(target));
 
     bunker.connect().await?;
 
     let envelope = envelope(None);
-    state.sessions.save_for(&bunker, envelope.as_ref())?;
+    let session_path = remote_session_path(&state, &remote_id)?;
+    ncc_proxy::bunker::Sessions::open(session_path).save_for(&bunker, envelope.as_ref())?;
+    let user_npub = bunker.user_npub().ok_or_else(|| "The remote signer did not return an npub".to_string())?;
+    state.remote_profiles.lock().expect("remote profiles").insert(remote_id.clone(), bunker.clone());
+    state.profile_prefs.update(|prefs| {
+        prefs.active_id = Some(bunker_profile_id(&remote_id));
+        if prefs.default_id.is_none() { prefs.default_id = prior_default.clone().or_else(|| prefs.active_id.clone()); }
+        prefs.remote_npubs.insert(remote_id, user_npub);
+    })?;
 
     state.proxy.set_remote(Some(bunker));
     Ok(bunker_info(state.proxy.remote().as_deref()))
@@ -572,11 +698,17 @@ async fn bunker_connect(
 #[tauri::command]
 fn bunker_status(state: tauri::State<'_, SignerState>) -> BunkerInfo {
     if state.proxy.remote().is_none() {
-        let envelope = envelope(None);
-        if let Some((target, client)) = state.sessions.load(envelope.as_ref()) {
-            state
-                .proxy
-                .set_remote(Some(Arc::new(ncc_proxy::bunker::Bunker::new(target, client))));
+        let prefs = state.profile_prefs.snapshot();
+        let active_remote = prefs.active_id.as_deref().and_then(|id| id.strip_prefix("nip46:"));
+        let saved = active_remote.and_then(|id| remote_session_path(&state, id).ok())
+            .filter(|path| path.exists())
+            .and_then(|path| ncc_proxy::bunker::Sessions::open(path).load(envelope(None).as_ref()));
+        let legacy = if prefs.active_id.is_none() { state.sessions.load(envelope(None).as_ref()) } else { None };
+        if let Some((target, client)) = saved.or(legacy) {
+            let remote_id = target.remote_pubkey.clone();
+            let bunker = Arc::new(ncc_proxy::bunker::Bunker::new(target, client));
+            state.remote_profiles.lock().expect("remote profiles").insert(remote_id, bunker.clone());
+            state.proxy.set_remote(Some(bunker));
         }
     }
 
@@ -585,12 +717,31 @@ fn bunker_status(state: tauri::State<'_, SignerState>) -> BunkerInfo {
 
 #[tauri::command]
 async fn bunker_disconnect(state: tauri::State<'_, SignerState>) -> Result<BunkerInfo, String> {
+    let mut removed_id = None;
     if let Some(bunker) = state.proxy.remote() {
         // A courtesy: the session is forgotten here either way.
         let _ = bunker.logout().await;
+        removed_id = Some(bunker.target().remote_pubkey);
     }
 
-    state.sessions.forget();
+    if let Some(remote_id) = removed_id {
+        if let Ok(path) = remote_session_path(&state, &remote_id) { let _ = std::fs::remove_file(path); }
+        state.remote_profiles.lock().expect("remote profiles").remove(&remote_id);
+        if state.sessions.load(envelope(None).as_ref()).map(|(target, _)| target.remote_pubkey) == Some(remote_id.clone()) {
+            state.sessions.forget();
+        }
+        let fallback = {
+            let prefs = state.profile_prefs.snapshot();
+            prefs.default_id.filter(|id| id != &bunker_profile_id(&remote_id))
+                .or_else(|| state.identity.profiles().first().map(|profile| local_profile_id(&profile.id)))
+        };
+        state.profile_prefs.update(|prefs| {
+            prefs.remote_npubs.remove(&remote_id);
+            prefs.active_id = fallback.clone();
+            if prefs.default_id.as_deref() == Some(&bunker_profile_id(&remote_id)) { prefs.default_id = fallback.clone(); }
+        })?;
+        if let Some(id) = fallback { let _ = activate_identity(&state, &id).await; }
+    }
     state.proxy.set_remote(None);
     Ok(bunker_info(None))
 }
@@ -622,6 +773,126 @@ fn settings_set_keep_unlocked(
 #[tauri::command]
 fn identity_status(state: tauri::State<'_, SignerState>) -> Status {
     state.identity.status()
+}
+
+#[tauri::command]
+fn identity_profiles(state: tauri::State<'_, SignerState>) -> IdentityProfilesInfo {
+    identity_profiles_info(&state)
+}
+
+#[tauri::command]
+fn identity_create_profile(state: tauri::State<'_, SignerState>) -> Result<Status, String> {
+    let prior_default = state.identity.profiles().into_iter().find(|profile| profile.default)
+        .map(|profile| local_profile_id(&profile.id));
+    let envelope = envelope(None);
+    state.identity.create_profile(envelope.as_ref()).map_err(|error| error.to_string())?;
+    let id = state.identity.profiles().into_iter().find(|profile| profile.active)
+        .map(|profile| profile.id).ok_or_else(|| "Could not read the new identity".to_string())?;
+    state.proxy.set_remote(None);
+    state.profile_prefs.update(|prefs| {
+        prefs.active_id = Some(local_profile_id(&id));
+        if prefs.default_id.is_none() { prefs.default_id = prior_default.clone().or_else(|| prefs.active_id.clone()); }
+    })?;
+    Ok(state.identity.status())
+}
+
+#[tauri::command]
+fn identity_import_profile(state: tauri::State<'_, SignerState>, secret: String) -> Result<Status, String> {
+    let prior_default = state.identity.profiles().into_iter().find(|profile| profile.default)
+        .map(|profile| local_profile_id(&profile.id));
+    let envelope = envelope(None);
+    state.identity.import_profile(envelope.as_ref(), &secret).map_err(|error| error.to_string())?;
+    let id = state.identity.profiles().into_iter().find(|profile| profile.active)
+        .map(|profile| profile.id).ok_or_else(|| "Could not read the imported identity".to_string())?;
+    state.proxy.set_remote(None);
+    state.profile_prefs.update(|prefs| {
+        prefs.active_id = Some(local_profile_id(&id));
+        if prefs.default_id.is_none() { prefs.default_id = prior_default.clone().or_else(|| prefs.active_id.clone()); }
+    })?;
+    Ok(state.identity.status())
+}
+
+#[tauri::command]
+async fn identity_select(state: tauri::State<'_, SignerState>, id: String) -> Result<IdentityProfilesInfo, String> {
+    activate_identity(&state, &id).await?;
+    Ok(identity_profiles_info(&state))
+}
+
+async fn activate_identity(state: &SignerState, id: &str) -> Result<(), String> {
+    if let Some(local_id) = id.strip_prefix("local:") {
+        let _ = state.identity.select_profile(local_id).map_err(|error| error.to_string())?;
+        let device_envelope = envelope(None);
+        if let Err(error) = state.identity.unlock(device_envelope.as_ref()) {
+            if !matches!(&error, ncc_identity::IdentityError::PassphraseRequired) {
+                return Err(error.to_string());
+            }
+        }
+        state.proxy.set_remote(None);
+    } else if let Some(remote_id) = id.strip_prefix("nip46:") {
+        let path = remote_session_path(&state, remote_id)?;
+        let loaded = if path.exists() {
+            ncc_proxy::bunker::Sessions::open(path).load(envelope(None).as_ref())
+        } else {
+            state.sessions.load(envelope(None).as_ref()).filter(|(target, _)| target.remote_pubkey == remote_id)
+        }.ok_or_else(|| "That remote signer session is no longer available".to_string())?;
+        let bunker = Arc::new(ncc_proxy::bunker::Bunker::new(loaded.0, loaded.1));
+        let user_key = bunker.ensure_user().await?;
+        let npub = bunker.user_npub().ok_or_else(|| format!("The signer returned no npub for {user_key}"))?;
+        state.remote_profiles.lock().expect("remote profiles").insert(remote_id.to_string(), bunker.clone());
+        state.proxy.set_remote(Some(bunker));
+        state.profile_prefs.update(|prefs| {
+            prefs.active_id = Some(id.to_string());
+            prefs.remote_npubs.insert(remote_id.to_string(), npub);
+        })?;
+    } else {
+        return Err("Unknown identity profile".into());
+    }
+    state.profile_prefs.update(|prefs| { prefs.active_id = Some(id.to_string()); })?;
+    Ok(())
+}
+
+#[tauri::command]
+fn identity_set_default(state: tauri::State<'_, SignerState>, id: String) -> Result<IdentityProfilesInfo, String> {
+    if let Some(local_id) = id.strip_prefix("local:") {
+        state.identity.set_default_profile(local_id).map_err(|error| error.to_string())?;
+    } else if !id.starts_with("nip46:") {
+        return Err("Unknown identity profile".into());
+    }
+    if !identity_profiles_info(&state).identities.iter().any(|profile| profile.id == id) {
+        return Err("That identity profile is not available".into());
+    }
+    state.profile_prefs.update(|prefs| { prefs.default_id = Some(id); })?;
+    Ok(identity_profiles_info(&state))
+}
+
+#[tauri::command]
+async fn identity_remove_profile(state: tauri::State<'_, SignerState>, id: String) -> Result<IdentityProfilesInfo, String> {
+    if let Some(local_id) = id.strip_prefix("local:") {
+        state.identity.remove_profile(local_id).map_err(|error| error.to_string())?;
+    } else if let Some(remote_id) = id.strip_prefix("nip46:") {
+        let path = remote_session_path(&state, remote_id)?;
+        if path.exists() { std::fs::remove_file(path).map_err(|error| error.to_string())?; }
+        let remote = { state.remote_profiles.lock().expect("remote profiles").remove(remote_id) };
+        if let Some(remote) = remote {
+            let _ = remote.logout().await;
+        }
+        if state.sessions.load(envelope(None).as_ref()).map(|(target, _)| target.remote_pubkey) == Some(remote_id.to_string()) {
+            state.sessions.forget();
+        }
+    } else { return Err("Unknown identity profile".into()); }
+
+    let next = identity_profiles_info(&state);
+    let fallback = next.identities.iter().find(|profile| profile.is_default && profile.id != id)
+        .map(|profile| profile.id.clone())
+        .or_else(|| next.identities.iter().find(|profile| profile.id != id).map(|profile| profile.id.clone()));
+    state.profile_prefs.update(|prefs| {
+        if prefs.active_id.as_deref() == Some(&id) { prefs.active_id = fallback.clone(); }
+        if prefs.default_id.as_deref() == Some(&id) { prefs.default_id = fallback.clone(); }
+        if let Some(remote_id) = id.strip_prefix("nip46:") { prefs.remote_npubs.remove(remote_id); }
+    })?;
+    if let Some(active) = fallback { activate_identity(&state, &active).await?; }
+    else { state.proxy.set_remote(None); }
+    Ok(identity_profiles_info(&state))
 }
 
 /// PSBT signing is exposed only to the browser chrome. The page's separate WebView
@@ -1186,6 +1457,12 @@ pub fn run() {
             bunker_status,
             bunker_disconnect,
             identity_status,
+            identity_profiles,
+            identity_select,
+            identity_set_default,
+            identity_remove_profile,
+            identity_create_profile,
+            identity_import_profile,
             bitcoin_sign_psbt,
             bitcoin_public_key,
             wallet_http,
@@ -1230,6 +1507,8 @@ pub fn run() {
                 .app_data_dir()
                 .unwrap_or_else(|_| std::env::temp_dir());
             let identity = Arc::new(IdentityStore::open(data_dir.join("identity.json")));
+            let remote_sessions_dir = data_dir.join("nip46-profiles");
+            let profile_prefs = ProfilePrefs::open(data_dir.join("identity-profile-preferences.json"));
 
             let handle = app.handle().clone();
             let approvals = Arc::new(Approvals::new(move |request: ApprovalRequest| {
@@ -1382,6 +1661,9 @@ pub fn run() {
                 approvals,
                 proxy,
                 sessions: ncc_proxy::bunker::Sessions::open(data_dir.join("nip46-session.json")),
+                remote_sessions_dir,
+                remote_profiles: Mutex::new(std::collections::HashMap::new()),
+                profile_prefs,
             });
 
             Ok(())

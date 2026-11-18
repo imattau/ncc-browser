@@ -397,6 +397,25 @@ export function registerIpc(deps: IpcDeps): void {
   })
 
   ipcMain.handle('ncc:identity-status', () => deps.identity.status())
+  ipcMain.handle('ncc:identity-list', () => deps.identity.list())
+  ipcMain.handle('ncc:identity-select', async (event, id: unknown) => {
+    if (!fromChrome(event)) throw new Error('Not allowed')
+    const status = await deps.identity.select(String(id ?? ''))
+    deps.passwords.onIdentityChanged()
+    resetCaches(deps)
+    return status
+  })
+  ipcMain.handle('ncc:identity-default', (event, id: unknown) => {
+    if (!fromChrome(event)) throw new Error('Not allowed')
+    return deps.identity.setDefault(String(id ?? ''))
+  })
+  ipcMain.handle('ncc:identity-remove-profile', async (event, id: unknown) => {
+    if (!fromChrome(event)) throw new Error('Not allowed')
+    const status = await deps.identity.remove(String(id ?? ''))
+    deps.passwords.onIdentityChanged()
+    resetCaches(deps)
+    return status
+  })
   ipcMain.handle('ncc:share-nostr', async (event, rawComment: unknown) => {
     if (!fromChrome(event)) throw new Error('Not allowed')
     const page = deps.shell.getActivePage()

@@ -116,6 +116,7 @@ let pendingFocus = null
 let findOpen = false
 let findTimer = null
 let identity = null
+let identityProfiles = null
 
 /** Loading progress per tab id, 0–100. Absent means idle. */
 const progressByTab = {}
@@ -3853,6 +3854,79 @@ function applyBarPosition(position) {
 
 /* ───────────────────────────── Identity and signer ───────────────────────────── */
 
+function renderIdentityProfiles(result) {
+  identityProfiles = result
+  const list = byId('identity-profiles')
+  if (!list) return
+  list.replaceChildren()
+  const profiles = result?.identities ?? []
+  if (!profiles.length) {
+    const empty = document.createElement('p')
+    empty.className = 'hint'
+    empty.textContent = 'No saved identities yet. Create or import a local key, or connect a remote signer below.'
+    list.append(empty)
+    return
+  }
+  for (const profile of profiles) {
+    const row = document.createElement('article')
+    row.className = 'identity-profile'
+    const title = document.createElement('div')
+    title.className = 'identity-profile-title'
+    title.textContent = profile.npub || (profile.mode === 'nip46' ? 'Remote signer' : profile.id.replace(/^local:/, ''))
+    const detail = document.createElement('div')
+    detail.className = 'identity-profile-detail'
+    detail.textContent = [profile.mode === 'nip46' ? 'NIP-46 remote signer' : 'Local key', profile.active ? 'Active' : '', profile.is_default ? 'Default' : '', profile.mode === 'local' ? (profile.unlocked ? 'Unlocked' : 'Locked') : ''].filter(Boolean).join(' · ')
+    row.append(title, detail)
+    const actions = document.createElement('div')
+    actions.className = 'identity-profile-actions'
+    if (!profile.active) {
+      const use = document.createElement('button')
+      use.type = 'button'
+      use.textContent = 'Use'
+      use.addEventListener('click', async () => {
+        try {
+          await invoke('identity_select', { id: profile.id })
+          await refreshIdentity()
+          await refreshBunker()
+          await refreshIdentityProfiles()
+        } catch (error) { identityFailure(error) }
+      })
+      actions.append(use)
+    }
+    if (!profile.is_default) {
+      const makeDefault = document.createElement('button')
+      makeDefault.type = 'button'
+      makeDefault.textContent = 'Make default'
+      makeDefault.addEventListener('click', async () => {
+        try { renderIdentityProfiles(await invoke('identity_set_default', { id: profile.id })) }
+        catch (error) { identityFailure(error) }
+      })
+      actions.append(makeDefault)
+    }
+    const remove = document.createElement('button')
+    remove.type = 'button'
+    remove.className = 'danger'
+    remove.textContent = 'Remove'
+    remove.addEventListener('click', async () => {
+      if (!confirm('Remove this identity from Nostr Navigator?')) return
+      try {
+        await invoke('identity_remove_profile', { id: profile.id })
+        await refreshIdentity()
+        await refreshBunker()
+        await refreshIdentityProfiles()
+      } catch (error) { identityFailure(error) }
+    })
+    actions.append(remove)
+    row.append(actions)
+    list.append(row)
+  }
+}
+
+async function refreshIdentityProfiles() {
+  try { renderIdentityProfiles(await invoke('identity_profiles')) }
+  catch (error) { identityFailure(error) }
+}
+
 function renderIdentity(status) {
   identity = status
   const state = byId('identity-state')
@@ -3883,7 +3957,8 @@ function renderIdentity(status) {
       : 'Your key is wrapped by the device keystore; there is no passphrase to remember.'
   )
 
-  byId('identity-setup').hidden = status.initialised
+  // Keep the add-key controls visible so more than one local key can be saved.
+  byId('identity-setup').hidden = false
   byId('identity-locked').hidden = !status.initialised || status.unlocked
   byId('identity-lock').hidden = !status.unlocked
 
@@ -3914,6 +3989,7 @@ async function refreshBunker() {
       state.textContent = 'None. The identity above signs on this device.'
       byId('bunker-disconnect').hidden = true
     }
+    await refreshIdentityProfiles()
   } catch (error) {
     state.textContent = `Could not read the remote signer: ${error}`
   }
@@ -3922,6 +3998,7 @@ async function refreshBunker() {
 async function refreshIdentity() {
   try {
     renderIdentity(await invoke('identity_status'))
+    await refreshIdentityProfiles()
   } catch (error) {
     byId('identity-state').textContent = `Identity unavailable: ${error}`
   }
@@ -3934,8 +4011,9 @@ function identityFailure(error) {
 async function setupIdentity(tauri) {
   byId('identity-create').addEventListener('click', async () => {
     try {
-      renderIdentity(await invoke('identity_create'))
+      renderIdentity(await invoke('identity_create_profile'))
       byId('identity-error').textContent = ''
+      await refreshIdentityProfiles()
     } catch (error) {
       identityFailure(error)
     }
@@ -3948,8 +4026,9 @@ async function setupIdentity(tauri) {
       return
     }
     try {
-      renderIdentity(await invoke('identity_import', { secret }))
+      renderIdentity(await invoke('identity_import_profile', { secret }))
       byId('identity-error').textContent = ''
+      await refreshIdentityProfiles()
     } catch (error) {
       identityFailure(error)
     }

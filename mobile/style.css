@@ -588,6 +588,53 @@ body[data-bar='top'] #progress {
   color: var(--muted);
 }
 
+.identity-profile-list {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 18px;
+}
+
+.identity-profile {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-2);
+}
+
+.identity-profile-title {
+  overflow-wrap: anywhere;
+  font-size: calc(13px * var(--text-scale));
+  font-weight: 600;
+}
+
+.identity-profile-detail {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: calc(12px * var(--text-scale));
+}
+
+.identity-profile-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.identity-profile-actions button {
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--text);
+  background: var(--surface);
+  font-size: calc(12px * var(--text-scale));
+}
+
+.identity-profile-actions button.danger {
+  color: var(--danger);
+}
+
 /* Forms */
 
 .field {

@@ -35,12 +35,12 @@ export class WalletService {
     let address: string | null = null
     if (local) {
       try {
-        const secret = this.localIdentity.getSecret()
+        const secret = this.identity.activeLocalSecret()
         if (secret) address = this.bitcoin.address(secret)
       } catch { /* Identity is currently locked. */ }
     }
     return {
-      identityReady: local && this.localIdentity.getSecret() !== null,
+      identityReady: local && this.identity.activeLocalSecret() !== null,
       bitcoinAvailable: Boolean(address),
       moneroConfigured: false,
       moneroSyncChoice: null,
@@ -156,7 +156,7 @@ export class WalletService {
 
   private requireLocalSecret(): Uint8Array {
     const status = this.identity.status()
-    const secret = status.mode === 'local' && status.configured ? this.localIdentity.getSecret() : null
+    const secret = status.mode === 'local' && status.configured ? this.identity.activeLocalSecret() : null
     if (!secret) throw new Error('Unlock a local Nostr identity to use the Bitcoin wallet')
     return new Uint8Array(secret)
   }

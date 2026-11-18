@@ -22,8 +22,9 @@ Nostr APIs, and packaged Linux, macOS and Windows releases.
 
 > **Android is alpha.** There is an early Tauri build for Android, published to
 > Zapstore for testing. It resolves locators, serves pages through a loopback proxy
-> with `k` pinning and injects a NIP-07 shim, but it has no identity, no signer
-> approvals, no tabs and no extensions yet. It is not a daily driver. See
+> with `k` pinning, injects a NIP-07 shim, and supports local key and NIP-46 identity
+> profiles with signer approvals. Tabs and extensions remain limited. It is not a
+> daily driver. See
 > [`docs/android.md`](./docs/android.md).
 
 ![Start screen](./docs/welcome.png)
@@ -727,8 +728,12 @@ tell the difference.
 The toolbar has a key icon for the current identity (accent when configured, with a
 pending dot when a request is waiting). Clicking it opens the **Identity & signer** page.
 
-Settings → Identity & signer imports an `nsec` (or 64-char hex), generates a new
-identity, shows the npub, and removes it.
+Settings → Identity & signer keeps a list of local keys and NIP-46 connections. Choose
+which identity new NIP-07 requests use, mark a default identity to keep it first in the
+list and use it when no saved active choice is available, and add or remove identities.
+Local keys and remote sessions are stored separately and encrypted with `safeStorage`
+when the OS keychain is available. Existing single-key and bunker-session files remain
+usable and are included in the list automatically.
 
 ![In-app signer approval](./docs/approval.png)
 
@@ -746,7 +751,8 @@ Nostr Connect, nsec.app, …). The flow is:
 3. Every NIP-07 call becomes a `kind 24133` request to the signer. The browser still shows
    its own per-service approval first, so the user sees *which service* is asking; the
    device then confirms the signature.
-4. Disconnecting removes the session and falls back to any saved local key.
+4. Each remote connection appears as its own identity. Removing one disconnects it and
+   selects the default identity if the removed connection was active.
 
 Targeted NCC-05 locators work too: the browser calls the signer's `nip44_decrypt` with
 the publisher's pubkey instead of deriving a conversation key, so the identity key never

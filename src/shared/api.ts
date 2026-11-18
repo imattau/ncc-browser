@@ -19,6 +19,7 @@ import type {
   Bookmark,
   DownloadNotice,
   IdentityStatus,
+  IdentityList,
   NavState,
   OmniboxSuggestion,
   OverlayReason,
@@ -201,6 +202,10 @@ export interface NccApi {
   torTest(): Promise<TorStatus>
   torRestart(): Promise<TorStatus>
   identity(): Promise<IdentityStatus>
+  identityList(): Promise<IdentityList>
+  identitySelect(id: string): Promise<IdentityStatus>
+  identitySetDefault(id: string): Promise<IdentityList>
+  identityRemove(id: string): Promise<IdentityStatus>
   shareNostr(comment: string): Promise<{ accepted: number; relays: number; error?: string }>
   importIdentity(secret: string): Promise<IdentityStatus>
   generateIdentity(): Promise<IdentityStatus>

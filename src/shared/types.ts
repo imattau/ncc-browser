@@ -704,6 +704,23 @@ export interface IdentityStatus {
   connected?: boolean
 }
 
+export interface IdentityProfile {
+  id: string
+  mode: 'local' | 'nip46'
+  npub?: string
+  hexPubkey: string
+  active: boolean
+  isDefault: boolean
+  persisted: boolean
+  connected?: boolean
+}
+
+export interface IdentityList {
+  identities: IdentityProfile[]
+  activeId: string | null
+  defaultId: string | null
+}
+
 export interface SignerPermission {
   /** `ncc://<npub>` or a web origin. */
   origin: string

@@ -194,6 +194,15 @@ app.whenReady().then(async () => {
     local: localIdentity,
     sessions,
     encryptionAvailable,
+    profilesPath: join(app.getPath('userData'), 'identity-profiles.json'),
+    localFactory: (id) => IdentityStore.open({
+      filePath: join(app.getPath('userData'), 'identity-profiles', `local-${id}.json`),
+      codec: identityCodec
+    }),
+    sessionFactory: (id) => new Nip46SessionStore(
+      join(app.getPath('userData'), 'identity-profiles', `nip46-${id}.json`),
+      identityCodec
+    ),
     timeoutMs: Number(process.env.NCC_NIP46_TIMEOUT_MS) || 60_000,
     resolveRelayLocator: async (input) => {
       const outcome = await relayLocator.resolve(input)

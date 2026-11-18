@@ -3,6 +3,13 @@
 **Alpha.** An early build published so the browser can be tested on a real device. It
 is not a daily driver.
 
+## New in 0.33.14
+
+- Manage multiple Nostr identities from Settings → Identity. Add local keys or NIP-46
+  connections, switch the active signer for new NIP-07 requests, and choose a default
+  identity that stays first in the list. The active choice is remembered across app
+  launches.
+
 ## Fixes in 0.33.13
 
 - Keep the Bitcoin wallet screen within the Android viewport after its receive QR loads.

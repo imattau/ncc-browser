@@ -208,18 +208,55 @@ pub struct Status {
     pub envelope: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ProfileStatus {
+    pub id: String,
+    pub npub: String,
+    pub active: bool,
+    pub default: bool,
+    pub unlocked: bool,
+    pub envelope: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ProfileIndex {
+    version: u32,
+    ids: Vec<String>,
+    active_id: Option<String>,
+    default_id: Option<String>,
+}
+
 pub struct IdentityStore {
     /// `None` for a session key: it exists in memory only, which is what a private tab
     /// signs with. Nothing is written, so there is nothing to leave behind.
     path: Option<PathBuf>,
     keys: Mutex<Option<Keys>>,
+    active_id: Mutex<Option<String>>,
+    default_id: Mutex<Option<String>>,
+    profile_ids: Mutex<Vec<String>>,
 }
 
 impl IdentityStore {
     pub fn open(path: impl Into<PathBuf>) -> Self {
+        let path = path.into();
+        let root_id = identity_id(&path);
+        let index_path = profile_index_path(&path);
+        let saved = fs::read(&index_path).ok()
+            .and_then(|bytes| serde_json::from_slice::<ProfileIndex>(&bytes).ok())
+            .filter(|index| index.version == 1);
+        let mut ids = saved.as_ref().map(|index| index.ids.clone()).unwrap_or_default();
+        if let Some(id) = root_id.as_ref() { if !ids.contains(id) { ids.push(id.clone()); } }
+        ids.retain(|id| valid_profile_id(id) && profile_path_for(&path, id).exists());
+        let active = saved.as_ref().and_then(|index| index.active_id.clone())
+            .filter(|id| ids.contains(id)).or_else(|| root_id.clone()).or_else(|| ids.first().cloned());
+        let default = saved.as_ref().and_then(|index| index.default_id.clone())
+            .filter(|id| ids.contains(id)).or_else(|| active.clone());
         Self {
-            path: Some(path.into()),
+            path: Some(path),
             keys: Mutex::new(None),
+            active_id: Mutex::new(active),
+            default_id: Mutex::new(default),
+            profile_ids: Mutex::new(ids),
         }
     }
 
@@ -228,6 +265,9 @@ impl IdentityStore {
         Self {
             path: None,
             keys: Mutex::new(Some(Keys::generate())),
+            active_id: Mutex::new(None),
+            default_id: Mutex::new(None),
+            profile_ids: Mutex::new(Vec::new()),
         }
     }
 
@@ -268,6 +308,132 @@ impl IdentityStore {
         }
     }
 
+    /// All saved local identities, with the default first.
+    pub fn profiles(&self) -> Vec<ProfileStatus> {
+        let Some(root) = self.path.as_ref() else { return Vec::new() };
+        self.refresh_profile_ids();
+        let active = self.active_id.lock().expect("identity active id").clone();
+        let default = self.default_id.lock().expect("identity default id").clone();
+        let ids = self.profile_ids.lock().expect("identity profile ids").clone();
+        let unlocked = self.keys.lock().expect("identity lock").as_ref()
+            .and_then(|keys| Some(keys.public_key().to_hex()))
+            .map(|id| id == active.as_deref().unwrap_or_default()).unwrap_or(false);
+        let mut result: Vec<_> = ids.into_iter().filter_map(|id| {
+            let path = profile_path_for(root, &id);
+            let bytes = fs::read(path).ok()?;
+            let (pubkey, envelope) = profile_file_identity(&bytes)?;
+            let npub = PublicKey::from_hex(&pubkey).ok()?.to_bech32().ok()?;
+            Some(ProfileStatus { id: id.clone(), npub, active: active.as_deref() == Some(&id),
+                default: default.as_deref() == Some(&id), unlocked: unlocked && active.as_deref() == Some(&id), envelope })
+        }).collect();
+        result.sort_by(|a,b| b.default.cmp(&a.default).then_with(|| a.id.cmp(&b.id)));
+        result
+    }
+
+    /// Save another local key without replacing an existing profile.
+    pub fn import_profile(&self, envelope: &dyn KeyEnvelope, secret: &str) -> Result<String, IdentityError> {
+        let keys = parse_secret(secret.trim())?;
+        self.add_profile(keys, envelope)
+    }
+
+    /// Generate and save another local key.
+    pub fn create_profile(&self, envelope: &dyn KeyEnvelope) -> Result<String, IdentityError> {
+        self.add_profile(Keys::generate(), envelope)
+    }
+
+    fn add_profile(&self, keys: Keys, envelope: &dyn KeyEnvelope) -> Result<String, IdentityError> {
+        let root = self.path.as_ref().ok_or(IdentityError::NotInitialised)?;
+        let id = keys.public_key().to_hex();
+        self.refresh_profile_ids();
+        if self.profile_ids.lock().expect("identity profile ids").contains(&id) {
+            return Err(IdentityError::AlreadyInitialised);
+        }
+        write_sealed_at(&profile_path_for(root, &id), &keys, envelope)?;
+        self.profile_ids.lock().expect("identity profile ids").push(id.clone());
+        *self.active_id.lock().expect("identity active id") = Some(id.clone());
+        if self.default_id.lock().expect("identity default id").is_none() {
+            *self.default_id.lock().expect("identity default id") = Some(id.clone());
+        }
+        self.persist_profile_index()?;
+        *self.keys.lock().expect("identity lock") = Some(keys);
+        Ok(PublicKey::from_hex(&id).expect("generated pubkey").to_bech32().expect("valid npub"))
+    }
+
+    /// Select a saved key. The caller can then unlock it using the appropriate envelope.
+    pub fn select_profile(&self, id: &str) -> Result<Status, IdentityError> {
+        self.refresh_profile_ids();
+        if !self.profile_ids.lock().expect("identity profile ids").contains(&id.to_string()) {
+            return Err(IdentityError::NotInitialised);
+        }
+        *self.active_id.lock().expect("identity active id") = Some(id.to_string());
+        *self.keys.lock().expect("identity lock") = None;
+        self.persist_profile_index()?;
+        Ok(self.status())
+    }
+
+    pub fn set_default_profile(&self, id: &str) -> Result<(), IdentityError> {
+        self.refresh_profile_ids();
+        if !self.profile_ids.lock().expect("identity profile ids").contains(&id.to_string()) {
+            return Err(IdentityError::NotInitialised);
+        }
+        *self.default_id.lock().expect("identity default id") = Some(id.to_string());
+        self.persist_profile_index()
+    }
+
+    pub fn remove_profile(&self, id: &str) -> Result<Status, IdentityError> {
+        let root = self.path.as_ref().ok_or(IdentityError::NotInitialised)?;
+        self.refresh_profile_ids();
+        if !self.profile_ids.lock().expect("identity profile ids").contains(&id.to_string()) {
+            return Err(IdentityError::NotInitialised);
+        }
+        let path = profile_path_for(root, id);
+        fs::remove_file(&path).map_err(|error| IdentityError::Io(error.to_string()))?;
+        let mut ids = self.profile_ids.lock().expect("identity profile ids");
+        ids.retain(|profile| profile != id);
+        let remaining = ids.clone();
+        drop(ids);
+        let next_default = if self.default_id.lock().expect("identity default id").as_deref() == Some(id) {
+            remaining.first().cloned()
+        } else { self.default_id.lock().expect("identity default id").clone() };
+        *self.default_id.lock().expect("identity default id") = next_default.clone();
+        if self.active_id.lock().expect("identity active id").as_deref() == Some(id) {
+            *self.active_id.lock().expect("identity active id") = next_default.or_else(|| remaining.first().cloned());
+            *self.keys.lock().expect("identity lock") = None;
+        }
+        self.persist_profile_index()?;
+        Ok(self.status())
+    }
+
+    fn refresh_profile_ids(&self) {
+        let Some(root) = self.path.as_ref() else { return };
+        let mut ids = self.profile_ids.lock().expect("identity profile ids");
+        if let Some(id) = identity_id(root) { if !ids.contains(&id) { ids.push(id); } }
+        ids.retain(|id| valid_profile_id(id) && profile_path_for(root, id).exists());
+        let active_valid = self.active_id.lock().expect("identity active id").as_ref()
+            .map(|id| ids.contains(id)).unwrap_or(false);
+        if !active_valid { *self.active_id.lock().expect("identity active id") = ids.first().cloned(); }
+        let default_valid = self.default_id.lock().expect("identity default id").as_ref()
+            .map(|id| ids.contains(id)).unwrap_or(false);
+        if !default_valid { *self.default_id.lock().expect("identity default id") = ids.first().cloned(); }
+    }
+
+    fn persist_profile_index(&self) -> Result<(), IdentityError> {
+        let Some(root) = self.path.as_ref() else { return Ok(()) };
+        let path = profile_index_path(root);
+        let data = ProfileIndex { version: 1,
+            ids: self.profile_ids.lock().expect("identity profile ids").clone(),
+            active_id: self.active_id.lock().expect("identity active id").clone(),
+            default_id: self.default_id.lock().expect("identity default id").clone() };
+        let bytes = serde_json::to_vec_pretty(&data).map_err(|error| IdentityError::Codec(error.to_string()))?;
+        if let Some(parent) = path.parent() { fs::create_dir_all(parent).map_err(|error| IdentityError::Io(error.to_string()))?; }
+        let temporary = path.with_extension("tmp");
+        fs::write(&temporary, bytes).map_err(|error| IdentityError::Io(error.to_string()))?;
+        restrict(&temporary);
+        fs::rename(&temporary, &path).map_err(|error| IdentityError::Io(error.to_string()))?;
+        restrict(&path);
+        Ok(())
+    }
+
     /// Generate a new key, seal it with `envelope`, and leave the store unlocked.
     pub fn create(&self, envelope: &dyn KeyEnvelope) -> Result<String, IdentityError> {
         if self.is_initialised() {
@@ -278,6 +444,7 @@ impl IdentityStore {
             self.write_sealed(&keys, envelope)?;
         }
         let npub = npub_of(&keys)?;
+        self.register_active_key(&keys)?;
         *self.keys.lock().expect("identity lock") = Some(keys);
         Ok(npub)
     }
@@ -297,6 +464,7 @@ impl IdentityStore {
             self.write_sealed(&keys, envelope)?;
         }
         let npub = npub_of(&keys)?;
+        self.register_active_key(&keys)?;
         *self.keys.lock().expect("identity lock") = Some(keys);
         Ok(npub)
     }
@@ -470,14 +638,33 @@ impl IdentityStore {
     }
 
     fn is_initialised(&self) -> bool {
-        match &self.path {
+        match self.selected_path() {
             Some(path) => path.exists(),
             None => self.keys.lock().expect("identity lock").is_some(),
         }
     }
 
+    fn register_active_key(&self, keys: &Keys) -> Result<(), IdentityError> {
+        if self.path.is_none() { return Ok(()) }
+        let id = keys.public_key().to_hex();
+        *self.active_id.lock().expect("identity active id") = Some(id.clone());
+        if self.default_id.lock().expect("identity default id").is_none() {
+            *self.default_id.lock().expect("identity default id") = Some(id.clone());
+        }
+        let mut ids = self.profile_ids.lock().expect("identity profile ids");
+        if !ids.contains(&id) { ids.push(id); }
+        drop(ids);
+        self.persist_profile_index()
+    }
+
+    fn selected_path(&self) -> Option<PathBuf> {
+        let root = self.path.as_ref()?;
+        self.active_id.lock().expect("identity active id").as_ref()
+            .map(|id| profile_path_for(root, id)).or_else(|| Some(root.clone()))
+    }
+
     fn read(&self) -> Result<File, IdentityError> {
-        let path = self.path.as_ref().ok_or(IdentityError::NotInitialised)?;
+        let path = self.selected_path().ok_or(IdentityError::NotInitialised)?;
         let bytes = fs::read(path).map_err(|error| IdentityError::Io(error.to_string()))?;
 
         if let Ok(sealed) = serde_json::from_slice::<SealedFile>(&bytes) {
@@ -497,40 +684,69 @@ impl IdentityStore {
 
     fn write_sealed(&self, keys: &Keys, envelope: &dyn KeyEnvelope) -> Result<(), IdentityError> {
         // A session key is never written; the caller has already checked for a path.
-        let Some(path) = self.path.clone() else {
+        let Some(path) = self.selected_path() else {
             return Ok(());
         };
 
-        let secret = hex_encode(&keys.secret_key().secret_bytes());
-        let sealed = envelope.seal(&secret)?;
-
-        let file = SealedFile {
-            version: VERSION_SEALED,
-            pubkey: keys.public_key().to_hex(),
-            kind: envelope.kind().to_string(),
-            sealed,
-        };
-
-        let encoded = serde_json::to_vec_pretty(&file)
-            .map_err(|error| IdentityError::Codec(error.to_string()))?;
-
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|error| IdentityError::Io(error.to_string()))?;
-        }
-        // Write beside the target and rename, so a crash cannot leave a half file.
-        let temporary = path.with_extension("tmp");
-        fs::write(&temporary, &encoded).map_err(|error| IdentityError::Io(error.to_string()))?;
-        restrict(&temporary);
-        fs::rename(&temporary, &path).map_err(|error| IdentityError::Io(error.to_string()))?;
-        restrict(&path);
-
-        Ok(())
+        write_sealed_at(&path, keys, envelope)
     }
 }
 
 enum File {
     Sealed(SealedFile),
     Legacy(LegacyFile),
+}
+
+fn valid_profile_id(id: &str) -> bool {
+    id.len() == 64 && id.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn profile_index_path(root: &Path) -> PathBuf {
+    let stem = root.file_stem().and_then(|value| value.to_str()).unwrap_or("identity");
+    root.parent().unwrap_or_else(|| Path::new(".")).join(format!("{stem}-profiles.json"))
+}
+
+fn profile_path_for(root: &Path, id: &str) -> PathBuf {
+    if identity_id(root).as_deref() == Some(id) { return root.to_path_buf() }
+    let stem = root.file_stem().and_then(|value| value.to_str()).unwrap_or("identity");
+    root.parent().unwrap_or_else(|| Path::new("."))
+        .join(format!("{stem}-profiles")).join(format!("{id}.json"))
+}
+
+fn identity_id(path: &Path) -> Option<String> {
+    let bytes = fs::read(path).ok()?;
+    profile_file_identity(&bytes).map(|(id, _)| id)
+}
+
+fn profile_file_identity(bytes: &[u8]) -> Option<(String, String)> {
+    if let Ok(sealed) = serde_json::from_slice::<SealedFile>(bytes) {
+        if sealed.version == VERSION_SEALED && valid_profile_id(&sealed.pubkey) {
+            return Some((sealed.pubkey, sealed.kind));
+        }
+    }
+    let legacy = serde_json::from_slice::<LegacyFile>(bytes).ok()?;
+    if valid_profile_id(&legacy.pubkey) { Some((legacy.pubkey, "legacy".to_string())) } else { None }
+}
+
+fn write_sealed_at(path: &Path, keys: &Keys, envelope: &dyn KeyEnvelope) -> Result<(), IdentityError> {
+    let secret = hex_encode(&keys.secret_key().secret_bytes());
+    let file = SealedFile {
+        version: VERSION_SEALED,
+        pubkey: keys.public_key().to_hex(),
+        kind: envelope.kind().to_string(),
+        sealed: envelope.seal(&secret)?,
+    };
+    let encoded = serde_json::to_vec_pretty(&file)
+        .map_err(|error| IdentityError::Codec(error.to_string()))?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| IdentityError::Io(error.to_string()))?;
+    }
+    let temporary = path.with_extension("tmp");
+    fs::write(&temporary, encoded).map_err(|error| IdentityError::Io(error.to_string()))?;
+    restrict(&temporary);
+    fs::rename(&temporary, path).map_err(|error| IdentityError::Io(error.to_string()))?;
+    restrict(path);
+    Ok(())
 }
 
 fn parse_secret(secret: &str) -> Result<Keys, IdentityError> {

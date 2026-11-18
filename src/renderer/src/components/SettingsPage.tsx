@@ -27,6 +27,7 @@ import type {
   HttpsMode,
   ProtectionLevel,
   IdentityStatus,
+  IdentityList,
   RelayEntry,
   SignerPermission,
   TorMode,
@@ -219,6 +220,7 @@ export function SettingsPage({
   const [loading, setLoading] = useState(false)
 
   const [identity, setIdentity] = useState<IdentityStatus | null>(null)
+  const [identityList, setIdentityList] = useState<IdentityList>({ identities: [], activeId: null, defaultId: null })
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null)
   const [permissions, setPermissions] = useState<SignerPermission[]>([])
   const [secret, setSecret] = useState('')
@@ -247,11 +249,12 @@ export function SettingsPage({
     void Promise.all([
       window.ncc.getConfig(),
       window.ncc.identity(),
+      window.ncc.identityList(),
       window.ncc.signerPermissions(),
       window.ncc.torStatus(),
       window.ncc.cacheInfo(),
       window.ncc.appInfo()
-    ]).then(([config, status, trusted, tor, cacheInfo, about]) => {
+    ]).then(([config, status, profiles, trusted, tor, cacheInfo, about]) => {
       setRelayEntries(config.relays)
       setGossip(config.gossip)
       setAnchorRequired(config.anchorRequired)
@@ -270,6 +273,7 @@ export function SettingsPage({
       setAppearance(config.appearance)
       applyAppearance(config.appearance)
       setIdentity(status)
+      setIdentityList(profiles)
       setEphemeralSigner(config.ephemeralSigner)
       setPermissions(trusted)
       setCache(cacheInfo)
@@ -549,6 +553,7 @@ export function SettingsPage({
     try {
       const status = await action()
       setIdentity(status)
+      setIdentityList(await window.ncc.identityList())
       onIdentityChange?.(status)
       setSecret('')
       setPermissions(await window.ncc.signerPermissions())
@@ -570,12 +575,30 @@ export function SettingsPage({
     }
   }
 
+  const updateIdentityProfile = async (action: () => Promise<IdentityStatus | IdentityList>): Promise<void> => {
+    setIdentityBusy(true)
+    setIdentityError(null)
+    try {
+      const result = await action()
+      const status = 'mode' in result ? result : await window.ncc.identity()
+      setIdentity(status)
+      setIdentityList(await window.ncc.identityList())
+      onIdentityChange?.(status)
+      setPermissions(await window.ncc.signerPermissions())
+    } catch (actionError) {
+      setIdentityError(errorMessage(actionError))
+    } finally {
+      setIdentityBusy(false)
+    }
+  }
+
   const connectBunker = async (): Promise<void> => {
     setConnectBusy(true)
     setRemoteError(null)
     try {
       const status = await window.ncc.identityConnectBunker(bunker)
       setIdentity(status)
+      setIdentityList(await window.ncc.identityList())
       onIdentityChange?.(status)
       setBunker('')
       setPermissions(await window.ncc.signerPermissions())
@@ -592,6 +615,7 @@ export function SettingsPage({
     try {
       const status = await window.ncc.identityDisconnect()
       setIdentity(status)
+      setIdentityList(await window.ncc.identityList())
       onIdentityChange?.(status)
     } catch (disconnectError) {
       setRemoteError(errorMessage(disconnectError))
@@ -1231,8 +1255,34 @@ export function SettingsPage({
             <>
               <SectionHeading
                 title="Identity (NIP-07)"
-                hint="Pages on ncc:// and clearnet can request signatures through window.nostr. The secret key never leaves the main process."
+                hint="Choose which local key or remote signer pages use through window.nostr. The secret key never leaves the main process."
               />
+
+              <div className="rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-4">
+                <h3 className="text-ui-12 font-semibold text-[color:var(--color-text-strong)]">Your identities</h3>
+                <p className="mt-1 text-ui-11 text-[color:var(--color-muted)]">The active identity is used for new NIP-07 requests. The default starts first and is restored when no saved selection is available.</p>
+                {identityList.identities.length ? (
+                  <ul className="mt-3 space-y-2">
+                    {identityList.identities.map((profile) => (
+                      <li key={profile.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-field)] p-3">
+                        <div className="min-w-0">
+                          <p className="truncate font-mono text-ui-11 text-[color:var(--color-text-strong)]">{profile.npub ?? profile.id}</p>
+                          <p className="mt-1 text-ui-105 text-[color:var(--color-muted)]">
+                            {profile.mode === 'nip46' ? 'NIP-46 remote signer' : 'Local key'}
+                            {profile.active ? ' · Active' : ''}{profile.isDefault ? ' · Default' : ''}
+                            {profile.mode === 'nip46' ? (profile.connected ? ' · Connected' : ' · Connects on use') : ''}
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 gap-1.5">
+                          {!profile.active ? <button type="button" disabled={identityBusy} onClick={() => void updateIdentityProfile(() => window.ncc.identitySelect(profile.id))} className="rounded-md border border-[color:var(--color-line)] px-2 py-1 text-ui-105 text-[color:var(--color-text)] disabled:opacity-40">Use</button> : null}
+                          {!profile.isDefault ? <button type="button" disabled={identityBusy} onClick={() => void updateIdentityProfile(() => window.ncc.identitySetDefault(profile.id))} className="rounded-md border border-[color:var(--color-line)] px-2 py-1 text-ui-105 text-[color:var(--color-text)] disabled:opacity-40">Make default</button> : null}
+                          <button type="button" disabled={identityBusy} onClick={() => { if (window.confirm('Remove this identity from Nostr Navigator?')) void updateIdentityProfile(() => window.ncc.identityRemove(profile.id)) }} className="rounded-md border border-[color:var(--color-danger)]/30 px-2 py-1 text-ui-105 text-[color:var(--color-danger)] disabled:opacity-40">Remove</button>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                ) : <p className="mt-3 text-ui-11 text-[color:var(--color-muted)]">No identity configured. Import or generate a local key, or connect a remote signer below.</p>}
+              </div>
 
               <div className="rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-4">
                 {identity?.mode === 'nip46' ? (
@@ -1333,6 +1383,18 @@ export function SettingsPage({
                   <p className="mt-2 text-ui-12 text-[color:var(--color-danger)]">{identityError}</p>
                 ) : null}
               </div>
+
+              {identity?.configured ? (
+                <div className="rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-4">
+                  <h3 className="text-ui-12 font-semibold text-[color:var(--color-text-strong)]">Add a local key</h3>
+                  <div className="mt-3 flex gap-2">
+                    <input type="password" value={secret} onChange={(event) => setSecret(event.target.value)} placeholder="nsec1… or 64-char hex" spellCheck={false} autoComplete="off" className="min-w-0 flex-1 rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-field)] px-3 py-2 font-mono text-ui-12 text-[color:var(--color-text)] outline-none focus:border-[color:var(--color-accent)]/60" />
+                    <button type="button" disabled={identityBusy || !secret.trim()} onClick={() => void runIdentity(() => window.ncc.importIdentity(secret))} className="rounded-lg bg-[color:var(--color-accent)] px-3 py-1.5 text-ui-11 font-semibold text-[color:var(--color-on-accent)] disabled:opacity-40">Import</button>
+                  </div>
+                  <button type="button" disabled={identityBusy} onClick={() => void runIdentity(() => window.ncc.generateIdentity())} className="mt-2 text-ui-11 text-[color:var(--color-muted)] underline-offset-2 hover:text-[color:var(--color-text-strong)] hover:underline disabled:opacity-40">Generate another identity</button>
+                  {!identity.encryptionAvailable ? <p className="mt-2 text-ui-105 text-[color:var(--color-warn)]">No OS keychain is available; imported keys last for this session only.</p> : null}
+                </div>
+              ) : null}
 
               <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-4">
                 <input

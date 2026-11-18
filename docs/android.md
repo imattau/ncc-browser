@@ -2,8 +2,11 @@
 
 Status: **alpha**. Published to Zapstore as `Nostr Navigator (alpha)` for testing.
 The shell builds and signs in CI, the NCC proxy serves live records, a content
-WebView renders them, and a local identity signs through the NIP-07 routes after an
-approval. No tabs, history, bookmarks, downloads or settings yet. Not a daily driver.
+WebView renders them, and local identities or NIP-46 connections sign through the
+NIP-07 routes after an approval. Android's Identity screen lists saved profiles,
+switches the active signer immediately, and lets one profile be the default shown
+first at startup. Tabs and other browser features remain limited; this is not yet a
+daily driver.
 
 ## Verified
 
@@ -146,7 +149,7 @@ it.
 ```
 page  window.nostr.*  →  POST /__ncc/nip07/<method>  on its own origin
                              ↓ intercepted before resolution
-                          Rust answers (or forwards to the signer)
+                          Rust answers (or forwards to the active local or NIP-46 signer)
 ```
 
 Same-origin HTTP rather than a `JavascriptInterface` on purpose: the service is
@@ -169,11 +172,13 @@ frame is served, never `*.localhost`. The call reaches Rust through `nativeNip07
 private tab uses the private listener's in-memory key and a Tor tab the Tor listener's,
 so neither can reach the person's own key, and "don't ask again" is not offered for them.
 
-(The next paragraph is the original design note from before the signer existed.)
-
-The signer itself is not implemented yet: calls answer `501 signer-not-configured`
-once the token checks out, which is where identity storage, NIP-46 and approvals plug
-in.
+The Identity screen can create or import multiple local keys, connect multiple
+NIP-46 signers, choose which profile receives new NIP-07 requests, and mark a default
+profile. The active choice is remembered across launches; the default stays first in
+the list and is used if the active choice is unavailable. Switching profiles applies
+globally to new requests. Existing local single-key storage and NIP-46 sessions are
+retained and appear in the profile list. Local keys and remote sessions are encrypted
+with the Android device keystore envelope.
 
 Pinning deserves a note because it is the reason the core is Rust: an endpoint that
 publishes `k` usually presents a self-signed certificate. The proxy routes those
