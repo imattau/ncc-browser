@@ -3,6 +3,12 @@
 **Alpha.** An early build published so the browser can be tested on a real device. It
 is not a daily driver.
 
+## Fixes in 0.33.12
+
+- Bitcoin receive QR codes stay within the Android wallet view.
+- Monero resumes from an encrypted local wallet cache after sync, reducing repeat scan
+  work. Concurrent sync requests are serialized to avoid overlapping wallet scans.
+
 ## New in 0.33.11
 
 - Long-press a home shortcut to enter edit mode. Remove several shortcuts with the X

@@ -2017,7 +2017,7 @@ body[data-kind='tor'] .pill-kind {
 .wallet-actions-centered { justify-content: center; }
 .wallet-send-pill { flex: 0 0 auto !important; min-width: 112px; min-height: 44px !important; border: 1px solid var(--line); border-radius: 999px; color: var(--text); background: transparent; }
 .wallet-receive { display: grid; justify-items: center; gap: 16px; width: 100%; border: 0; padding: 4px 0 0; }
-.wallet-receive img, #wallet-xmr-qr { width: min(300px, 74vw); max-width: 100%; border-radius: 22px; padding: 12px; }
+.wallet-receive img, #wallet-xmr-qr { box-sizing: border-box; width: min(188px, 60vw); max-width: 100%; height: auto; border-radius: 12px; padding: 8px; background: white; }
 .wallet-address-pill { display: flex; align-items: center; justify-content: center; gap: 10px; width: min(100%, 440px); min-height: 44px; border: 1px solid var(--line); border-radius: 999px; padding: 8px 14px; color: var(--muted); background: transparent; }
 .wallet-address-pill code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 13px ui-monospace, monospace; }
 .wallet-address-pill span { flex: 0 0 auto; font-size: 17px; }
@@ -2041,6 +2041,5 @@ body[data-kind='tor'] .pill-kind {
 #wallet-monero input, #wallet-monero textarea, #wallet-monero select { width: 100%; min-height: 42px; border: 1px solid var(--line); border-radius: 10px; padding: 10px; color: var(--text); background: var(--bg); font: 12px ui-monospace, monospace; }
 #wallet-xmr-receive { display: grid; gap: 10px; padding-top: 14px; border-top: 1px solid var(--line); }
 #wallet-xmr-address { overflow-wrap: anywhere; font-size: 11px; color: var(--muted); }
-#wallet-xmr-qr { width: 188px; max-width: 60vw; justify-self: center; border-radius: 12px; background: white; padding: 8px; }
-#wallet-xmr-qr { width: min(300px, 74vw); max-width: 100%; border-radius: 22px; padding: 12px; }
+#wallet-xmr-qr { justify-self: center; }
 #wallet-xmr-send { display: grid; gap: 10px; border-top: 1px solid var(--line); padding-top: 14px; }

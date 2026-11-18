@@ -13,6 +13,7 @@ export type MoneroSnapshot = {
   transactions: { id: string; direction: 'incoming' | 'outgoing'; amount: string; fee: string; confirmations: number; timestamp: number; status: 'confirmed' | 'pending' | 'failed' }[]
 }
 export type MoneroSendPreview = { id: string; address: string; amount: string; fee: string; transactions: number }
+export type MoneroWalletData = { keysData: string; cacheData: string }
 
 export function parseXmrAmount(input: string): bigint {
   const value = input.trim()
@@ -33,16 +34,23 @@ export class MoneroWalletSession {
   private wallet: MoneroWalletFull | null = null
   private pending = new Map<string, { txs: Awaited<ReturnType<MoneroWalletFull['createTxs']>>; preview: MoneroSendPreview }>()
   private loadRuntime: Promise<typeof import('monero-ts')> | null = null
+  private syncing: Promise<MoneroSnapshot> | null = null
   progress = { height: 0, startHeight: 0, endHeight: 0, percent: 0, message: '' }
 
-  async open(options: { seed: string; daemonUrl: string; restoreHeight: number; seedOffset?: string }): Promise<MoneroSnapshot> {
+  async open(options: { seed: string; daemonUrl: string; restoreHeight: number; seedOffset?: string; walletData?: MoneroWalletData }): Promise<MoneroSnapshot> {
     if (this.wallet) await this.close()
     const monero = await this.runtime()
-    this.wallet = await monero.createWalletFull({
-      path: '', password: '', networkType: 'mainnet', seed: options.seed,
-      seedOffset: options.seedOffset ?? '', restoreHeight: Math.max(0, Math.floor(options.restoreHeight)),
-      server: options.daemonUrl, proxyToWorker: true, fs: NO_FILESYSTEM
-    })
+    const common = { path: '', password: '', networkType: 'mainnet' as const, server: options.daemonUrl, proxyToWorker: true, fs: NO_FILESYSTEM }
+    if (options.walletData) {
+      try {
+        this.wallet = await monero.openWalletFull({ ...common, keysData: decodeWalletData(options.walletData.keysData), cacheData: decodeWalletData(options.walletData.cacheData) })
+      } catch {
+        // A stale or incompatible cache must not make a valid recovery seed unusable.
+        this.wallet = await monero.createWalletFull({ ...common, seed: options.seed, seedOffset: options.seedOffset ?? '', restoreHeight: Math.max(0, Math.floor(options.restoreHeight)) })
+      }
+    } else {
+      this.wallet = await monero.createWalletFull({ ...common, seed: options.seed, seedOffset: options.seedOffset ?? '', restoreHeight: Math.max(0, Math.floor(options.restoreHeight)) })
+    }
     const actualAddress = await this.wallet.getPrimaryAddress()
     if (!actualAddress.startsWith('4') && !actualAddress.startsWith('8')) {
       await this.close()
@@ -71,12 +79,23 @@ export class MoneroWalletSession {
   }
 
   async sync(): Promise<MoneroSnapshot> {
+    if (this.syncing) return this.syncing
     const wallet = this.requireWallet()
-    const monero = await this.runtime()
-    const listener = new monero.MoneroWalletListener()
-    listener.onSyncProgress = async (height, startHeight, endHeight, percent, message) => { this.progress = { height, startHeight, endHeight, percent, message } }
-    await wallet.sync(listener)
-    return this.snapshot()
+    this.syncing = (async () => {
+      const monero = await this.runtime()
+      const listener = new monero.MoneroWalletListener()
+      listener.onSyncProgress = async (height, startHeight, endHeight, percent, message) => { this.progress = { height, startHeight, endHeight, percent, message } }
+      await wallet.sync(listener)
+      return this.snapshot()
+    })()
+    try { return await this.syncing }
+    finally { this.syncing = null }
+  }
+
+  async exportWalletData(): Promise<MoneroWalletData> {
+    const data = await this.requireWallet().getData()
+    if (data.length !== 2) throw new Error('Monero wallet returned incomplete cache data')
+    return { keysData: encodeWalletData(data[0]), cacheData: encodeWalletData(data[1]) }
   }
 
   async snapshot(): Promise<MoneroSnapshot> {
@@ -114,6 +133,7 @@ export class MoneroWalletSession {
 
   async close(): Promise<void> {
     this.pending.clear()
+    if (this.syncing) await this.syncing.catch(() => undefined)
     if (this.wallet) await this.wallet.close(false).catch(() => undefined)
     this.wallet = null
   }
@@ -130,4 +150,21 @@ export class MoneroWalletSession {
     if (!this.wallet) throw new Error('Open the Monero wallet first')
     return this.wallet
   }
+}
+
+function encodeWalletData(data: DataView): string {
+  const bytes = new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+  let binary = ''
+  const chunkSize = 0x8000
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize))
+  }
+  return btoa(binary)
+}
+
+function decodeWalletData(encoded: string): Uint8Array {
+  const binary = atob(encoded)
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index)
+  return bytes
 }

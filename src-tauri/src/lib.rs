@@ -754,6 +754,59 @@ async fn profile_picture_data(url: String) -> Result<Option<String>, String> {
 }
 
 const MONERO_WALLET_RECORD: &str = "monero-wallet.json";
+const MONERO_WALLET_CACHE: &str = "monero-wallet-cache.json";
+
+#[tauri::command]
+async fn wallet_monero_cache_load(
+    state: tauri::State<'_, SignerState>,
+    dir: tauri::State<'_, AppDataDir>,
+) -> Result<Option<serde_json::Value>, String> {
+    if state.proxy.remote().is_some() { return Err("Monero wallet cache requires a local Nostr identity".into()); }
+    let path = dir.0.join(MONERO_WALLET_CACHE);
+    if !path.exists() { return Ok(None); }
+    let data: serde_json::Value = serde_json::from_slice(&std::fs::read(path).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
+    let pubkey = state.identity.public_key().map_err(|error| error.to_string())?.to_hex();
+    let plaintext = if let Some(parts) = data.get("parts").and_then(|value| value.as_array()) {
+        let mut plaintext = String::new();
+        for part in parts {
+            let ciphertext = part.as_str().ok_or_else(|| "Stored Monero cache is invalid".to_string())?;
+            plaintext.push_str(&state.identity.nip44_decrypt(&pubkey, ciphertext).map_err(|error| error.to_string())?);
+        }
+        plaintext
+    } else {
+        let ciphertext = data.get("ciphertext").and_then(|value| value.as_str()).ok_or_else(|| "Stored Monero cache is invalid".to_string())?;
+        state.identity.nip44_decrypt(&pubkey, ciphertext).map_err(|error| error.to_string())?
+    };
+    serde_json::from_str(&plaintext).map(Some).map_err(|error| format!("Stored Monero cache is invalid: {error}"))
+}
+
+#[tauri::command]
+async fn wallet_monero_cache_save(
+    state: tauri::State<'_, SignerState>,
+    dir: tauri::State<'_, AppDataDir>,
+    data: serde_json::Value,
+) -> Result<(), String> {
+    if state.proxy.remote().is_some() { return Err("Monero wallet cache requires a local Nostr identity".into()); }
+    if data.get("keysData").and_then(|value| value.as_str()).map_or(true, str::is_empty)
+        || data.get("cacheData").and_then(|value| value.as_str()).map_or(true, str::is_empty) {
+        return Err("Monero wallet cache is incomplete".into());
+    }
+    let pubkey = state.identity.public_key().map_err(|error| error.to_string())?.to_hex();
+    // NIP-44 has a 64 KiB plaintext ceiling. Cache data can exceed it, so
+    // encrypt bounded text chunks independently before writing the local file.
+    let plaintext = data.to_string();
+    let parts = plaintext.as_bytes().chunks(24 * 1024).map(|chunk| {
+        let chunk = std::str::from_utf8(chunk).map_err(|error| error.to_string())?;
+        state.identity.nip44_encrypt(&pubkey, chunk).map_err(|error| error.to_string())
+    }).collect::<Result<Vec<_>, String>>()?;
+    let path = dir.0.join(MONERO_WALLET_CACHE);
+    let parent = path.parent().ok_or_else(|| "Monero wallet storage path is invalid".to_string())?;
+    std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let temp = path.with_extension("json.tmp");
+    let bytes = serde_json::to_vec(&serde_json::json!({"version":1,"parts":parts})).map_err(|error| error.to_string())?;
+    std::fs::write(&temp, bytes).map_err(|error| error.to_string())?;
+    std::fs::rename(temp, path).map_err(|error| error.to_string())
+}
 
 #[tauri::command]
 async fn wallet_monero_load(
@@ -1138,6 +1191,8 @@ pub fn run() {
             wallet_http,
             wallet_monero_load,
             wallet_monero_save,
+            wallet_monero_cache_load,
+            wallet_monero_cache_save,
             identity_create,
             identity_import,
             identity_unlock,

@@ -79,7 +79,9 @@ async function readSnapshot() {
   byId('wallet-balance').textContent = `${btcText(confirmed + mempool)} BTC`
   byId('wallet-pending').textContent = `Available · ${btcText(mempool)} BTC pending`
   byId('wallet-address').textContent = currentAddress
-  byId('wallet-qr').src = await QRCode.toDataURL(`bitcoin:${currentAddress}`, { width: 300, margin: 1 })
+  // Match the Android wallet's compact receive card. CSS still constrains this
+  // to the available viewport if the app is shown in a narrow split window.
+  byId('wallet-qr').src = await QRCode.toDataURL(`bitcoin:${currentAddress}`, { width: 188, margin: 1 })
   byId('wallet-qr').hidden = false
   const tip = Number(await api(btcUrl('/blocks/tip/height')).catch(() => '0'))
   showTransactions(Array.isArray(txs) ? txs.map((tx) => {
@@ -110,6 +112,7 @@ export async function loadWallet() {
 }
 
 export async function closeMoneroWallet() {
+  if (moneroSession && moneroRecord) await saveMoneroCache().catch(() => undefined)
   if (moneroSession) await moneroSession.close()
   moneroSession = null
   moneroRecord = null
@@ -135,11 +138,13 @@ async function loadMoneroWallet() {
     byId('wallet-xmr-restore').disabled = false
     moneroRecord = await window.__TAURI__.core.invoke('wallet_monero_load')
     if (!moneroRecord) { byId('wallet-xmr-setup').hidden = false; byId('wallet-xmr-receive').hidden = true; return }
+    const walletData = await window.__TAURI__.core.invoke('wallet_monero_cache_load').catch(() => null)
     byId('wallet-xmr-setup').hidden = true; byId('wallet-xmr-backup').hidden = true; byId('wallet-xmr-receive').hidden = false
     message('Opening Monero wallet and scanning locally. First sync can take a while.')
     timer = window.setInterval(() => { byId('wallet-xmr-note').textContent = `Scanning block ${moneroSession.progress.height.toLocaleString()} (${Math.floor(moneroSession.progress.percent)}%).` }, 1000)
-    await moneroSession.open({ seed: moneroRecord.seed, daemonUrl: byId('wallet-xmr-daemon').value, restoreHeight: moneroRecord.restoreHeight })
+    await moneroSession.open({ seed: moneroRecord.seed, daemonUrl: byId('wallet-xmr-daemon').value, restoreHeight: moneroRecord.restoreHeight, walletData: walletData ?? undefined })
     await renderMoneroSnapshot(await moneroSession.sync())
+    await saveMoneroCache()
     byId('wallet-xmr-note').textContent = 'Monero wallet is synced.'
   } catch (error) { byId('wallet-xmr-note').textContent = error instanceof Error ? error.message : String(error) }
   finally { if (timer) window.clearInterval(timer) }
@@ -159,6 +164,12 @@ async function renderMoneroSnapshot(snapshot) {
     const detail = document.createElement('small'); detail.textContent = `${tx.direction} · ${tx.status} · ${tx.confirmations} confirmations`; info.append(id, detail)
     const amount = document.createElement('strong'); amount.textContent = `${tx.direction === 'incoming' ? '+' : '−'}${tx.amount} XMR`; row.append(info, amount); list.append(row)
   }
+}
+
+async function saveMoneroCache() {
+  if (!moneroSession || !moneroRecord) return
+  const data = await moneroSession.exportWalletData()
+  await window.__TAURI__.core.invoke('wallet_monero_cache_save', { data })
 }
 
 function startMoneroBackup(seed) {
@@ -188,7 +199,7 @@ async function saveMoneroBackup() {
     moneroDraftSeed = ''; byId('wallet-xmr-backup').hidden = true; byId('wallet-xmr-receive').hidden = false
     byId('wallet-xmr-words').replaceChildren(); byId('wallet-xmr-word-answer').value = ''
     await moneroSession.open({ seed: moneroRecord.seed, daemonUrl, restoreHeight: moneroRecord.restoreHeight })
-    await renderMoneroSnapshot(await moneroSession.sync()); byId('wallet-xmr-note').textContent = 'Backup checked. Monero wallet is synced.'
+    await renderMoneroSnapshot(await moneroSession.sync()); await saveMoneroCache(); byId('wallet-xmr-note').textContent = 'Backup checked. Monero wallet is synced.'
   } catch (error) { byId('wallet-xmr-note').textContent = error instanceof Error ? error.message : String(error) }
 }
 
