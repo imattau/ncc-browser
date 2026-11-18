@@ -120,11 +120,35 @@ class MainActivity : TauriActivity() {
   private var activeId: String? = null
   private var nextTabId = 1
 
+  /**
+   * A link another app handed us (we are a registered browser). The shell takes it once
+   * its saved tabs are back, or immediately when it is already running.
+   */
+  private var pendingLink: String? = null
+
+  private fun captureLink(intent: Intent?) {
+    if (intent?.action != Intent.ACTION_VIEW) return
+    val uri = intent.data ?: return
+    if (uri.scheme != "http" && uri.scheme != "https") return
+    pendingLink = uri.toString()
+    // Handled: a later configuration change must not replay it.
+    intent.data = null
+  }
+
+  override fun onNewIntent(intent: Intent) {
+    super.onNewIntent(intent)
+    captureLink(intent)
+    if (pendingLink != null) {
+      shell?.evaluateJavascript("window.__nccOpenLink && window.__nccOpenLink()", null)
+    }
+  }
+
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
 
     installCrashReporter()
+    if (savedInstanceState == null) captureLink(intent)
 
     // Anything an earlier run left in the private or Tor sessions goes first, before a
     // tab can load them.
@@ -689,6 +713,14 @@ class MainActivity : TauriActivity() {
   }
 
   inner class Bridge {
+    /** The link another app asked us to open, once. */
+    @JavascriptInterface
+    fun takeLink(): String? {
+      val link = pendingLink
+      pendingLink = null
+      return link
+    }
+
     @JavascriptInterface
     fun open(url: String?) {
       val target = url ?: return

@@ -789,6 +789,18 @@ globalThis.__nccContent = (state) => {
   renderPill()
 }
 
+/** A link opened from another app (we are a registered browser): open it in a new tab. */
+function openExternalLink() {
+  if (!content || typeof content.takeLink !== 'function') return
+  const link = content.takeLink()
+  if (!link) return
+  // Straight to a new tab: `tabs` may not have caught up with the restored ones yet.
+  // Onion links still go through navigate() so they land in a Tor tab.
+  if (/^https?:\/\/[^/?#]*\.onion(?:[:/?#]|$)/i.test(link)) void navigate(link, { newTab: true })
+  else content.openNew(link)
+}
+globalThis.__nccOpenLink = openExternalLink
+
 globalThis.__nccContentReady = () => {
   set('bridge', 'ok (content bridge)')
 }
@@ -4423,6 +4435,7 @@ async function main() {
 
   // Before anything else opens a tab, so the saved ones come back in their old order.
   restoreTabs()
+  openExternalLink()
   startSync()
 
   try {

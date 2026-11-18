@@ -8,6 +8,8 @@
 - Bitcoin and Monero send forms have a QR icon in the destination field that opens the camera
   and fills in the address (and amount, when the code includes one).
 - Monero shows its address and QR code before the first scan finishes.
+- Links opened from other apps (when NCC Browser is the default browser) now open in a new
+  tab instead of just launching the app.
 - Restoring a Monero wallet explains that the restore height controls how long the first scan takes.
 
 ## Fixes in 0.33.17
