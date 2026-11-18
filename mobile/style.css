@@ -2062,6 +2062,8 @@ body[data-kind='tor'] .pill-kind {
 #wallet-bitcoin > *, #wallet-monero > * { min-width: 0; max-width: 100%; }
 #wallet-bitcoin > .wallet-card:first-child,
 .wallet-monero-card { display: grid; justify-items: center; gap: 14px; border: 0; padding: 10px 0 4px; background: transparent; box-shadow: none; }
+#wallet-bitcoin > .wallet-balance-card { width: 100%; min-width: 0; grid-template-columns: minmax(0, 1fr); }
+#wallet-bitcoin > .wallet-balance-card > * { min-width: 0; max-width: 100%; }
 .wallet-balance-card > strong, .wallet-monero-card .wallet-balance { margin: 4px 0 0; text-align: center; font: 700 40px/1.15 ui-sans-serif, system-ui, sans-serif; letter-spacing: -.04em; }
 .wallet-balance-card > small { text-align: center; }
 .wallet-actions-centered { justify-content: center; }

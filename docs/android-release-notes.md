@@ -3,6 +3,11 @@
 **Alpha.** An early build published so the browser can be tested on a real device. It
 is not a daily driver.
 
+## Fixes in 0.33.15
+
+- Keep the Bitcoin balance card and its contents within the wallet viewport when the
+  receive QR code loads.
+
 ## New in 0.33.14
 
 - Manage multiple Nostr identities from Settings → Identity. Add local keys or NIP-46
