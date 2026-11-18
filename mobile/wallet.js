@@ -152,8 +152,8 @@ async function loadMoneroWallet() {
     if (!moneroSession.isOpen) {
       showProgress()
       await moneroSession.open({ seed: moneroRecord.seed, daemonUrl: byId('wallet-xmr-daemon').value, restoreHeight: moneroRecord.restoreHeight, walletData: walletData ?? undefined })
-      // Show the cached balance and history straight away while the scan catches up.
-      if (walletData) await renderMoneroSnapshot(await moneroSession.snapshot()).catch(() => undefined)
+      // Show the address, QR code and any cached balance straight away while the scan catches up.
+      await renderMoneroSnapshot(await moneroSession.snapshot()).catch(() => undefined)
     }
     phase = ''; showProgress()
     await renderMoneroSnapshot(await moneroSession.sync())
