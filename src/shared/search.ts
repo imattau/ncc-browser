@@ -1,12 +1,12 @@
 /**
  * Search-engine definitions and template validation.
  *
- * A search is just a navigation to a normal URL, so Tor routing, the HTTPS policy
- * and HTTP warnings apply to it unchanged. Templates are plain strings with a `%s`
- * placeholder; nothing here performs network access.
+ * Search templates navigate to ordinary web URLs or NCC service addresses. Templates
+ * are plain strings with a `%s` placeholder; nothing here performs network access.
  */
 
 import type { TabKind } from './types'
+import { parseNccAddress } from './ncc-url'
 
 export type SearchEngineId =
   | 'duckduckgo'
@@ -71,7 +71,7 @@ export const SEARCH_ENGINES: SearchEngineDefinition[] = [
 
 export interface SearchSettings {
   engine: SearchEngineId
-  /** SearXNG base URL, or a full `%s` template for the custom engine. */
+  /** SearXNG base URL, or an HTTP(S)/NCC `%s` template for the custom engine. */
   custom: string
   /** Substitute the engine's onion endpoint inside full Tor tabs. */
   useOnionSearch: boolean
@@ -125,8 +125,16 @@ export function validateSearchTemplate(input: string): TemplateResult {
   } catch {
     return { ok: false, error: 'That is not a valid URL' }
   }
+  if (url.protocol === 'ncc:') {
+    try {
+      parseNccAddress(value.split('%s').join('test'))
+    } catch {
+      return { ok: false, error: 'Use a valid ncc:// address for the search URL' }
+    }
+    return { ok: true, template: value }
+  }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-    return { ok: false, error: 'Use an http:// or https:// search URL' }
+    return { ok: false, error: 'Use an http://, https:// or ncc:// search URL' }
   }
   if (url.protocol === 'http:' && !isExemptSearchHost(url.hostname)) {
     return {

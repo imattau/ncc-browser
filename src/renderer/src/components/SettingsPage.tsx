@@ -967,7 +967,7 @@ export function SettingsPage({
                         setSearchCustom(event.target.value)
                         setSaved(false)
                       }}
-                      placeholder="https://example.com/search?q=%s"
+                      placeholder="https://…/?q=%s or ncc://…/?q=%s"
                       spellCheck={false}
                       autoComplete="off"
                       aria-label="Custom search URL"
@@ -1001,8 +1001,9 @@ export function SettingsPage({
                   <p className="mt-3 text-ui-11 leading-relaxed text-[color:var(--color-muted)]">
                     Suggestions come from bookmarks, open tabs and normal-tab history. The
                     browser never asks the engine for suggestions as you type: the query is
-                    sent only when you press Enter. Plaintext HTTP search URLs are allowed
-                    only for loopback and .onion hosts.
+                    sent only when you press Enter. Custom search templates can use an
+                    <span className="font-mono"> ncc://</span> service address. Plaintext HTTP
+                    search URLs are allowed only for loopback and .onion hosts.
                   </p>
                 </div>
 

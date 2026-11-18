@@ -96,6 +96,9 @@ function normalizeLocator(input: unknown): RelayLocatorRef | undefined {
     service: raw.service.trim(),
     dTag: raw.dTag.trim(),
     expiresAt,
+    ...(Number.isFinite(Number(raw.serviceExpiresAt)) && Number(raw.serviceExpiresAt) > 0
+      ? { serviceExpiresAt: Number(raw.serviceExpiresAt) }
+      : {}),
     k: typeof raw.k === 'string' && raw.k.trim() ? raw.k.trim() : null
   }
 }

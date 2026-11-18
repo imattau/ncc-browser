@@ -50,7 +50,7 @@ interface ToolbarProps {
   onOpenPasswords: (anchor: PopoverAnchor) => void
   onHistoryMenu: (direction: 'back' | 'forward') => void
   onOpenSiteInfo: (anchor: PopoverAnchor) => void
-  onOpenSettings: () => void
+  onOpenIdentity: (anchor: PopoverAnchor) => void
   onOpenMenu: () => void
   onShareNostr: () => void
 }
@@ -78,7 +78,7 @@ export function Toolbar({
   onOpenPasswords,
   onHistoryMenu,
   onOpenSiteInfo,
-  onOpenSettings,
+  onOpenIdentity,
   onOpenMenu,
   onShareNostr
 }: ToolbarProps) {
@@ -197,7 +197,10 @@ export function Toolbar({
         aria-label="Nostr identity"
         data-signer-button
         title={signerTitle(identity)}
-        onClick={onOpenSettings}
+        onClick={(event) => {
+          const rect = event.currentTarget.getBoundingClientRect()
+          onOpenIdentity({ top: rect.bottom, left: rect.left })
+        }}
         className="relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[color:var(--color-muted)] transition-colors hover:bg-[color:var(--color-hover)] hover:text-[color:var(--color-text-strong)]"
       >
         <KeyRound

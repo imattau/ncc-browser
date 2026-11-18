@@ -1,11 +1,11 @@
 /**
  * Keeps identity-resolved relays alive.
  *
- * An NCC-05 endpoint can rotate at any time, so each locator-backed entry is
- * re-resolved shortly before its record expires. The refresh point is jittered per
- * entry so several locators do not all burst-query at once. A failed refresh keeps
- * the previous address (a running relay is preferable to a broken one) and marks
- * the entry stale for the UI.
+ * An NCC-05 endpoint can rotate at any time, and its NCC-02 service record can expire
+ * sooner. Each locator-backed entry is re-resolved shortly before the earlier record
+ * expiry. The refresh point is jittered per entry so several locators do not all
+ * burst-query at once. A failed refresh keeps the previous address (a running relay is
+ * preferable to a broken one) and marks the entry stale for the UI.
  */
 
 import type { RelayEntry } from '@shared/types'
@@ -65,7 +65,11 @@ export class RelaySync {
         jitter = this.jitterSeconds()
         this.jitter.set(entry.url, jitter)
       }
-      if (now < entry.locator.expiresAt - jitter) continue
+      const refreshAt = Math.min(
+        entry.locator.expiresAt,
+        entry.locator.serviceExpiresAt ?? Number.POSITIVE_INFINITY
+      )
+      if (now < refreshAt - jitter) continue
 
       this.inFlight.add(entry.url)
       try {

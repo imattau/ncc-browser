@@ -5,6 +5,7 @@ import { sortDownloads } from '@shared/downloads'
 import type {
   Bookmark,
   DownloadNotice,
+  IdentityProfile,
   IdentityStatus,
   NavState,
   OverlayReason,
@@ -19,6 +20,7 @@ import { ChromeMenu } from './components/ChromeMenu'
 import type { SyncDevice } from '@shared/sync-status'
 import { DownloadsPanel } from './components/DownloadsPanel'
 import { HistoryPanel } from './components/HistoryPanel'
+import { IdentityChooser } from './components/IdentityChooser'
 import { PasswordsPanel } from './components/PasswordsPanel'
 import { PasswordSavePrompt } from './components/PasswordSavePrompt'
 import { type PopoverAnchor } from './components/Popover'
@@ -63,6 +65,10 @@ export function App() {
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([])
   const [syncDevices, setSyncDevices] = useState<SyncDevice[]>([])
   const [identity, setIdentity] = useState<IdentityStatus | null>(null)
+  const [identityChooserProfiles, setIdentityChooserProfiles] = useState<IdentityProfile[]>([])
+  const [identityChooserAnchor, setIdentityChooserAnchor] = useState<PopoverAnchor | null>(null)
+  const [identityChooserBusy, setIdentityChooserBusy] = useState(false)
+  const [identityChooserError, setIdentityChooserError] = useState<string | null>(null)
   const [signerRequests, setSignerRequests] = useState<SignerRequest[]>([])
   const signerRequest = signerRequests[0] ?? null
   const [history, setHistory] = useState<TabHistory | null>(null)
@@ -101,6 +107,41 @@ export function App() {
       showOverlay('settings')
     },
     [showOverlay]
+  )
+
+  const openIdentityChooser = useCallback(
+    async (anchor: PopoverAnchor): Promise<void> => {
+      try {
+        const list = await window.ncc.identityList()
+        if (list.identities.length > 1) {
+          setIdentityChooserProfiles(list.identities)
+          setIdentityChooserAnchor(anchor)
+          setIdentityChooserError(null)
+          showOverlay('identity-chooser')
+        } else {
+          openSettings('identity')
+        }
+      } catch {
+        openSettings('identity')
+      }
+    },
+    [openSettings, showOverlay]
+  )
+
+  const selectToolbarIdentity = useCallback(
+    async (id: string): Promise<void> => {
+      setIdentityChooserBusy(true)
+      setIdentityChooserError(null)
+      try {
+        setIdentity(await window.ncc.identitySelect(id))
+        closeOverlay()
+      } catch (error) {
+        setIdentityChooserError(error instanceof Error ? error.message : String(error))
+      } finally {
+        setIdentityChooserBusy(false)
+      }
+    },
+    [closeOverlay]
   )
 
   useEffect(() => {
@@ -587,7 +628,7 @@ export function App() {
           setSiteInfoAnchor(anchor)
           showOverlay('site-info')
         }}
-        onOpenSettings={() => openSettings('identity')}
+        onOpenIdentity={(anchor) => void openIdentityChooser(anchor)}
         onOpenMenu={() => showOverlay('menu')}
         onShareNostr={() => showOverlay('share-nostr')}
       />
@@ -648,6 +689,17 @@ export function App() {
           onCancel={cancelDownload}
           onReveal={revealDownload}
           onClear={clearDownloads}
+        />
+      ) : null}
+
+      {overlay === 'identity-chooser' ? (
+        <IdentityChooser
+          identities={identityChooserProfiles}
+          anchor={identityChooserAnchor}
+          busy={identityChooserBusy}
+          error={identityChooserError}
+          onClose={closeOverlay}
+          onSelect={(id) => void selectToolbarIdentity(id)}
         />
       ) : null}
 

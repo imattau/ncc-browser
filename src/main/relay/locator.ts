@@ -58,6 +58,9 @@ export class RelayLocatorService {
     const parsed = parseRelayLocator(locator.identity)
     if (!parsed) return null
 
+    // This path is the explicit expiry refresh. Drop the relay-mode memoized outcome
+    // first so refresh() actually confirms the current NCC-05 and NCC-02 records.
+    this.deps.resolver.invalidate(locator.pubkey, locator.service, 'relay')
     const outcome = await this.resolveLocator(parsed.identity, locator.pubkey, locator.service)
     if (!outcome.ok) return null
 
@@ -115,6 +118,9 @@ export class RelayLocatorService {
       service,
       dTag: record.dTag,
       expiresAt: record.expiresAt,
+      ...(record.anchor?.record?.expiresAt
+        ? { serviceExpiresAt: record.anchor.record.expiresAt }
+        : {}),
       k: selection.endpoint.k
     }
 

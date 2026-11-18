@@ -356,6 +356,8 @@ export interface RelayLocatorRef {
   dTag: string
   /** Unix seconds after which the locator must be re-resolved. */
   expiresAt: number
+  /** Unix seconds after which the NCC-02 service record must be revalidated, when set. */
+  serviceExpiresAt?: number
   /** SPKI fingerprint from the endpoint, enforced on `wss:` connections. */
   k: string | null
 }
@@ -586,6 +588,7 @@ export interface Bookmark {
 export const OVERLAY_REASONS = [
   'menu',
   'settings',
+  'identity-chooser',
   'downloads',
   'history',
   'tabs',

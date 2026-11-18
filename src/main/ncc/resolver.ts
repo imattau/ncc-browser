@@ -180,11 +180,22 @@ export class NccResolver {
     const key = cacheKey(hex, normalizedService, mode)
 
     const now = this.now()
+    const requiresAnchor = this.shouldRequireAnchor()
     const cached = this.cache.get(key)
-    if (cached && cached.expiresAt > now) return cached.outcome
+    if (cached && cached.expiresAt > now) {
+      if (
+        !cached.outcome.ok ||
+        !requiresAnchor ||
+        this.anchorIsFresh(cached.outcome.record, now)
+      ) {
+        return cached.outcome
+      }
+      // An NCC-02 service record can expire before the NCC-05 locator. Do not keep
+      // returning a cached endpoint after its required trust anchor has expired.
+      this.cache.delete(key)
+    }
     if (cached) this.cache.delete(key)
 
-    const requiresAnchor = this.shouldRequireAnchor()
     const persisted =
       mode === 'web' ? (this.options.cacheStore?.get(hex, normalizedService) ?? null) : null
 
@@ -317,13 +328,16 @@ export class NccResolver {
 
   private ttlFor(outcome: ResolveOutcome): number {
     if (!outcome.ok) return this.options.negativeCacheSeconds ?? DEFAULT_NEGATIVE_CACHE_SECONDS
-    return Math.max(
-      1,
-      Math.min(
-        outcome.record.expiresAt - this.now(),
-        this.options.maxCacheSeconds ?? DEFAULT_MAX_CACHE_SECONDS
-      )
+    const expiries = [outcome.record.expiresAt]
+    const anchorExpiry = outcome.record.anchor?.record?.expiresAt
+    if (this.shouldRequireAnchor() && anchorExpiry && anchorExpiry > 0) {
+      expiries.push(anchorExpiry)
+    }
+    const ttlSeconds = Math.min(
+      ...expiries.map((expiresAt) => expiresAt - this.now()),
+      this.options.maxCacheSeconds ?? DEFAULT_MAX_CACHE_SECONDS
     )
+    return Math.max(1, ttlSeconds)
   }
 
   /** Copy a record for the caller, with the current anchoring policy and staleness. */
