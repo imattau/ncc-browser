@@ -570,7 +570,6 @@
           <article class="wallet-card wallet-monero-card">
             <div class="wallet-heading"><div></div><button id="wallet-xmr-refresh" class="btn tonal" type="button">Refresh</button></div>
             <p class="wallet-balance"><span id="wallet-xmr-balance">—</span> XMR</p><p class="hint wallet-xmr-unlocked">Available · <span id="wallet-xmr-unlocked">—</span> XMR unlocked</p>
-            <details class="wallet-settings"><summary>Monero sync settings</summary><label>Daemon URL<input id="wallet-xmr-daemon" type="url" inputmode="url" /></label><p>The remote daemon can see your IP and scan requests. Wallet keys stay on this device.</p></details>
             <div id="wallet-xmr-setup">
               <button id="wallet-xmr-create" class="btn" type="button">Create wallet</button>
               <details><summary>Restore wallet</summary><label>25-word recovery seed<textarea id="wallet-xmr-restore-seed" rows="3" autocomplete="off" autocapitalize="none" spellcheck="false"></textarea></label><label>Restore from block height<input id="wallet-xmr-restore-height" type="number" min="0" value="0" /></label><p class="hint">Use the block height of your wallet's first transaction. Starting from 0 scans the whole chain, which can take hours on a phone.</p><button id="wallet-xmr-restore" class="btn tonal" type="button">Continue</button></details>
@@ -580,6 +579,7 @@
             <div id="wallet-xmr-send" hidden><label>Destination address<span class="wallet-scan-field"><input id="wallet-xmr-send-address" autocomplete="off" autocapitalize="none" spellcheck="false" /><button class="wallet-scan" type="button" data-scan-target="wallet-xmr-send-address" aria-label="Scan QR code"><svg class="i"><use href="#i-qr" /></svg></button></span></label><label>Amount in XMR<input id="wallet-xmr-send-amount" inputmode="decimal" autocomplete="off" /></label><div id="wallet-xmr-send-preview" class="wallet-send-preview" hidden></div><button id="wallet-xmr-send-review" class="btn tonal" type="button">Review fee</button><button id="wallet-xmr-send-confirm" class="btn danger" type="button" hidden>Confirm and send</button><button id="wallet-xmr-send-cancel" class="btn tonal" type="button">Cancel</button></div>
           </article>
           <details class="wallet-card wallet-transactions-card"><summary>Transactions <span aria-hidden="true">⌄</span></summary><div id="wallet-xmr-transactions" class="wallet-transactions">No transactions yet.</div></details>
+          <details class="wallet-settings"><summary>Monero sync settings</summary><label>Daemon URL<input id="wallet-xmr-daemon" type="url" inputmode="url" /></label><p>The remote daemon can see your IP and scan requests. Wallet keys stay on this device.</p></details>
           <p id="wallet-xmr-note" class="hint" role="status"></p>
         </section>
       </div>
