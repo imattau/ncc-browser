@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  NPACK_VERSION: 0.10.0
+  NPACK_VERSION: 0.10.1
 
 jobs:
   verify:
