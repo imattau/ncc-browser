@@ -129,7 +129,7 @@ describe('IdentityManager', () => {
     expect(manager.provider()).not.toBeNull()
   })
 
-  it('importing a local key replaces an active remote signer', async () => {
+  it('importing a local key switches active identity and retains the remote profile', async () => {
     const { manager, signer } = await makeManager()
     await manager.connectRemote(BUNKER)
 
@@ -137,7 +137,9 @@ describe('IdentityManager', () => {
     const status = await manager.importLocal(nip19.nsecEncode(secret))
     expect(status.mode).toBe('local')
     expect(status.npub).toBe(nip19.npubEncode(getPublicKey(secret)))
-    expect(signer.close).toHaveBeenCalled()
+    expect(signer.close).not.toHaveBeenCalled()
+    expect(manager.list().identities).toHaveLength(2)
+    expect(manager.list().identities.find((identity) => identity.mode === 'nip46')?.active).toBe(false)
   })
 
   it('exposes a locator signer that decrypts remotely', async () => {
