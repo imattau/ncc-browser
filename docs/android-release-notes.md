@@ -5,6 +5,9 @@
 - Monero scanning now shows real progress (block, total and percentage) instead of a constant 0%.
 - Monero shows the cached balance and history immediately while the scan catches up, and
   Refresh no longer reopens the wallet if it is already open or syncing.
+- Bitcoin and Monero send forms have a QR icon in the destination field that opens the camera
+  and fills in the address (and amount, when the code includes one).
+- Monero shows its address and QR code before the first scan finishes.
 - Restoring a Monero wallet explains that the restore height controls how long the first scan takes.
 
 ## Fixes in 0.33.17

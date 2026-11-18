@@ -1,6 +1,7 @@
 import * as btc from '@scure/btc-signer'
 import { hex } from '@scure/base'
 import QRCode from 'qrcode'
+import { parsePaymentQr, scanQr } from './qr-scan.js'
 import { MoneroWalletSession } from '../src/shared/monero-wallet.ts'
 import { DEFAULT_MONERO_DAEMON_URL } from '../src/shared/wallet.ts'
 
@@ -278,6 +279,16 @@ export function wireWallet() {
     try { getEndpoint(); localStorage.setItem('ncc.wallet.esplora', byId('wallet-esplora').value.trim().replace(/\/$/, '')); void loadWallet() }
     catch (error) { message(error instanceof Error ? error.message : String(error)) }
   })
+  document.querySelectorAll('.wallet-scan').forEach((button) => button.addEventListener('click', async () => {
+    const input = byId(button.dataset.scanTarget)
+    const isMonero = button.dataset.scanTarget.includes('xmr')
+    const text = await scanQr()
+    if (!text) return
+    const { address, amount } = parsePaymentQr(text, isMonero ? 'monero' : 'bitcoin')
+    input.value = address
+    const amountInput = byId(isMonero ? 'wallet-xmr-send-amount' : 'wallet-send-amount')
+    if (amount && !amountInput.value) amountInput.value = amount
+  }))
   byId('wallet-open-send').addEventListener('click', () => { byId('wallet-send').hidden = false; byId('wallet-send-address').focus() })
   byId('wallet-send-cancel').addEventListener('click', () => {
     pendingPsbt = null; byId('wallet-send').hidden = true; byId('wallet-send-preview').hidden = true
