@@ -843,7 +843,7 @@ export const ERROR_COPY: Record<string, { title: string; hint: string }> = {
   },
   'onion-only': {
     title: 'Onion endpoint only',
-    hint: 'This locator publishes only an onion endpoint. Turn on "Prefer Tor connections" in settings, or use the onion button in the address bar.'
+    hint: 'This locator publishes only an onion endpoint. Turn on "Prefer Tor connections" in settings, or use the onion button in the address bar to open it in a Tor tab.'
   },
   'tor-unavailable': {
     title: 'Tor is not available',

@@ -277,24 +277,12 @@ export function AddressBar({
           <button
             type="button"
             data-tor-button
-            data-tor-active={tor.active}
-            aria-pressed={tor.active}
-            aria-label={
-              tor.active
-                ? 'Using Tor for this page — reload the direct endpoint'
-                : 'Onion endpoint available — load this page over Tor'
-            }
-            title={
-              tor.active
-                ? 'Using Tor for this service — click to load the direct endpoint'
-                : 'Onion endpoint available — click to load over Tor'
-            }
+            aria-label="Onion endpoint available — open this page in a Tor tab"
+            title="Onion endpoint available — open in a Tor tab"
             onClick={onToggleTor}
             className={cn(
               'shrink-0 rounded p-0.5 transition-colors hover:bg-[color:var(--color-hover)]',
-              tor.active
-                ? 'text-[color:var(--color-tor-text)]'
-                : 'text-[color:var(--color-tor)]/70 hover:text-[color:var(--color-tor-text)]'
+              'text-[color:var(--color-tor)]/70 hover:text-[color:var(--color-tor-text)]'
             )}
           >
             <OnionIcon className="h-3.5 w-3.5" />

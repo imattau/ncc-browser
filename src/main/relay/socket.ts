@@ -130,6 +130,11 @@ export function createRelayWebSocket(
 
       super(address, protocols ?? [], merged)
 
+      // Closing a socket that is still connecting makes `ws` emit an async 'error'
+      // ("closed before the connection was established"). With no listener left,
+      // that surfaces as an uncaught main-process exception, so keep one attached.
+      this.on('error', () => undefined)
+
       if (!pin) return
 
       this.once('upgrade', (response) => {

@@ -472,7 +472,7 @@ function TorBlock({
           : active
             ? 'This page is loaded from an onion endpoint through Tor. Clearnet subresources and redirects are blocked to avoid revealing your IP.'
             : available
-              ? 'This locator also publishes an onion endpoint. Use the onion button in the address bar to load it over Tor.'
+              ? 'This locator also publishes an onion endpoint. Use the onion button in the address bar to open it in a Tor tab.'
               : 'This page is loaded through Tor.'}
       </p>
     </div>

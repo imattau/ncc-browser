@@ -68,6 +68,8 @@ export interface ProtocolActivity {
   /** The NCC-05 record behind this document, for the site panel. */
   locator?: LocatorInfo | null
   failureCode?: string
+  /** The locator has an onion endpoint and Tor is preferred: open it in a Tor tab instead. */
+  torRedirect?: boolean
 }
 
 export interface ProtocolDeps {
@@ -194,10 +196,31 @@ async function handleNccRequest(
   const documentRequest = isDocumentRequest(request)
   const strict = deps.strictTor !== false
   const fromTorPage = strict && !documentRequest && refererUsesTor(request, deps)
-  const useTor =
-    deps.forceTor === true ||
-    deps.transport.useTor(pubkey, service, onionAvailable) ||
-    fromTorPage
+  // Only Tor tabs use Tor. With "Prefer Tor" on, a document that has an onion
+  // endpoint is handed to a Tor tab rather than fetched over Tor in this tab.
+  if (
+    deps.forceTor !== true &&
+    documentRequest &&
+    deps.transport.useTor(pubkey, service, onionAvailable)
+  ) {
+    deps.onActivity({
+      pubkey,
+      service,
+      transport: 'unknown',
+      pinned: false,
+      onionAvailable: true,
+      torRedirect: true
+    })
+    return new Response(
+      '<!doctype html><meta charset="utf-8"><title>Opened in a Tor tab</title>' +
+        '<body style="font:14px system-ui;padding:2rem">Opened in a Tor tab.</body>',
+      {
+        status: 200,
+        headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
+      }
+    )
+  }
+  const useTor = deps.forceTor === true || fromTorPage
   const selection = selectTransportEndpoints(outcome.record.endpoints, useTor)
 
   if (strict && fromTorPage && !onionAvailable) {

@@ -864,6 +864,11 @@ export class BrowserShell {
     )
     if (tabs.length === 0) return
 
+    if (activity.torRedirect) {
+      this.redirectToTorTab(tabs.filter((tab) => tab.kind !== 'tor'))
+      return
+    }
+
     const onionAvailable = activity.onionAvailable === true
     for (const tab of tabs) {
       const active =
@@ -920,6 +925,18 @@ export class BrowserShell {
     this.syncState()
   }
 
+  /** Move a normal or private tab's NCC navigation into a Tor tab. */
+  private redirectToTorTab(tabs: Tab[]): void {
+    const tab = tabs.find((t) => t.id === this.activeId) ?? tabs[0]
+    if (!tab || !tab.displayUrl) return
+    const url = tab.displayUrl
+    const wc = tab.view.webContents
+    this.newTorTab(url)
+    // Leave the original tab where it was: back if it has history, else close it.
+    if (wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack()
+    else this.closeTab(tab.id)
+  }
+
   /** True when at least one tab for this service is currently served over Tor. */
   isTorService(pubkey: string, service: string): boolean {
     return this.tabs.some(
@@ -931,14 +948,15 @@ export class BrowserShell {
     )
   }
 
-  /** Flip the per-service onion override, then reload through the other transport. */
+  /**
+   * The onion button never routes a normal or private tab through Tor: it opens the
+   * page in a Tor tab, the only tab kind that uses Tor connections.
+   */
   toggleTor(): void {
     const tab = this.activeTab()
-    if (!tab || tab.mode !== 'ncc' || !tab.pubkey || !tab.service) return
-    if (!tab.tor.onionAvailable) return
-    this.deps.transport.toggle(tab.pubkey, tab.service, true)
-    this.deps.health.clear()
-    void this.forceReload()
+    if (!tab || tab.kind === 'tor' || tab.mode !== 'ncc') return
+    if (!tab.tor.onionAvailable || !tab.displayUrl) return
+    this.newTorTab(tab.displayUrl)
   }
 
   /** Apply transport and content-protection changes to every open page. */
