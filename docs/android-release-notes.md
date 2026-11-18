@@ -1,5 +1,10 @@
 # Nostr Navigator for Android
 
+## Fixes in 0.33.20
+
+- The Monero wallet now shows Send, the QR code and address above the sync settings, matching
+  the Bitcoin wallet.
+
 ## Fixes in 0.33.19
 
 - Fixed Android startup and ensured the Downloads screen is included in production builds.
