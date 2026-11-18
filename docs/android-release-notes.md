@@ -1,5 +1,12 @@
 # Nostr Navigator for Android
 
+## Fixes in 0.33.18
+
+- Monero scanning now shows real progress (block, total and percentage) instead of a constant 0%.
+- Monero shows the cached balance and history immediately while the scan catches up, and
+  Refresh no longer reopens the wallet if it is already open or syncing.
+- Restoring a Monero wallet explains that the restore height controls how long the first scan takes.
+
 ## Fixes in 0.33.17
 
 - Keep the Bitcoin and Monero receive QR code and address inside the wallet screen when the

@@ -15,6 +15,12 @@ export type MoneroSnapshot = {
 export type MoneroSendPreview = { id: string; address: string; amount: string; fee: string; transactions: number }
 export type MoneroWalletData = { keysData: string; cacheData: string }
 
+/** monero-ts sync progress is a 0-1 fraction; the UI wants 0-100, clamped. */
+export function normalizeSyncPercent(fraction: number): number {
+  if (!Number.isFinite(fraction)) return 0
+  return Math.min(100, Math.max(0, fraction * 100))
+}
+
 export function parseXmrAmount(input: string): bigint {
   const value = input.trim()
   if (!/^(?:0|[1-9]\d*)(?:\.\d{1,12})?$/.test(value)) throw new Error('Enter an XMR amount with up to 12 decimal places')
@@ -35,7 +41,11 @@ export class MoneroWalletSession {
   private pending = new Map<string, { txs: Awaited<ReturnType<MoneroWalletFull['createTxs']>>; preview: MoneroSendPreview }>()
   private loadRuntime: Promise<typeof import('monero-ts')> | null = null
   private syncing: Promise<MoneroSnapshot> | null = null
+  /** `percent` is 0-100; monero-ts reports a 0-1 fraction, normalised in sync(). */
   progress = { height: 0, startHeight: 0, endHeight: 0, percent: 0, message: '' }
+
+  get isOpen(): boolean { return this.wallet !== null }
+  get isSyncing(): boolean { return this.syncing !== null }
 
   async open(options: { seed: string; daemonUrl: string; restoreHeight: number; seedOffset?: string; walletData?: MoneroWalletData }): Promise<MoneroSnapshot> {
     if (this.wallet) await this.close()
@@ -84,7 +94,7 @@ export class MoneroWalletSession {
     this.syncing = (async () => {
       const monero = await this.runtime()
       const listener = new monero.MoneroWalletListener()
-      listener.onSyncProgress = async (height, startHeight, endHeight, percent, message) => { this.progress = { height, startHeight, endHeight, percent, message } }
+      listener.onSyncProgress = async (height, startHeight, endHeight, percent, message) => { this.progress = { height, startHeight, endHeight, percent: normalizeSyncPercent(percent), message } }
       await wallet.sync(listener)
       return this.snapshot()
     })()

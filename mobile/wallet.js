@@ -140,9 +140,22 @@ async function loadMoneroWallet() {
     if (!moneroRecord) { byId('wallet-xmr-setup').hidden = false; byId('wallet-xmr-receive').hidden = true; return }
     const walletData = await window.__TAURI__.core.invoke('wallet_monero_cache_load').catch(() => null)
     byId('wallet-xmr-setup').hidden = true; byId('wallet-xmr-backup').hidden = true; byId('wallet-xmr-receive').hidden = false
-    message('Opening Monero wallet and scanning locally. First sync can take a while.')
-    timer = window.setInterval(() => { byId('wallet-xmr-note').textContent = `Scanning block ${moneroSession.progress.height.toLocaleString()} (${Math.floor(moneroSession.progress.percent)}%).` }, 1000)
-    await moneroSession.open({ seed: moneroRecord.seed, daemonUrl: byId('wallet-xmr-daemon').value, restoreHeight: moneroRecord.restoreHeight, walletData: walletData ?? undefined })
+    let phase = 'Loading Monero engine…'
+    const showProgress = () => {
+      const { height, endHeight, percent } = moneroSession.progress
+      byId('wallet-xmr-note').textContent = phase
+        || (endHeight > 0
+          ? `Scanning block ${height.toLocaleString()} of ${endHeight.toLocaleString()} (${percent.toFixed(percent < 10 ? 1 : 0)}%).`
+          : 'Connecting to the Monero node…')
+    }
+    timer = window.setInterval(() => showProgress(), 1000)
+    if (!moneroSession.isOpen) {
+      showProgress()
+      await moneroSession.open({ seed: moneroRecord.seed, daemonUrl: byId('wallet-xmr-daemon').value, restoreHeight: moneroRecord.restoreHeight, walletData: walletData ?? undefined })
+      // Show the cached balance and history straight away while the scan catches up.
+      if (walletData) await renderMoneroSnapshot(await moneroSession.snapshot()).catch(() => undefined)
+    }
+    phase = ''; showProgress()
     await renderMoneroSnapshot(await moneroSession.sync())
     await saveMoneroCache()
     byId('wallet-xmr-note').textContent = 'Monero wallet is synced.'
