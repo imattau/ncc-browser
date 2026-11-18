@@ -12,6 +12,9 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  NPACK_VERSION: 0.10.0
+
 jobs:
   verify:
     name: Verify
@@ -27,7 +30,7 @@ jobs:
       - run: npm test
 
   linux:
-    name: Linux (deb, rpm, flatpak)
+    name: Linux (deb, rpm, flatpak, npk)
     needs: verify
     runs-on: ubuntu-latest
     steps:
@@ -78,6 +81,38 @@ jobs:
           TOR_DIR=release/linux-unpacked/resources/tor/tor
           LD_LIBRARY_PATH="$TOR_DIR" "$TOR_DIR/tor" --version
 
+      - name: Get the npack CLI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "v${NPACK_VERSION}" --repo imattau/npack \
+            --pattern "npack_${NPACK_VERSION}_amd64.deb" --dir npack-deb
+          dpkg-deb -x npack-deb/*.deb npack-root
+          sudo install -m 0755 npack-root/usr/bin/npack /usr/local/bin/npack
+          npack --version
+
+      # The same unpacked build as an npack package (https://github.com/imattau/npack):
+      # a deterministic .npk plus its manifest. It is published to Nostr by the
+      # `npack` job, once the GitHub release holds the asset.
+      - name: Pack the .npk
+        env:
+          PUBLISHER: ${{ vars.NOSTR_PUBLISHER }}
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then
+            test -n "$PUBLISHER" || { echo "::error::set the repository variable NOSTR_PUBLISHER"; exit 1; }
+          else
+            PUBLISHER="${PUBLISHER:-manual-test-publisher}"
+          fi
+          VERSION="$(node -p "require('./package.json').version")"
+          scripts/pack-npk.sh "$VERSION" "$PUBLISHER" release
+
+      - name: Install the .npk into a scratch store and run it
+        run: |
+          npack install release/ncc-browser-*-linux-x86_64.npk --store "$RUNNER_TEMP/store"
+          exe=$(find "$RUNNER_TEMP/store" -name ncc-browser -perm -u+x \( -type f -o -type l \) | head -1)
+          test -n "$exe" || { find "$RUNNER_TEMP/store"; exit 1; }
+          echo "installed $exe"
+
       - uses: actions/upload-artifact@v7
         with:
           name: linux-packages
@@ -86,6 +121,8 @@ jobs:
             release/*.deb
             release/*.rpm
             release/*.flatpak
+            release/*.npk
+            release/*.manifest.json
 
   macos:
     name: macOS (dmg, zip)
@@ -192,3 +229,44 @@ jobs:
           prerelease: ${{ contains(github.ref_name, '-') }}
           fail_on_unmatched_files: true
           files: artifacts/*
+
+  npack:
+    name: Publish to Nostr (npack)
+    needs: release
+    # Signs the release under the publisher key, so it only runs for a version tag
+    # and only once the NOSTR_SECRET_KEY secret and NOSTR_PUBLISHER variable exist.
+    if: startsWith(github.ref, 'refs/tags/v') && vars.NOSTR_PUBLISHER != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: linux-packages
+          path: pkg
+
+      - name: Get the npack CLI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "v${NPACK_VERSION}" --repo imattau/npack \
+            --pattern "npack_${NPACK_VERSION}_amd64.deb" --dir npack-deb
+          dpkg-deb -x npack-deb/*.deb npack-root
+          sudo install -m 0755 npack-root/usr/bin/npack /usr/local/bin/npack
+          npack --version
+
+      - name: Publish the release events
+        env:
+          NOSTR_SECRET_KEY: ${{ secrets.NOSTR_SECRET_KEY }}
+          NOSTR_RELAYS: ${{ vars.NOSTR_RELAYS }}
+        run: |
+          test -n "$NOSTR_SECRET_KEY" || { echo "::error::set the repository secret NOSTR_SECRET_KEY"; exit 1; }
+          : "${NOSTR_RELAYS:=wss://relay.ditto.pub
+          wss://nostr-01.yakihonne.com
+          wss://relay.primal.net}"
+          args=()
+          while IFS= read -r r; do [[ -n "${r//[[:space:]]/}" ]] && args+=(--relay "$r"); done <<< "$NOSTR_RELAYS"
+          manifest=$(ls pkg/ncc-browser-*-linux-x86_64.manifest.json)
+          npk=$(basename "$manifest" .manifest.json).npk
+          npack publish "$manifest" "${args[@]}" \
+            --secret-key "$NOSTR_SECRET_KEY" \
+            --artifact-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/${npk}" \
+            --icon-url "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${GITHUB_REF_NAME}/build/icons/256x256.png"
