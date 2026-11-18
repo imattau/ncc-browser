@@ -1,5 +1,9 @@
 # Nostr Navigator for Android
 
+## Fixes in 0.33.19
+
+- Fixed Android startup and ensured the Downloads screen is included in production builds.
+
 ## Fixes in 0.33.18
 
 - Monero scanning now shows real progress (block, total and percentage) instead of a constant 0%.
