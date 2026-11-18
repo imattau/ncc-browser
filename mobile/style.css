@@ -2006,10 +2006,13 @@ body[data-kind='tor'] .pill-kind {
 
 /* Wallet home: keep the first view focused on balance, send and receive. */
 .wallet-body { justify-items: center; gap: 18px; padding: 12px 18px 28px; }
+.screen#wallet { width: 100%; min-width: 0; max-width: 100%; overflow: hidden; }
+.screen#wallet > .wallet-body { flex: 1 1 0%; width: 100%; min-width: 0; min-height: 0; max-width: 100%; grid-template-columns: minmax(0, 1fr); overflow-x: hidden; }
 .wallet-currencies { display: flex; width: fit-content; max-width: 100%; border-radius: 999px; }
 .wallet-currency { min-height: 38px; padding: 0 17px; border-radius: 999px; }
 #wallet-note:empty { display: none; }
-#wallet-bitcoin, #wallet-monero { width: 100%; }
+#wallet-bitcoin, #wallet-monero { width: 100%; min-width: 0; max-width: 100%; }
+#wallet-bitcoin > *, #wallet-monero > * { min-width: 0; max-width: 100%; }
 #wallet-bitcoin > .wallet-card:first-child,
 .wallet-monero-card { display: grid; justify-items: center; gap: 14px; border: 0; padding: 10px 0 4px; background: transparent; box-shadow: none; }
 .wallet-balance-card > strong, .wallet-monero-card .wallet-balance { margin: 4px 0 0; text-align: center; font: 700 40px/1.15 ui-sans-serif, system-ui, sans-serif; letter-spacing: -.04em; }

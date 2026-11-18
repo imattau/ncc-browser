@@ -3,6 +3,10 @@
 **Alpha.** An early build published so the browser can be tested on a real device. It
 is not a daily driver.
 
+## Fixes in 0.33.13
+
+- Keep the Bitcoin wallet screen within the Android viewport after its receive QR loads.
+
 ## Fixes in 0.33.12
 
 - Bitcoin receive QR codes stay within the Android wallet view.
