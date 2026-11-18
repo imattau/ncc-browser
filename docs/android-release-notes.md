@@ -1,5 +1,10 @@
 # Nostr Navigator for Android
 
+## Fixes in 0.33.17
+
+- Keep the Bitcoin and Monero receive QR code and address inside the wallet screen when the
+  address is long.
+
 ## Fixes in 0.33.16
 
 - NCC Browser can now be selected as Android's default browser and handle HTTP/HTTPS links.
