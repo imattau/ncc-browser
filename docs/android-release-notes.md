@@ -1,5 +1,9 @@
 # Nostr Navigator for Android
 
+## Fixes in 0.33.24
+
+- Tapping a shortcut on the home page opens it again.
+
 ## New in 0.33.23
 
 - Added a Lightning wallet tab with Nostr Wallet Connect, balance refresh, invoice

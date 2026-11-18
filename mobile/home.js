@@ -111,7 +111,7 @@ export function createHome(deps) {
           writeList(HOME_ORDER_KEY, [entry.address, ...order])
           renderHome()
         } else if (!longPressed) {
-          void submit(entry.address, { newTab: newTabMode })
+          void submit(entry.address, { newTab: getNewTabMode() })
         }
         longPressed = false
       })
