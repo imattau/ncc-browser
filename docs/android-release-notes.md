@@ -1,5 +1,9 @@
 # Nostr Navigator for Android
 
+## Fixes in 0.33.16
+
+- NCC Browser can now be selected as Android's default browser and handle HTTP/HTTPS links.
+
 **Alpha.** An early build published so the browser can be tested on a real device. It
 is not a daily driver.
 
