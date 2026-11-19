@@ -9,27 +9,31 @@ use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use axum::Router;
 use axum::body::Body;
 use axum::extract::{Request, State};
-use axum::http::{header, HeaderMap, HeaderName, HeaderValue, StatusCode};
+use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
-use axum::Router;
 use futures_util::FutureExt;
 use url::Url;
 
 use ncc_core::{
-    http_origin, is_onion_host, join_paths, parse_ncc_address, select_transport_endpoints,
-    upstream_headers, Endpoint,
+    Endpoint, http_origin, is_onion_host, join_paths, parse_ncc_address,
+    select_transport_endpoints, upstream_headers,
 };
 
 use ncc_identity::IdentityStore;
 
 use crate::approvals::Approvals;
-use crate::inject::{inject_into_html, relax_csp, Injection, TokenStore, MAX_INJECTION_BYTES};
+use crate::inject::{Injection, MAX_INJECTION_BYTES, TokenStore, inject_into_html, relax_csp};
 use crate::nsite::{Blobs, NsiteResolver};
-use crate::pins::{pinned_tls_config, PinStore};
+use crate::pins::{PinStore, pinned_tls_config};
 use crate::resolve::{ResolveError, ResolvedService, Resolver};
-use crate::vhost::{parse_vhost, Vhost};
+use crate::vhost::{Vhost, parse_vhost};
+
+mod nccsearch_assets {
+    include!(concat!(env!("OUT_DIR"), "/nccsearch_assets.rs"));
+}
 
 /// Headers that describe one hop and must not be forwarded either way.
 const HOP_BY_HOP: &[&str] = &[
@@ -73,6 +77,8 @@ pub struct ProxyConfig {
     /// Root of the on-disk cache: manifests, locator records and verified site files.
     /// `None` keeps all three in memory only.
     pub cache_directory: Option<std::path::PathBuf>,
+    /// Static assets for the optional app-local nccsearch origin.
+    pub nccsearch_directory: Option<std::path::PathBuf>,
     /// Where trusted services are remembered. Separate from the cache on purpose:
     /// clearing the cache must not revoke a permission.
     pub permissions_file: Option<std::path::PathBuf>,
@@ -95,6 +101,7 @@ impl Default for ProxyConfig {
             max_body_bytes: 10 * 1024 * 1024,
             allowed_origins: Vec::new(),
             cache_directory: None,
+            nccsearch_directory: None,
             permissions_file: None,
             settings: None,
             tor_proxy: None,
@@ -122,6 +129,7 @@ pub struct ProxyState {
     nsite: NsiteResolver,
     blobs: Blobs,
     settings: Arc<crate::settings::SettingsStore>,
+    nccsearch_directory: Option<std::path::PathBuf>,
 }
 
 impl ProxyState {
@@ -202,6 +210,7 @@ impl ProxyState {
             tokens: TokenStore::new(),
             max_body_bytes: config.max_body_bytes,
             allowed_origins: config.allowed_origins.clone(),
+            nccsearch_directory: config.nccsearch_directory.clone(),
             identity: None,
             approvals: None,
             remote: Mutex::new(None),
@@ -496,6 +505,10 @@ async fn handle_inner(state: &ProxyState, request: Request) -> Response {
     let path = request.uri().path().to_string();
     let query = request.uri().query().unwrap_or_default().to_string();
 
+    if authority_host(&authority).eq_ignore_ascii_case("nccsearch.localhost") {
+        return serve_nccsearch(state, &path, request.method());
+    }
+
     if path == "/__ncc/route" {
         return route(state, &authority, &query).await;
     }
@@ -647,7 +660,7 @@ async fn handle_inner(state: &ProxyState, request: Request) -> Response {
                     "Certificate does not match the locator",
                     &detail,
                     &vhost,
-                )
+                );
             }
             Err(ForwardError::Retry(detail)) => failures.push(detail),
         }
@@ -659,6 +672,111 @@ async fn handle_inner(state: &ProxyState, request: Request) -> Response {
         &failures.join("; "),
         &vhost,
     )
+}
+
+fn authority_host(authority: &str) -> &str {
+    if authority.starts_with('[') {
+        return authority.split(']').next().unwrap_or(authority);
+    }
+    authority.split(':').next().unwrap_or(authority)
+}
+
+fn serve_nccsearch(
+    state: &ProxyState,
+    request_path: &str,
+    method: &axum::http::Method,
+) -> Response {
+    if method != axum::http::Method::GET && method != axum::http::Method::HEAD {
+        return text(StatusCode::METHOD_NOT_ALLOWED, "Method not allowed");
+    }
+    let Some(root) = state.nccsearch_directory.as_ref() else {
+        return serve_nccsearch_embedded(request_path, method);
+    };
+    let mut file = root.clone();
+    for segment in request_path.split('/') {
+        if segment.is_empty() {
+            continue;
+        }
+        if segment == "." || segment == ".." || segment.contains('\\') {
+            return text(StatusCode::NOT_FOUND, "Not found");
+        }
+        file.push(segment);
+    }
+    if request_path.ends_with('/') || file.is_dir() {
+        file.push("index.html");
+    }
+    let Ok(root) = std::fs::canonicalize(root) else {
+        return serve_nccsearch_embedded(request_path, method);
+    };
+    let Ok(file) = std::fs::canonicalize(file) else {
+        return serve_nccsearch_embedded(request_path, method);
+    };
+    if !file.starts_with(&root) {
+        return text(StatusCode::NOT_FOUND, "Not found");
+    }
+    let Ok(bytes) = std::fs::read(&file) else {
+        return serve_nccsearch_embedded(request_path, method);
+    };
+    let extension = file
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let content_type = match extension.as_str() {
+        "html" => "text/html; charset=utf-8",
+        "js" | "mjs" => "text/javascript; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "json" => "application/json; charset=utf-8",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "woff2" => "font/woff2",
+        _ => "application/octet-stream",
+    };
+    let body = if method == axum::http::Method::HEAD {
+        Body::empty()
+    } else {
+        Body::from(bytes)
+    };
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, content_type)
+        .header(header::CACHE_CONTROL, "no-store")
+        .header("x-content-type-options", "nosniff")
+        .header(header::REFERRER_POLICY, "no-referrer")
+        .header("content-security-policy", "default-src 'self' data: blob:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src https:; connect-src 'self' wss: ws: https:; worker-src 'self' blob:; base-uri 'self'")
+        .body(body)
+        .unwrap_or_else(|_| text(StatusCode::INTERNAL_SERVER_ERROR, "Could not serve nccsearch"))
+}
+
+fn serve_nccsearch_embedded(request_path: &str, method: &axum::http::Method) -> Response {
+    let relative = request_path.trim_start_matches('/');
+    let relative = if relative.is_empty() || request_path.ends_with('/') {
+        format!("{relative}index.html")
+    } else {
+        relative.to_string()
+    };
+    let Some((_, bytes, content_type)) = nccsearch_assets::ASSETS
+        .iter()
+        .find(|(path, _, _)| *path == relative)
+    else {
+        return text(StatusCode::NOT_FOUND, "Not found");
+    };
+    let body = if method == axum::http::Method::HEAD {
+        Body::empty()
+    } else {
+        Body::from(*bytes)
+    };
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, *content_type)
+        .header(header::CACHE_CONTROL, "no-store")
+        .header("x-content-type-options", "nosniff")
+        .header(header::REFERRER_POLICY, "no-referrer")
+        .header("content-security-policy", "default-src 'self' data: blob:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src https:; connect-src 'self' wss: ws: https:; worker-src 'self' blob:; base-uri 'self'")
+        .body(body)
+        .unwrap_or_else(|_| text(StatusCode::INTERNAL_SERVER_ERROR, "Could not serve nccsearch"))
 }
 
 enum ForwardError {

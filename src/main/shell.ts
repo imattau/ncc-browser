@@ -813,11 +813,16 @@ export class BrowserShell {
   /** Set by sync: called whenever the set of tabs or their addresses may have changed. */
   onTabsChanged: (() => void) | null = null
 
-  /** Normal tabs as sync publishes them. Private and Tor tabs are never included. */
+  /** Normal user tabs as sync publishes them. App-internal nccsearch is local-only. */
   syncTabs(): { url: string; title: string; lastActive: number }[] {
     const now = Date.now()
     return this.tabs
-      .filter((tab) => tab.kind === 'normal' && tab.mode !== 'blank' && tab.displayUrl)
+      .filter((tab) =>
+        tab.kind === 'normal' &&
+        tab.mode !== 'blank' &&
+        tab.displayUrl &&
+        !/^nccsearch:\/\//i.test(tab.displayUrl)
+      )
       .map((tab) => ({
         url: tab.displayUrl,
         title: tabTitle(tab),

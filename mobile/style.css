@@ -499,6 +499,14 @@ body[data-bar='top'] #progress {
   overscroll-behavior: contain;
 }
 
+.nccsearch-frame {
+  flex: 1 1 0%;
+  width: 100%;
+  min-height: 0;
+  border: 0;
+  background: var(--bg);
+}
+
 .hint {
   margin: 4px 0 16px;
   color: var(--muted);

@@ -40,6 +40,7 @@ import { closeSharedPool, NccResolver, signerFromSecret, type LocatorSigner } fr
 import { NsiteBlobs } from './nsite/blob'
 import { NsiteResolver } from './nsite/resolver'
 import { installNsiteProtocol } from './nsite/protocol'
+import { installNccSearchProtocol } from './nccsearch/protocol'
 import { installCertificatePinning, PinStore } from './pins'
 import { installNccProtocol, type ProtocolActivity } from './protocol'
 import { registerPrivilegedSchemes } from './schemes'
@@ -223,6 +224,17 @@ app.whenReady().then(async () => {
     installCertificatePinning(value, pins)
     protection.installCookiePolicy(value, kind)
   }
+  const nccSearchAssets = app.isPackaged
+    ? join(process.resourcesPath, 'nccsearch')
+    : join(app.getAppPath(), 'resources', 'nccsearch')
+  installNccSearchProtocol(
+    [content.normal, content.private, content.tor],
+    nccSearchAssets,
+    () => ({
+      relays: config.getRelays(),
+      pubkey: identity.list().activeId
+    })
+  )
 
   const torGuard = new TorGuard()
   torGuard.install(content.normal, (details) => protection.shouldBlock(details, 'normal'))

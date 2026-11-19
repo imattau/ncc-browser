@@ -161,10 +161,11 @@ export function registerIpc(deps: IpcDeps): void {
       if (!payload || typeof payload !== 'object') {
         return { ok: false, error: 'Invalid search settings' }
       }
-      const { engine, custom, useOnionSearch } = payload as {
+      const { engine, custom, useOnionSearch, nccSearchEnabled } = payload as {
         engine?: unknown
         custom?: unknown
         useOnionSearch?: unknown
+        nccSearchEnabled?: unknown
       }
       if (!isSearchEngineId(engine)) {
         return { ok: false, error: 'Choose a search engine' }
@@ -177,7 +178,7 @@ export function registerIpc(deps: IpcDeps): void {
         const result = validateSearchTemplate(template)
         if (!result.ok) return { ok: false, error: result.error }
       }
-      const config = deps.config.setSearchConfig({ engine, custom: template, useOnionSearch })
+      const config = deps.config.setSearchConfig({ engine, custom: template, useOnionSearch, nccSearchEnabled })
       return { ok: true, config }
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }

@@ -136,6 +136,7 @@ export interface NccApi {
     engine: SearchEngineId
     custom: string
     useOnionSearch: boolean
+    nccSearchEnabled: boolean
   }): Promise<SetRelaysResult>
   setAppearance(appearance: Partial<AppearanceConfig>): Promise<SetAppearanceResult>
   syncStatus(): Promise<SyncStatus>

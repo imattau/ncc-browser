@@ -171,6 +171,7 @@ export class ConfigStore {
     engine?: unknown
     custom?: unknown
     useOnionSearch?: unknown
+    nccSearchEnabled?: unknown
   }): AppConfig {
     const current = this.get()
     const engine: SearchEngineId = isSearchEngineId(input.engine)
@@ -180,7 +181,9 @@ export class ConfigStore {
       typeof input.custom === 'string' ? input.custom.trim().slice(0, 2048) : current.searchEngineCustom
     const useOnionSearch =
       typeof input.useOnionSearch === 'boolean' ? input.useOnionSearch : current.useOnionSearch
-    this.config = { ...current, searchEngine: engine, searchEngineCustom: custom, useOnionSearch }
+    const nccSearchEnabled =
+      typeof input.nccSearchEnabled === 'boolean' ? input.nccSearchEnabled : current.nccSearchEnabled
+    this.config = { ...current, searchEngine: engine, searchEngineCustom: custom, useOnionSearch, nccSearchEnabled }
     this.write()
     return this.get()
   }
@@ -256,6 +259,7 @@ export class ConfigStore {
               ? parsed.searchEngineCustom.trim().slice(0, 2048)
               : '',
           useOnionSearch: parsed.useOnionSearch !== false,
+          nccSearchEnabled: parsed.nccSearchEnabled === true,
           appearance: normalizeAppearance(parsed.appearance),
           passwords: normalizePasswordConfig(parsed.passwords)
         }
@@ -278,6 +282,7 @@ export class ConfigStore {
       searchEngine: DEFAULT_SEARCH_ENGINE,
       searchEngineCustom: '',
       useOnionSearch: true,
+      nccSearchEnabled: false,
       appearance: { ...DEFAULT_APPEARANCE },
       passwords: { ...DEFAULT_PASSWORD_CONFIG }
     }

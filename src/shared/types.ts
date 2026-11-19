@@ -665,6 +665,8 @@ export interface AppConfig {
   searchEngineCustom: string
   /** Use an engine's onion endpoint inside full Tor tabs. */
   useOnionSearch: boolean
+  /** Enable the bundled, relay-local nccsearch page. */
+  nccSearchEnabled?: boolean
   /** Theme, text size, density, accent and motion preferences. */
   appearance: AppearanceConfig
   /** Password manager lock, save, relay and never-save preferences. */

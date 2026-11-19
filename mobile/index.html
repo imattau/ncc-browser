@@ -7,7 +7,7 @@
       content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no"
     />
     <meta name="color-scheme" content="light dark" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https: http: wss: ws:" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https: http: wss: ws:; frame-src 'self' http://nccsearch.localhost:*" />
     <title>Nostr Navigator (alpha)</title>
     <link rel="stylesheet" href="style.css" />
   </head>
@@ -438,9 +438,22 @@
           <span id="search-custom-label">SearXNG instance</span>
           <input id="search-custom" spellcheck="false" autocapitalize="off" />
         </label>
+        <label class="switch-row">
+          <span><b>Enable local nccsearch</b><small>Crawls your configured relays while open and keeps its index on this device. Search activity is not published.</small></span>
+          <input id="nccsearch-enabled" class="switch" type="checkbox" role="switch" />
+        </label>
+        <button id="nccsearch-open" class="btn block" type="button">Open nccsearch</button>
         <button id="search-save" class="btn block" type="button">Save</button>
         <p id="search-error" class="status" role="status"></p>
       </div>
+    </section>
+
+    <section id="nccsearch" class="screen" hidden>
+      <header class="appbar">
+        <button class="ib" type="button" data-back aria-label="Back"><svg class="i"><use href="#i-back" /></svg></button>
+        <h2>nccsearch</h2>
+      </header>
+      <iframe id="nccsearch-frame" title="Local nccsearch" class="nccsearch-frame" referrerpolicy="no-referrer"></iframe>
     </section>
 
     <section id="security" class="screen" hidden>

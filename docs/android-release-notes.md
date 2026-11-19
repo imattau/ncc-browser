@@ -1,5 +1,12 @@
 # Nostr Navigator for Android
 
+## New in 0.34.0
+
+- Added optional local nccsearch to Search settings. It indexes configured relays on
+  the device, and search activity is not published.
+- Fixed the embedded search page in Android by allowing its local frame and bundling
+  its static assets into the app proxy.
+
 ## Fixes in 0.33.24
 
 - Tapping a shortcut on the home page opens it again.

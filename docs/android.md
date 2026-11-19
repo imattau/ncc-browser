@@ -228,18 +228,15 @@ within 30 days of expiry.
 
 ## Release flow
 
-```bash
-node scripts/android-version.mjs      # versionName + monotonic versionCode
-git tag android-v0.13.0 && git push origin android-v0.13.0
-```
+The supported release is built by `.github/workflows/release.yml` from one `v*` tag.
+It builds desktop packages and the signed Android arm64 APK, verifies the APK has the
+expected ABI, and attaches all artifacts and checksums to one GitHub release. Before
+tagging, update the package version, then run `node scripts/android-version.mjs` to
+keep Android's version name and monotonic version code in sync. The Android-only
+workflow remains for manual builds and legacy `android-v*` tags.
 
-The workflow builds the APK, verifies it is signed and carries `lib/arm64-v8a/`,
-uploads it as an artifact and to the GitHub release, then publishes to Zapstore with
-`SIGN_WITH` from the secret. `workflow_dispatch` with `publish: true` does the same
-from a branch.
-
-Publishing is gated on a repository variable so a tag cannot fail before the claim
-exists:
+The legacy Android-only workflow's Zapstore publishing is gated on a repository
+variable so a tag cannot fail before the claim exists:
 
 ```bash
 # after the one-time claim succeeds

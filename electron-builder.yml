@@ -18,6 +18,10 @@ files:
   - node_modules/adblock-rs/js/index.js
   - node_modules/adblock-rs/js/index.node
 
+extraResources:
+  - from: resources/nccsearch
+    to: nccsearch
+
 asar: true
 asarUnpack:
   - node_modules/adblock-rs/**/*.node

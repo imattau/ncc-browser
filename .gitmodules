@@ -1,0 +1,4 @@
+[submodule "vendor/ncc-server"]
+	path = vendor/ncc-server
+	url = https://github.com/imattau/ncc-server.git
+	branch = nccsearch-nsites

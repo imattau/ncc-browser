@@ -1356,6 +1356,7 @@ fn tor_config(dir: &std::path::Path, mode: TorMode, socks: String) -> TorConfig 
 fn proxy_config(
     data_dir: Option<std::path::PathBuf>,
     settings: Option<Arc<SettingsStore>>,
+    nccsearch_directory: Option<std::path::PathBuf>,
 ) -> ProxyConfig {
     ProxyConfig {
         relays: default_relays(),
@@ -1366,6 +1367,7 @@ fn proxy_config(
         // Manifests, records and verified site files survive a restart; site files are
         // hash-checked when read back.
         cache_directory: data_dir,
+        nccsearch_directory,
         // Only the shell's own bundle may read responses across origins. A page
         // served from a vhost does not need CORS at all.
         allowed_origins: vec![
@@ -1555,6 +1557,11 @@ pub fn run() {
             }));
 
             let settings = Arc::new(SettingsStore::open(data_dir.join("config.json")));
+            let nccsearch_directory = if cfg!(debug_assertions) {
+                Some(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../mobile/public/nccsearch"))
+            } else {
+                app.path().resource_dir().ok().map(|directory| directory.join("nccsearch"))
+            };
             ncc_proxy::protection::set_config(settings.get().protection.clone());
             let filter_cache = data_dir.join("protection");
             ncc_proxy::protection::load_cached_lists(&filter_cache);
@@ -1572,7 +1579,7 @@ pub fn run() {
                 }
             }
             let proxy = Arc::new(
-                ProxyState::new(&proxy_config(Some(data_dir.clone()), Some(settings.clone())))
+                ProxyState::new(&proxy_config(Some(data_dir.clone()), Some(settings.clone()), nccsearch_directory.clone()))
                     .with_signer(identity.clone(), approvals.clone()),
             );
 
@@ -1602,7 +1609,7 @@ pub fn run() {
             // Private tabs: the same proxy, minus every cache and with a key that exists
             // only in memory. Nothing a private tab does is written down.
             let private_proxy = Arc::new(
-                ProxyState::new(&proxy_config(None, Some(settings.clone()))).with_signer(
+                ProxyState::new(&proxy_config(None, Some(settings.clone()), None)).with_signer(
                     Arc::new(IdentityStore::ephemeral()),
                     approvals.clone(),
                 ),
@@ -1643,7 +1650,7 @@ pub fn run() {
 
             let mut tor_state: Option<Arc<ProxyState>> = None;
             let tor_port = tor.as_ref().and_then(|tor| {
-                let mut config = proxy_config(None, Some(settings.clone()));
+                let mut config = proxy_config(None, Some(settings.clone()), None);
                 config.tor_proxy = Some(tor.socks_url().to_string());
                 config.tor_progress = Some(Arc::new(TorProgressFeed(tor.clone())));
                 let listener = Arc::new(

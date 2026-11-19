@@ -208,6 +208,7 @@ export function SettingsPage({
   const [searchEngine, setSearchEngine] = useState<SearchEngineId>('duckduckgo')
   const [searchCustom, setSearchCustom] = useState('')
   const [useOnionSearch, setUseOnionSearch] = useState(true)
+  const [nccSearchEnabled, setNccSearchEnabled] = useState(false)
   const [appearance, setAppearance] = useState<AppearanceConfig>(DEFAULT_APPEARANCE)
   const [appearanceError, setAppearanceError] = useState<string | null>(null)
   const [historyCleared, setHistoryCleared] = useState(false)
@@ -270,6 +271,7 @@ export function SettingsPage({
       setSearchEngine(config.searchEngine)
       setSearchCustom(config.searchEngineCustom)
       setUseOnionSearch(config.useOnionSearch)
+      setNccSearchEnabled(config.nccSearchEnabled === true)
       setAppearance(config.appearance)
       applyAppearance(config.appearance)
       setIdentity(status)
@@ -427,7 +429,8 @@ export function SettingsPage({
     const searchResult = await window.ncc.setSearchConfig({
       engine: searchEngine,
       custom: searchCustom,
-      useOnionSearch
+      useOnionSearch,
+      nccSearchEnabled
     })
     setLoading(false)
     if (!searchResult.ok) {
@@ -457,6 +460,7 @@ export function SettingsPage({
       setSearchEngine(config.searchEngine)
       setSearchCustom(config.searchEngineCustom)
       setUseOnionSearch(config.useOnionSearch)
+      setNccSearchEnabled(config.nccSearchEnabled === true)
     }
     setTorStatus(await window.ncc.torStatus())
     setSaved(true)
@@ -997,6 +1001,39 @@ export function SettingsPage({
                       </span>
                     </span>
                   </label>
+
+                  <div className="mt-3 rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-field)] p-3.5">
+                    <label className="flex cursor-pointer items-start gap-3">
+                      <input
+                        type="checkbox"
+                        checked={nccSearchEnabled}
+                        onChange={(event) => {
+                          setNccSearchEnabled(event.target.checked)
+                          setSaved(false)
+                        }}
+                        className="mt-0.5 h-4 w-4 accent-[color:var(--color-accent)]"
+                      />
+                      <span>
+                        <span className="block text-ui-12 font-medium text-[color:var(--color-text-strong)]">
+                          Enable local nccsearch
+                        </span>
+                        <span className="mt-0.5 block text-ui-115 leading-relaxed text-[color:var(--color-muted)]">
+                          Crawls your configured relays while open and keeps its index on this device. Search activity is not published.
+                        </span>
+                      </span>
+                    </label>
+                    <button
+                      type="button"
+                      disabled={!nccSearchEnabled || loading}
+                      onClick={() => {
+                        void window.ncc.newTab('nccsearch://app/')
+                        onClose()
+                      }}
+                      className="mt-3 rounded-lg border border-[color:var(--color-line)] px-3 py-1.5 text-ui-11 text-[color:var(--color-text)] hover:bg-[color:var(--color-hover)] disabled:opacity-40"
+                    >
+                      Open nccsearch
+                    </button>
+                  </div>
 
                   <p className="mt-3 text-ui-11 leading-relaxed text-[color:var(--color-muted)]">
                     Suggestions come from bookmarks, open tabs and normal-tab history. The

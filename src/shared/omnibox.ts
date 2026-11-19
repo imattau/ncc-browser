@@ -87,6 +87,18 @@ export function classifyOmniboxInput(raw: string, context: OmniboxContext): Omni
       return invalid('invalid-address', 'That is not a valid URL')
     }
 
+    if (/^nccsearch:\/\/app(?:\/|$)/i.test(text)) {
+      try {
+        const url = new URL(text)
+        if (url.hostname === 'app' && !url.username && !url.password) {
+          return { kind: 'web', url: text }
+        }
+      } catch {
+        // Fall through to the unsupported-scheme message.
+      }
+      return invalid('invalid-address', 'That is not a valid local nccsearch address')
+    }
+
     const scheme = SCHEME_RE.exec(text) ?? /^([a-z][a-z0-9+.-]*):/i.exec(text)
     if (scheme && !/^[a-z][a-z0-9+.-]*:\d+([/?#]|$)/i.test(text)) {
       return invalid(

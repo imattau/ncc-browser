@@ -108,6 +108,7 @@ let pendingFocus = null
 let findOpen = false
 let findTimer = null
 let identity = null
+let nccSearchEnabled = false
 
 /** Loading progress per tab id, 0–100. Absent means idle. */
 const progressByTab = {}
@@ -123,6 +124,7 @@ const PANELS = [
   'appearance',
   'relays',
   'search',
+  'nccsearch',
   'security',
   'tor',
   'passwords',
@@ -146,6 +148,7 @@ const PANEL_PARENT = {
   appearance: 'settings',
   relays: 'settings',
   search: 'settings',
+  nccsearch: 'search',
   security: 'settings',
   tor: 'settings',
   passwords: 'settings',
@@ -592,6 +595,7 @@ globalThis.__nccBack = () => {
 /** Every full-window surface is the shell expanded over the page. */
 function showPanel(name) {
   if (!content) return
+  if (panel === 'nccsearch' && name !== 'nccsearch') byId('nccsearch-frame').removeAttribute('src')
   if (panel === 'wallet' && name !== 'wallet') void closeMoneroWallet()
   if (findOpen) closeFind()
   panel = name
@@ -607,6 +611,7 @@ function showPanel(name) {
   if (name === 'signer-settings') void loadPermissions()
   if (name === 'relays') void loadRelays()
   if (name === 'search') void loadSearch()
+  if (name === 'nccsearch') void loadNccSearch()
   if (name === 'security') void loadSecurity()
   if (name === 'tor') void loadTor()
   if (name === 'passwords') void passwordFeature.loadPasswords()
@@ -1608,6 +1613,10 @@ function readSetting(key, fallback) {
   }
 }
 
+function writeSetting(key, value) {
+  try { globalThis.localStorage?.setItem(key, value) } catch { /* preferences are optional */ }
+}
+
 function applyChoiceAttribute(attribute, value, choices, key, fallback) {
   const selected = choices.includes(value) ? value : fallback
   if (selected === fallback) delete document.documentElement.dataset[attribute]
@@ -1676,9 +1685,38 @@ async function loadSearch() {
     byId('search-custom').value = browserSettings.searchEngineCustom
     byId('search-custom-label').textContent =
       browserSettings.searchEngine === 'custom' ? 'Template with %s' : 'SearXNG instance'
+    nccSearchEnabled = readSetting('ncc.nccsearch.enabled', 'false') === 'true'
+    byId('nccsearch-enabled').checked = nccSearchEnabled
+    byId('nccsearch-open').disabled = !nccSearchEnabled
     renderSearchSub()
   } catch (error) {
     byId('search-error').textContent = String(error)
+  }
+}
+
+async function loadNccSearch() {
+  if (!nccSearchEnabled) {
+    showPanel('search')
+    byId('search-error').textContent = 'Enable local nccsearch in Search settings first.'
+    return
+  }
+  const frame = byId('nccsearch-frame')
+  try {
+    const [settings, profiles] = await Promise.all([
+      invoke('browser_settings'),
+      invoke('identity_profiles').catch(() => null)
+    ])
+    const relays = (settings.relays || []).filter((relay) => /^wss?:\/\//i.test(relay)).slice(0, 6)
+    if (!proxyPort) throw new Error('The local page proxy is not ready yet.')
+    const url = new URL(`http://nccsearch.localhost:${proxyPort}/`)
+    url.searchParams.set('relays', btoa(relays.join(',')))
+    const activeId = profiles?.active_id || ''
+    const key = activeId.split(':').at(-1)
+    if (/^[0-9a-f]{64}$/i.test(key || '')) url.searchParams.set('pubkey', key.toLowerCase())
+    frame.src = url.toString()
+  } catch (error) {
+    byId('search-error').textContent = `Could not open nccsearch: ${error}`
+    showPanel('search')
   }
 }
 
@@ -1688,6 +1726,9 @@ async function saveSearch() {
       engine: byId('search-engine').value,
       custom: byId('search-custom').value.trim()
     })
+    nccSearchEnabled = byId('nccsearch-enabled').checked
+    writeSetting('ncc.nccsearch.enabled', String(nccSearchEnabled))
+    byId('nccsearch-open').disabled = !nccSearchEnabled
     byId('search-error').textContent = 'Saved.'
     renderSearchSub()
   } catch (error) {
@@ -2080,6 +2121,14 @@ function wireChrome() {
 
   byId('relays-save').addEventListener('click', () => void saveRelays())
   byId('search-save').addEventListener('click', () => void saveSearch())
+  byId('nccsearch-enabled').addEventListener('change', () => {
+    nccSearchEnabled = byId('nccsearch-enabled').checked
+    byId('nccsearch-open').disabled = !nccSearchEnabled
+    writeSetting('ncc.nccsearch.enabled', String(nccSearchEnabled))
+  })
+  byId('nccsearch-open').addEventListener('click', () => {
+    if (nccSearchEnabled) showPanel('nccsearch')
+  })
   byId('search-engine').addEventListener('change', () => {
     byId('search-custom-label').textContent =
       byId('search-engine').value === 'custom' ? 'Template with %s' : 'SearXNG instance'

@@ -308,12 +308,22 @@ dropdown always states what Enter will do:
 - **Search engines** — DuckDuckGo (default), Brave, Startpage, Google, Bing, SearXNG and
   a custom `%s` template. HTTPS is required except for loopback and `.onion` hosts; a
   misconfigured engine falls back to DuckDuckGo and Settings shows the error.
+- **Local nccsearch** — optionally enable the embedded nccsearch nsite edition in
+  Settings → Search. It crawls the configured read relays while open, keeps its search
+  index in this app’s local browser storage, and never publishes search events. The
+  active identity is used only for personalized ranking. Its address and query are also
+  excluded from browser tab sync.
 - **Tor** — full Tor tabs use DuckDuckGo's onion endpoint when **Use onion search in Tor
   tabs** is on, otherwise the engine's normal URL over the tab's fixed proxy.
 - **History** lives in `userData/history.json`: normal tabs only, deduplicated with visit
   counts, capped at 3000 entries and 180 days. Private and Tor tabs are never recorded,
   and Settings → Security clears it. With history sync on, clearing also clears it on
   your other devices.
+
+The embedded page is built from the `vendor/ncc-server` submodule on its
+`nccsearch-nsites` branch. To intentionally advance the upstream pin, run
+`git submodule update --remote vendor/ncc-server` and commit the resulting submodule
+pointer. Desktop and mobile builds run `npm run nccsearch:build` automatically.
 
 ---
 
@@ -961,28 +971,25 @@ See [soapbox.pub/mkstack](https://soapbox.pub/mkstack).
 
 ## Packaging and releases
 
-Desktop releases are built by [`.github/workflows/release.yml`](./.github/workflows/release.yml)
-from a `v*` tag. The workflow runs the typecheck and unit tests once, then builds on
-three runners and attaches every artifact to a single GitHub release. Android releases
-use the separate [`.github/workflows/android.yml`](./.github/workflows/android.yml)
-pipeline and an `android-v*` tag; it builds and attaches the signed arm64 APK to its own
-GitHub release:
+Releases are built by [`.github/workflows/release.yml`](./.github/workflows/release.yml)
+from one `v*` tag. The workflow runs typecheck and unit tests, then builds desktop
+packages on Linux, macOS and Windows, plus the signed Android arm64 APK, and attaches
+all artifacts and checksums to one GitHub release:
 
 | Platform | Artifacts |
 | --- | --- |
 | Linux | `ncc-browser-<version>-linux-amd64.deb`, `…-linux-x86_64.rpm`, `…-linux-x86_64.flatpak` |
 | macOS | `ncc-browser-<version>-mac-x64.dmg` / `-arm64.dmg` and matching `.zip` |
 | Windows | `ncc-browser-<version>-win-x64-setup.exe` (NSIS) |
+| Android | `ncc-browser-android-arm64.apk` |
 
-The desktop release job and Android release both upload checksums. After committing the
-release version and notes, push both tags to publish desktop and Android together:
+After updating the release version and notes, push the release commit and its tag:
 
 ```bash
 npm version 0.33.0 --no-git-tag-version
 node scripts/android-version.mjs
 git commit -am "Release v0.33.0"
 git tag -a v0.33.0 -m "Nostr Navigator v0.33.0"
-git tag -a android-v0.33.0 -m "Nostr Navigator Android v0.33.0"
 git push origin main --follow-tags
 ```
 
