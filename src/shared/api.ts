@@ -39,6 +39,10 @@ import type {
   PasswordToast,
   PasswordTotpCode,
   PasswordVaultStatus,
+  PaymentCardDraft,
+  PaymentCardSaveRequest,
+  PaymentCardSettingsStatus,
+  PaymentCardSummary,
   TabKind,
   RelayEntry,
   RelayLocatorOutcome,
@@ -168,6 +172,14 @@ export interface NccApi {
     mode: 'merge' | 'skip' | 'add'
   ): Promise<PasswordSaveResult>
   passwordsExport(format: 'encrypted' | 'csv'): Promise<PasswordExportResult>
+  paymentCardsStatus(): Promise<PaymentCardSettingsStatus>
+  paymentCardsList(): Promise<PaymentCardSummary[]>
+  paymentCardsSave(card: PaymentCardDraft): Promise<{ ok: boolean; pending?: boolean; error?: string }>
+  paymentCardsRemove(id: string): Promise<{ ok: boolean; error?: string }>
+  paymentCardsSync(): Promise<void>
+  paymentCardsRespond(id: string, action: 'save' | 'dismiss'): Promise<{ ok: boolean; pending?: boolean; error?: string }>
+  onPaymentCardsStatus(listener: (status: PaymentCardSettingsStatus) => void): () => void
+  onPaymentCardSaveRequest(listener: (request: PaymentCardSaveRequest) => void): () => void
   walletStatus(): Promise<WalletStatus>
   walletSnapshot(): Promise<WalletSnapshot>
   walletSettings(): Promise<{ esploraUrl: string; privacyNotice: string }>

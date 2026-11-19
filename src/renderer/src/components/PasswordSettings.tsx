@@ -29,6 +29,7 @@ import type {
   PasswordVaultStatus
 } from '@shared/types'
 import { cn } from '../lib/cn'
+import { PaymentCardsSettings } from './PaymentCardsSettings'
 
 interface PasswordSettingsProps {
   identity: IdentityStatus | null
@@ -757,6 +758,7 @@ export function PasswordSettings({
           </div>
         </>
       ) : null}
+      <PaymentCardsSettings passwords={status} />
     </>
   )
 }

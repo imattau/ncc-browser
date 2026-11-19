@@ -90,6 +90,19 @@ async function pointFor(
 const WAIT_DEFAULT_MS = 5_000
 const WAIT_MAX_MS = 30_000
 const WAIT_POLL_INTERVAL_MS = 250
+const DEVELOPMENT_SCOPE = 'browser://development'
+
+async function developmentSurface(
+  host: AutomationHost,
+  gate: AutomationGate,
+  action: string
+): Promise<AutomationContents | ToolResult> {
+  if (!(await gate.authorize(DEVELOPMENT_SCOPE, `browser dev: ${action}`))) {
+    return denied(DEVELOPMENT_SCOPE)
+  }
+  const contents = host.chromeContents?.()
+  return contents ?? fail('Browser chrome is not ready.')
+}
 
 async function waitFor(
   contents: AutomationContents,
@@ -105,6 +118,80 @@ async function waitFor(
 }
 
 export const TOOLS: ToolDefinition[] = [
+  {
+    name: 'open_settings',
+    description: 'Open a browser settings section. Requires a separate Browser development tools permission, shown in the browser Agent control popup.',
+    inputSchema: { type: 'object', properties: { section: { type: 'string', enum: ['general', 'identity', 'passwords'] } }, required: ['section'] },
+    run: async (host, args, gate) => {
+      const section = str(args, 'section')
+      if (section !== 'general' && section !== 'identity' && section !== 'passwords') return fail('section must be general, identity, or passwords.')
+      const surface = await developmentSurface(host, gate, `open ${section} settings`)
+      if (isResult(surface)) return surface
+      if (!host.openSettings) return fail('Browser settings control is unavailable in this build.')
+      host.openSettings(section)
+      return text(`Opened ${section} settings.`)
+    }
+  },
+  {
+    name: 'chrome_read_page',
+    description: 'Inspect visible browser chrome controls and dialogs. Requires a separate Browser development tools permission, shown in the browser Agent control popup.',
+    inputSchema: { type: 'object', properties: {} },
+    run: async (host, _args, gate) => {
+      const surface = await developmentSurface(host, gate, 'inspect browser chrome')
+      return isResult(surface) ? surface : json(await surface.evaluate(SNAPSHOT_SCRIPT))
+    }
+  },
+  {
+    name: 'chrome_screenshot',
+    description: 'Capture the browser chrome viewport, including browser-owned settings and prompts. Requires a separate Browser development tools permission, shown in the browser Agent control popup.',
+    inputSchema: { type: 'object', properties: {} },
+    run: async (host, _args, gate) => {
+      const surface = await developmentSurface(host, gate, 'capture browser chrome screenshot')
+      if (isResult(surface)) return surface
+      const png = await surface.screenshot()
+      return { content: [{ type: 'image', data: png.toString('base64'), mimeType: 'image/png' }] }
+    }
+  },
+  {
+    name: 'chrome_click',
+    description: 'Click a visible browser chrome control by ref from chrome_read_page or by viewport coordinates. Requires separate Browser development tools permission.',
+    inputSchema: { type: 'object', properties: { ref: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' } } },
+    run: async (host, args, gate) => {
+      const surface = await developmentSurface(host, gate, 'click a browser chrome control')
+      if (isResult(surface)) return surface
+      const point = await pointFor(surface, args)
+      if (isResult(point)) return point
+      await surface.click(point.x, point.y)
+      return text('clicked')
+    }
+  },
+  {
+    name: 'chrome_type',
+    description: 'Type text into the focused browser chrome input. Requires separate Browser development tools permission.',
+    inputSchema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] },
+    run: async (host, args, gate) => {
+      const surface = await developmentSurface(host, gate, 'type into a browser chrome input')
+      if (isResult(surface)) return surface
+      const value = str(args, 'text')
+      if (value === undefined) return fail('text is required.')
+      await surface.insertText(value)
+      return text('typed')
+    }
+  },
+  {
+    name: 'chrome_press_key',
+    description: 'Press a key in browser chrome, such as Enter, Tab, or Escape. Requires separate Browser development tools permission.',
+    inputSchema: { type: 'object', properties: { key: { type: 'string' }, modifiers: { type: 'array', items: { type: 'string' } } }, required: ['key'] },
+    run: async (host, args, gate) => {
+      const surface = await developmentSurface(host, gate, 'press a key in browser chrome')
+      if (isResult(surface)) return surface
+      const key = str(args, 'key')
+      if (!key) return fail('key is required.')
+      const modifiers = Array.isArray(args.modifiers) ? args.modifiers.filter((value): value is string => typeof value === 'string') : []
+      await surface.pressKey(key, modifiers)
+      return text('pressed')
+    }
+  },
   {
     name: 'approvals_status',
     description:

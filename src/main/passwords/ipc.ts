@@ -3,9 +3,12 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync
 import { dirname, join } from 'node:path'
 import type { BrowserShell } from '../shell'
 import type { PasswordClipboard, PasswordFileDialogs, PasswordService } from './service'
+import type { PasswordConfig } from '@shared/types'
 
 export interface PasswordIpcDeps {
   shell: BrowserShell
+  afterUnlock?: () => Promise<void>
+  afterConfigChange?: (input: Record<string, unknown>) => Promise<void>
 }
 
 /** Register chrome-only and content-only IPC. Nothing here is reachable from pages. */
@@ -25,7 +28,11 @@ export function registerPasswordIpc(service: PasswordService, deps: PasswordIpcD
 
   handle('ncc:password-status', () => service.status())
   handle('ncc:password-context', () => service.context())
-  handle('ncc:password-unlock', () => service.unlock())
+  handle('ncc:password-unlock', async () => {
+    const status = await service.unlock()
+    await deps.afterUnlock?.().catch((error) => console.warn('[payment-cards] unlock failed:', error))
+    return status
+  })
   handle('ncc:password-lock', () => service.lock())
   handle('ncc:password-list', () => service.list())
   handle('ncc:password-entry', (id) => (typeof id === 'string' ? service.entry(id) : null))
@@ -59,9 +66,12 @@ export function registerPasswordIpc(service: PasswordService, deps: PasswordIpcD
   handle('ncc:password-fill', (id) =>
     typeof id === 'string' ? service.fill(id) : { ok: false, error: 'Invalid login' }
   )
-  handle('ncc:password-config', (input) =>
-    input && typeof input === 'object' ? service.setConfig(input) : service.status()
-  )
+  handle('ncc:password-config', async (input) => {
+    if (!input || typeof input !== 'object') return service.status()
+    const result = await service.setConfig(input as Partial<PasswordConfig>)
+    await deps.afterConfigChange?.(input as Record<string, unknown>)
+    return result
+  })
   handle('ncc:password-remove-never', (origin) => {
     if (typeof origin === 'string') service.removeNeverSave(origin)
     return service.status()

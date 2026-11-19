@@ -43,13 +43,15 @@ export function SignerPrompt({ request, onRespond, waiting = 0 }: SignerPromptPr
 
   const remote = request.mode === 'nip46'
   const agent = request.kind === 'automation'
+  const paymentCardAuth = request.kind === 'payment-card-auth'
+  const browserDevelopment = agent && request.service === 'browser://development'
 
   return (
     <div
       data-signer-prompt
       role="dialog"
       aria-modal="true"
-      aria-label={agent ? 'Agent control request' : 'Signer request'}
+      aria-label={paymentCardAuth ? 'Confirm card fill' : agent ? 'Agent control request' : 'Signer request'}
       className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto bg-[color:var(--color-scrim-strong)] px-4 py-[9vh] backdrop-blur-sm"
     >
       <div
@@ -62,7 +64,7 @@ export function SignerPrompt({ request, onRespond, waiting = 0 }: SignerPromptPr
               {remote ? <Smartphone className="h-4 w-4" /> : <KeyRound className="h-4 w-4" />}
             </span>
             <div className="min-w-0">
-              <h2 className="text-ui-13 font-semibold text-[color:var(--color-text-strong)]">{agent ? 'Agent control request' : 'Signer request'}</h2>
+              <h2 className="text-ui-13 font-semibold text-[color:var(--color-text-strong)]">{paymentCardAuth ? 'Confirm card fill' : agent ? 'Agent control request' : 'Signer request'}</h2>
               {waiting > 0 ? (
                 <p className="mt-0.5 text-ui-10 text-[color:var(--color-muted)]">
                   {waiting} more waiting
@@ -72,7 +74,7 @@ export function SignerPrompt({ request, onRespond, waiting = 0 }: SignerPromptPr
                 className="mt-0.5 truncate font-mono text-ui-11 text-[color:var(--color-muted)]"
                 title={request.service}
               >
-                {request.service}
+                {browserDevelopment ? 'Browser development tools' : request.service}
               </p>
             </div>
           </div>
@@ -89,8 +91,12 @@ export function SignerPrompt({ request, onRespond, waiting = 0 }: SignerPromptPr
 
         <div className="px-5 py-4">
           <h3 className="text-ui-15 font-semibold leading-snug text-[color:var(--color-text-strong)]">
-            {agent
-              ? `An AI agent wants to ${request.action}.`
+            {paymentCardAuth
+              ? 'A Nostr signer is being asked to confirm this card fill.'
+              : agent
+              ? browserDevelopment
+                ? 'An AI agent wants to inspect and operate browser settings and prompts.'
+                : `An AI agent wants to ${request.action}.`
               : `This service wants to ${request.action}.`}
           </h3>
 
@@ -122,11 +128,23 @@ export function SignerPrompt({ request, onRespond, waiting = 0 }: SignerPromptPr
 
           <p className="mt-3 flex items-start gap-2 text-ui-11 leading-relaxed text-[color:var(--color-warn)]">
             <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            {agent ? (
+            {paymentCardAuth ? (
+              <span>
+                A one-time challenge is signed by your active Nostr identity. It is not
+                published. The card will be filled only after approval.
+              </span>
+            ) : agent ? (
+              browserDevelopment ? (
+                <span>
+                  This grants access to the browser&apos;s own settings and controls. Website
+                  access is still approved separately.
+                </span>
+              ) : (
               <span>
                 The agent can read this site&apos;s pages and act as you on it: click, type and
                 submit forms. Allow it only for a task you started.
               </span>
+              )
             ) : (
             <span>
               Approve only if you trust this service. On `ncc://` addresses the npub is the
@@ -149,7 +167,7 @@ export function SignerPrompt({ request, onRespond, waiting = 0 }: SignerPromptPr
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[color:var(--color-line)] px-5 py-3.5">
-          <label className="flex cursor-pointer items-center gap-2 text-ui-115 text-[color:var(--color-muted)]">
+          {request.rememberable && !paymentCardAuth ? <label className="flex cursor-pointer items-center gap-2 text-ui-115 text-[color:var(--color-muted)]">
             <input
               type="checkbox"
               data-signer-remember
@@ -158,7 +176,7 @@ export function SignerPrompt({ request, onRespond, waiting = 0 }: SignerPromptPr
               className="h-3.5 w-3.5 accent-[color:var(--color-accent)]"
             />
             {request.rememberLabel ?? 'Always allow this service'}
-          </label>
+          </label> : <span />}
 
           <div className="flex items-center gap-2">
             <button

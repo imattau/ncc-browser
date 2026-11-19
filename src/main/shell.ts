@@ -202,6 +202,12 @@ export class BrowserShell {
     return this.sendChrome(channel, payload)
   }
 
+  /** Open a known settings section from the separately permissioned MCP surface. */
+  openAutomationSettings(section: 'general' | 'identity' | 'passwords'): void {
+    this.window.focus()
+    this.sendChrome('ncc:open-settings', { section })
+  }
+
   /** Main-process view of one tab, for the password manager. */
   pageForTab(tabId: string): PasswordPage | null {
     const tab = this.tabs.find((entry) => entry.id === tabId)

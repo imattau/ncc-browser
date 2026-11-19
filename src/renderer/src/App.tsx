@@ -14,6 +14,7 @@ import type {
   PasswordSaveRequest,
   PasswordToast,
   PasswordVaultStatus,
+  PaymentCardSaveRequest,
   SignerRequest,
   TabHistory
 } from '@shared/types'
@@ -24,6 +25,7 @@ import { HistoryPanel } from './components/HistoryPanel'
 import { IdentityChooser } from './components/IdentityChooser'
 import { PasswordsPanel } from './components/PasswordsPanel'
 import { PasswordSavePrompt } from './components/PasswordSavePrompt'
+import { PaymentCardSavePrompt } from './components/PaymentCardSavePrompt'
 import { type PopoverAnchor } from './components/Popover'
 import { InsecureWarning, SecurityBanner } from './components/SecurityNotice'
 import { SettingsPage, type SettingsSection } from './components/SettingsPage'
@@ -84,6 +86,9 @@ export function App() {
   const [passwordSave, setPasswordSave] = useState<PasswordSaveRequest | null>(null)
   const [passwordSaveBusy, setPasswordSaveBusy] = useState(false)
   const [passwordSaveError, setPasswordSaveError] = useState<string | null>(null)
+  const [paymentCardSave, setPaymentCardSave] = useState<PaymentCardSaveRequest | null>(null)
+  const [paymentCardSaveBusy, setPaymentCardSaveBusy] = useState(false)
+  const [paymentCardSaveError, setPaymentCardSaveError] = useState<string | null>(null)
   const [passwordDraftOrigin, setPasswordDraftOrigin] = useState<string | null>(null)
   const [passwordToast, setPasswordToast] = useState<PasswordToast | null>(null)
   const [extensions, setExtensions] = useState<ExtensionsState | null>(null)
@@ -207,15 +212,36 @@ export function App() {
       setPasswordDraftOrigin(null)
       showOverlay('password-save')
     })
+    const offCardSave = window.ncc.onPaymentCardSaveRequest((request) => {
+      setPaymentCardSave(request)
+      setPaymentCardSaveError(null)
+      showOverlay('payment-card-save')
+    })
     const offToast = window.ncc.onPasswordToast((toast) => setPasswordToast(toast))
     return () => {
       alive = false
       offStatus()
       offContext()
       offSave()
+      offCardSave()
       offToast()
     }
   }, [showOverlay])
+
+  const respondToPaymentCardSave = async (action: 'save' | 'dismiss'): Promise<void> => {
+    if (!paymentCardSave) return
+    setPaymentCardSaveBusy(true)
+    setPaymentCardSaveError(null)
+    try {
+      const result = await window.ncc.paymentCardsRespond(paymentCardSave.id, action)
+      if (!result.ok) { setPaymentCardSaveError(result.error ?? 'Could not save card'); return }
+      setPaymentCardSave(null)
+      showOverlay(null)
+      if (result.pending) setPasswordToast({ tone: 'warn', message: 'Card saved locally; relay sync will retry.' })
+    } catch (error) {
+      setPaymentCardSaveError(messageOf(error))
+    } finally { setPaymentCardSaveBusy(false) }
+  }
 
   useEffect(() => {
     let alive = true
@@ -793,6 +819,15 @@ export function App() {
           busy={passwordSaveBusy}
           error={passwordSaveError}
           onRespond={(action) => void respondToPasswordSave(action)}
+        />
+      ) : null}
+
+      {paymentCardSave ? (
+        <PaymentCardSavePrompt
+          request={paymentCardSave}
+          busy={paymentCardSaveBusy}
+          error={paymentCardSaveError}
+          onRespond={(action) => void respondToPaymentCardSave(action)}
         />
       ) : null}
 

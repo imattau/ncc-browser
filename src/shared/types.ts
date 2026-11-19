@@ -142,6 +142,16 @@ export interface PasswordConfig {
   vaultRelay: string
   /** Origins the user chose never to save for. */
   neverSave: string[]
+  /** Allow checkout card-save prompts. */
+  offerPaymentCardSave: boolean
+  /** Show payment-card autofill suggestions on supported devices. */
+  fillPaymentCards: boolean
+  /** Opt in to capturing, storing, and autofilling card security codes. */
+  savePaymentCardSecurityCodes: boolean
+  /** Allow Nostr signer confirmation as an alternative to system authentication. */
+  allowNostrPaymentCardAuth: boolean
+  /** Make Nostr signer confirmation the default when card autofill is requested. */
+  defaultNostrPaymentCardAuth: boolean
 }
 
 export const DEFAULT_PASSWORD_CONFIG: PasswordConfig = {
@@ -149,7 +159,79 @@ export const DEFAULT_PASSWORD_CONFIG: PasswordConfig = {
   offerSave: true,
   useNip65: true,
   vaultRelay: '',
-  neverSave: []
+  neverSave: [],
+  offerPaymentCardSave: true,
+  fillPaymentCards: true,
+  savePaymentCardSecurityCodes: false,
+  allowNostrPaymentCardAuth: false,
+  defaultNostrPaymentCardAuth: false
+}
+
+/* ------------------------------------------------------------------ */
+/*  Payment cards                                                     */
+/* ------------------------------------------------------------------ */
+
+export interface PaymentCard {
+  id: string
+  name: string
+  number: string
+  /** Optional security code; only populated when the user opts in. */
+  cvc?: string
+  expMonth: string
+  expYear: string
+  nickname: string
+  createdAt: number
+  updatedAt: number
+  deleted?: boolean
+}
+
+export interface PaymentCardDraft {
+  id?: string
+  name: string
+  number: string
+  cvc?: string
+  expMonth: string
+  expYear: string
+  nickname: string
+}
+
+export interface PaymentCardSummary {
+  id: string
+  name: string
+  last4: string
+  network: string
+  expMonth: string
+  expYear: string
+  nickname: string
+}
+
+export interface PaymentCardSettingsStatus {
+  unlocked: boolean
+  authAvailable: boolean
+  nostrAuthAvailable: boolean
+  allowNostrAuth: boolean
+  defaultNostrAuth: boolean
+  enabled: boolean
+  offerSave: boolean
+  saveSecurityCodes: boolean
+  cards: PaymentCardSummary[]
+}
+
+export interface PaymentCardSaveRequest {
+  id: string
+  mode: 'create' | 'update'
+  name: string
+  last4: string
+  network: string
+  expMonth: string
+  expYear: string
+  includesSecurityCode?: boolean
+}
+
+export interface PaymentCardSaveResult {
+  ok: boolean
+  error?: string
+  pending?: boolean
 }
 
 export function normalizePasswordConfig(input: unknown): PasswordConfig {
@@ -170,7 +252,12 @@ export function normalizePasswordConfig(input: unknown): PasswordConfig {
       ? value.neverSave
           .filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)
           .slice(-200)
-      : []
+      : [],
+    offerPaymentCardSave: typeof value.offerPaymentCardSave === 'boolean' ? value.offerPaymentCardSave : true,
+    fillPaymentCards: typeof value.fillPaymentCards === 'boolean' ? value.fillPaymentCards : true,
+    savePaymentCardSecurityCodes: typeof value.savePaymentCardSecurityCodes === 'boolean' ? value.savePaymentCardSecurityCodes : false,
+    allowNostrPaymentCardAuth: value.allowNostrPaymentCardAuth === true,
+    defaultNostrPaymentCardAuth: value.allowNostrPaymentCardAuth === true && value.defaultNostrPaymentCardAuth === true
   }
 }
 
@@ -596,6 +683,7 @@ export const OVERLAY_REASONS = [
   'insecure',
   'passwords',
   'password-save',
+  'payment-card-save',
   'wallet',
   'share-nostr'
 ] as const
@@ -778,8 +866,8 @@ export interface SignerRequest {
   torTab?: boolean
   /** Label for the remember control, e.g. "Always allow" or "Remember for this session". */
   rememberLabel?: string
-  /** Not a signer request: an agent asks to control a site through the automation server. */
-  kind?: 'automation'
+  /** Additional browser-owned approval flows shown in the same trusted prompt. */
+  kind?: 'automation' | 'payment-card-auth'
 }
 
 export interface SignerDecision {

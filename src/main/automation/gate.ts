@@ -73,7 +73,9 @@ export class ApprovalGate implements AutomationGate {
         origin: siteOf(site),
         identity: null,
         mode: 'none',
-        note: `First action requested: ${action}`,
+        note: site === 'browser://development'
+          ? `Development access can inspect and operate browser settings and prompts. First action: ${action}`
+          : `First action requested: ${action}`,
         rememberable: true,
         ephemeral: true,
         rememberLabel: 'Allow for this session'

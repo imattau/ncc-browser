@@ -61,6 +61,9 @@ export interface AutomationHost {
   navigate(tabId: string, input: string): Promise<void>
   history(tabId: string, direction: 'back' | 'forward'): Promise<void>
   contents(tabId: string): AutomationContents | null
+  /** Trusted browser chrome, kept separate from site contents and permission scope. */
+  chromeContents?(): AutomationContents | null
+  openSettings?(section: 'general' | 'identity' | 'passwords'): void
 }
 
 export type ToolContent =

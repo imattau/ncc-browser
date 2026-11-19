@@ -260,6 +260,8 @@ export function createIdentity(deps) {
   function describeSignerMethod(request) {
     const kind = request.kind ? ` (kind ${request.kind})` : ''
     switch (request.method) {
+      case 'payment-card-auth':
+        return 'Confirm a payment card fill with your Nostr identity'
       case 'get-public-key':
       case 'getPublicKey':
         return 'Wants to read your public key'
@@ -295,10 +297,10 @@ export function createIdentity(deps) {
     byId('signer-remember').checked = false
     // A throwaway key has nothing worth remembering a decision for.
     const rememberRow = byId('signer-remember').closest('.switch-row')
-    if (rememberRow) rememberRow.hidden = request.ephemeral === true
-    byId('signer-title').textContent = request.ephemeral
-      ? 'Request (throwaway key)'
-      : 'Signature request'
+    if (rememberRow) rememberRow.hidden = request.ephemeral === true || request.method === 'payment-card-auth'
+    byId('signer-title').textContent = request.method === 'payment-card-auth'
+      ? 'Confirm card fill'
+      : request.ephemeral ? 'Request (throwaway key)' : 'Signature request'
     byId('signer-bar').style.width = '100%'
     tickSigner()
     content?.expand(true)

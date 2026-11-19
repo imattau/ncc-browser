@@ -922,6 +922,13 @@ class MainActivity : TauriActivity() {
       runOnUiThread { tabs.firstOrNull { it.id == id }?.fillLogin(user, secret) }
     }
 
+    @JavascriptInterface
+    fun fillPaymentCard(tabId: String?, card: String?) {
+      val id = tabId ?: return
+      val json = card ?: return
+      runOnUiThread { tabs.firstOrNull { it.id == id }?.fillPaymentCard(json) }
+    }
+
     /** Write-only: the page-triggered path must never be able to read a password. */
     @JavascriptInterface
     fun copySecret(text: String?, label: String?) {

@@ -28,6 +28,11 @@ import { ExtensionStorage } from './extensions/storage'
 import { PasswordCache } from './passwords/cache'
 import { electronClipboard, electronFileDialogs, registerPasswordIpc } from './passwords/ipc'
 import { PasswordService } from './passwords/service'
+import { PaymentCardCache } from './payment-cards/cache'
+import { createPaymentCardAuth } from './payment-cards/auth'
+import { NostrPaymentCardAuth } from './payment-cards/nostr-auth'
+import { PaymentCardService } from './payment-cards/service'
+import { registerPaymentCardIpc } from './payment-cards/ipc'
 import { WalletService } from './wallet/service'
 import { registerWalletIpc } from './wallet/ipc'
 import { NwcService } from './wallet/nwc-service'
@@ -91,6 +96,7 @@ let torManager: TorManager | null = null
 let torRelays: TorRelayPool | null = null
 let relaySync: RelaySync | null = null
 let passwords: PasswordService | null = null
+let paymentCards: PaymentCardService | null = null
 let walletService: WalletService | null = null
 let nwcService: NwcService | null = null
 let extensions: ExtensionService | null = null
@@ -428,7 +434,16 @@ app.whenReady().then(async () => {
       shell.window.webContents.send(channel, payload)
       return true
     },
-    setOverlay: (visible) => shell?.setOverlay('approval', visible),
+    setOverlay: (visible) => {
+      if (!shell) return
+      shell.setOverlay('approval', visible)
+      if (visible && !shell.window.isDestroyed()) {
+        // Agent approvals can originate while the browser is behind another window.
+        // Surface the request so the user can actually answer the permission prompt.
+        shell.window.show()
+        shell.window.focus()
+      }
+    },
     timeoutMs: 120_000
   })
 
@@ -439,10 +454,37 @@ app.whenReady().then(async () => {
     cache: new PasswordCache(join(app.getPath('userData'), 'passwords.json')),
     host: shell,
     clipboard: electronClipboard(),
-    dialogs: electronFileDialogs(shell)
+    dialogs: electronFileDialogs(shell),
+    onLock: () => paymentCards?.lock()
   })
   passwords = passwordService
-  registerPasswordIpc(passwordService, { shell })
+  paymentCards = new PaymentCardService({
+    identity,
+    relays: relayPool,
+    host: shell,
+    cache: new PaymentCardCache(join(app.getPath('userData'), 'payment-cards.json')),
+    auth: createPaymentCardAuth(shell.window),
+    nostrAuth: new NostrPaymentCardAuth(identity, approvals),
+    relaysFor: (pubkey) => passwordService.relaysFor(pubkey),
+    config: {
+      enabled: () => config.get().passwords.fillPaymentCards,
+      offerSave: () => config.get().passwords.offerPaymentCardSave,
+      saveSecurityCodes: () => config.get().passwords.savePaymentCardSecurityCodes,
+      allowNostrAuth: () => config.get().passwords.allowNostrPaymentCardAuth,
+      defaultNostrAuth: () => config.get().passwords.defaultNostrPaymentCardAuth,
+      setDefaultNostrAuth: (enabled) => {
+        config.setPasswordConfig({ allowNostrPaymentCardAuth: true, defaultNostrPaymentCardAuth: enabled })
+      }
+    }
+  })
+  registerPasswordIpc(passwordService, {
+    shell,
+    afterUnlock: () => paymentCards!.unlock(),
+    afterConfigChange: async (input) => {
+      if (typeof input.savePaymentCardSecurityCodes === 'boolean') await paymentCards!.setSecurityCodeSaving(input.savePaymentCardSecurityCodes)
+    }
+  })
+  registerPaymentCardIpc(paymentCards, shell)
   walletService = new WalletService(
     join(app.getPath('userData'), 'wallet-prefs.json'),
     localIdentity,

@@ -242,6 +242,11 @@ export function createElectronHost(shell: BrowserShell): AutomationHost {
     contents: (tabId) => {
       const contents = live(tabId)
       return contents ? wrap(contents) : null
-    }
+    },
+    chromeContents: () => {
+      const contents = shell.window.webContents
+      return contents.isDestroyed() ? null : wrap(contents)
+    },
+    openSettings: (section) => shell.openAutomationSettings(section)
   }
 }

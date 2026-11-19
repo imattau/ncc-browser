@@ -251,6 +251,32 @@ the author, timestamps and the approximate size.
 The Nostr key is the recovery key: losing it loses the vault. The vault is not encrypted
 with a separate master passphrase in this version.
 
+## Payment cards
+
+Payment cards live in a separate NIP-78 kind `30078` event (`d =
+ncc-browser/payment-cards/v1`) encrypted with NIP-44 to the active identity. The local
+cache contains only the signed ciphertext. Cardholder name, card number, and expiry are
+stored. CVV/security codes are off by default; an explicit Settings → Passwords → Payment
+methods opt-in allows a checkout save prompt to include them, store them inside the same
+NIP-44 encrypted record, and autofill them. Turning the option off removes saved codes from
+the local vault and publishes an updated encrypted record to configured relays.
+Settings lets you add, edit, remove, and sync cards, and control checkout save prompts and
+autofill.
+
+On secure HTTPS pages in normal tabs, focusing a recognized top-level card field can show
+a masked inline suggestion. Selecting a card requires a fresh macOS Touch ID prompt before
+the card details are sent to the isolated page preload. The form is filled but never
+submitted. Private and Tor tabs, insecure pages, and embedded checkout frames are not
+supported. Electron currently exposes a usable device authentication prompt only for
+macOS Touch ID; card management and encrypted sync work elsewhere, but filling stays
+disabled there until a supported OS authentication adapter is available.
+
+After a trusted form submission, the browser may ask to save or update the card. The
+prompt shows only the card network and last four digits. Saving requires the password
+manager vault to be unlocked. Card data is synced with the same relay selection as the
+password vault, as its own encrypted event. When security-code saving is enabled, captured
+codes are stored with that encrypted card record; the prompt itself never displays the code.
+
 ---
 
 ## Extensions

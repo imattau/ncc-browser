@@ -3720,9 +3720,10 @@ dependencies = [
 
 [[package]]
 name = "ncc-navigator"
-version = "0.34.3"
+version = "0.34.4"
 dependencies = [
  "base64 0.23.1",
+ "futures-util",
  "jni 0.21.1",
  "log",
  "ncc-core",
@@ -3730,6 +3731,7 @@ dependencies = [
  "ncc-proxy",
  "ncc-tor",
  "ncc-vault",
+ "nostr",
  "reqwest",
  "serde",
  "serde_json",
@@ -3739,6 +3741,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "url",
+ "uuid",
 ]
 
 [[package]]

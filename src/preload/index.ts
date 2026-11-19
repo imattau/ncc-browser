@@ -14,6 +14,8 @@ import {
   type PasswordSaveRequest,
   type PasswordToast,
   type PasswordVaultStatus,
+  type PaymentCardDraft,
+  type PaymentCardSaveRequest,
   type SignerRequest
 } from '@shared/types'
 
@@ -112,6 +114,17 @@ const api: NccApi = {
   passwordsImportOpen: () => ipcRenderer.invoke('ncc:password-import-open'),
   passwordsImportCommit: (id, mode) => ipcRenderer.invoke('ncc:password-import-commit', id, mode),
   passwordsExport: (format) => ipcRenderer.invoke('ncc:password-export', format),
+  paymentCardsStatus: () => ipcRenderer.invoke('ncc:payment-cards-status'),
+  paymentCardsList: () => ipcRenderer.invoke('ncc:payment-cards-list'),
+  paymentCardsSave: (card) => ipcRenderer.invoke('ncc:payment-cards-save', card),
+  paymentCardsRemove: (id) => ipcRenderer.invoke('ncc:payment-cards-remove', id),
+  paymentCardsSync: () => ipcRenderer.invoke('ncc:payment-cards-sync'),
+  paymentCardsRespond: (id, action) => ipcRenderer.invoke('ncc:payment-cards-respond', id, action),
+  onPaymentCardsStatus: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, status: Awaited<ReturnType<NccApi['paymentCardsStatus']>>): void => listener(status)
+    ipcRenderer.on('ncc:payment-card-status', handler)
+    return () => ipcRenderer.removeListener('ncc:payment-card-status', handler)
+  },
   walletStatus: () => ipcRenderer.invoke('ncc:wallet-status'),
   walletSnapshot: () => ipcRenderer.invoke('ncc:wallet-snapshot'),
   walletSettings: () => ipcRenderer.invoke('ncc:wallet-settings'),
@@ -273,6 +286,11 @@ const api: NccApi = {
     return () => {
       ipcRenderer.removeListener('ncc:password-save-request', handler)
     }
+  },
+  onPaymentCardSaveRequest: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, request: PaymentCardSaveRequest): void => listener(request)
+    ipcRenderer.on('ncc:payment-card-save-request', handler)
+    return () => ipcRenderer.removeListener('ncc:payment-card-save-request', handler)
   },
   onPasswordToast: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, toast: PasswordToast): void =>

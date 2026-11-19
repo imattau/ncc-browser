@@ -126,6 +126,7 @@ export interface PasswordServiceDeps {
   host: PasswordHost
   clipboard: PasswordClipboard
   dialogs: PasswordFileDialogs
+  onLock?: () => void
   now?: () => number
 }
 
@@ -1115,6 +1116,7 @@ export class PasswordService {
     this.fillWaiters.clear()
     if (this.lockTimer) clearTimeout(this.lockTimer)
     this.lockTimer = null
+    this.deps.onLock?.()
     if (notify) {
       this.sendStatus()
       this.sendContext()

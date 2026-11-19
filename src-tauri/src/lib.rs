@@ -1,4 +1,5 @@
 use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
 use tauri::{Emitter, Manager};
@@ -12,6 +13,7 @@ use ncc_vault::{GeneratorOptions, PasswordSummary, TotpCode};
 use ncc_proxy::settings::PasswordSettings;
 use ncc_proxy::vault::VaultService;
 use ncc_tor::{Tor, TorConfig, TorMode, TorState, TorStatus};
+mod payment_cards;
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_imattau_nccbrowser_ContentSurface_nativeProtectionCheck(
@@ -216,6 +218,7 @@ struct AppDataDir(std::path::PathBuf);
 
 /// The password vault. It needs the identity and the settings store, not the proxy.
 struct VaultHandle(Arc<VaultService>);
+struct PaymentCardsHandle(Arc<payment_cards::CardStore>);
 
 /// Bookmark, history and open-tab sync. Same identity and relays as the vault.
 struct SyncHandle(Arc<ncc_proxy::sync::SyncService>);
@@ -255,6 +258,83 @@ fn tor_prepare(state: tauri::State<'_, TorHandle>) {
 #[tauri::command]
 fn vault_status(vault: tauri::State<'_, VaultHandle>) -> VaultStatus {
     vault.0.status()
+}
+
+#[tauri::command]
+async fn payment_cards_unlock(state: tauri::State<'_, SignerState>, cards: tauri::State<'_, PaymentCardsHandle>) -> Result<(), String> {
+    let identity = state.identity.status();
+    if identity.initialised && !identity.unlocked { let _ = state.identity.unlock(envelope(None).as_ref()); }
+    cards.0.unlock(&state.identity)?;
+    cards.0.sync(state.identity.clone(), state.proxy.settings().clone()).await
+}
+#[tauri::command]
+fn payment_cards_lock(cards: tauri::State<'_, PaymentCardsHandle>) { cards.0.lock(); }
+#[tauri::command]
+fn payment_cards_list(cards: tauri::State<'_, PaymentCardsHandle>) -> Result<Vec<payment_cards::Summary>, String> { cards.0.list() }
+#[tauri::command]
+fn payment_cards_get(id: String, cards: tauri::State<'_, PaymentCardsHandle>) -> Result<payment_cards::Card, String> { cards.0.get(&id) }
+#[tauri::command]
+async fn payment_cards_save(state: tauri::State<'_, SignerState>, cards: tauri::State<'_, PaymentCardsHandle>, card: payment_cards::Card, save_cvc: bool) -> Result<(), String> {
+    cards.0.save(&state.identity, card, save_cvc)?;
+    cards.0.sync(state.identity.clone(), state.proxy.settings().clone()).await
+}
+#[tauri::command]
+async fn payment_cards_clear_cvc(state: tauri::State<'_, SignerState>, cards: tauri::State<'_, PaymentCardsHandle>) -> Result<(), String> {
+    cards.0.clear_cvc(&state.identity)?;
+    cards.0.sync(state.identity.clone(), state.proxy.settings().clone()).await
+}
+#[tauri::command]
+async fn payment_cards_remove(state: tauri::State<'_, SignerState>, cards: tauri::State<'_, PaymentCardsHandle>, id: String) -> Result<(), String> {
+    cards.0.remove(&state.identity, &id)?;
+    cards.0.sync(state.identity.clone(), state.proxy.settings().clone()).await
+}
+
+#[tauri::command]
+async fn payment_cards_authenticate(
+    state: tauri::State<'_, SignerState>,
+    site: String,
+    network: String,
+    last4: String,
+) -> Result<bool, String> {
+    let parsed = url::Url::parse(&site).map_err(|_| "Invalid payment site".to_string())?;
+    if parsed.scheme() != "https" || parsed.host_str().is_none() || last4.len() != 4 || !last4.chars().all(|c| c.is_ascii_digit()) {
+        return Err("Payment confirmation requires a secure site and valid card summary".into());
+    }
+    let origin = parsed.origin().ascii_serialization();
+    let preview = format!("Confirm filling {network} ending in {last4} on {origin}");
+    let approval = ApprovalRequest {
+        id: String::new(),
+        service: origin.clone(),
+        method: "payment-card-auth".into(),
+        kind: None,
+        preview,
+        ephemeral: false,
+    };
+    if !state.approvals.ask(approval, std::time::Duration::from_secs(120)).await {
+        return Err("Nostr signer confirmation was cancelled".into());
+    }
+
+    let challenge = uuid::Uuid::new_v4().to_string();
+    let template = serde_json::json!({
+        "kind": 27235,
+        "created_at": SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
+        "tags": [["challenge", challenge.clone()]],
+        "content": format!("NCC card fill at {origin}: {network} ending in {last4}")
+    });
+    let event = if let Some(bunker) = state.proxy.remote() {
+        bunker.sign_event(&template).await?
+    } else {
+        let identity = state.identity.status();
+        if identity.initialised && !identity.unlocked {
+            state.identity.unlock(envelope(None).as_ref()).map_err(|error| error.to_string())?;
+        }
+        state.identity.sign_event(&template).map_err(|error| error.to_string())?
+    };
+    if event.verify().is_err() || event.kind.as_u16() != 27235
+        || !event.tags.iter().any(|tag| tag.as_slice().get(0).map(String::as_str) == Some("challenge") && tag.as_slice().get(1).map(String::as_str) == Some(challenge.as_str())) {
+        return Err("The Nostr signer did not verify the card-fill challenge".into());
+    }
+    Ok(true)
 }
 
 /// Unlocking is gated on a device credential in the shell before this is called; the
@@ -1467,6 +1547,14 @@ pub fn run() {
             tor_prepare,
             settings_set_tor,
             vault_status,
+            payment_cards_unlock,
+            payment_cards_lock,
+            payment_cards_list,
+            payment_cards_get,
+            payment_cards_save,
+            payment_cards_clear_cvc,
+            payment_cards_remove,
+            payment_cards_authenticate,
             sync_exchange,
             sync_remove_device,
             share_nostr,
@@ -1698,6 +1786,7 @@ pub fn run() {
             ))));
             app.manage(TorProxyPort(tor_port));
             app.manage(VaultHandle(vault_service));
+            app.manage(PaymentCardsHandle(Arc::new(payment_cards::CardStore::new(data_dir.join("payment-cards").join("cache.json")))));
             app.manage(TorHandle(tor));
             app.manage(AppDataDir(data_dir.clone()));
             app.manage(SignerState {

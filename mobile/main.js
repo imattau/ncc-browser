@@ -18,6 +18,7 @@ import { createHome } from './home.js'
 import { createSecurity } from './security.js'
 import { createSecurityInfo } from './security-info.js'
 import { createPasswords } from './passwords.js'
+import { createPaymentCards } from './payment-cards.js'
 import { createIdentity } from './identity.js'
 
 const byId = (id) => document.getElementById(id)
@@ -138,6 +139,11 @@ const PANELS = [
   'password-save',
   'share-nostr',
   'password-edit',
+  'payment-cards',
+  'payment-picker',
+  'payment-auth-choice',
+  'payment-save',
+  'payment-edit',
   'storage',
   'identity',
   'signer-settings',
@@ -156,6 +162,11 @@ const PANEL_PARENT = {
   security: 'settings',
   tor: 'settings',
   passwords: 'settings',
+  'payment-cards': 'settings',
+  'payment-edit': 'payment-cards',
+  'payment-picker': 'home',
+  'payment-auth-choice': 'payment-picker',
+  'payment-save': 'home',
   wallet: 'settings',
   sync: 'settings',
   'password-edit': 'passwords',
@@ -512,6 +523,8 @@ globalThis.__nccContent = (state) => {
     void passwordFeature.handlePasswordCapture(state)
     return
   }
+  if (state.type === 'payment-detected') { void paymentFeature.detect(state); return }
+  if (state.type === 'payment-capture') { void paymentFeature.capture(state); return }
 
   if (state.type === 'filled') {
     // The fill runs after the panel closes, so a miss is reported where the user can
@@ -619,6 +632,7 @@ function showPanel(name) {
   if (name === 'security') void loadSecurity()
   if (name === 'tor') void loadTor()
   if (name === 'passwords') void passwordFeature.loadPasswords()
+  if (name === 'payment-cards') void paymentFeature.load()
   if (name === 'wallet') void loadWallet()
   if (name === 'sync') syncFeature.renderSync()
   if (name === 'password-fill') void passwordFeature.renderPasswordFill()
@@ -2146,6 +2160,7 @@ function wireChrome() {
   byId('vault-save-config').addEventListener('click', () => void passwordFeature.saveVaultConfig())
   byId('fill-add').addEventListener('click', () => passwordFeature.openNewLogin(displayAddress(activeUrl)))
   byId('fill-manage').addEventListener('click', () => showPanel('passwords'))
+  paymentFeature.wire()
   byId('edit-save').addEventListener('click', () => void passwordFeature.saveEdits())
   byId('edit-delete').addEventListener('click', () => void passwordFeature.deleteEditing())
   byId('edit-generate').addEventListener('click', () => void passwordFeature.generateIntoEdit())
@@ -2213,7 +2228,9 @@ const passwordFeature = createPasswords({
   getActiveUrl: () => activeUrl,
   getActiveTabId: () => activeTabId
 })
-globalThis.__nccDeviceCredential = (ok) => passwordFeature.deviceCredentialReply(ok)
+const paymentFeature = createPaymentCards({ content, invoke, byId, showPanel, closePanel,
+  getTabs: () => tabs, getActiveUrl: () => activeUrl, getActiveTabId: () => activeTabId })
+globalThis.__nccDeviceCredential = (ok) => { passwordFeature.deviceCredentialReply(ok); paymentFeature.credentialReply(ok) }
 
 const security = createSecurity({ getProxyPort: () => proxyPort })
 
