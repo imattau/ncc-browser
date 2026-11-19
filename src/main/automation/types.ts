@@ -24,6 +24,12 @@ export interface AutomationDiagnostic {
   line?: number
 }
 
+export interface PendingDialogInfo {
+  type: 'alert' | 'confirm' | 'prompt' | 'beforeunload'
+  message: string
+  defaultValue: string | null
+}
+
 export interface AutomationContents {
   /** Evaluate an expression in the page's main world and return its JSON value. */
   evaluate(code: string): Promise<unknown>
@@ -37,6 +43,12 @@ export interface AutomationContents {
   pressKey(key: string, modifiers: string[]): Promise<void>
   /** Recent renderer console messages and page load failures captured in this tab. */
   diagnostics(): AutomationDiagnostic[]
+  /** Start intercepting alert/confirm/prompt dialogs on this tab. Idempotent. */
+  armDialogs(): void
+  /** The dialog currently blocking the page, if any. */
+  pendingDialog(): PendingDialogInfo | null
+  /** Answer the pending dialog. Returns false if nothing was pending. */
+  resolveDialog(accept: boolean, promptText?: string): boolean
 }
 
 export interface AutomationHost {

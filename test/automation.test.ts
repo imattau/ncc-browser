@@ -10,7 +10,8 @@ import { TOOLS } from '../src/main/automation/tools'
 import type {
   AutomationContents,
   AutomationGate,
-  AutomationHost
+  AutomationHost,
+  PendingDialogInfo
 } from '../src/main/automation/types'
 import type { SignerDecision } from '../src/shared/types'
 
@@ -18,17 +19,28 @@ const allowAll: AutomationGate = { authorize: async () => true }
 
 function fakeHost() {
   const calls: string[] = []
+  let dialogState: PendingDialogInfo | null = null
   const contents: AutomationContents = {
     evaluate: async (code) => {
       calls.push('eval')
-      return code.includes('getBoundingClientRect') ? { x: 10, y: 20 } : { ok: true }
+      return code.includes('getBoundingClientRect') || code.includes('__nccTopRect')
+        ? { x: 10, y: 20 }
+        : { ok: true }
     },
     screenshot: async () => Buffer.from('png'),
     click: async (x, y) => void calls.push(`click ${x},${y}`),
     hover: async () => undefined,
     insertText: async (t) => void calls.push(`type ${t}`),
     pressKey: async (k) => void calls.push(`key ${k}`),
-    diagnostics: () => []
+    diagnostics: () => [],
+    armDialogs: () => void calls.push('arm'),
+    pendingDialog: () => dialogState,
+    resolveDialog: (accept, promptText) => {
+      if (!dialogState) return false
+      dialogState = null
+      calls.push(`dialog ${accept} ${promptText ?? ''}`.trim())
+      return true
+    }
   }
   const host: AutomationHost = {
     listTabs: () => [{ tabId: 't1', url: 'https://example.com/', title: 'Example', active: true }],
@@ -39,7 +51,7 @@ function fakeHost() {
     history: async () => undefined,
     contents: (id) => (id === 't1' ? contents : null)
   }
-  return { host, calls }
+  return { host, calls, setDialog: (dialog: PendingDialogInfo | null) => (dialogState = dialog) }
 }
 
 const rpc = (method: string, params?: unknown, id = 1) => ({ jsonrpc: '2.0', id, method, params })
@@ -68,6 +80,144 @@ describe('McpHandler', () => {
     await handler.handle(rpc('tools/call', { name: 'click', arguments: { ref: 'e1' } }))
     expect(calls).toContain('click 5,6')
     expect(calls).toContain('click 10,20')
+  })
+
+  it('surfaces a read_page truncation flag unchanged', async () => {
+    const base = fakeHost()
+    const host: AutomationHost = {
+      ...base.host,
+      contents: (id) =>
+        id === 't1'
+          ? {
+              ...base.host.contents('t1')!,
+              evaluate: async () => ({
+                url: 'https://example.com/',
+                title: 'Example',
+                viewport: { width: 100, height: 100 },
+                elements: new Array(250).fill({ ref: 'e1', tag: 'button', name: '' }),
+                truncated: true,
+                total: 300
+              })
+            }
+          : null
+    }
+    const handler = new McpHandler(host, allowAll, info)
+    const reply = await handler.handle(rpc('tools/call', { name: 'read_page', arguments: {} }))
+    const payload = JSON.parse(
+      (reply?.result as { content: Array<{ text: string }> }).content[0]!.text
+    ) as { truncated: boolean; total: number; elements: unknown[] }
+    expect(payload.truncated).toBe(true)
+    expect(payload.total).toBe(300)
+    expect(payload.elements).toHaveLength(250)
+  })
+
+  it('sets a select element by value or visible text', async () => {
+    const base = fakeHost()
+    const host: AutomationHost = {
+      ...base.host,
+      contents: (id) =>
+        id === 't1'
+          ? {
+              ...base.host.contents('t1')!,
+              evaluate: async () => ({ ok: true, value: 'b', label: 'Beta' })
+            }
+          : null
+    }
+    const handler = new McpHandler(host, allowAll, info)
+    const reply = await handler.handle(
+      rpc('tools/call', { name: 'select_option', arguments: { ref: 'e1', value: 'Beta' } })
+    )
+    const result = reply?.result as { content: Array<{ text: string }>; isError?: boolean }
+    expect(result.isError).toBeUndefined()
+    expect(JSON.parse(result.content[0]!.text)).toEqual({ ok: true, value: 'b', label: 'Beta' })
+  })
+
+  it('fails select_option when no option matches', async () => {
+    const base = fakeHost()
+    const host: AutomationHost = {
+      ...base.host,
+      contents: (id) =>
+        id === 't1'
+          ? { ...base.host.contents('t1')!, evaluate: async () => ({ ok: false, reason: 'no-such-option' }) }
+          : null
+    }
+    const handler = new McpHandler(host, allowAll, info)
+    const reply = await handler.handle(
+      rpc('tools/call', { name: 'select_option', arguments: { ref: 'e1', value: 'nope' } })
+    )
+    const result = reply?.result as { isError?: boolean; content: Array<{ text: string }> }
+    expect(result.isError).toBe(true)
+    expect(result.content[0]?.text).toContain('No option matches')
+  })
+
+  it('waits for a condition to become true before timing out', async () => {
+    const base = fakeHost()
+    let attempts = 0
+    const host: AutomationHost = {
+      ...base.host,
+      contents: (id) =>
+        id === 't1'
+          ? {
+              ...base.host.contents('t1')!,
+              evaluate: async () => {
+                attempts++
+                return attempts >= 3
+              }
+            }
+          : null
+    }
+    const handler = new McpHandler(host, allowAll, info)
+    const reply = await handler.handle(
+      rpc('tools/call', { name: 'wait_for', arguments: { selector: '.ready', timeoutMs: 5000 } })
+    )
+    const result = reply?.result as { content: Array<{ text: string }> }
+    expect(JSON.parse(result.content[0]!.text)).toEqual({ met: true })
+  })
+
+  it('reports wait_for timing out instead of failing the call', async () => {
+    const base = fakeHost()
+    const host: AutomationHost = {
+      ...base.host,
+      contents: (id) => (id === 't1' ? { ...base.host.contents('t1')!, evaluate: async () => false } : null)
+    }
+    const handler = new McpHandler(host, allowAll, info)
+    const reply = await handler.handle(
+      rpc('tools/call', { name: 'wait_for', arguments: { text: 'done', timeoutMs: 300 } })
+    )
+    const result = reply?.result as { isError?: boolean; content: Array<{ text: string }> }
+    expect(result.isError).toBeUndefined()
+    expect(JSON.parse(result.content[0]!.text)).toEqual({ met: false })
+  })
+
+  it('rejects wait_for with more than one predicate', async () => {
+    const handler = new McpHandler(fakeHost().host, allowAll, info)
+    const reply = await handler.handle(
+      rpc('tools/call', { name: 'wait_for', arguments: { selector: 'a', text: 'b' } })
+    )
+    const result = reply?.result as { isError?: boolean; content: Array<{ text: string }> }
+    expect(result.isError).toBe(true)
+  })
+
+  it('reports and answers a pending dialog', async () => {
+    const { host, calls, setDialog } = fakeHost()
+    const handler = new McpHandler(host, allowAll, info)
+    setDialog({ type: 'confirm', message: 'Sure?', defaultValue: null })
+    const status = await handler.handle(rpc('tools/call', { name: 'dialog_status', arguments: {} }))
+    const statusResult = status?.result as { content: Array<{ text: string }> }
+    expect(JSON.parse(statusResult.content[0]!.text)).toEqual({
+      dialog: { type: 'confirm', message: 'Sure?', defaultValue: null }
+    })
+
+    const answer = await handler.handle(
+      rpc('tools/call', { name: 'handle_dialog', arguments: { accept: true } })
+    )
+    expect((answer?.result as { isError?: boolean }).isError).toBeUndefined()
+    expect(calls).toContain('dialog true')
+
+    const again = await handler.handle(
+      rpc('tools/call', { name: 'handle_dialog', arguments: { accept: false } })
+    )
+    expect((again?.result as { isError?: boolean }).isError).toBe(true)
   })
 
   it('returns screenshots as image content', async () => {

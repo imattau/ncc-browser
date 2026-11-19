@@ -5,11 +5,13 @@ import type {
   AutomationContents,
   AutomationDiagnostic,
   AutomationHost,
-  AutomationPage
+  AutomationPage,
+  PendingDialogInfo
 } from './types'
 
 const NAVIGATION_TIMEOUT_MS = 20_000
 const MAX_DIAGNOSTICS = 300
+const DIALOG_TIMEOUT_MS = 5 * 60_000
 
 const MODIFIERS: Record<string, 'shift' | 'control' | 'alt' | 'meta'> = {
   shift: 'shift',
@@ -70,6 +72,61 @@ function watch(contents: WebContents): Collector {
   return collector
 }
 
+interface PendingDialog extends PendingDialogInfo {
+  resolve(answer: { accept: boolean; promptText?: string }): void
+  timer: NodeJS.Timeout
+}
+
+const armed = new WeakSet<WebContents>()
+const dialogs = new WeakMap<WebContents, PendingDialog>()
+
+/**
+ * Start intercepting alert/confirm/prompt via the Chrome DevTools Protocol, so an
+ * authorized agent can see and answer them instead of the dialog silently blocking the
+ * tab forever. Idempotent per tab; never armed until a tool call authorizes this tab, so
+ * ordinary browsing with automation off is unaffected.
+ */
+function arm(contents: WebContents): void {
+  if (armed.has(contents)) return
+  armed.add(contents)
+  try {
+    contents.debugger.attach('1.3')
+  } catch {
+    // Already attached, e.g. real DevTools is open on this tab — leave native dialogs alone.
+    armed.delete(contents)
+    return
+  }
+  contents.debugger.sendCommand('Page.enable').catch(() => undefined)
+  contents.debugger.on('message', (_event, method, params) => {
+    if (method !== 'Page.javascriptDialogOpening') return
+    const info = params as { type: PendingDialogInfo['type']; message: string; defaultPrompt?: string }
+    const timer = setTimeout(() => {
+      dialogs.delete(contents)
+      contents.debugger.sendCommand('Page.handleJavaScriptDialog', { accept: false }).catch(() => undefined)
+    }, DIALOG_TIMEOUT_MS)
+    dialogs.set(contents, {
+      type: info.type,
+      message: info.message,
+      defaultValue: info.defaultPrompt ?? null,
+      timer,
+      resolve: (answer) => {
+        contents.debugger
+          .sendCommand('Page.handleJavaScriptDialog', {
+            accept: answer.accept,
+            promptText: answer.promptText
+          })
+          .catch(() => undefined)
+      }
+    })
+  })
+  contents.debugger.on('detach', () => {
+    armed.delete(contents)
+    const pending = dialogs.get(contents)
+    if (pending) clearTimeout(pending.timer)
+    dialogs.delete(contents)
+  })
+}
+
 function wrap(contents: WebContents): AutomationContents {
   const diagnostics = watch(contents)
   const mouse = (type: 'mouseMove' | 'mouseDown' | 'mouseUp', x: number, y: number, extra = {}) =>
@@ -102,7 +159,22 @@ function wrap(contents: WebContents): AutomationContents {
         contents.sendInputEvent({ ...event, modifiers: mods })
       }
     },
-    diagnostics
+    diagnostics,
+    armDialogs: () => arm(contents),
+    pendingDialog: () => {
+      const pending = dialogs.get(contents)
+      return pending
+        ? { type: pending.type, message: pending.message, defaultValue: pending.defaultValue }
+        : null
+    },
+    resolveDialog: (accept, promptText) => {
+      const pending = dialogs.get(contents)
+      if (!pending) return false
+      clearTimeout(pending.timer)
+      dialogs.delete(contents)
+      pending.resolve({ accept, promptText })
+      return true
+    }
   }
 }
 

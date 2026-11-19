@@ -2,7 +2,10 @@ import {
   focusRefScript,
   PAGE_TEXT_SCRIPT,
   resolveRefScript,
-  SNAPSHOT_SCRIPT
+  selectOptionScript,
+  SNAPSHOT_SCRIPT,
+  waitSelectorScript,
+  waitTextScript
 } from './page-scripts'
 import { siteOf } from './site'
 import type {
@@ -54,6 +57,7 @@ async function target(
   host.selectTab(tabId)
   const contents = host.contents(tabId)
   if (!contents) return fail(`Tab "${tabId}" is not ready.`)
+  contents.armDialogs()
   return { tabId, contents }
 }
 
@@ -81,6 +85,23 @@ async function pointFor(
   const y = num(args, 'y')
   if (x === undefined || y === undefined) return fail('Provide either ref or both x and y.')
   return { x, y }
+}
+
+const WAIT_DEFAULT_MS = 5_000
+const WAIT_MAX_MS = 30_000
+const WAIT_POLL_INTERVAL_MS = 250
+
+async function waitFor(
+  contents: AutomationContents,
+  predicate: string,
+  timeoutMs: number
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    if (await contents.evaluate(predicate)) return true
+    if (Date.now() >= deadline) return false
+    await new Promise((resolve) => setTimeout(resolve, WAIT_POLL_INTERVAL_MS))
+  }
 }
 
 export const TOOLS: ToolDefinition[] = [
@@ -182,7 +203,7 @@ export const TOOLS: ToolDefinition[] = [
   {
     name: 'read_page',
     description:
-      'List visible interactive elements with short refs (e1, e2, …) to use with click, type and hover. Refs are invalidated by the next read_page call.' +
+      'List visible interactive elements with short refs (e1, e2, …) to use with click, type and hover. Includes elements in same-origin iframes; cross-origin iframes are skipped. Refs are invalidated by the next read_page call. The result may include truncated:true and a total count past 250 elements — narrow scope (scroll, get_page_text) rather than assume everything was seen.' +
       UNTRUSTED,
     inputSchema: { type: 'object', properties: tabIdProp },
     run: async (host, args, gate) => {
@@ -380,6 +401,96 @@ export const TOOLS: ToolDefinition[] = [
       } catch (error) {
         return fail(error instanceof Error ? error.message : String(error))
       }
+    }
+  },
+  {
+    name: 'select_option',
+    description:
+      "Set a <select> element's value by ref, matching the option's value or its visible text, and dispatch a change event.",
+    inputSchema: {
+      type: 'object',
+      properties: { ...tabIdProp, ref: { type: 'string' }, value: { type: 'string' } },
+      required: ['ref', 'value']
+    },
+    run: async (host, args, gate) => {
+      const t = await target(host, args, gate, 'select_option')
+      if (isResult(t)) return t
+      const ref = str(args, 'ref')
+      const value = str(args, 'value')
+      if (!ref || value === undefined) return fail('ref and value are required.')
+      const result = (await t.contents.evaluate(selectOptionScript(ref, value))) as
+        | { ok: true; value: string; label: string }
+        | { ok: false; reason: string }
+      if (!result.ok) {
+        const messages: Record<string, string> = {
+          gone: `Element "${ref}" is gone. Call read_page again for fresh refs.`,
+          'not-a-select': `Element "${ref}" is not a <select>.`,
+          'no-such-option': `No option matches "${value}" by value or visible text.`
+        }
+        return fail(messages[result.reason] ?? 'select_option failed.')
+      }
+      return json(result)
+    }
+  },
+  {
+    name: 'wait_for',
+    description:
+      'Poll until a condition is true: a selector appears (selector), page text contains a string (text), or a JS expression becomes truthy (expression). Give exactly one. Returns met:false on timeout rather than failing the call.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ...tabIdProp,
+        selector: { type: 'string' },
+        text: { type: 'string' },
+        expression: { type: 'string' },
+        timeoutMs: {
+          type: 'number',
+          description: `Default ${WAIT_DEFAULT_MS}, max ${WAIT_MAX_MS}.`
+        }
+      }
+    },
+    run: async (host, args, gate) => {
+      const t = await target(host, args, gate, 'wait_for')
+      if (isResult(t)) return t
+      const selector = str(args, 'selector')
+      const waitText = str(args, 'text')
+      const expression = str(args, 'expression')
+      const given = [selector, waitText, expression].filter((value) => value !== undefined)
+      if (given.length !== 1) return fail('Provide exactly one of selector, text or expression.')
+      const timeoutMs = Math.min(WAIT_MAX_MS, Math.max(0, num(args, 'timeoutMs') ?? WAIT_DEFAULT_MS))
+      const predicate = selector
+        ? waitSelectorScript(selector)
+        : waitText
+          ? waitTextScript(waitText)
+          : (expression as string)
+      return json({ met: await waitFor(t.contents, predicate, timeoutMs) })
+    }
+  },
+  {
+    name: 'dialog_status',
+    description:
+      'Report whether the page has an alert, confirm, prompt or beforeunload dialog waiting for an answer (the page is paused until handle_dialog answers it). Unavailable while DevTools is open on this tab.',
+    inputSchema: { type: 'object', properties: tabIdProp },
+    run: async (host, args, gate) => {
+      const t = await target(host, args, gate, 'dialog_status')
+      if (isResult(t)) return t
+      return json({ dialog: t.contents.pendingDialog() })
+    }
+  },
+  {
+    name: 'handle_dialog',
+    description:
+      "Answer a pending dialog (see dialog_status). accept:true with a prompt returns promptText (or its default if omitted); accept:false cancels/dismisses.",
+    inputSchema: {
+      type: 'object',
+      properties: { ...tabIdProp, accept: { type: 'boolean' }, promptText: { type: 'string' } },
+      required: ['accept']
+    },
+    run: async (host, args, gate) => {
+      const t = await target(host, args, gate, 'handle_dialog')
+      if (isResult(t)) return t
+      const ok = t.contents.resolveDialog(args.accept === true, str(args, 'promptText'))
+      return ok ? text('answered') : fail('No dialog is pending on this tab.')
     }
   }
 ]
