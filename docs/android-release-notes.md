@@ -1,5 +1,9 @@
 # Nostr Navigator for Android
 
+## Fixes in 0.34.2
+
+- Pressing Back from local nccsearch now returns to the home page.
+
 ## Fixes in 0.34.1
 
 - Added an nccsearch icon to the home bottom bar when local nccsearch is enabled.

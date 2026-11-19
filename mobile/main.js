@@ -152,7 +152,7 @@ const PANEL_PARENT = {
   appearance: 'settings',
   relays: 'settings',
   search: 'settings',
-  nccsearch: 'search',
+  nccsearch: 'home',
   security: 'settings',
   tor: 'settings',
   passwords: 'settings',
