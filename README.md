@@ -321,7 +321,7 @@ dropdown always states what Enter will do:
   your other devices.
 
 The embedded page is built from the `vendor/ncc-server` submodule on its
-`nccsearch-nsites` branch. To intentionally advance the upstream pin, run
+`main` branch. To intentionally advance the upstream pin, run
 `git submodule update --remote vendor/ncc-server` and commit the resulting submodule
 pointer. Desktop and mobile builds run `npm run nccsearch:build` automatically.
 
