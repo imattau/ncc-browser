@@ -206,16 +206,26 @@ private const val PASSWORD_HOOK = """
 private const val PAYMENT_HOOK = """
 (function(){
   if(window.__nccPaymentHook)return;window.__nccPaymentHook=true;
+  function send(type,data){try{if(window.__nccPaymentBridge)window.__nccPaymentBridge.postMessage(JSON.stringify(Object.assign({type:type},data||{})))}catch(_){}}
   function visible(e){if(!e||e.disabled||e.readOnly)return false;var s=getComputedStyle(e);return s.display!=='none'&&s.visibility!=='hidden'&&e.getClientRects().length>0}
   function text(e){return [e.name,e.id,e.autocomplete,e.placeholder,e.getAttribute('aria-label'),e.labels&&[].map.call(e.labels,function(l){return l.textContent}).join(' '),e.parentElement&&e.parentElement.textContent].join(' ').toLowerCase()}
   function inspect(form){var els=[].slice.call((form||document).querySelectorAll('input,select')).filter(visible);var num=els.find(function(e){return e.autocomplete==='cc-number'||/card.?number|cc.?number|credit.?card/.test(text(e))});var exp=els.find(function(e){return e.autocomplete==='cc-exp'||e.autocomplete==='cc-exp-month'||/expir|valid.?thru/.test(text(e))});var expYear=els.find(function(e){return e.autocomplete==='cc-exp-year'||/expir.*year|year.*expir/.test(text(e))});var name=els.find(function(e){return e.autocomplete==='cc-name'||/card.?holder|name.?on.?card/.test(text(e))});var cvc=els.find(function(e){return e.autocomplete==='cc-csc'||/cvc|cvv|security.?code/.test(text(e))});var network=els.find(function(e){return e.tagName==='SELECT'&&/visa|mastercard|amex|discover/.test(e.textContent.toLowerCase())});var n=!!num,a=!!exp||!!expYear,h=!!name,s=!!cvc,k=!!network;var score=(n?3:0)+(a?2:0)+(h?1:0)+(s?1:0)+(k?2:0)+(els.some(function(e){return /^cc-/.test(e.autocomplete||'')})?2:0);return score>=5&&n?{form:form||document,number:num,exp:exp,expYear:expYear,name:name,cvc:cvc,network:network}:null}
   function likelyForms(){var fs=[].slice.call(document.forms);if(!fs.length)fs=[document];return fs.map(inspect).filter(Boolean)}
-  function announce(){var found=likelyForms();if(found.length&&window.NccPayments&&window.NccPayments.detected)window.NccPayments.detected(JSON.stringify({blank:!found[0].number.value}))}
-  document.addEventListener('focusin',function(ev){var form=ev.target&&ev.target.form;var hit=inspect(form||document);if(hit&&window.NccPayments&&window.NccPayments.detected)window.NccPayments.detected(JSON.stringify({blank:!hit.number.value}))},true);
-  document.addEventListener('submit',function(ev){if(!ev.isTrusted)return;var hit=inspect(ev.target);if(!hit||!hit.number)return;var digits=function(e){return e?e.value.replace(/\D/g,''):''};var exp=digits(hit.exp);var month=hit.exp&&hit.exp.autocomplete==='cc-exp-month'?exp:exp.slice(0,2);var year=hit.expYear?digits(hit.expYear):(hit.exp&&hit.exp.autocomplete==='cc-exp-month'?'':exp.slice(2));if(hit.exp&&hit.exp.autocomplete==='cc-exp'){var raw=hit.exp.value;var m=raw.match(/(\d{1,2})\D+(\d{2,4})/);if(m){month=m[1];year=m[2]}}var data={name:hit.name?hit.name.value:'',number:digits(hit.number),expMonth:month,expYear:year,cvc:hit.cvc?digits(hit.cvc):''};if(!/^\d{12,19}$/.test(data.number)||!data.expMonth||!data.expYear)return;if(window.NccPayments&&window.NccPayments.capture)window.NccPayments.capture(JSON.stringify(data))},true);
+  function announce(){var found=likelyForms();if(found.length)send('detected',{blank:!found[0].number.value})}
+  document.addEventListener('focusin',function(ev){var form=ev.target&&ev.target.form;var hit=inspect(form||document);if(hit)send('detected',{blank:!hit.number.value})},true);
+  document.addEventListener('submit',function(ev){if(!ev.isTrusted)return;var hit=inspect(ev.target);if(!hit||!hit.number)return;var digits=function(e){return e?e.value.replace(/\D/g,''):''};var exp=digits(hit.exp);var month=hit.exp&&hit.exp.autocomplete==='cc-exp-month'?exp:exp.slice(0,2);var year=hit.expYear?digits(hit.expYear):(hit.exp&&hit.exp.autocomplete==='cc-exp-month'?'':exp.slice(2));if(hit.exp&&hit.exp.autocomplete==='cc-exp'){var raw=hit.exp.value;var m=raw.match(/(\d{1,2})\D+(\d{2,4})/);if(m){month=m[1];year=m[2]}}var data={name:hit.name?hit.name.value:'',number:digits(hit.number),expMonth:month,expYear:year,cvc:hit.cvc?digits(hit.cvc):''};if(!/^\d{12,19}$/.test(data.number)||!data.expMonth||!data.expYear)return;send('capture',{card:data})},true);
   announce();new MutationObserver(announce).observe(document.documentElement,{childList:true,subtree:true});
 })()
 """
+
+private fun webOrigin(raw: String?): String? {
+  val uri = raw?.let { try { Uri.parse(it) } catch (_: Exception) { null } } ?: return null
+  val scheme = uri.scheme?.lowercase() ?: return null
+  val host = uri.host?.lowercase() ?: return null
+  if (scheme != "https") return null
+  val port = if (uri.port == -1 || uri.port == 443) "" else ":${uri.port}"
+  return "$scheme://$host$port"
+}
 
 /**
  * One tab: a WebView plus what the switcher needs to draw it.
@@ -358,24 +368,28 @@ class ContentSurface(
 
   private fun installPaymentBridge(web: WebView) {
     if (isPrivate || isTor) return
-    web.addJavascriptInterface(object {
-      @JavascriptInterface fun detected(info: String?) {
-        val page = currentUrl ?: return
-        if (!page.startsWith("https://", true)) return
-        val blank = try { JSONObject(info ?: "{}").optBoolean("blank", false) } catch (_: Exception) { false }
+    if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER) ||
+      !WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) return
+    try {
+      WebViewCompat.addWebMessageListener(web, "__nccPaymentBridge", setOf("*")) { _, message, sourceOrigin, isMainFrame, _ ->
+        if (!isMainFrame || sourceOrigin.scheme?.lowercase() != "https") return@addWebMessageListener
+        val origin = sourceOrigin.toString().trimEnd('/')
+        if (webOrigin(origin) == null || webOrigin(currentUrl) != webOrigin(origin)) return@addWebMessageListener
+        val request = try { JSONObject(message.data ?: return@addWebMessageListener) } catch (_: Exception) { return@addWebMessageListener }
+        val kind = request.optString("type")
+        if (kind != "detected" && kind != "capture") return@addWebMessageListener
         Handler(Looper.getMainLooper()).post {
-          if (!destroyed && blank) emit(JSONObject().put("type", "payment-detected").put("url", page))
+          if (destroyed || webOrigin(web.url) != webOrigin(origin) || webOrigin(currentUrl) != webOrigin(origin)) return@post
+          val page = web.url ?: currentUrl ?: return@post
+          if (kind == "detected") {
+            if (request.optBoolean("blank", false)) emit(JSONObject().put("type", "payment-detected").put("url", page))
+          } else {
+            val card = request.optJSONObject("card") ?: return@post
+            emit(JSONObject().put("type", "payment-capture").put("url", page).put("title", title ?: "").put("card", card))
+          }
         }
       }
-      @JavascriptInterface fun capture(payload: String?) {
-        val page = currentUrl ?: return
-        if (!page.startsWith("https://", true)) return
-        val data = try { JSONObject(payload ?: return) } catch (_: Exception) { return }
-        Handler(Looper.getMainLooper()).post {
-          if (!destroyed) emit(JSONObject().put("type", "payment-capture").put("url", page).put("title", title ?: "").put("card", data))
-        }
-      }
-    }, "NccPayments")
+    } catch (_: Throwable) { /* Payment form assistance is unavailable on older WebView versions. */ }
   }
 
   /**
@@ -521,14 +535,15 @@ class ContentSurface(
     }
   }
 
-  fun fillPaymentCard(cardJson: String) {
+  fun fillPaymentCard(cardJson: String, expectedOrigin: String) {
     val web = webView ?: return
-    if (isPrivate || isTor || destroyed || currentUrl?.startsWith("https://", true) != true) return
+    if (isPrivate || isTor || destroyed || webOrigin(expectedOrigin) == null || webOrigin(currentUrl) != webOrigin(expectedOrigin) || webOrigin(web.url) != webOrigin(expectedOrigin)) return
     val card = try { JSONObject(cardJson) } catch (_: Exception) { return }
     // Embed the already parsed JSON object, not a quoted JSON string. The page
     // fill script reads `c.number` and the other fields directly.
     val values = card.toString()
-    web.evaluateJavascript("""(()=>{const c=$values;const vis=e=>e&&!e.disabled&&!e.readOnly&&e.getClientRects().length;const all=[...document.querySelectorAll('input,select')].filter(vis);const tx=e=>[e.name,e.id,e.autocomplete,e.placeholder,e.getAttribute('aria-label'),e.labels&&[...e.labels].map(x=>x.textContent).join(' ')].join(' ').toLowerCase();const pick=(re,ac)=>all.find(e=>e.autocomplete===ac||re.test(tx(e)));const set=(e,v)=>{if(!e||!v)return;const p=Object.getPrototypeOf(e);const d=Object.getOwnPropertyDescriptor(p,'value');if(d&&d.set)d.set.call(e,v);else e.value=v;e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}))};set(pick(/card.?number|cc.?number|credit.?card/,'cc-number'),c.number);set(pick(/card.?holder|name.?on.?card/,'cc-name'),c.name);let m=pick(/expir|valid.?thru/,'cc-exp');if(m){if(m.autocomplete==='cc-exp-month')set(m,c.expMonth);else set(m,String(c.expMonth).padStart(2,'0')+'/'+c.expYear)}const ys=all.find(e=>e.autocomplete==='cc-exp-year');set(ys,c.expYear);set(pick(/cvc|cvv|security.?code/,'cc-csc'),c.cvc)})()""", null)
+    val origin = JSONObject.quote(expectedOrigin)
+      web.evaluateJavascript("""(()=>{if(location.origin!==$origin)return;const c=$values;const vis=e=>e&&!e.disabled&&!e.readOnly&&e.getClientRects().length;const all=[...document.querySelectorAll('input,select')].filter(vis);const tx=e=>[e.name,e.id,e.autocomplete,e.placeholder,e.getAttribute('aria-label'),e.labels&&[...e.labels].map(x=>x.textContent).join(' ')].join(' ').toLowerCase();const pick=(re,ac)=>all.find(e=>e.autocomplete===ac||re.test(tx(e)));const set=(e,v)=>{if(!e||!v)return;const p=Object.getPrototypeOf(e);const d=Object.getOwnPropertyDescriptor(p,'value');if(d&&d.set)d.set.call(e,v);else e.value=v;e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}))};set(pick(/card.?number|cc.?number|credit.?card/,'cc-number'),c.number);set(pick(/card.?holder|name.?on.?card/,'cc-name'),c.name);let m=pick(/expir|valid.?thru/,'cc-exp');if(m){if(m.autocomplete==='cc-exp-month')set(m,c.expMonth);else set(m,String(c.expMonth).padStart(2,'0')+'/'+c.expYear)}const ys=all.find(e=>e.autocomplete==='cc-exp-year');set(ys,c.expYear);set(pick(/cvc|cvv|security.?code/,'cc-csc'),c.cvc)})()""", null)
   }
 
   fun open(url: String): Boolean {

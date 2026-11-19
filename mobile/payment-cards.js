@@ -11,10 +11,10 @@ export function createPaymentCards({ content, invoke, byId, showPanel, closePane
   const defaultNostrAuth = () => allowNostrAuth() && read('ncc.payment.defaultNostrAuth', false) === true
   function credentialReply(ok) { const fn = waiting; waiting = null; fn?.(ok === true) }
   function authenticate() {
-    if (!content?.unlockWithDeviceCredential) return Promise.resolve(true)
+    if (typeof content?.unlockWithDeviceCredential !== 'function') return Promise.resolve(false)
     return new Promise((resolve) => {
       waiting = resolve
-      content.unlockWithDeviceCredential()
+      content.unlockWithDeviceCredential('payment-card')
       setTimeout(() => { if (waiting === resolve) { waiting = null; resolve(false) } }, 180000)
     })
   }
@@ -28,7 +28,7 @@ export function createPaymentCards({ content, invoke, byId, showPanel, closePane
     await invoke('payment_cards_authenticate', {
       site: new URL(url).origin,
       network: card.network || network(card.number),
-      last4: String(card.number).slice(-4)
+      last4: card.last4 || String(card.number || '').slice(-4)
     })
     return true
   }
@@ -43,7 +43,7 @@ export function createPaymentCards({ content, invoke, byId, showPanel, closePane
       byId('payment-note').textContent = 'Connect a Nostr signer to use Nostr confirmation.'
       return false
     }
-    byId('payment-auth-detail').textContent = `${card.network || network(card.number)} ending in ${String(card.number).slice(-4)} will be filled on ${new URL(url).hostname}.`
+    byId('payment-auth-detail').textContent = `${card.network || network(card.number || '')} ending in ${card.last4 || String(card.number || '').slice(-4)} will be filled on ${new URL(url).hostname}.`
     byId('payment-auth-make-default').checked = false
     byId('payment-auth-note').textContent = ''
     byId('payment-auth-system').hidden = !content?.unlockWithDeviceCredential
@@ -156,14 +156,16 @@ export function createPaymentCards({ content, invoke, byId, showPanel, closePane
     const tab = getTabs().find((item) => item.id === tabId)
     if (!tab || tab.kind !== 'normal') return
     try {
+      const summary = cards.find((item) => item.id === id)
+      if (!summary || getActiveTabId() !== tabId || getActiveUrl() !== url) throw new Error('The payment page changed before the card could be filled.')
+      if (!await authenticateForFill(summary, url)) { byId('payment-note').textContent = 'Card confirmation was cancelled.'; closePanel(); return }
       const card = await invoke('payment_cards_get', { id })
-      if (!card || getActiveTabId() !== tabId || getActiveUrl() !== url) throw new Error('The payment page changed before the card could be filled.')
-      if (!await authenticateForFill(card, url)) { byId('payment-note').textContent = 'Card confirmation was cancelled.'; closePanel(); return }
+      if (!card) throw new Error('That card is unavailable.')
       if (getActiveTabId() !== tabId || getActiveUrl() !== url || !secureActive(url)) throw new Error('The payment page changed before the card could be filled.')
       const cvc = saveCvc() ? card.cvc : undefined
       const payload = { name: card.name, number: card.number, expMonth: card.expMonth, expYear: card.expYear, ...(cvc ? { cvc } : {}) }
       closePanel()
-      content.fillPaymentCard(tabId, JSON.stringify(payload))
+      content.fillPaymentCard(tabId, JSON.stringify(payload), new URL(url).origin)
     } catch (error) { byId('payment-note').textContent = String(error); closePanel() }
   }
   function edit(card = {}) {

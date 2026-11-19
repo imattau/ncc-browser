@@ -112,6 +112,8 @@ class MainActivity : TauriActivity() {
    */
   private val confirmDevice =
     registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+      nativePaymentCardAuthResult(result.resultCode == Activity.RESULT_OK && pendingPaymentCardAuth)
+      pendingPaymentCardAuth = false
       emitToShellRaw(
         "window.__nccDeviceCredential",
         if (result.resultCode == Activity.RESULT_OK) "true" else "false",
@@ -119,6 +121,8 @@ class MainActivity : TauriActivity() {
     }
   private var activeId: String? = null
   private var nextTabId = 1
+  private var pendingPaymentCardAuth = false
+  private external fun nativePaymentCardAuthResult(success: Boolean)
 
   /**
    * A link another app handed us (we are a registered browser). The shell takes it once
@@ -923,10 +927,11 @@ class MainActivity : TauriActivity() {
     }
 
     @JavascriptInterface
-    fun fillPaymentCard(tabId: String?, card: String?) {
+    fun fillPaymentCard(tabId: String?, card: String?, origin: String?) {
       val id = tabId ?: return
       val json = card ?: return
-      runOnUiThread { tabs.firstOrNull { it.id == id }?.fillPaymentCard(json) }
+      val expectedOrigin = origin ?: return
+      runOnUiThread { tabs.firstOrNull { it.id == id }?.fillPaymentCard(json, expectedOrigin) }
     }
 
     /** Write-only: the page-triggered path must never be able to read a password. */
@@ -951,26 +956,31 @@ class MainActivity : TauriActivity() {
     }
 
     @JavascriptInterface
-    fun unlockWithDeviceCredential() {
+    fun unlockWithDeviceCredential(purpose: String?) {
       runOnUiThread {
+        pendingPaymentCardAuth = purpose == "payment-card"
         val keyguard = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
         if (!keyguard.isDeviceSecure) {
-          // No lock to confirm against; the app itself is the only barrier, and the
-          // vault screen says so.
-          emitToShellRaw("window.__nccDeviceCredential", "true")
+          nativePaymentCardAuthResult(false)
+          pendingPaymentCardAuth = false
+          emitToShellRaw("window.__nccDeviceCredential", "false")
           return@runOnUiThread
         }
         val intent = keyguard.createConfirmDeviceCredentialIntent(
-          "Unlock passwords",
-          "Confirm it is you to open the vault.",
+          if (pendingPaymentCardAuth) "Confirm card autofill" else "Unlock passwords",
+          if (pendingPaymentCardAuth) "Confirm to fill the selected payment card." else "Confirm it is you to open the vault.",
         )
         if (intent == null) {
+          nativePaymentCardAuthResult(false)
+          pendingPaymentCardAuth = false
           emitToShellRaw("window.__nccDeviceCredential", "false")
           return@runOnUiThread
         }
         try {
           confirmDevice.launch(intent)
         } catch (error: Exception) {
+          nativePaymentCardAuthResult(false)
+          pendingPaymentCardAuth = false
           emitToShellRaw("window.__nccDeviceCredential", "false")
         }
       }

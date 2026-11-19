@@ -16,6 +16,15 @@ use ncc_tor::{Tor, TorConfig, TorMode, TorState, TorStatus};
 mod payment_cards;
 
 #[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_imattau_nccbrowser_MainActivity_nativePaymentCardAuthResult(
+    _env: jni::JNIEnv,
+    _this: jni::objects::JObject,
+    success: jni::sys::jboolean,
+) {
+    payment_cards::record_system_auth(success != 0);
+}
+
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_imattau_nccbrowser_ContentSurface_nativeProtectionCheck(
     mut env: jni::JNIEnv,
     _this: jni::objects::JObject,
@@ -270,9 +279,15 @@ async fn payment_cards_unlock(state: tauri::State<'_, SignerState>, cards: tauri
 #[tauri::command]
 fn payment_cards_lock(cards: tauri::State<'_, PaymentCardsHandle>) { cards.0.lock(); }
 #[tauri::command]
-fn payment_cards_list(cards: tauri::State<'_, PaymentCardsHandle>) -> Result<Vec<payment_cards::Summary>, String> { cards.0.list() }
+fn payment_cards_list(state: tauri::State<'_, SignerState>, cards: tauri::State<'_, PaymentCardsHandle>) -> Result<Vec<payment_cards::Summary>, String> {
+    let pubkey = state.identity.public_key().map_err(|e| e.to_string())?.to_hex();
+    cards.0.list(&pubkey)
+}
 #[tauri::command]
-fn payment_cards_get(id: String, cards: tauri::State<'_, PaymentCardsHandle>) -> Result<payment_cards::Card, String> { cards.0.get(&id) }
+fn payment_cards_get(state: tauri::State<'_, SignerState>, id: String, cards: tauri::State<'_, PaymentCardsHandle>) -> Result<payment_cards::Card, String> {
+    let pubkey = state.identity.public_key().map_err(|e| e.to_string())?.to_hex();
+    cards.0.get(&pubkey, &id)
+}
 #[tauri::command]
 async fn payment_cards_save(state: tauri::State<'_, SignerState>, cards: tauri::State<'_, PaymentCardsHandle>, card: payment_cards::Card, save_cvc: bool) -> Result<(), String> {
     cards.0.save(&state.identity, card, save_cvc)?;
@@ -292,14 +307,25 @@ async fn payment_cards_remove(state: tauri::State<'_, SignerState>, cards: tauri
 #[tauri::command]
 async fn payment_cards_authenticate(
     state: tauri::State<'_, SignerState>,
+    cards: tauri::State<'_, PaymentCardsHandle>,
     site: String,
     network: String,
     last4: String,
 ) -> Result<bool, String> {
+    let auth_generation = cards.0.authorization_generation();
+    if !cards.0.authorization_generation_is_active(auth_generation) {
+        return Err("Unlock payment cards before confirming a fill".into());
+    }
     let parsed = url::Url::parse(&site).map_err(|_| "Invalid payment site".to_string())?;
     if parsed.scheme() != "https" || parsed.host_str().is_none() || last4.len() != 4 || !last4.chars().all(|c| c.is_ascii_digit()) {
         return Err("Payment confirmation requires a secure site and valid card summary".into());
     }
+    let bunker = state.proxy.remote();
+    let expected_pubkey = if let Some(bunker) = bunker.as_ref() {
+        bunker.ensure_user().await?
+    } else {
+        state.identity.public_key().map_err(|error| error.to_string())?.to_hex()
+    };
     let origin = parsed.origin().ascii_serialization();
     let preview = format!("Confirm filling {network} ending in {last4} on {origin}");
     let approval = ApprovalRequest {
@@ -313,6 +339,9 @@ async fn payment_cards_authenticate(
     if !state.approvals.ask(approval, std::time::Duration::from_secs(120)).await {
         return Err("Nostr signer confirmation was cancelled".into());
     }
+    if !cards.0.authorization_generation_is_active(auth_generation) {
+        return Err("The active identity changed during card confirmation".into());
+    }
 
     let challenge = uuid::Uuid::new_v4().to_string();
     let template = serde_json::json!({
@@ -321,7 +350,14 @@ async fn payment_cards_authenticate(
         "tags": [["challenge", challenge.clone()]],
         "content": format!("NCC card fill at {origin}: {network} ending in {last4}")
     });
-    let event = if let Some(bunker) = state.proxy.remote() {
+    if let Some(bunker) = bunker.as_ref() {
+        if bunker.user_pubkey().as_deref() != Some(expected_pubkey.as_str()) {
+            return Err("The active Nostr identity changed during card confirmation".into());
+        }
+    } else if state.identity.public_key().map_err(|error| error.to_string())?.to_hex() != expected_pubkey {
+        return Err("The active Nostr identity changed during card confirmation".into());
+    }
+    let event = if let Some(bunker) = bunker {
         bunker.sign_event(&template).await?
     } else {
         let identity = state.identity.status();
@@ -330,10 +366,14 @@ async fn payment_cards_authenticate(
         }
         state.identity.sign_event(&template).map_err(|error| error.to_string())?
     };
-    if event.verify().is_err() || event.kind.as_u16() != 27235
+    if event.verify().is_err() || event.pubkey.to_hex() != expected_pubkey || event.kind.as_u16() != 27235
         || !event.tags.iter().any(|tag| tag.as_slice().get(0).map(String::as_str) == Some("challenge") && tag.as_slice().get(1).map(String::as_str) == Some(challenge.as_str())) {
         return Err("The Nostr signer did not verify the card-fill challenge".into());
     }
+    if !cards.0.authorization_generation_is_active(auth_generation) {
+        return Err("The active identity changed during card confirmation".into());
+    }
+    payment_cards::record_system_auth(true);
     Ok(true)
 }
 
@@ -861,7 +901,8 @@ fn identity_profiles(state: tauri::State<'_, SignerState>) -> IdentityProfilesIn
 }
 
 #[tauri::command]
-fn identity_create_profile(state: tauri::State<'_, SignerState>) -> Result<Status, String> {
+fn identity_create_profile(state: tauri::State<'_, SignerState>, cards: tauri::State<'_, PaymentCardsHandle>) -> Result<Status, String> {
+    cards.0.lock();
     let prior_default = state.identity.profiles().into_iter().find(|profile| profile.default)
         .map(|profile| local_profile_id(&profile.id));
     let envelope = envelope(None);
@@ -877,7 +918,8 @@ fn identity_create_profile(state: tauri::State<'_, SignerState>) -> Result<Statu
 }
 
 #[tauri::command]
-fn identity_import_profile(state: tauri::State<'_, SignerState>, secret: String) -> Result<Status, String> {
+fn identity_import_profile(state: tauri::State<'_, SignerState>, cards: tauri::State<'_, PaymentCardsHandle>, secret: String) -> Result<Status, String> {
+    cards.0.lock();
     let prior_default = state.identity.profiles().into_iter().find(|profile| profile.default)
         .map(|profile| local_profile_id(&profile.id));
     let envelope = envelope(None);
@@ -893,7 +935,8 @@ fn identity_import_profile(state: tauri::State<'_, SignerState>, secret: String)
 }
 
 #[tauri::command]
-async fn identity_select(state: tauri::State<'_, SignerState>, id: String) -> Result<IdentityProfilesInfo, String> {
+async fn identity_select(state: tauri::State<'_, SignerState>, cards: tauri::State<'_, PaymentCardsHandle>, id: String) -> Result<IdentityProfilesInfo, String> {
+    cards.0.lock();
     activate_identity(&state, &id).await?;
     Ok(identity_profiles_info(&state))
 }
@@ -946,7 +989,8 @@ fn identity_set_default(state: tauri::State<'_, SignerState>, id: String) -> Res
 }
 
 #[tauri::command]
-async fn identity_remove_profile(state: tauri::State<'_, SignerState>, id: String) -> Result<IdentityProfilesInfo, String> {
+async fn identity_remove_profile(state: tauri::State<'_, SignerState>, cards: tauri::State<'_, PaymentCardsHandle>, id: String) -> Result<IdentityProfilesInfo, String> {
+    cards.0.lock();
     if let Some(local_id) = id.strip_prefix("local:") {
         state.identity.remove_profile(local_id).map_err(|error| error.to_string())?;
     } else if let Some(remote_id) = id.strip_prefix("nip46:") {
@@ -1270,8 +1314,10 @@ fn envelope(passphrase: Option<String>) -> Box<dyn KeyEnvelope> {
 #[tauri::command]
 fn identity_create(
     state: tauri::State<'_, SignerState>,
+    cards: tauri::State<'_, PaymentCardsHandle>,
     passphrase: Option<String>,
 ) -> Result<Status, String> {
+    cards.0.lock();
     let envelope = envelope(passphrase);
     state
         .identity
@@ -1283,9 +1329,11 @@ fn identity_create(
 #[tauri::command]
 fn identity_import(
     state: tauri::State<'_, SignerState>,
+    cards: tauri::State<'_, PaymentCardsHandle>,
     passphrase: Option<String>,
     secret: String,
 ) -> Result<Status, String> {
+    cards.0.lock();
     let envelope = envelope(passphrase);
     state
         .identity
@@ -1319,7 +1367,8 @@ fn identity_unlock(
 }
 
 #[tauri::command]
-fn identity_lock(state: tauri::State<'_, SignerState>) -> Status {
+fn identity_lock(state: tauri::State<'_, SignerState>, cards: tauri::State<'_, PaymentCardsHandle>) -> Status {
+    cards.0.lock();
     state.identity.lock();
     state.identity.status()
 }

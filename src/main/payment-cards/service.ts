@@ -45,6 +45,8 @@ export class PaymentCardService {
   private vault: PaymentCardVault | null = null
   private cached: CachedPaymentCardVault | null = null
   private lastCreatedAt = 0
+  private identityEpoch = 0
+  private migrationNeeded = false
   private pendingSaves = new Map<string, PendingCardSave>()
 
   constructor(private readonly deps: PaymentCardServiceDeps) {}
@@ -64,23 +66,31 @@ export class PaymentCardService {
   }
 
   lock(): void {
+    this.identityEpoch++
     this.pubkey = null; this.vault = null; this.cached = null
+    this.migrationNeeded = false
     for (const pending of this.pendingSaves.values()) clearTimeout(pending.timer)
     this.pendingSaves.clear()
     this.sendStatus()
   }
 
   async unlock(): Promise<void> {
+    const epoch = ++this.identityEpoch
+    this.migrationNeeded = false
     const provider = this.deps.identity.provider()
     if (!provider) throw new Error('Set up a Nostr identity to use payment cards.')
     const pubkey = await provider.getPublicKey()
+    if (epoch !== this.identityEpoch) throw new Error('The active identity changed while unlocking payment cards.')
     this.pubkey = pubkey
     this.cached = this.deps.cache.get(pubkey)
     this.lastCreatedAt = this.cached?.event.created_at ?? 0
-    this.vault = this.cached ? await this.decrypt(provider, this.cached.event).catch(() => emptyPaymentCardVault()) : emptyPaymentCardVault()
-    await this.sync().catch((error) => console.warn('[payment-cards] sync failed:', error))
+    const vault = this.cached ? await this.decrypt(provider, this.cached.event).catch(() => emptyPaymentCardVault()) : emptyPaymentCardVault()
+    if (epoch !== this.identityEpoch) throw new Error('The active identity changed while unlocking payment cards.')
+    this.vault = vault
+    if (this.migrationNeeded) await this.publish(provider, pubkey, vault, [], epoch)
+    await this.sync(epoch).catch((error) => console.warn('[payment-cards] sync failed:', error))
     if (!this.deps.config.saveSecurityCodes()) {
-      await this.setSecurityCodeSaving(false).catch((error) => console.warn('[payment-cards] security-code cleanup pending:', error))
+      if (epoch === this.identityEpoch) await this.setSecurityCodeSaving(false).catch((error) => console.warn('[payment-cards] security-code cleanup pending:', error))
     }
     this.sendStatus()
   }
@@ -119,6 +129,7 @@ export class PaymentCardService {
 
   async save(input: PaymentCardDraft): Promise<{ ok: boolean; pending?: boolean; error?: string }> {
     try {
+      const epoch = this.identityEpoch
       const vault = this.requireVault()
       const existing = input.id ? vault.cards.find((card) => card.id === input.id && !card.deleted) : undefined
       let card = normalizePaymentCardDraft({ ...input, number: input.number || existing?.number || '' }, existing)
@@ -128,20 +139,23 @@ export class PaymentCardService {
         card = withoutCvc
       }
       const cards = vault.cards.filter((candidate) => candidate.id !== card.id)
-      if (!existing && vault.cards.filter((candidate) => !candidate.deleted).length >= 100) throw new Error('The payment card limit is 100')
-      if (!existing && cards.length >= MAX_PAYMENT_CARD_RECORDS) throw new Error('The payment card vault is full. Remove old cards or wait until devices sync.')
+      const tombstones = vault.tombstones.filter((item) => item.id !== card.id)
+      if (!existing && vault.cards.length >= 100) throw new Error('The payment card limit is 100')
+      if (!existing && cards.length + tombstones.length >= MAX_PAYMENT_CARD_RECORDS) throw new Error('The payment card vault is full. Remove old cards or wait until devices sync.')
       cards.push(card)
-      const result = await this.commit({ v: PAYMENT_CARDS_VERSION, updatedAt: Date.now(), cards })
+      const result = await this.commit({ v: PAYMENT_CARDS_VERSION, updatedAt: Date.now(), cards, tombstones }, epoch)
       return { ok: true, pending: result.pending }
     } catch (error) { return { ok: false, error: messageOf(error) } }
   }
 
   async remove(id: string): Promise<{ ok: boolean; error?: string }> {
     try {
+      const epoch = this.identityEpoch
       const vault = this.requireVault()
-      const card = vault.cards.find((candidate) => candidate.id === id && !candidate.deleted)
+      const card = vault.cards.find((candidate) => candidate.id === id)
       if (!card) throw new Error('That card no longer exists')
-      await this.commit({ ...vault, updatedAt: Date.now(), cards: vault.cards.map((candidate) => candidate.id === id ? { ...candidate, deleted: true, updatedAt: Date.now() } : candidate) })
+      const deletedAt = Date.now()
+      await this.commit({ ...vault, updatedAt: deletedAt, cards: vault.cards.filter((candidate) => candidate.id !== id), tombstones: [...vault.tombstones.filter((item) => item.id !== id), { id, deletedAt }] }, epoch)
       return { ok: true }
     } catch (error) { return { ok: false, error: messageOf(error) } }
   }
@@ -205,6 +219,8 @@ export class PaymentCardService {
   }
 
   async fill(webContentsId: number, id: string): Promise<{ ok: boolean; error?: string }> {
+    const epoch = this.identityEpoch
+    const pubkey = this.pubkey
     const tabId = this.deps.host.tabIdForContents(webContentsId)
     const page = tabId ? this.deps.host.pageForTab(tabId) : null
     if (!tabId || !page || !this.allowed(page)) return { ok: false, error: 'Payment cards are available only on secure normal tabs.' }
@@ -241,7 +257,7 @@ export class PaymentCardService {
       }
     } catch (error) { return { ok: false, error: messageOf(error) } }
     const freshPage = this.deps.host.pageForTab(tabId)
-    if (!freshPage || !this.allowed(freshPage) || originOf(freshPage.url) !== originalOrigin || this.deps.host.activePage()?.tabId !== tabId || !this.vault) {
+    if (epoch !== this.identityEpoch || pubkey !== this.pubkey || !freshPage || !this.allowed(freshPage) || originOf(freshPage.url) !== originalOrigin || this.deps.host.activePage()?.tabId !== tabId || !this.vault) {
       return { ok: false, error: 'The payment page changed before the card could be filled.' }
     }
     const sent = this.deps.host.sendToContent(tabId, 'payments:fill', {
@@ -262,60 +278,69 @@ export class PaymentCardService {
     return this.vault
   }
 
-  private async sync(): Promise<void> {
+  private async sync(expectedEpoch = this.identityEpoch): Promise<void> {
     const provider = this.deps.identity.provider()
     const pubkey = this.pubkey
     if (!provider || !pubkey || !this.vault) return
     const relays = await this.deps.relaysFor(pubkey)
-    const auth = (template: EventTemplate): Promise<Event> => this.signAndVerify(provider, template)
+    if (expectedEpoch !== this.identityEpoch || this.pubkey !== pubkey || !this.vault) return
+    const auth = (template: EventTemplate): Promise<Event> => this.signAndVerify(provider, template, pubkey)
     let remote: Event | null = null
     if (relays.length) {
       const events = await this.deps.relays.queryAuth(relays, { ...FILTER, authors: [pubkey] }, auth)
+      if (expectedEpoch !== this.identityEpoch || this.pubkey !== pubkey) return
       remote = events.filter((event) => event.kind === 30078 && event.pubkey === pubkey && event.content.length <= MAX_EVENT_CONTENT && event.tags.some((tag) => tag[0] === 'd' && tag[1] === PAYMENT_CARDS_D) && verifyEvent(event)).sort((a, b) => b.created_at - a.created_at)[0] ?? null
     }
     if (remote) {
       const remoteVault = await this.decrypt(provider, remote)
+      if (expectedEpoch !== this.identityEpoch || this.pubkey !== pubkey || !this.vault) return
       const merged = mergePaymentCardVaults(this.vault, remoteVault)
       const localHasChanges = this.cached?.pending === true || this.vault.cards.some((card) => {
         const match = remoteVault.cards.find((candidate) => candidate.id === card.id)
         return !match || card.updatedAt > match.updatedAt
-      })
+      }) || this.vault.tombstones.some((item) => !remoteVault.tombstones.some((remoteItem) => remoteItem.id === item.id)) || this.migrationNeeded
       this.vault = merged
       this.cached = { event: remote, pending: false, syncedAt: Date.now() }
       this.deps.cache.set(pubkey, this.cached)
       this.lastCreatedAt = Math.max(this.lastCreatedAt, remote.created_at)
-      if (localHasChanges) await this.publish(provider, pubkey, merged, relays)
-    } else if (this.vault.cards.length || this.cached?.pending) {
-      await this.publish(provider, pubkey, this.vault, relays)
+      if (localHasChanges) await this.publish(provider, pubkey, merged, relays, expectedEpoch)
+    } else if (this.vault.cards.length || this.vault.tombstones.length || this.cached?.pending) {
+      await this.publish(provider, pubkey, this.vault, relays, expectedEpoch)
     }
   }
 
-  private async commit(vault: PaymentCardVault): Promise<{ pending: boolean }> {
+  private async commit(vault: PaymentCardVault, expectedEpoch = this.identityEpoch): Promise<{ pending: boolean }> {
     const provider = this.deps.identity.provider()
     const pubkey = this.pubkey
     if (!provider || !pubkey) throw new Error('Set up a Nostr identity to use payment cards')
+    if (expectedEpoch !== this.identityEpoch) throw new Error('The active identity changed. Unlock payment cards again.')
     const relays = await this.deps.relaysFor(pubkey)
-    return this.publish(provider, pubkey, vault, relays)
+    return this.publish(provider, pubkey, vault, relays, expectedEpoch)
   }
 
-  private async publish(provider: NonNullable<ReturnType<PasswordIdentityLike['provider']>>, pubkey: string, vault: PaymentCardVault, relays: string[]): Promise<{ pending: boolean }> {
+  private async publish(provider: NonNullable<ReturnType<PasswordIdentityLike['provider']>>, pubkey: string, vault: PaymentCardVault, relays: string[], expectedEpoch = this.identityEpoch): Promise<{ pending: boolean }> {
+    if (expectedEpoch !== this.identityEpoch || this.pubkey !== pubkey) throw new Error('The active identity changed. Unlock payment cards again.')
     const plaintext = JSON.stringify(vault)
     if (Buffer.byteLength(plaintext, 'utf8') > MAX_PAYMENT_CARDS_BYTES) throw new Error('The card vault is full. Remove cards before adding more.')
     const content = await provider.nip44Encrypt(pubkey, plaintext)
+    if (expectedEpoch !== this.identityEpoch || this.pubkey !== pubkey) throw new Error('The active identity changed. Unlock payment cards again.')
     const event = await provider.signEvent({
       kind: 30078,
       created_at: Math.max(Math.floor(Date.now() / 1000), this.lastCreatedAt + 1),
       tags: [['d', PAYMENT_CARDS_D], ['t', PAYMENT_CARDS_TAG], ['client', 'ncc-browser']],
       content
     })
-    if (!verifyEvent(event)) throw new Error('The signer returned an invalid payment card vault event')
-    const results = await Promise.allSettled(relays.map((url) => this.deps.relays.publishWithAuth(url, event, (template) => this.signAndVerify(provider, template))))
+    if (!verifyEvent(event) || event.pubkey !== pubkey) throw new Error('The signer returned an invalid payment card vault event')
+    if (expectedEpoch !== this.identityEpoch || this.pubkey !== pubkey) throw new Error('The active identity changed. Unlock payment cards again.')
+    const results = await Promise.allSettled(relays.map((url) => this.deps.relays.publishWithAuth(url, event, (template) => this.signAndVerify(provider, template, pubkey))))
+    if (expectedEpoch !== this.identityEpoch || this.pubkey !== pubkey) throw new Error('The active identity changed. Unlock payment cards again.')
     const accepted = results.filter((result) => result.status === 'fulfilled').length
     const pending = relays.length === 0 || accepted < relays.length
     this.lastCreatedAt = event.created_at
     this.vault = vault
     this.cached = { event, pending, syncedAt: Date.now() }
     this.deps.cache.set(pubkey, this.cached)
+    this.migrationNeeded = false
     this.sendStatus()
     return { pending }
   }
@@ -325,12 +350,14 @@ export class PaymentCardService {
     const plaintext = await provider.nip44Decrypt(this.pubkey, event.content)
     const parsed = JSON.parse(plaintext) as { v?: unknown }
     if (parsed.v !== PAYMENT_CARDS_VERSION) throw new Error('This payment card vault was created by a newer version')
+    this.migrationNeeded ||= Array.isArray((parsed as { cards?: unknown[] }).cards) &&
+      (parsed as { cards: Array<{ deleted?: unknown }> }).cards.some((card) => card?.deleted === true)
     return normalizePaymentCardVault(parsed)
   }
 
-  private async signAndVerify(provider: NonNullable<ReturnType<PasswordIdentityLike['provider']>>, template: EventTemplate): Promise<Event> {
+  private async signAndVerify(provider: NonNullable<ReturnType<PasswordIdentityLike['provider']>>, template: EventTemplate, expectedPubkey: string): Promise<Event> {
     const event = await provider.signEvent(template)
-    if (!verifyEvent(event)) throw new Error('The signer returned an invalid relay authentication event')
+    if (!verifyEvent(event) || event.pubkey !== expectedPubkey) throw new Error('The signer returned an invalid relay authentication event')
     return event
   }
 

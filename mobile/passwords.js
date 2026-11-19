@@ -22,11 +22,11 @@ export function createPasswords(deps) {
 
   function askDeviceCredential() {
     if (!content || typeof content.unlockWithDeviceCredential !== 'function') {
-      return Promise.resolve(true)
+      return Promise.resolve(false)
     }
     return new Promise((resolve) => {
       deviceWaiter = resolve
-      content.unlockWithDeviceCredential()
+      content.unlockWithDeviceCredential('password-vault')
       // A device with no prompt path answers immediately; this only guards a lost reply.
       setTimeout(() => {
         if (deviceWaiter === resolve) {

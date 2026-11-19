@@ -5,11 +5,13 @@ use ncc_identity::IdentityStore;
 use ncc_proxy::{own_relays::OwnRelays, settings::SettingsStore};
 use nostr::Event;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::time::Duration;
 use std::{
     fs,
     path::PathBuf,
+    sync::atomic::{AtomicU64, Ordering},
+    sync::OnceLock,
     sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -36,6 +38,33 @@ struct Vault {
     v: u8,
     updated_at: u64,
     cards: Vec<Card>,
+    #[serde(default)]
+    tombstones: Vec<Tombstone>,
+}
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct Tombstone {
+    id: String,
+    deleted_at: u64,
+}
+
+static SYSTEM_AUTH_GRANT: OnceLock<Mutex<Option<std::time::Instant>>> = OnceLock::new();
+
+pub fn record_system_auth(success: bool) {
+    let grant = SYSTEM_AUTH_GRANT.get_or_init(|| Mutex::new(None));
+    *grant.lock().unwrap_or_else(|e| e.into_inner()) = if success {
+        Some(std::time::Instant::now() + Duration::from_secs(60))
+    } else {
+        None
+    };
+}
+
+fn consume_system_auth() -> bool {
+    let grant = SYSTEM_AUTH_GRANT.get_or_init(|| Mutex::new(None));
+    let mut grant = grant.lock().unwrap_or_else(|e| e.into_inner());
+    let valid = grant.is_some_and(|expires| expires > std::time::Instant::now());
+    *grant = None;
+    valid
 }
 #[derive(Serialize, Deserialize)]
 struct Cache {
@@ -55,7 +84,8 @@ pub struct Summary {
 }
 pub struct CardStore {
     path: PathBuf,
-    cards: Mutex<Option<(String, Vec<Card>)>>,
+    cards: Mutex<Option<(String, Vec<Card>, Vec<Tombstone>)>>,
+    generation: AtomicU64,
     own_relays: OwnRelays,
 }
 impl CardStore {
@@ -63,10 +93,13 @@ impl CardStore {
         Self {
             path,
             cards: Mutex::new(None),
+            generation: AtomicU64::new(0),
             own_relays: OwnRelays::default(),
         }
     }
     pub fn unlock(&self, identity: &IdentityStore) -> Result<(), String> {
+        record_system_auth(false);
+        let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
         let pubkey = identity.public_key().map_err(|e| e.to_string())?.to_hex();
         let cards = fs::read(&self.path)
             .ok()
@@ -74,17 +107,37 @@ impl CardStore {
             .filter(|c| c.pubkey == pubkey)
             .and_then(|c| identity.nip44_decrypt(&pubkey, &c.content).ok())
             .and_then(|s| serde_json::from_str::<Vault>(&s).ok())
-            .map(|v| v.cards)
+            .map(migrate_vault)
+            .map(|v| (v.cards, v.tombstones))
             .unwrap_or_default();
-        *self.cards.lock().unwrap_or_else(|e| e.into_inner()) = Some((pubkey, cards));
+        if self.generation.load(Ordering::SeqCst) != generation {
+            return Err("The active identity changed while unlocking payment cards".into());
+        }
+        *self.cards.lock().unwrap_or_else(|e| e.into_inner()) = Some((pubkey, cards.0, cards.1));
         Ok(())
     }
     pub fn lock(&self) {
+        self.generation.fetch_add(1, Ordering::SeqCst);
+        record_system_auth(false);
         *self.cards.lock().unwrap_or_else(|e| e.into_inner()) = None
     }
-    pub fn list(&self) -> Result<Vec<Summary>, String> {
+    pub fn authorization_generation(&self) -> u64 {
+        self.generation.load(Ordering::SeqCst)
+    }
+    pub fn authorization_generation_is_active(&self, generation: u64) -> bool {
+        self.generation.load(Ordering::SeqCst) == generation
+            && self
+                .cards
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_some()
+    }
+    pub fn list(&self, expected_pubkey: &str) -> Result<Vec<Summary>, String> {
         let s = self.cards.lock().unwrap_or_else(|e| e.into_inner());
-        let (_, cards) = s.as_ref().ok_or("Unlock payment cards first")?;
+        let (pubkey, cards, _) = s.as_ref().ok_or("Unlock payment cards first")?;
+        if pubkey != expected_pubkey {
+            return Err("The active identity changed. Unlock payment cards again.".into());
+        }
         Ok(cards
             .iter()
             .filter(|c| !c.deleted)
@@ -107,10 +160,14 @@ impl CardStore {
             })
             .collect())
     }
-    pub fn get(&self, id: &str) -> Result<Card, String> {
+    pub fn get(&self, expected_pubkey: &str, id: &str) -> Result<Card, String> {
+        if !consume_system_auth() {
+            return Err("Confirm with the device credential before accessing card details".into());
+        }
         let s = self.cards.lock().unwrap_or_else(|e| e.into_inner());
         s.as_ref()
-            .and_then(|(_, v)| v.iter().find(|c| c.id == id && !c.deleted))
+            .filter(|(pubkey, _, _)| pubkey == expected_pubkey)
+            .and_then(|(_, v, _)| v.iter().find(|c| c.id == id && !c.deleted))
             .cloned()
             .ok_or_else(|| "That card is unavailable".into())
     }
@@ -154,18 +211,24 @@ impl CardStore {
             .unwrap_or_default()
             .as_millis() as u64;
         let mut guard = self.cards.lock().unwrap_or_else(|e| e.into_inner());
-        let (pubkey, cards) = guard.as_mut().ok_or("Unlock payment cards first")?;
+        let (pubkey, cards, tombstones) = guard.as_mut().ok_or("Unlock payment cards first")?;
+        let active_pubkey = identity.public_key().map_err(|e| e.to_string())?.to_hex();
+        if *pubkey != active_pubkey {
+            return Err("The active identity changed. Unlock payment cards again.".into());
+        }
         if card.id.is_empty() {
             card.id = format!("{:016x}", now);
             card.created_at = now
         }
         card.updated_at = now;
         cards.retain(|c| c.id != card.id);
+        tombstones.retain(|item| item.id != card.id);
         cards.push(card);
         let data = serde_json::to_string(&Vault {
             v: 1,
             updated_at: now,
             cards: cards.clone(),
+            tombstones: tombstones.clone(),
         })
         .map_err(|e| e.to_string())?;
         let cache = Cache {
@@ -185,7 +248,11 @@ impl CardStore {
     }
     pub fn clear_cvc(&self, identity: &IdentityStore) -> Result<(), String> {
         let mut guard = self.cards.lock().unwrap_or_else(|e| e.into_inner());
-        let (pubkey, cards) = guard.as_mut().ok_or("Unlock payment cards first")?;
+        let (pubkey, cards, tombstones) = guard.as_mut().ok_or("Unlock payment cards first")?;
+        let active_pubkey = identity.public_key().map_err(|e| e.to_string())?.to_hex();
+        if *pubkey != active_pubkey {
+            return Err("The active identity changed. Unlock payment cards again.".into());
+        }
         for c in cards.iter_mut() {
             c.cvc = None;
             c.updated_at = now_ms();
@@ -198,6 +265,7 @@ impl CardStore {
             v: 1,
             updated_at: now,
             cards: cards.clone(),
+            tombstones: tombstones.clone(),
         })
         .map_err(|e| e.to_string())?;
         let cache = Cache {
@@ -218,17 +286,26 @@ impl CardStore {
 
     pub fn remove(&self, identity: &IdentityStore, id: &str) -> Result<(), String> {
         let mut guard = self.cards.lock().unwrap_or_else(|e| e.into_inner());
-        let (pubkey, cards) = guard.as_mut().ok_or("Unlock payment cards first")?;
-        let card = cards
-            .iter_mut()
-            .find(|c| c.id == id && !c.deleted)
-            .ok_or("That card is unavailable")?;
-        card.deleted = true;
-        card.updated_at = now_ms();
+        let (pubkey, cards, tombstones) = guard.as_mut().ok_or("Unlock payment cards first")?;
+        let active_pubkey = identity.public_key().map_err(|e| e.to_string())?.to_hex();
+        if *pubkey != active_pubkey {
+            return Err("The active identity changed. Unlock payment cards again.".into());
+        }
+        if !cards.iter().any(|c| c.id == id && !c.deleted) {
+            return Err("That card is unavailable".into());
+        }
+        cards.retain(|c| c.id != id);
+        let deleted_at = now_ms();
+        tombstones.retain(|item| item.id != id);
+        tombstones.push(Tombstone {
+            id: id.to_string(),
+            deleted_at,
+        });
         let data = serde_json::to_string(&Vault {
             v: 1,
-            updated_at: now_ms(),
+            updated_at: deleted_at,
             cards: cards.clone(),
+            tombstones: tombstones.clone(),
         })
         .map_err(|e| e.to_string())?;
         let cache = Cache {
@@ -252,8 +329,14 @@ impl CardStore {
         identity: Arc<IdentityStore>,
         settings: Arc<SettingsStore>,
     ) -> Result<(), String> {
+        let generation = self.generation.load(Ordering::SeqCst);
         let pubkey = identity.public_key().map_err(|e| e.to_string())?.to_hex();
         let relays = self.own_relays.resolve(&settings.get(), &pubkey).await;
+        if self.generation.load(Ordering::SeqCst) != generation
+            || identity.public_key().map_err(|e| e.to_string())?.to_hex() != pubkey
+        {
+            return Err("The active identity changed during card sync".into());
+        }
         let filter = json!({"kinds":[30078],"authors":[pubkey],"#d":["ncc-browser/payment-cards/v1"],"limit":20});
         let signer_identity = identity.clone();
         let signer: ncc_proxy::relay::Signer = Arc::new(move |template: Value| {
@@ -287,23 +370,36 @@ impl CardStore {
                 }
             }
         }
-        let local = self
+        if self.generation.load(Ordering::SeqCst) != generation
+            || identity.public_key().map_err(|e| e.to_string())?.to_hex() != pubkey
+        {
+            return Err("The active identity changed during card sync".into());
+        }
+        let (local, mut tombstones) = self
             .cards
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .as_ref()
-            .filter(|(key, _)| key == &pubkey)
-            .map(|(_, cards)| cards.clone())
+            .filter(|(key, _, _)| key == &pubkey)
+            .map(|(_, cards, deleted)| (cards.clone(), deleted.clone()))
             .ok_or("Unlock payment cards first")?;
         let mut merged = local.clone();
         let mut remote_created = 0;
-        let mut remote_cards: Option<Vec<Card>> = None;
+        let mut remote_snapshot: Option<(Vec<Card>, Vec<Tombstone>)> = None;
         if let Some(event) = latest.as_ref() {
             remote_created = event.created_at.as_secs();
             if let Ok(clear) = identity.nip44_decrypt(&pubkey, &event.content) {
-                if let Ok(remote) = serde_json::from_str::<Vault>(&clear) {
-                    remote_cards = Some(remote.cards.clone());
+                if let Ok(remote) = serde_json::from_str::<Vault>(&clear).map(migrate_vault) {
+                    remote_snapshot = Some((remote.cards.clone(), remote.tombstones.clone()));
+                    for tombstone in remote.tombstones {
+                        if !tombstones.iter().any(|item| item.id == tombstone.id) {
+                            tombstones.push(tombstone);
+                        }
+                    }
                     for card in remote.cards {
+                        if tombstones.iter().any(|item| item.id == card.id) {
+                            continue;
+                        }
                         match merged.iter_mut().find(|old| old.id == card.id) {
                             Some(old) if card.updated_at > old.updated_at => *old = card,
                             Some(_) => {}
@@ -313,18 +409,32 @@ impl CardStore {
                 }
             }
         }
+        merged.retain(|card| !tombstones.iter().any(|item| item.id == card.id));
         let plaintext = serde_json::to_string(&Vault {
             v: 1,
             updated_at: now_ms(),
             cards: merged.clone(),
+            tombstones: tombstones.clone(),
         })
         .map_err(|e| e.to_string())?;
-        let publish = match remote_cards {
-            Some(remote) => merged != remote,
-            None => latest.is_none() && !merged.is_empty(),
+        if self.generation.load(Ordering::SeqCst) != generation
+            || identity.public_key().map_err(|e| e.to_string())?.to_hex() != pubkey
+        {
+            return Err("The active identity changed during card sync".into());
+        }
+        let publish = match remote_snapshot {
+            Some((remote_cards, remote_tombstones)) => {
+                merged != remote_cards || tombstones != remote_tombstones
+            }
+            None => latest.is_none() && (!merged.is_empty() || !tombstones.is_empty()),
         };
-        *self.cards.lock().unwrap_or_else(|e| e.into_inner()) =
-            Some((pubkey.clone(), merged.clone()));
+        {
+            let mut state = self.cards.lock().unwrap_or_else(|e| e.into_inner());
+            if self.generation.load(Ordering::SeqCst) != generation {
+                return Err("The active identity changed during card sync".into());
+            }
+            *state = Some((pubkey.clone(), merged.clone(), tombstones));
+        }
         self.write_cache(&pubkey, &plaintext, &identity)?;
         if publish && !relays.is_empty() {
             let content = identity
@@ -382,6 +492,35 @@ fn now_ms() -> u64 {
         .unwrap_or_default()
         .as_millis() as u64
 }
+fn migrate_vault(mut vault: Vault) -> Vault {
+    let legacy = vault
+        .cards
+        .iter()
+        .filter(|card| card.deleted)
+        .map(|card| Tombstone {
+            id: card.id.clone(),
+            deleted_at: card.updated_at,
+        })
+        .collect::<Vec<_>>();
+    for item in legacy {
+        if !vault
+            .tombstones
+            .iter()
+            .any(|existing| existing.id == item.id)
+        {
+            vault.tombstones.push(item);
+        }
+    }
+    let deleted_ids = vault
+        .tombstones
+        .iter()
+        .map(|item| item.id.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    vault
+        .cards
+        .retain(|card| !card.deleted && !deleted_ids.contains(card.id.as_str()));
+    vault
+}
 fn luhn(s: &str) -> bool {
     let d = s
         .chars()
@@ -397,7 +536,11 @@ fn luhn(s: &str) -> bool {
         .map(|(i, n)| {
             if i % 2 == 1 {
                 let x = n * 2;
-                if x > 9 { x - 9 } else { x }
+                if x > 9 {
+                    x - 9
+                } else {
+                    x
+                }
             } else {
                 *n
             }
@@ -405,6 +548,22 @@ fn luhn(s: &str) -> bool {
         .sum::<u32>()
         % 10
         == 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{consume_system_auth, record_system_auth};
+
+    #[test]
+    fn native_auth_grant_is_one_use_and_fail_closed() {
+        record_system_auth(false);
+        assert!(!consume_system_auth());
+        record_system_auth(true);
+        assert!(consume_system_auth());
+        assert!(!consume_system_auth());
+        record_system_auth(false);
+        assert!(!consume_system_auth());
+    }
 }
 fn network(n: &str) -> &'static str {
     if n.starts_with('4') {

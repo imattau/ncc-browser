@@ -1,5 +1,11 @@
 # Nostr Navigator for Android
 
+## New in 0.35.0
+
+- Added payment-card autofill and save prompts for detected secure checkout forms.
+- Added device-credential and optional Nostr signer confirmation before card autofill.
+- Improved payment-card deletion, identity switching, and checkout-origin checks.
+
 ## Fixes in 0.34.2
 
 - Pressing Back from local nccsearch now returns to the home page.
