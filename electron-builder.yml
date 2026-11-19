@@ -32,6 +32,9 @@ removePackageScripts: true
 mac:
   category: public.app-category.utilities
   icon: build/icon.png
+  protocols:
+    - name: Web browser
+      schemes: [http, https]
   artifactName: ${name}-${version}-mac-${arch}.${ext}
   target:
     - target: dmg
@@ -93,6 +96,8 @@ linux:
   syncDesktopName: true
   mimeTypes:
     - x-scheme-handler/ncc
+    - x-scheme-handler/http
+    - x-scheme-handler/https
   artifactName: ${name}-${version}-linux-${arch}.${ext}
   target:
     - target: deb

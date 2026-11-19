@@ -4,6 +4,7 @@ import {
   ArrowRight,
   Download,
   History,
+  Search,
   KeyRound,
   LockKeyhole,
   LockKeyholeOpen,
@@ -29,6 +30,8 @@ import { cn } from '../lib/cn'
 
 interface ToolbarProps {
   state: NavState
+  nccSearchEnabled: boolean
+  onOpenNccSearch: () => void
   hint: string | null
   identity: IdentityStatus | null
   signerPending: boolean
@@ -57,6 +60,8 @@ interface ToolbarProps {
 
 export function Toolbar({
   state,
+  nccSearchEnabled,
+  onOpenNccSearch,
   hint,
   identity,
   signerPending,
@@ -133,6 +138,12 @@ export function Toolbar({
         onOpenSiteInfo={onOpenSiteInfo}
         onNavigate={onNavigate}
       />
+
+      {nccSearchEnabled ? (
+        <NavButton label="Search nccsearch" onClick={onOpenNccSearch}>
+          <Search className="h-4 w-4" />
+        </NavButton>
+      ) : null}
 
       <NavButton
         label="Share to Nostr"

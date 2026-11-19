@@ -4,6 +4,7 @@ import type { ExtensionActionInfo, ExtensionsState } from '@shared/extensions'
 import { sortDownloads } from '@shared/downloads'
 import type {
   Bookmark,
+  AppConfig,
   DownloadNotice,
   IdentityProfile,
   IdentityStatus,
@@ -58,6 +59,7 @@ const EMPTY_STATE: NavState = {
 
 export function App() {
   const [state, setState] = useState<NavState>(EMPTY_STATE)
+  const [config, setConfig] = useState<AppConfig | null>(null)
   const [overlay, setOverlay] = useState<OverlayReason | null>(null)
   const overlayRef = useRef<OverlayReason | null>(null)
   const [hint, setHint] = useState<string | null>(null)
@@ -171,10 +173,17 @@ export function App() {
   useEffect(
     () =>
       window.ncc.onConfig((config) => {
+        setConfig(config)
         applyAppearance(config.appearance)
       }),
     []
   )
+
+  useEffect(() => {
+    let alive = true
+    void window.ncc.getConfig().then((next) => { if (alive) setConfig(next) })
+    return () => { alive = false }
+  }, [])
 
   useEffect(() => {
     void window.ncc.extensionsState().then(setExtensions).catch(() => undefined)
@@ -604,6 +613,8 @@ export function App() {
 
       <Toolbar
         state={state}
+        nccSearchEnabled={config?.nccSearchEnabled === true}
+        onOpenNccSearch={() => navigate('nccsearch://app/')}
         hint={hint}
         identity={identity}
         signerPending={signerRequest !== null}

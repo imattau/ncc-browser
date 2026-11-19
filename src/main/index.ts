@@ -94,8 +94,21 @@ let passwords: PasswordService | null = null
 let walletService: WalletService | null = null
 let nwcService: NwcService | null = null
 let extensions: ExtensionService | null = null
+let pendingExternalUrl: string | null = null
+
+// macOS can deliver a browser URL before the app is ready, so subscribe before
+// creating the window and hold it until the shell can navigate.
+app.on('open-url', (event, url) => {
+  event.preventDefault()
+  if (!/^(https?):\/\//i.test(url)) return
+  if (shell) void shell.navigate(url)
+  else pendingExternalUrl = url
+})
 
 app.whenReady().then(async () => {
+  // Register as an available handler so the operating system can offer Nostr
+  // Navigator in its default-browser chooser. The user still selects the default.
+  for (const scheme of ['http', 'https']) app.setAsDefaultProtocolClient(scheme)
   const config = new ConfigStore()
   const protection = new ProtectionService(config)
   // Resolve light/dark before any window exists so the first paint is correct.
@@ -618,6 +631,10 @@ app.whenReady().then(async () => {
 
   shell.loadChrome()
   relaySync?.start()
+  if (pendingExternalUrl) {
+    void shell.navigate(pendingExternalUrl)
+    pendingExternalUrl = null
+  }
 
   app.on('second-instance', (_event, argv) => {
     if (!shell) return
@@ -626,6 +643,7 @@ app.whenReady().then(async () => {
     const address = argv.find((arg) => /^(ncc|https?):\/\//i.test(arg))
     if (address) void shell.navigate(address)
   })
+
 })
 
 app.on('window-all-closed', () => {
