@@ -110,6 +110,10 @@ let findTimer = null
 let identity = null
 let nccSearchEnabled = false
 
+function updateNccSearchButton() {
+  byId('home-nccsearch').hidden = !nccSearchEnabled
+}
+
 /** Loading progress per tab id, 0–100. Absent means idle. */
 const progressByTab = {}
 let progressTimer = null
@@ -1687,7 +1691,7 @@ async function loadSearch() {
       browserSettings.searchEngine === 'custom' ? 'Template with %s' : 'SearXNG instance'
     nccSearchEnabled = readSetting('ncc.nccsearch.enabled', 'false') === 'true'
     byId('nccsearch-enabled').checked = nccSearchEnabled
-    byId('nccsearch-open').disabled = !nccSearchEnabled
+    updateNccSearchButton()
     renderSearchSub()
   } catch (error) {
     byId('search-error').textContent = String(error)
@@ -1728,7 +1732,7 @@ async function saveSearch() {
     })
     nccSearchEnabled = byId('nccsearch-enabled').checked
     writeSetting('ncc.nccsearch.enabled', String(nccSearchEnabled))
-    byId('nccsearch-open').disabled = !nccSearchEnabled
+    updateNccSearchButton()
     byId('search-error').textContent = 'Saved.'
     renderSearchSub()
   } catch (error) {
@@ -2123,11 +2127,8 @@ function wireChrome() {
   byId('search-save').addEventListener('click', () => void saveSearch())
   byId('nccsearch-enabled').addEventListener('change', () => {
     nccSearchEnabled = byId('nccsearch-enabled').checked
-    byId('nccsearch-open').disabled = !nccSearchEnabled
+    updateNccSearchButton()
     writeSetting('ncc.nccsearch.enabled', String(nccSearchEnabled))
-  })
-  byId('nccsearch-open').addEventListener('click', () => {
-    if (nccSearchEnabled) showPanel('nccsearch')
   })
   byId('search-engine').addEventListener('change', () => {
     byId('search-custom-label').textContent =
@@ -2265,6 +2266,8 @@ const syncFeature = createSync({
 })
 
 async function main() {
+  nccSearchEnabled = readSetting('ncc.nccsearch.enabled', 'false') === 'true'
+  updateNccSearchButton()
   applyTheme(readSetting('ncc.theme', 'system'))
   applyBarPosition(readSetting('ncc.bar', 'bottom'))
   applyTextSize(readSetting('ncc.text-size', 'default'))

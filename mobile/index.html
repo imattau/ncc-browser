@@ -159,6 +159,9 @@
       </div>
 
       <nav class="home-bar" aria-label="Browser">
+        <button id="home-nccsearch" class="ib" type="button" aria-label="nccsearch" data-panel="nccsearch" hidden>
+          <svg class="i"><use href="#i-search" /></svg>
+        </button>
         <button id="home-bookmarks" class="ib" type="button" aria-label="Bookmarks" data-panel="bookmarks">
           <svg class="i"><use href="#i-star" /></svg>
         </button>
@@ -442,7 +445,6 @@
           <span><b>Enable local nccsearch</b><small>Crawls your configured relays while open and keeps its index on this device. Search activity is not published.</small></span>
           <input id="nccsearch-enabled" class="switch" type="checkbox" role="switch" />
         </label>
-        <button id="nccsearch-open" class="btn block" type="button">Open nccsearch</button>
         <button id="search-save" class="btn block" type="button">Save</button>
         <p id="search-error" class="status" role="status"></p>
       </div>

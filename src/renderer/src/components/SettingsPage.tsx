@@ -1022,17 +1022,6 @@ export function SettingsPage({
                         </span>
                       </span>
                     </label>
-                    <button
-                      type="button"
-                      disabled={!nccSearchEnabled || loading}
-                      onClick={() => {
-                        void window.ncc.newTab('nccsearch://app/')
-                        onClose()
-                      }}
-                      className="mt-3 rounded-lg border border-[color:var(--color-line)] px-3 py-1.5 text-ui-11 text-[color:var(--color-text)] hover:bg-[color:var(--color-hover)] disabled:opacity-40"
-                    >
-                      Open nccsearch
-                    </button>
                   </div>
 
                   <p className="mt-3 text-ui-11 leading-relaxed text-[color:var(--color-muted)]">
