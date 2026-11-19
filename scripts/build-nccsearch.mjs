@@ -9,8 +9,10 @@ const output = resolve(ui, 'dist-nsite')
 
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm'
 const npmOptions = { cwd: ui, stdio: 'inherit', shell: process.platform === 'win32' }
-execFileSync(npm, ['ci'], npmOptions)
-execFileSync(npm, ['run', 'build:nsite'], npmOptions)
+const npmCli = process.env.npm_execpath
+const runNpm = (args) => execFileSync(npmCli ? process.execPath : npm, npmCli ? [npmCli, ...args] : args, npmOptions)
+runNpm(['ci'])
+runNpm(['run', 'build:nsite'])
 
 for (const destination of [resolve(root, 'resources/nccsearch'), resolve(root, 'mobile/public/nccsearch')]) {
   rmSync(destination, { recursive: true, force: true })
