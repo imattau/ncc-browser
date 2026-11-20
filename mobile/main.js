@@ -612,7 +612,12 @@ globalThis.__nccBack = () => {
 /** Every full-window surface is the shell expanded over the page. */
 function showPanel(name) {
   if (!content) return
-  if (panel === 'nccsearch' && name !== 'nccsearch') byId('nccsearch-frame').removeAttribute('src')
+  if (panel === 'nccsearch' && name !== 'nccsearch') {
+    // Unload the document, not just the attribute: Android WebView can keep a
+    // <video> inside a hidden iframe audible after `removeAttribute('src')`.
+    // loadNccSearch() sets a real src again on the next visit.
+    byId('nccsearch-frame').src = 'about:blank'
+  }
   if (panel === 'wallet' && name !== 'wallet') void closeMoneroWallet()
   if (findOpen) closeFind()
   panel = name
