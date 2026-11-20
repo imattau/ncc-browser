@@ -1,5 +1,11 @@
 # Nostr Navigator for Android
 
+## New in 0.36.0
+
+- Added passkey creation and sign-in through the NCC encrypted password vault, with
+  confirmation for each use and native authenticator fallback when no NCC credential
+  matches.
+
 ## Fixes in 0.35.7
 
 - Media previews in nccsearch stop playing when they are closed, and when you leave
