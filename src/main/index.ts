@@ -65,7 +65,11 @@ import {
 import { TransportPolicy } from './ncc/transport'
 import { HttpPolicy } from './security'
 import { ProtectionService } from './protection'
-import { installShellCameraPermission, installSitePermissionPrompts } from './site-permissions'
+import {
+  installShellCameraPermission,
+  installSitePermissionPrompts,
+  SitePermissionStore
+} from './site-permissions'
 import { TorGuard } from './tor/guard'
 import { TorManager } from './tor/manager'
 import { TorRelayPool } from './tor/relay'
@@ -157,6 +161,9 @@ app.whenReady().then(async () => {
 
   const permissions = new PermissionStore(
     join(app.getPath('userData'), 'signer-permissions.json')
+  )
+  const sitePermissions = new SitePermissionStore(
+    join(app.getPath('userData'), 'site-permissions.json')
   )
   const envLocatorSigner = locatorSignerFromEnv()
 
@@ -427,7 +434,11 @@ app.whenReady().then(async () => {
     invalidateSite
   })
   installShellCameraPermission(shell.window.webContents.session, () => shell!.window.webContents, process.env.ELECTRON_RENDERER_URL)
-  installSitePermissionPrompts([content.normal, content.private, content.tor], () => shell!.window)
+  installSitePermissionPrompts([
+    { session: content.normal, kind: 'normal' },
+    { session: content.private, kind: 'private' },
+    { session: content.tor, kind: 'tor' }
+  ], () => shell!.window, sitePermissions)
 
   const approvals = new ApprovalBroker({
     send: (channel, payload) => {
@@ -566,6 +577,7 @@ app.whenReady().then(async () => {
     host: shell,
     config,
     permissions,
+    sitePermissions,
     sessions: { normal: content.normal, private: content.private, tor: content.tor },
     extensionSession: content.extensions,
     locators: {
