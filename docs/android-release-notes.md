@@ -1,5 +1,10 @@
 # Nostr Navigator for Android
 
+## Fixes in 0.35.1
+
+- Lightning payments can be scanned from QR codes, and receive invoices display a QR code.
+- Replaced native Lightning dialogs with styled in-app payment and invoice flows.
+
 ## New in 0.35.0
 
 - Added payment-card autofill and save prompts for detected secure checkout forms.

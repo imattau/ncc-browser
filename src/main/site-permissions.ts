@@ -1,4 +1,33 @@
-import { dialog, type BrowserWindow, type Session } from 'electron'
+import { dialog, type BrowserWindow, type Session, type WebContents } from 'electron'
+
+/** Camera access is limited to the browser's trusted shell renderer for QR scanning. */
+export function installShellCameraPermission(session: Session, getShellContents: () => WebContents, rendererUrl?: string): void {
+  const shellOrigin = (value: string): string | null => {
+    try {
+      const url = new URL(value)
+      return url.protocol === 'file:' ? 'file://' : url.origin
+    } catch { return null }
+  }
+  const trustedOrigins = new Set(['file://'])
+  if (rendererUrl) {
+    const origin = shellOrigin(rendererUrl)
+    if (origin) trustedOrigins.add(origin)
+  }
+  const isTrustedShell = (contents: WebContents | null, url: string): boolean => {
+    if (!contents || contents.isDestroyed()) return false
+    const shellContents = getShellContents()
+    return !shellContents.isDestroyed() && contents.id === shellContents.id && trustedOrigins.has(shellOrigin(url) ?? '')
+  }
+
+  session.setPermissionCheckHandler((contents, permission, origin) =>
+    permission === 'media' && isTrustedShell(contents, origin)
+  )
+  session.setPermissionRequestHandler((contents, permission, callback, details) => {
+    const requestingUrl = details.requestingUrl || contents.getURL()
+    const hasVideoRequest = 'mediaTypes' in details && Array.isArray(details.mediaTypes) && details.mediaTypes.includes('video')
+    callback(permission === 'media' && hasVideoRequest && isTrustedShell(contents, requestingUrl))
+  })
+}
 
 /** Permission decisions are per-origin and per-session; private/Tor grants vanish with the session. */
 export function installSitePermissionPrompts(sessions: Session[], getWindow: () => BrowserWindow): void {

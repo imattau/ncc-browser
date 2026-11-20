@@ -65,7 +65,7 @@ import {
 import { TransportPolicy } from './ncc/transport'
 import { HttpPolicy } from './security'
 import { ProtectionService } from './protection'
-import { installSitePermissionPrompts } from './site-permissions'
+import { installShellCameraPermission, installSitePermissionPrompts } from './site-permissions'
 import { TorGuard } from './tor/guard'
 import { TorManager } from './tor/manager'
 import { TorRelayPool } from './tor/relay'
@@ -426,6 +426,7 @@ app.whenReady().then(async () => {
     extensionContextItems: (url) => extensions?.contextMenuItems(url) ?? [],
     invalidateSite
   })
+  installShellCameraPermission(shell.window.webContents.session, () => shell!.window.webContents, process.env.ELECTRON_RENDERER_URL)
   installSitePermissionPrompts([content.normal, content.private, content.tor], () => shell!.window)
 
   const approvals = new ApprovalBroker({
