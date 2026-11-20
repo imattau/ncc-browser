@@ -24,9 +24,12 @@ export function registerSiteDataIpc(service: SiteDataService, deps: SiteDataIpcD
     if (!fromChrome(event)) throw new Error('Site data is only available to the browser chrome')
     const value =
       options && typeof options === 'object'
-        ? (options as { forgetTrust?: unknown })
+        ? (options as { forgetTrust?: unknown; forgetSitePermissions?: unknown })
         : {}
-    return service.clearActiveSite({ forgetTrust: value.forgetTrust === true })
+    return service.clearActiveSite({
+      forgetTrust: value.forgetTrust === true,
+      forgetSitePermissions: value.forgetSitePermissions === true
+    })
   })
 
   ipcMain.handle('ncc:cache-info', (event) => {

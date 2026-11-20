@@ -608,6 +608,7 @@ function SiteDataBlock() {
   const [busy, setBusy] = useState(false)
   const [confirm, setConfirm] = useState(false)
   const [forgetTrust, setForgetTrust] = useState(false)
+  const [forgetSitePermissions, setForgetSitePermissions] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -638,14 +639,19 @@ function SiteDataBlock() {
     setError(null)
     setNotice(null)
     try {
-      const outcome = await window.ncc.clearSiteData({ forgetTrust })
+      const outcome = await window.ncc.clearSiteData({ forgetTrust, forgetSitePermissions })
       if (!outcome.ok) {
         setError(outcome.error ?? 'Could not clear site data')
         return
       }
       setConfirm(false)
       setForgetTrust(false)
-      setNotice(outcome.trustCleared ? 'Cleared data and trust. Reloading…' : 'Cleared. Reloading…')
+      setForgetSitePermissions(false)
+      const cleared = [
+        outcome.trustCleared ? 'trust' : '',
+        outcome.sitePermissionsCleared ? 'saved site permissions' : ''
+      ].filter(Boolean)
+      setNotice(cleared.length ? `Cleared data and ${cleared.join(' and ')}. Reloading…` : 'Cleared. Reloading…')
       setInfo(await window.ncc.siteData())
     } catch (clearError) {
       setError(clearError instanceof Error ? clearError.message : String(clearError))
@@ -705,6 +711,25 @@ function SiteDataBlock() {
             Also forget trust decisions for this site
             <span className="mt-0.5 block text-ui-100 leading-relaxed text-[color:var(--color-faint)]">
               {trustSummary(info)}
+            </span>
+          </span>
+        </label>
+      ) : null}
+
+      {info.hasSavedSitePermissionChoices ? (
+        <label className="mt-2 flex cursor-pointer items-start gap-2 text-ui-11 text-[color:var(--color-muted)]">
+          <input
+            type="checkbox"
+            data-forget-site-permissions
+            checked={forgetSitePermissions}
+            onChange={(event) => setForgetSitePermissions(event.target.checked)}
+            disabled={busy}
+            className="mt-0.5 h-3 w-3 accent-[color:var(--color-accent)]"
+          />
+          <span>
+            Also forget saved site permission choices
+            <span className="mt-0.5 block text-ui-100 leading-relaxed text-[color:var(--color-faint)]">
+              The site will ask again before using clipboard, storage or other browser permissions.
             </span>
           </span>
         </label>

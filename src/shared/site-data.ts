@@ -39,11 +39,14 @@ export interface SiteDataInfo {
   hasHttpException: boolean
   signerTrusted: boolean
   passwordNeverSave: boolean
+  hasSavedSitePermissionChoices: boolean
 }
 
 export interface SiteDataClearOptions {
   /** Also drop the HTTP exception, NIP-07 trust and never-save entry. */
   forgetTrust: boolean
+  /** Also drop the saved browser permission choices for this origin. */
+  forgetSitePermissions: boolean
 }
 
 export interface SiteDataClearResult {
@@ -52,6 +55,7 @@ export interface SiteDataClearResult {
   cookiesRemoved: number
   storageCleared: boolean
   trustCleared: boolean
+  sitePermissionsCleared: boolean
   error?: string
 }
 
@@ -92,7 +96,8 @@ export const UNSUPPORTED_SITE: SiteDataInfo = {
   endpointCookies: false,
   hasHttpException: false,
   signerTrusted: false,
-  passwordNeverSave: false
+  passwordNeverSave: false,
+  hasSavedSitePermissionChoices: false
 }
 
 export function siteIdentityForUrl(raw: string): SiteIdentity | null {

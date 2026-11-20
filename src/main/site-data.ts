@@ -23,11 +23,13 @@ import type { TabKind } from '@shared/types'
 import type { ConfigStore } from './config'
 import type { BrowserShell } from './shell'
 import type { PermissionStore } from './signer/permissions'
+import { permissionOrigin, type SitePermissionStore } from './site-permissions'
 
 export interface SiteDataDeps {
   host: BrowserShell
   config: ConfigStore
   permissions: PermissionStore
+  sitePermissions: SitePermissionStore
   sessions: Record<TabKind, Session>
   extensionSession: Session
   /** Resolved NCC-05 records that survive restarts. */
@@ -113,7 +115,10 @@ export class SiteDataService {
       signerTrusted: this.deps.permissions.isTrusted(identity.trustKey),
       passwordNeverSave: this.deps.config
         .get()
-        .passwords.neverSave.includes(identity.trustKey)
+        .passwords.neverSave.includes(identity.trustKey),
+      hasSavedSitePermissionChoices: page.kind === 'normal' && this.deps.sitePermissions.hasOrigin(
+        permissionOrigin(page.url) ?? identity.origin
+      )
     }
   }
 
@@ -127,6 +132,7 @@ export class SiteDataService {
         cookiesRemoved: 0,
         storageCleared: false,
         trustCleared: false,
+        sitePermissionsCleared: false,
         error: 'This page has no site data to clear'
       }
     }
@@ -162,13 +168,18 @@ export class SiteDataService {
       trustCleared = this.forgetTrust(identity.trustKey)
     }
 
+    const sitePermissionsCleared = options.forgetSitePermissions && page.kind === 'normal'
+      ? this.deps.sitePermissions.revokeOrigin(permissionOrigin(page.url) ?? identity.origin)
+      : false
+
     this.deps.host.reloadTab(page.tabId)
     return {
       ok: true,
       origin: identity.origin,
       cookiesRemoved,
       storageCleared,
-      trustCleared
+      trustCleared,
+      sitePermissionsCleared
     }
   }
 
