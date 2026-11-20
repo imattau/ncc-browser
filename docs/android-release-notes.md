@@ -1,5 +1,10 @@
 # Nostr Navigator for Android
 
+## New in 0.35.2
+
+- Updated embedded nccsearch with mobile-friendly search settings, local relay preferences,
+  and discovery for events, live streams and short videos.
+
 ## Fixes in 0.35.1
 
 - Lightning payments can be scanned from QR codes, and receive invoices display a QR code.
