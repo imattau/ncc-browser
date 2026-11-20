@@ -42,6 +42,10 @@ export function signerOriginFromUrl(raw: string): SignerOrigin | null {
     }
   }
 
+  if (url.protocol === 'nccsearch:' && url.hostname === 'app') {
+    return { origin: 'nccsearch://app', label: 'Nostr Navigator nccsearch' }
+  }
+
   if (url.protocol === 'https:' || url.protocol === 'http:') {
     return { origin: url.origin, label: url.origin }
   }

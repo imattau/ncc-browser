@@ -1,5 +1,10 @@
 # Nostr Navigator for Android
 
+## Fixes in 0.35.4
+
+- Desktop's embedded nccsearch page can use NIP-07 through the existing signer approval flow.
+- Updated embedded nccsearch to ncc-server v0.2.15.
+
 ## Fixes in 0.35.3
 
 - Fixed the Identity screen failing to open from Settings.
