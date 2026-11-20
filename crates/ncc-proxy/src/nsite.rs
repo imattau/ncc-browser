@@ -13,7 +13,7 @@ use std::time::Duration;
 use axum::body::Body;
 use axum::http::{header, HeaderValue, Method, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
-use nostr::{Alphabet, Event, Filter, Kind, PublicKey, SingleLetterTag};
+use nostr::{Alphabet, Event, Filter, Kind, PublicKey, SingleLetterTag, ToBech32};
 
 use ncc_core::{
     content_type_for, match_path, nsite_host, PathMatch, NSITE_NAMED_KIND, NSITE_ROOT_KIND,
@@ -657,13 +657,45 @@ fn page(status: StatusCode, detail: &str) -> Response {
 }
 
 /// Advertising a site's own host, used by the link router.
+///
+/// Always an npub. The address parser accepts both an npub and a
+/// 64-character hex pubkey, but this host becomes a virtual hostname on
+/// Android (`<host>.<site>.nsite.localhost`) and a DNS label is at most 63
+/// characters: an npub is 63, a hex pubkey is 64. Normalize here rather than
+/// emit an address that can never resolve.
 pub fn host_for(pubkey: &str, site: Option<&str>) -> String {
-    nsite_host(pubkey, site)
+    nsite_host(&nsite_host_label(pubkey), site)
+}
+
+fn nsite_host_label(pubkey: &str) -> String {
+    PublicKey::parse(pubkey)
+        .ok()
+        .and_then(|key| key.to_bech32().ok())
+        .unwrap_or_else(|| pubkey.to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn host_for_normalizes_a_hex_pubkey_to_an_npub() {
+        // The parser accepts both forms, but the host is a DNS label on Android:
+        // an npub is 63 characters, a hex pubkey is 64.
+        const HEX: &str = "96cb7df7ef2d9c86114a4a219dc53ac406dceaf129d8ea7067904b726eb399e8";
+        let npub = PublicKey::parse(HEX).unwrap().to_bech32().unwrap();
+
+        assert_eq!(npub.len(), 63);
+        assert_eq!(
+            host_for(HEX, Some("blog")),
+            format!("{npub}.blog.nsite.localhost")
+        );
+        assert_eq!(
+            host_for(&npub, Some("blog")),
+            format!("{npub}.blog.nsite.localhost")
+        );
+        assert_eq!(host_for(HEX, None), format!("{npub}.nsite.localhost"));
+    }
 
     fn resolver(directory: Option<PathBuf>) -> NsiteResolver {
         // No relays: anything that returns a manifest returned it from disk.

@@ -1306,7 +1306,7 @@ async fn route(state: &ProxyState, authority: &str, query: &str) -> Response {
             None => (None, address.path.clone()),
         };
 
-        let host = ncc_core::nsite_host(&address.pubkey, site.as_deref());
+        let host = crate::nsite::host_for(&address.pubkey, site.as_deref());
         return routed(format!(
             "http://{}{}{}{}",
             with_port(host),
