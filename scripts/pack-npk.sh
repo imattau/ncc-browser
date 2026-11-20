@@ -36,11 +36,15 @@ Type=Application
 Name=Nostr Navigator
 Comment=Browse Nostr identity services without DNS
 Exec={{prefix}}/bin/$NAME %U
-Icon=$NAME
+# Use the installed icon's absolute path. Some GNOME installations do not
+# refresh the hicolor icon cache when npack installs into a user prefix, so
+# resolving the theme name alone can leave the launcher with a generic icon.
+Icon={{prefix}}/share/icons/hicolor/256x256/apps/$NAME.png
 Terminal=false
 Categories=Network;WebBrowser;
 MimeType=x-scheme-handler/ncc;
-StartupWMClass=Nostr Navigator
+# Electron exposes the executable's WM_CLASS on Linux, not the display name.
+StartupWMClass=$NAME
 DESKTOP
 echo "share/applications/$NAME.desktop" > "$SRC/.npack/templates.txt"
 

@@ -1,5 +1,9 @@
 # Nostr Navigator for Android
 
+## Fixes in 0.35.6
+
+- Fixed the Linux npack launcher icon on GNOME.
+
 ## Fixes in 0.35.5
 
 - Site permission choices can be remembered during normal browsing. Private and Tor
