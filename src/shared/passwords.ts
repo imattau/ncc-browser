@@ -7,7 +7,7 @@
 
 import { parseNccAddress } from './ncc-url'
 import { parseNsiteAddress } from './nsite-url'
-import type { PasswordEntry, PasswordPage, PasswordSummary } from './types'
+import type { PasskeyCredential, PasswordEntry, PasswordPage, PasswordSummary } from './types'
 
 export const PASSWORD_VAULT_KIND = 30078
 export const PASSWORD_VAULT_VERSION = 1
@@ -138,6 +138,7 @@ export function normalizeEntry(input: unknown): PasswordEntry | null {
     typeof value.updatedAt === 'number' && Number.isFinite(value.updatedAt)
       ? value.updatedAt
       : createdAt
+  const passkey = normalizePasskey(value.passkey)
   return {
     id: value.id.toLowerCase(),
     origin,
@@ -148,8 +149,37 @@ export function normalizeEntry(input: unknown): PasswordEntry | null {
     totp: clampText(value.totp, MAX_TOTP, ''),
     createdAt,
     updatedAt,
-    ...(value.deleted === true ? { deleted: true } : {})
+    ...(value.deleted === true ? { deleted: true } : {}),
+    ...(passkey ? { passkey } : {})
   }
+}
+
+function normalizePasskey(input: unknown): PasskeyCredential | null {
+  if (!input || typeof input !== 'object') return null
+  const value = input as Partial<PasskeyCredential>
+  const privateKeyJwk = value.privateKeyJwk
+  const publicKeyJwk = value.publicKeyJwk
+  if (typeof value.credentialId !== 'string' || !/^[A-Za-z0-9_-]{20,1024}$/.test(value.credentialId)) return null
+  if (typeof value.rpId !== 'string' || value.rpId.length > 253 || !/^[a-z0-9.-]+$/i.test(value.rpId)) return null
+  if (typeof value.userHandle !== 'string' || value.userHandle.length > 1024) return null
+  if (!isEcJwk(privateKeyJwk, true) || !isEcJwk(publicKeyJwk, false)) return null
+  return {
+    credentialId: value.credentialId,
+    rpId: value.rpId.toLowerCase(),
+    userHandle: value.userHandle,
+    userName: clampText(value.userName, MAX_USERNAME, ''),
+    userDisplayName: clampText(value.userDisplayName, MAX_TITLE, ''),
+    privateKeyJwk,
+    publicKeyJwk,
+    signCount: Number.isSafeInteger(value.signCount) && (value.signCount as number) >= 0 ? value.signCount as number : 0,
+    discoverable: value.discoverable === true
+  }
+}
+
+function isEcJwk(value: unknown, privateKey: boolean): value is JsonWebKey {
+  if (!value || typeof value !== 'object') return false
+  const jwk = value as JsonWebKey
+  return jwk.kty === 'EC' && jwk.crv === 'P-256' && typeof jwk.x === 'string' && typeof jwk.y === 'string' && (!privateKey || typeof jwk.d === 'string')
 }
 
 function clampText(value: unknown, max: number, fallback: string): string {
@@ -168,6 +198,7 @@ export function summarize(entry: PasswordEntry): PasswordSummary {
     title: entry.title,
     username: entry.username,
     hasTotp: entry.totp.length > 0,
+    ...(entry.passkey ? { isPasskey: true } : {}),
     createdAt: entry.createdAt,
     updatedAt: entry.updatedAt
   }
@@ -226,7 +257,7 @@ export function findEntryFor(vault: PasswordVault, origin: string, username: str
   const normalized = username.trim().toLowerCase()
   return (
     activeEntries(vault).find(
-      (entry) => entry.origin === origin && entry.username.toLowerCase() === normalized
+      (entry) => !entry.passkey && entry.origin === origin && entry.username.toLowerCase() === normalized
     ) ?? null
   )
 }

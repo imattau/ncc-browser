@@ -1,3 +1,5 @@
+import { makeVaultAssertion, makeVaultPasskey, validateRpId } from './passkeys.js'
+
 export function createPasswords(deps) {
   const {
     content, invoke, byId, set, displayAddress, showPanel, closePanel, goBackPanel, activeKind,
@@ -80,7 +82,7 @@ export function createPasswords(deps) {
     const title = document.createElement('b')
     title.textContent = entry.title || entry.origin
     const detail = document.createElement('small')
-    detail.textContent = entry.username ? `${entry.username} · ${entry.origin}` : entry.origin
+    detail.textContent = `${entry.isPasskey ? 'Passkey · ' : ''}${entry.username ? `${entry.username} · ` : ''}${entry.origin}`
     text.append(title, detail)
 
     row.append(icon, text)
@@ -169,7 +171,13 @@ export function createPasswords(deps) {
     }
 
     for (const entry of visible) {
-      list.appendChild(vaultRow(entry, (chosen) => void openPasswordEdit(chosen.id)))
+      list.appendChild(vaultRow(entry, (chosen) => {
+        if (chosen.isPasskey) {
+          byId('vault-note').textContent = 'This passkey is ready for sign-in on its website.'
+          return
+        }
+        void openPasswordEdit(chosen.id)
+      }))
     }
   }
 
@@ -231,6 +239,95 @@ export function createPasswords(deps) {
       await loadPasswords()
     } catch (error) {
       byId('vault-note').textContent = String(error)
+    }
+  }
+
+  async function passkeyCandidates(origin, options) {
+    let rpId
+    try { rpId = validateRpId(origin, options.rpId) } catch { return [] }
+    const allowed = new Set((options.allowCredentials || []).map((item) => item.id).filter(Boolean))
+    const summaries = await invoke('vault_list')
+    const output = []
+    for (const summary of summaries) {
+      if (!summary.isPasskey) continue
+      const entry = await invoke('vault_entry', { id: summary.id })
+      const passkey = entry?.passkey
+      if (!passkey || passkey.rpId !== rpId || (allowed.size && !allowed.has(passkey.credentialId))) continue
+      if (!allowed.size && !passkey.discoverable) continue
+      output.push({ entryId: summary.id, credentialId: passkey.credentialId, name: passkey.userName || passkey.userDisplayName || 'Passkey' })
+    }
+    return output
+  }
+
+  async function handleWebauthnRequest(request) {
+    const reply = (value) => content?.resolvePasskey?.(request.tab, request.requestId, JSON.stringify(value))
+    const fallback = () => reply({ handled: false })
+    const failed = (error) => reply({ handled: true, error: error?.message || 'NotAllowedError' })
+    try {
+      const tab = getTabs().find((entry) => entry.id === request.tab)
+      if (!tab || tab.kind !== 'normal' || !request.origin || new URL(tab.url).origin !== request.origin) return fallback()
+      if (request.operation === 'candidates') {
+        const status = await invoke('vault_status')
+        if (!status.unlocked) return reply({ handled: true, candidates: [] })
+        return reply({ handled: true, candidates: await passkeyCandidates(request.origin, request.options || {}) })
+      }
+      if (request.operation !== 'create' && request.operation !== 'get') return fallback()
+
+      let status = await invoke('vault_status')
+      if (!status.configured) return fallback()
+      if (!status.unlocked) {
+        const approved = await askDeviceCredential()
+        if (!approved) return fallback()
+        status = await invoke('vault_unlock')
+        vaultStatus = status
+      }
+      if (!status.unlocked) return fallback()
+
+      const options = request.credentialId
+        ? { ...(request.options || {}), allowCredentials: [{ id: request.credentialId }] }
+        : request.options || {}
+      if (request.operation === 'create') {
+        let rpId
+        try { rpId = validateRpId(request.origin, options.rp?.id) } catch { return reply({ handled: false }) }
+        const exclude = new Set((options.excludeCredentials || []).map((item) => item.id).filter(Boolean))
+        const existing = exclude.size
+          ? await passkeyCandidates(request.origin, { rpId, allowCredentials: Array.from(exclude, (id) => ({ id })) })
+          : []
+        if (existing.length) return reply({ handled: true, error: 'InvalidStateError' })
+        const username = String(options.user?.name || 'Passkey').slice(0, 320)
+        if (!window.confirm(`Create a passkey for ${username} at ${new URL(request.origin).host}? It will be stored in your encrypted NCC password vault and synced with that vault.`)) {
+          return reply({ handled: true, error: 'NotAllowedError' })
+        }
+        const made = await makeVaultPasskey(options, request.origin)
+        await invoke('vault_passkey_save', {
+          origin: request.origin,
+          username: made.record.userName,
+          passkey: made.record
+        })
+        return reply({ handled: true, response: made.response })
+      }
+
+      const candidates = await passkeyCandidates(request.origin, options)
+      if (!candidates.length) return fallback()
+      // NCC confirms every use. When several credentials match, let the user choose
+      // one explicitly rather than exposing the private vault index to page content.
+      let chosen = candidates[0]
+      if (candidates.length > 1) {
+        const labels = candidates.map((item, index) => `${index + 1}. ${item.name}`).join('\n')
+        const answer = window.prompt(`Choose a passkey for ${new URL(request.origin).host}:\n${labels}`, '1')
+        const index = Number(answer) - 1
+        if (!Number.isInteger(index) || index < 0 || index >= candidates.length) return reply({ handled: true, error: 'NotAllowedError' })
+        chosen = candidates[index]
+      }
+      if (!window.confirm(`Use the NCC passkey for ${chosen.name} on ${new URL(request.origin).host}?`)) {
+        return reply({ handled: true, error: 'NotAllowedError' })
+      }
+      const entry = await invoke('vault_entry', { id: chosen.entryId })
+      const record = entry?.passkey
+      if (!record || record.credentialId !== chosen.credentialId) return reply({ handled: true, error: 'NotAllowedError' })
+      return reply({ handled: true, response: await makeVaultAssertion(record, options.challenge, request.origin, options.userVerification) })
+    } catch (error) {
+      return failed(error)
     }
   }
 
@@ -492,7 +589,7 @@ export function createPasswords(deps) {
 
   return {
     deviceCredentialReply, reportFillFailure, loadPasswords, renderVaultList, unlockVault, lockVault,
-    saveVaultConfig, renderPasswordFill, openNewLogin, renderPasswordSave, renderPasswordEdit,
+    handleWebauthnRequest, saveVaultConfig, renderPasswordFill, openNewLogin, renderPasswordSave, renderPasswordEdit,
     saveEdits, deleteEditing, generateIntoEdit, respondSave, handlePasswordCapture
   }
 }

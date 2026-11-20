@@ -3732,6 +3732,7 @@ dependencies = [
  "ncc-tor",
  "ncc-vault",
  "nostr",
+ "psl",
  "reqwest",
  "serde",
  "serde_json",

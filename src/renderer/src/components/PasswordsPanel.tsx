@@ -42,6 +42,8 @@ export function PasswordsPanel({
 }: PasswordsPanelProps) {
   const status = context?.status
   const origin = context?.origin ?? null
+  const matches = context?.matches ?? []
+  const passkeys = context?.passkeys ?? []
 
   return (
     <Popover
@@ -86,15 +88,18 @@ export function PasswordsPanel({
             </p>
           ) : null}
 
-          {context?.matches.length ? (
+          {matches.length || passkeys.length ? (
             <ul className="space-y-1" data-password-matches>
-              {context.matches.map((entry) => (
+              {matches.map((entry) => (
                 <PasswordRow
                   key={entry.id}
                   entry={entry}
                   onFill={onFill}
                   onCopy={onCopy}
                 />
+              ))}
+              {passkeys.map((entry) => (
+                <PasskeyRow key={entry.id} entry={entry} />
               ))}
             </ul>
           ) : (
@@ -110,7 +115,7 @@ export function PasswordsPanel({
             />
           )}
 
-          {context?.matches.length ? (
+          {matches.length || passkeys.length ? (
             <button
               type="button"
               data-password-add
@@ -207,6 +212,20 @@ function PasswordRow({
           icon={<KeyRound className="h-3.5 w-3.5" />}
         />
       </div>
+    </li>
+  )
+}
+
+function PasskeyRow({ entry }: { entry: PasswordSummary }) {
+  return (
+    <li className="flex items-center gap-2 rounded-lg px-2.5 py-2" data-password-passkey={entry.id}>
+      <KeyRound className="h-3.5 w-3.5 shrink-0 text-[color:var(--color-accent)]" />
+      <span className="min-w-0 flex-1 truncate text-ui-11 font-medium text-[color:var(--color-text-strong)]">
+        {entry.username || entry.title || 'Passkey'}
+      </span>
+      <span className="rounded border border-[color:var(--color-accent)]/30 px-1.5 py-0.5 text-ui-9 text-[color:var(--color-accent)]">
+        Passkey
+      </span>
     </li>
   )
 }

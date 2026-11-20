@@ -1,5 +1,5 @@
 import { dialog, ipcMain, type IpcMainInvokeEvent } from 'electron'
-import type { BrowserShell } from '../shell'
+import { browserShellFor, type BrowserShell } from '../shell'
 import type { NwcService } from './nwc-service'
 import type { ContentSessions } from '../sessions'
 import { signerOriginFromUrl } from '../signer/origin'
@@ -7,7 +7,7 @@ import { decodeBolt11Invoice } from '@shared/nwc'
 
 export function registerNwcIpc(service: NwcService, shell: BrowserShell, sessions: ContentSessions): void {
   const handle = (channel: string, action: (...args: unknown[]) => unknown) => ipcMain.handle(channel, (event: IpcMainInvokeEvent, ...args: unknown[]) => {
-    if (event.sender !== shell.window.webContents) throw new Error('NWC settings are only available to browser chrome')
+    if (browserShellFor(event.sender) === null) throw new Error('NWC settings are only available to browser chrome')
     return action(...args)
   })
   handle('ncc:nwc-status', () => service.status())

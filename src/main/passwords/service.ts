@@ -58,6 +58,7 @@ import {
 } from './import-export'
 import { discoverWriteRelays } from '../relay/nip65'
 import { normalizeTotpInput, totpFor } from './totp'
+import { makeAssertion, makeCredential, validateRpId, type PasskeyCreationOptions, type PasskeyRequestOptions } from './passkeys'
 
 export interface ProviderLike {
   getPublicKey(): Promise<string>
@@ -207,10 +208,11 @@ export class PasswordService {
     const usable = page != null && page.mode !== 'blank' && page.mode !== 'error'
     const info = usable ? pageOriginFromUrl(page.url) : null
     const status = this.status()
-    const matches =
-      this.unlocked && this.vault && info && page?.kind !== 'private'
-        ? entriesForOrigin(this.vault, info.origin).map(summary)
-        : []
+    const originEntries = this.unlocked && this.vault && info && page?.kind !== 'private'
+      ? entriesForOrigin(this.vault, info.origin)
+      : []
+    const matches = originEntries.filter((entry) => !entry.passkey).map(summary)
+    const passkeys = originEntries.filter((entry) => entry.passkey).map(summary)
     const form = page ? this.formState.get(page.tabId) : undefined
     const locked = !this.unlocked
     const plaintext = isPlaintextNcc(page)
@@ -237,6 +239,7 @@ export class PasswordService {
       configured: status.configured,
       status,
       matches,
+      passkeys,
       formDetected: form?.hasLoginForm ?? false,
       pendingSave: this.pendingForOrigin(info?.origin ?? null),
       canFill:
@@ -342,10 +345,113 @@ export class PasswordService {
     return summarizeVault(this.vault)
   }
 
+  hasWebauthnCredentials(): boolean {
+    return !!this.unlocked && !!this.vault?.entries.some((entry) => entry.deleted !== true && !!entry.passkey)
+  }
+
+  hasWebauthnCredentialsForPage(page: PasswordPage | null, origin: string): boolean {
+    if (!this.unlocked || !this.vault || !page || page.kind === 'private' || page.mode === 'blank' || page.mode === 'error') return false
+    try {
+      const parsed = pageOriginFromUrl(page.url)
+      if (!parsed || parsed.scheme !== 'https' || parsed.origin !== new URL(origin).origin) return false
+      const rpId = validateRpId(origin)
+      return this.vault.entries.some((entry) => entry.deleted !== true && entry.passkey?.rpId === rpId && entry.passkey.discoverable)
+    } catch { return false }
+  }
+
+  isWebauthnAuthenticatorAvailable(): boolean {
+    return !!this.unlocked && !!this.vault && !!this.pubkey
+  }
+
+  hasWebauthnCandidates(page: PasswordPage | null, origin: string, options: PasskeyRequestOptions): boolean {
+    if (!this.unlocked || !this.vault || !page || page.kind === 'private' || page.mode === 'blank' || page.mode === 'error') return false
+    try {
+      const parsed = pageOriginFromUrl(page.url)
+      if (!parsed || parsed.scheme !== 'https' || parsed.origin !== new URL(origin).origin) return false
+      const rpId = validateRpId(origin, options.rpId)
+      const allowed = new Set((options.allowCredentials ?? []).map((item) => item.id).filter((id): id is string => typeof id === 'string'))
+      return this.vault.entries.some((entry) => {
+        const credential = entry.deleted !== true ? entry.passkey : undefined
+        return !!credential && credential.rpId === rpId && !(allowed.size && !allowed.has(credential.credentialId)) && (allowed.size > 0 || credential.discoverable)
+      })
+    } catch { return false }
+  }
+
   entry(id: string): PasswordEntry | null {
     if (!this.unlocked || !this.vault) throw new Error(LOCKED)
     this.touch()
     return findEntry(this.vault, id)
+  }
+
+  canHandleWebauthn(page: PasswordPage | null, origin: string, operation: 'create' | 'get', input: PasskeyCreationOptions | PasskeyRequestOptions): boolean {
+    if (!this.unlocked || !this.vault) return false
+    if (!page || page.kind === 'private' || page.mode === 'blank' || page.mode === 'error') return false
+    try {
+      const parsed = pageOriginFromUrl(page.url)
+      if (!parsed || parsed.scheme !== 'https' || parsed.origin !== new URL(origin).origin) return false
+      const rpId = validateRpId(origin, operation === 'create' ? (input as PasskeyCreationOptions).rp?.id : (input as PasskeyRequestOptions).rpId)
+      if (operation === 'create') {
+        const options = input as PasskeyCreationOptions
+        return !options.pubKeyCredParams || options.pubKeyCredParams.some((param) => param.type === 'public-key' && param.alg === -7)
+      }
+      const options = input as PasskeyRequestOptions
+      const allowed = new Set((options.allowCredentials ?? []).map((item) => item.id).filter((id): id is string => typeof id === 'string'))
+      return this.vault.entries.some((entry) => entry.deleted !== true && entry.passkey?.rpId === rpId && (allowed.size ? allowed.has(entry.passkey.credentialId) : entry.passkey.discoverable))
+    } catch { return false }
+  }
+
+  async webauthnCreate(page: PasswordPage | null, origin: string, options: PasskeyCreationOptions, approve: (site: string, accounts: string[], action: string) => Promise<number | null>): Promise<{ handled: boolean; response?: Record<string, string>; error?: string }> {
+    if (!this.unlocked || !this.vault || !this.pubkey) return { handled: false }
+    if (!page || page.kind === 'private' || page.mode === 'blank' || page.mode === 'error') return { handled: false }
+    const parsed = pageOriginFromUrl(page.url)
+    if (!parsed || parsed.scheme !== 'https' || parsed.origin !== new URL(origin).origin) return { handled: false }
+    let rpId: string
+    try { rpId = validateRpId(origin, options.rp?.id) } catch { return { handled: false } }
+    if (options.pubKeyCredParams && !options.pubKeyCredParams.some((param) => param.type === 'public-key' && param.alg === -7)) return { handled: false }
+    const excluded = new Set((options.excludeCredentials ?? []).map((item) => item.id).filter((id): id is string => typeof id === 'string'))
+    if (this.vault.entries.some((entry) => entry.passkey?.rpId === rpId && excluded.has(entry.passkey.credentialId))) return { handled: true, error: 'InvalidStateError' }
+    const account = options.user?.name?.slice(0, 320) || 'Passkey'
+    if ((await approve(new URL(origin).host, [account], 'Create passkey')) !== 0) return { handled: true, error: 'NotAllowedError' }
+    try {
+      const provider = this.requireProvider()
+      const pubkey = this.pubkey
+      await this.ensureLatest(provider, pubkey)
+      const current = this.vault ?? emptyVault()
+      if (current.entries.some((entry) => entry.deleted !== true && entry.passkey?.rpId === rpId && excluded.has(entry.passkey.credentialId))) {
+        return { handled: true, error: 'InvalidStateError' }
+      }
+      const made = makeCredential(options, new URL(origin).origin, rpId)
+      const now = this.now()
+      const entry: PasswordEntry = { id: randomBytes(16).toString('hex'), origin: new URL(origin).origin, title: `${new URL(origin).host} passkey`, username: made.credential.userName, password: '', notes: '', totp: '', createdAt: now, updatedAt: now, passkey: made.credential }
+      await this.commit(provider, pubkey, { ...current, updatedAt: now, entries: [...current.entries, entry] })
+      this.touch()
+      return { handled: true, response: made.response }
+    } catch (error) { return { handled: true, error: error instanceof Error ? error.message : 'NotAllowedError' } }
+  }
+
+  async webauthnGet(page: PasswordPage | null, origin: string, options: PasskeyRequestOptions, approve: (site: string, accounts: string[], action: string) => Promise<number | null>, selectedCredentialId?: string): Promise<{ handled: boolean; response?: Record<string, string>; error?: string }> {
+    if (!this.unlocked || !this.vault || !this.pubkey) return { handled: false }
+    if (!page || page.kind === 'private' || page.mode === 'blank' || page.mode === 'error') return { handled: false }
+    const parsed = pageOriginFromUrl(page.url)
+    if (!parsed || parsed.scheme !== 'https' || parsed.origin !== new URL(origin).origin) return { handled: false }
+    let rpId: string
+    try { rpId = validateRpId(origin, options.rpId) } catch { return { handled: false } }
+    const allowed = new Set((options.allowCredentials ?? []).map((item) => item.id).filter((id): id is string => typeof id === 'string'))
+    const candidates = this.vault.entries.filter((entry) => entry.deleted !== true && entry.passkey?.rpId === rpId && (allowed.size ? allowed.has(entry.passkey.credentialId) : entry.passkey.discoverable) && (!selectedCredentialId || entry.passkey.credentialId === selectedCredentialId))
+    if (!candidates.length) return { handled: false }
+    try {
+      // The unlocked vault is already the local authenticator's credential store.
+      // Do not put a relay round-trip in the WebAuthn response path: a relying
+      // party is waiting on this promise and synced credentials remain usable offline.
+      const available = candidates
+      if (!available.length) return { handled: false }
+      const selected = await approve(new URL(origin).host, available.map((entry) => entry.passkey!.userName || entry.passkey!.userDisplayName || 'Passkey'), 'Use passkey')
+      const chosen = selected == null ? undefined : available[selected]
+      if (!chosen) return { handled: true, error: 'NotAllowedError' }
+      const made = makeAssertion(chosen.passkey!, options.challenge, new URL(origin).origin, options.userVerification)
+      this.touch()
+      return { handled: true, response: made.response }
+    } catch (error) { return { handled: true, error: error instanceof Error ? error.message : 'NotAllowedError' } }
   }
 
   reveal(id: string): string {
@@ -1169,6 +1275,7 @@ function summary(entry: PasswordEntry) {
     title: entry.title,
     username: entry.username,
     hasTotp: entry.totp.length > 0,
+    ...(entry.passkey ? { isPasskey: true } : {}),
     createdAt: entry.createdAt,
     updatedAt: entry.updatedAt
   }

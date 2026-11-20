@@ -24,6 +24,7 @@ interface TabStripProps {
   onNew: () => void
   onNewMenu: () => void
   onMove: (id: string, toIndex: number) => void
+  onDetach: (id: string, screenX: number, screenY: number) => void
   onContextMenu: (id: string) => void
   onToggleMute: (id: string) => void
   onOverflow: () => void
@@ -43,6 +44,7 @@ export function TabStrip({
   onNew,
   onNewMenu,
   onMove,
+  onDetach,
   onContextMenu,
   onToggleMute,
   onOverflow,
@@ -123,7 +125,13 @@ export function TabStrip({
                 event.dataTransfer.setData('text/plain', tab.id)
                 setDragId(tab.id)
               }}
-              onDragEnd={resetDrag}
+              onDragEnd={(event) => {
+                const outsideWindow =
+                  event.screenX < window.screenX || event.screenX > window.screenX + window.outerWidth ||
+                  event.screenY < window.screenY || event.screenY > window.screenY + window.outerHeight
+                if (outsideWindow) onDetach(tab.id, event.screenX, event.screenY)
+                resetDrag()
+              }}
               onDragOver={(event) => {
                 event.preventDefault()
                 event.dataTransfer.dropEffect = 'move'

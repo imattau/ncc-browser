@@ -53,8 +53,9 @@ import { RelayLocatorService } from './relay/locator'
 import { RelayPool } from './relay/pool'
 import { RelayPinStore } from './relay/socket'
 import { RelaySync } from './relay/sync'
-import { BrowserShell } from './shell'
+import { BrowserShell, browserShells, type ShellDeps } from './shell'
 import { SessionStore } from './session-store'
+import type { SavedSession } from './session-store'
 import {
   clearContentSession,
   createContentSessions,
@@ -95,6 +96,7 @@ if (!gotLock) {
 }
 
 let shell: BrowserShell | null = null
+let createFallbackShell: (() => BrowserShell) | null = null
 let contentSessions: ContentSessions | null = null
 let torManager: TorManager | null = null
 let torRelays: TorRelayPool | null = null
@@ -111,7 +113,8 @@ let pendingExternalUrl: string | null = null
 app.on('open-url', (event, url) => {
   event.preventDefault()
   if (!/^(https?):\/\//i.test(url)) return
-  if (shell) void shell.navigate(url)
+  const target = browserShells()[0] ?? (shell && !shell.window.isDestroyed() ? shell : null)
+  if (target) void target.navigate(url)
   else pendingExternalUrl = url
 })
 
@@ -406,7 +409,8 @@ app.whenReady().then(async () => {
     }
   }
 
-  shell = new BrowserShell({
+  let createShellWindow: (saved?: SavedSession | null, bounds?: { x: number; y: number }) => BrowserShell
+  const shellDeps: Omit<ShellDeps, 'initialSession' | 'initialBounds' | 'deferInitialTabs'> = {
     preloadPath: join(__dirname, '../preload/index.js'),
     contentPreloadPath: join(__dirname, '../preload/content.js'),
     rendererUrl: process.env.ELECTRON_RENDERER_URL,
@@ -418,7 +422,6 @@ app.whenReady().then(async () => {
     releaseSession,
     bookmarks,
     sessionStore,
-    initialSession,
     transport,
     tor,
     torGuard,
@@ -431,8 +434,25 @@ app.whenReady().then(async () => {
       contents.on('will-prevent-unload', (event) => event.preventDefault())
     },
     extensionContextItems: (url) => extensions?.contextMenuItems(url) ?? [],
-    invalidateSite
-  })
+    invalidateSite,
+    createWindow: (bounds) => createShellWindow(null, bounds),
+    onSessionChanged: () => sessionStore.saveWindows(browserShells().map((entry) => entry.sessionSnapshot()))
+  }
+  shell = new BrowserShell({ ...shellDeps, initialSession })
+  createShellWindow = (saved, bounds) => {
+    const child = new BrowserShell({
+      ...shellDeps,
+      initialSession: saved,
+      initialBounds: bounds,
+      deferInitialTabs: !saved
+    })
+    child.loadChrome()
+    return child
+  }
+  createFallbackShell = () => createShellWindow(null)
+  for (const saved of initialSession?.windows ?? []) {
+    createShellWindow({ version: 1, ...saved, savedAt: initialSession?.savedAt ?? 0 })
+  }
   installShellCameraPermission(shell.window.webContents.session, () => shell!.window.webContents, process.env.ELECTRON_RENDERER_URL)
   installSitePermissionPrompts([
     { session: content.normal, kind: 'normal' },
@@ -692,11 +712,15 @@ app.whenReady().then(async () => {
   }
 
   app.on('second-instance', (_event, argv) => {
-    if (!shell) return
-    if (shell.window.isMinimized()) shell.window.restore()
-    shell.window.focus()
+    let target = browserShells()[0] ?? null
+    if (!target && createFallbackShell) {
+      target = createFallbackShell()
+    }
+    if (!target) return
+    if (target.window.isMinimized()) target.window.restore()
+    target.window.focus()
     const address = argv.find((arg) => /^(ncc|https?):\/\//i.test(arg))
-    if (address) void shell.navigate(address)
+    if (address) void target.navigate(address)
   })
 
 })
@@ -706,9 +730,10 @@ app.on('window-all-closed', () => {
 })
 
 app.on('activate', () => {
-  if (!shell) return
-  if (shell.window.isDestroyed()) return
-  shell.window.show()
+  const target = browserShells()[0] ?? createFallbackShell?.() ?? null
+  if (!target) return
+  target.window.show()
+  target.window.focus()
 })
 
 app.on('before-quit', () => {

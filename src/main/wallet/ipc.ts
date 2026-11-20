@@ -1,11 +1,11 @@
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
-import type { BrowserShell } from '../shell'
+import { browserShellFor, type BrowserShell } from '../shell'
 import type { WalletService } from './service'
 
 export function registerWalletIpc(service: WalletService, shell: BrowserShell): void {
   const handle = (channel: string, action: (...args: unknown[]) => unknown | Promise<unknown>): void => {
     ipcMain.handle(channel, (event: IpcMainInvokeEvent, ...args: unknown[]) => {
-      if (event.sender !== shell.window.webContents) throw new Error('Wallet is only available to browser chrome')
+      if (browserShellFor(event.sender) === null) throw new Error('Wallet is only available to browser chrome')
       return action(...args)
     })
   }

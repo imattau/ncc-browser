@@ -725,6 +725,13 @@ class MainActivity : TauriActivity() {
       runOnUiThread { tabs.firstOrNull { it.id == tabKey }?.resolveNwc(requestKey, response ?: "{}") }
     }
 
+    @JavascriptInterface
+    fun resolvePasskey(tabId: String?, requestId: String?, response: String?) {
+      val tabKey = tabId ?: return
+      val requestKey = requestId ?: return
+      runOnUiThread { tabs.firstOrNull { it.id == tabKey }?.resolvePasskey(requestKey, response ?: "{}") }
+    }
+
     /** The link another app asked us to open, once. */
     @JavascriptInterface
     fun takeLink(): String? {

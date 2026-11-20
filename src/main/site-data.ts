@@ -90,8 +90,8 @@ const CLEAR_PAGE_SCRIPT = `(async () => {
 export class SiteDataService {
   constructor(private readonly deps: SiteDataDeps) {}
 
-  async describe(): Promise<SiteDataInfo> {
-    const page = this.deps.host.activePage()
+  async describe(host: BrowserShell = this.deps.host): Promise<SiteDataInfo> {
+    const page = host.activePage()
     const identity = page ? siteIdentityForUrl(page.url) : null
     if (!page || !identity) return { ...UNSUPPORTED_SITE }
     if (page.mode === 'blank') {
@@ -122,8 +122,8 @@ export class SiteDataService {
     }
   }
 
-  async clearActiveSite(options: SiteDataClearOptions): Promise<SiteDataClearResult> {
-    const page = this.deps.host.activePage()
+  async clearActiveSite(options: SiteDataClearOptions, host: BrowserShell = this.deps.host): Promise<SiteDataClearResult> {
+    const page = host.activePage()
     const identity = page ? siteIdentityForUrl(page.url) : null
     if (!page || !identity || page.mode === 'blank') {
       return {
@@ -160,7 +160,7 @@ export class SiteDataService {
       }
     }
 
-    const pageCleared = await this.clearPageStorage(identity.origin)
+    const pageCleared = await this.clearPageStorage(identity.origin, host)
     if (pageCleared) storageCleared = true
 
     let trustCleared = false
@@ -172,7 +172,7 @@ export class SiteDataService {
       ? this.deps.sitePermissions.revokeOrigin(permissionOrigin(page.url) ?? identity.origin)
       : false
 
-    this.deps.host.reloadTab(page.tabId)
+    host.reloadTab(page.tabId)
     return {
       ok: true,
       origin: identity.origin,
@@ -215,8 +215,8 @@ export class SiteDataService {
    * Forget the locator behind the active page and reload it, so relays are asked
    * again even while the cached record is still unexpired.
    */
-  revalidateActiveSite(): boolean {
-    const page = this.deps.host.activePage()
+  revalidateActiveSite(host: BrowserShell = this.deps.host): boolean {
+    const page = host.activePage()
     const identity = page ? siteIdentityForUrl(page.url) : null
     if (!page || !identity || page.mode === 'blank') return false
     // nsite manifests are invalidated by the shell's force reload; only NCC has a
@@ -224,7 +224,7 @@ export class SiteDataService {
     if (identity.scheme === 'ncc') {
       this.deps.locators.invalidate(page.kind, identity.host, identity.service)
     }
-    this.deps.host.reloadTab(page.tabId)
+    host.reloadTab(page.tabId)
     return true
   }
 
@@ -263,8 +263,8 @@ export class SiteDataService {
     }
   }
 
-  private async clearPageStorage(origin: string): Promise<boolean> {
-    const contents = this.deps.host.activeContents()
+  private async clearPageStorage(origin: string, host: BrowserShell): Promise<boolean> {
+    const contents = host.activeContents()
     if (!contents || !isSameSite(contents.getURL(), origin)) return false
     try {
       await contents.executeJavaScript(CLEAR_PAGE_SCRIPT, true)

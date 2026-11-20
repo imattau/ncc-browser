@@ -6,7 +6,7 @@
 
 import { dialog, ipcMain, shell as electronShell, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
 import { EXTENSION_SCHEME, type ExtensionManifest, type ExtensionSender } from '@shared/extensions'
-import type { BrowserShell } from '../shell'
+import { browserShellFor, type BrowserShell } from '../shell'
 import type { ExtensionService } from './runtime'
 
 export interface ExtensionIpcDeps {
@@ -15,7 +15,7 @@ export interface ExtensionIpcDeps {
 
 export function registerExtensionIpc(service: ExtensionService, deps: ExtensionIpcDeps): void {
   const fromChrome = (event: IpcMainInvokeEvent): boolean =>
-    event.sender === deps.shell.window.webContents
+    browserShellFor(event.sender) !== null
 
   const handle = <T>(channel: string, action: (...args: unknown[]) => T | Promise<T>): void => {
     ipcMain.handle(channel, (event, ...args) => {

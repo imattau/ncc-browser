@@ -4,7 +4,7 @@
  */
 
 import { ipcMain } from 'electron'
-import type { BrowserShell } from './shell'
+import { browserShellFor, type BrowserShell } from './shell'
 import type { SiteDataService } from './site-data'
 
 export interface SiteDataIpcDeps {
@@ -13,11 +13,11 @@ export interface SiteDataIpcDeps {
 
 export function registerSiteDataIpc(service: SiteDataService, deps: SiteDataIpcDeps): void {
   const fromChrome = (event: Electron.IpcMainInvokeEvent): boolean =>
-    event.sender === deps.shell.window.webContents
+    browserShellFor(event.sender) !== null
 
   ipcMain.handle('ncc:site-data', (event) => {
     if (!fromChrome(event)) throw new Error('Site data is only available to the browser chrome')
-    return service.describe()
+    return service.describe(browserShellFor(event.sender) ?? deps.shell)
   })
 
   ipcMain.handle('ncc:clear-site-data', (event, options: unknown) => {
@@ -29,7 +29,7 @@ export function registerSiteDataIpc(service: SiteDataService, deps: SiteDataIpcD
     return service.clearActiveSite({
       forgetTrust: value.forgetTrust === true,
       forgetSitePermissions: value.forgetSitePermissions === true
-    })
+    }, browserShellFor(event.sender) ?? deps.shell)
   })
 
   ipcMain.handle('ncc:cache-info', (event) => {
@@ -44,6 +44,6 @@ export function registerSiteDataIpc(service: SiteDataService, deps: SiteDataIpcD
 
   ipcMain.handle('ncc:re-resolve-site', (event) => {
     if (!fromChrome(event)) throw new Error('Site data is only available to the browser chrome')
-    return service.revalidateActiveSite()
+    return service.revalidateActiveSite(browserShellFor(event.sender) ?? deps.shell)
   })
 }

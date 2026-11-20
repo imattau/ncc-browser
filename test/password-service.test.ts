@@ -190,6 +190,47 @@ const draft = {
 }
 
 describe('PasswordService', () => {
+  it('advertises the unlocked empty vault as an available authenticator', async () => {
+    const h = harness()
+    expect(h.service.isWebauthnAuthenticatorAvailable()).toBe(false)
+    await h.service.unlock()
+    expect(h.service.isWebauthnAuthenticatorAvailable()).toBe(true)
+    expect(h.service.hasWebauthnCredentials()).toBe(false)
+  })
+
+  it('offers conditional credentials only for the matching RP and allow-list', async () => {
+    const h = harness()
+    await h.service.unlock()
+    const challenge = Buffer.alloc(32, 9).toString('base64url')
+    const created = await h.service.webauthnCreate(
+      {
+        tabId: 't1', kind: 'normal', mode: 'web', url: 'https://example.com/login',
+        displayUrl: 'https://example.com/login', title: 'Example', security: null
+      },
+      'https://example.com',
+      {
+        challenge, rp: { id: 'example.com', name: 'Example' },
+        user: { id: Buffer.from('user-1').toString('base64url'), name: 'alice@example.com' },
+        pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+        authenticatorSelection: { residentKey: 'required' }
+      },
+      async () => 0
+    )
+    expect(created.handled).toBe(true)
+    expect(h.service.hasWebauthnCredentials()).toBe(true)
+    expect(h.service.hasWebauthnCandidates(null, 'https://example.com', { challenge })).toBe(false)
+
+    const page = {
+      tabId: 't1', kind: 'normal' as const, mode: 'web' as const, url: 'https://example.com/login',
+      displayUrl: 'https://example.com/login', title: 'Example', security: null
+    }
+    expect(h.service.hasWebauthnCandidates(page, 'https://example.com', { challenge })).toBe(true)
+    expect(h.service.hasWebauthnCredentialsForPage(page, 'https://example.com')).toBe(true)
+    expect(h.service.hasWebauthnCredentialsForPage({ ...page, url: 'https://another.example/login' }, 'https://another.example')).toBe(false)
+    expect(h.service.hasWebauthnCandidates(page, 'https://example.com', { challenge, rpId: 'other.example' })).toBe(false)
+    expect(h.service.hasWebauthnCandidates(page, 'https://example.com', { challenge, allowCredentials: [{ id: 'not-this-credential' }] })).toBe(false)
+  })
+
   it('unlocks, saves and lists an encrypted vault', async () => {
     const h = harness()
     const unlocked = await h.service.unlock()

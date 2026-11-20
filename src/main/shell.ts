@@ -27,7 +27,7 @@ import { fetchFavicon } from './favicon'
 import { renderErrorPage } from './error-page'
 import { windowBackground } from './appearance'
 import type { BookmarkStore } from './bookmarks'
-import type { SavedSession, SavedWindow, SessionStore } from './session-store'
+import type { SavedSession, SavedWindow, SavedWindowSession, SessionStore } from './session-store'
 import type { ExtensionPage } from '@shared/extensions'
 import type {
   AppearanceConfig,
@@ -78,6 +78,8 @@ export interface ShellDeps {
   bookmarks: BookmarkStore
   sessionStore: SessionStore
   initialSession?: SavedSession | null
+  initialBounds?: { x: number; y: number }
+  deferInitialTabs?: boolean
   transport: TransportPolicy
   tor: TorManager
   torGuard: TorGuard
@@ -89,9 +91,30 @@ export interface ShellDeps {
   extensionContextItems?: (url: string) => Array<{ label: string; click: () => void }>
   /** Drop a cached NCC locator before a forced reload. */
   invalidateSite?: (url: string, kind: TabKind) => void
+  createWindow?: (bounds?: { x: number; y: number }) => BrowserShell
+  onSessionChanged?: () => void
+}
+
+const shellsByChrome = new Map<number, BrowserShell>()
+
+export function browserShellFor(contents: WebContents): BrowserShell | null {
+  return shellsByChrome.get(contents.id) ?? null
+}
+
+/** Resolve a page WebContents to the browser window currently owning its tab. */
+export function browserShellForTabContents(contents: WebContents): BrowserShell | null {
+  for (const shell of shellsByChrome.values()) {
+    if (shell.tabIdForContents(contents.id) !== null) return shell
+  }
+  return null
+}
+
+export function browserShells(): BrowserShell[] {
+  return [...shellsByChrome.values()]
 }
 
 interface Tab {
+  owner: BrowserShell
   id: string
   kind: TabKind
   view: WebContentsView
@@ -129,6 +152,7 @@ const CONTENT_WEB_PREFERENCES = {
  */
 export class BrowserShell {
   readonly window: BrowserWindow
+  private readonly chromeWebContentsId: number
   private readonly deps: ShellDeps
   private readonly tabs: Tab[] = []
   private activeId: string | null = null
@@ -145,7 +169,9 @@ export class BrowserShell {
   constructor(deps: ShellDeps) {
     this.deps = deps
     const savedWindow = deps.initialSession?.window
-    const bounds = restoreWindowBounds(savedWindow)
+    const bounds = deps.initialBounds
+      ? { ...restoreWindowBounds(undefined), ...deps.initialBounds }
+      : restoreWindowBounds(savedWindow)
 
     this.window = new BrowserWindow({
       width: bounds.width,
@@ -171,7 +197,9 @@ export class BrowserShell {
       }
     })
 
+    this.chromeWebContentsId = this.window.webContents.id
     this.wireWindow()
+    shellsByChrome.set(this.chromeWebContentsId, this)
     installChromeContextMenu(this.window.webContents, () => this.window)
     this.window.webContents.on('before-input-event', (event, input) =>
       this.handleInput(event, input)
@@ -179,7 +207,7 @@ export class BrowserShell {
     this.window.on('blur', () => this.sendChrome('ncc:close-menu'))
     // A chrome reload (dev HMR, devtools) loses which overlay owned the surface.
     this.window.webContents.on('did-finish-load', () => this.clearOverlays())
-    this.restoreTabs(deps.initialSession)
+    if (!deps.deferInitialTabs) this.restoreTabs(deps.initialSession)
     if (savedWindow?.maximized) this.window.maximize()
     this.window.once('ready-to-show', () => this.window.show())
   }
@@ -385,6 +413,42 @@ export class BrowserShell {
     this.tabs.splice(0, this.tabs.length, ...next)
     this.scheduleSessionSave()
     this.syncState()
+  }
+
+  detachTab(id: string, screenX: number, screenY: number): void {
+    const tab = this.tabs.find((entry) => entry.id === id)
+    if (!tab || !this.deps.createWindow) return
+    const target = this.deps.createWindow({ x: Math.round(screenX - 520), y: Math.round(screenY - 18) })
+    this.transferTabTo(target, tab)
+  }
+
+  openTabInNewWindow(id: string): void {
+    const tab = this.tabs.find((entry) => entry.id === id)
+    if (!tab || !this.deps.createWindow) return
+    const [x, y] = this.window.getPosition()
+    const target = this.deps.createWindow({ x: x + 48, y: y + 32 })
+    this.transferTabTo(target, tab)
+  }
+
+  private transferTabTo(target: BrowserShell, tab: Tab): void {
+    if (target === this || !this.tabs.includes(tab)) return
+    if (this.pendingInsecure?.tabId === tab.id) this.cancelInsecurePrompt()
+    const previousIndex = this.tabs.indexOf(tab)
+    this.tabs.splice(previousIndex, 1)
+    this.window.contentView.removeChildView(tab.view)
+    if (this.activeId === tab.id) {
+      const replacement = this.tabs[previousIndex] ?? this.tabs[previousIndex - 1] ?? null
+      this.activeId = replacement?.id ?? null
+      if (replacement) this.showOnly(replacement.id)
+    }
+    tab.id = `t${target.nextTabId++}`
+    tab.owner = target
+    target.tabs.push(tab)
+    target.window.contentView.addChildView(tab.view)
+    target.activateTab(tab.id)
+    this.scheduleSessionSave()
+    target.scheduleSessionSave()
+    if (this.tabs.length === 0) this.closeWindow()
   }
 
   duplicateTab(id?: string): string | null {
@@ -739,6 +803,7 @@ export class BrowserShell {
     Menu.buildFromTemplate([
       { label: 'Reload', click: () => contents.reload() },
       { label: 'Duplicate', click: () => void this.duplicateTab(tab.id) },
+      { label: 'Open in new window', click: () => this.openTabInNewWindow(tab.id) },
       {
         label: tab.muted ? 'Unmute tab' : 'Mute tab',
         click: () => this.toggleMute(tab.id)
@@ -844,6 +909,11 @@ export class BrowserShell {
     }
     if (this.window.isDestroyed()) return
 
+    if (this.deps.onSessionChanged) this.deps.onSessionChanged()
+    else this.deps.sessionStore.save(this.sessionSnapshot())
+  }
+
+  sessionSnapshot(): SavedWindowSession {
     const bounds = this.window.getNormalBounds()
     const normalTabs = this.tabs.filter((tab) => tab.kind === 'normal')
     const savedTabs = normalTabs.length
@@ -855,7 +925,7 @@ export class BrowserShell {
       0,
       normalTabs.findIndex((tab) => tab.id === this.activeId)
     )
-    this.deps.sessionStore.save({
+    return {
       tabs: savedTabs,
       activeIndex,
       window: {
@@ -865,7 +935,11 @@ export class BrowserShell {
         y: bounds.y,
         maximized: this.window.isMaximized()
       }
-    })
+    }
+  }
+
+  usesTabKind(kind: TabKind): boolean {
+    return this.tabs.some((tab) => tab.kind === kind)
   }
 
   /** Called by the protocol handler for document-level activity only. */
@@ -1226,6 +1300,7 @@ export class BrowserShell {
       view.webContents.setWebRTCIPHandlingPolicy('disable_non_proxied_udp')
     }
     const tab: Tab = {
+      owner: this,
       id: `t${this.nextTabId++}`,
       kind,
       view,
@@ -1259,7 +1334,7 @@ export class BrowserShell {
     if (kind === 'normal') return
     setTimeout(() => {
       if (this.window.isDestroyed()) return
-      if (!this.tabs.some((tab) => tab.kind === kind)) this.deps.releaseSession(kind)
+      if (!browserShells().some((shell) => shell.usesTabKind(kind))) this.deps.releaseSession(kind)
     }, 0)
   }
 
@@ -1293,16 +1368,16 @@ export class BrowserShell {
 
     contents.on('did-start-loading', () => {
       tab.loading = true
-      this.syncState()
+      tab.owner.syncState()
     })
 
     contents.on('did-stop-loading', () => {
       tab.loading = false
       const url = contents.isDestroyed() ? '' : contents.getURL()
-      const script = url ? this.deps.protectionScriptForUrl?.(url, tab.kind) ?? '' : ''
+      const script = url ? tab.owner.deps.protectionScriptForUrl?.(url, tab.kind) ?? '' : ''
       if (script) void contents.executeJavaScript(script, true).catch(() => undefined)
-      this.scheduleSessionSave()
-      this.syncState()
+      tab.owner.scheduleSessionSave()
+      tab.owner.syncState()
     })
 
     contents.on('did-start-navigation', (_event, url, _isInPlace, isMainFrame) => {
@@ -1311,36 +1386,36 @@ export class BrowserShell {
       tab.security = null
       const onion = tab.kind === 'tor' || isOnionPageUrl(url)
       tab.tor = { onionAvailable: false, active: onion }
-      if (tab.kind !== 'tor') this.deps.torGuard.set(contents.id, onion)
+      if (tab.kind !== 'tor') tab.owner.deps.torGuard.set(contents.id, onion)
       tab.displayUrl = formatDisplayUrl(url)
-      this.applyUrlToTab(tab, url)
-      this.syncState()
+      tab.owner.applyUrlToTab(tab, url)
+      tab.owner.syncState()
     })
 
     contents.on('did-navigate', (_event, url) => {
       tab.displayUrl = formatDisplayUrl(url)
-      this.applyUrlToTab(tab, url)
+      tab.owner.applyUrlToTab(tab, url)
       // Only normal tabs contribute to address-bar suggestions.
       if (tab.kind === 'normal' && /^(ncc:\/\/|nsite:\/\/|https?:\/\/)/i.test(url)) {
-        this.deps.omnibox.recordVisit(tab.displayUrl, tabTitle(tab), 'normal')
+        tab.owner.deps.omnibox.recordVisit(tab.displayUrl, tabTitle(tab), 'normal')
       }
-      this.scheduleSessionSave()
-      this.syncState()
+      tab.owner.scheduleSessionSave()
+      tab.owner.syncState()
     })
 
     contents.on('did-navigate-in-page', (_event, url, isMainFrame) => {
       if (!isMainFrame) return
       tab.displayUrl = formatDisplayUrl(url)
-      this.scheduleSessionSave()
-      this.syncState()
+      tab.owner.scheduleSessionSave()
+      tab.owner.syncState()
     })
 
     contents.on('page-title-updated', () => {
       if (tab.kind === 'normal' && tab.displayUrl) {
         const title = contents.isDestroyed() ? '' : contents.getTitle()
-        if (title) this.deps.omnibox.updateTitle(tab.displayUrl, title, 'normal')
+        if (title) tab.owner.deps.omnibox.updateTitle(tab.displayUrl, title, 'normal')
       }
-      this.syncState()
+      tab.owner.syncState()
     })
 
     contents.on('page-favicon-updated', (_event, favicons) => {
@@ -1349,7 +1424,7 @@ export class BrowserShell {
       if (candidate.startsWith('data:image/')) {
         if (candidate.length <= 350_000) {
           tab.favicon = candidate
-          this.syncState()
+          tab.owner.syncState()
         }
         return
       }
@@ -1358,9 +1433,9 @@ export class BrowserShell {
       if (tab.tor.active && !isAllowedTorUrl(candidate)) return
       const referer = contents.getURL()
       void fetchFavicon(contents.session, candidate, referer).then((dataUrl) => {
-        if (!dataUrl || tab.favicon === dataUrl || !this.tabs.includes(tab)) return
+        if (!dataUrl || tab.favicon === dataUrl || !tab.owner.tabs.includes(tab)) return
         tab.favicon = dataUrl
-        this.syncState()
+        tab.owner.syncState()
       })
     })
 
@@ -1369,7 +1444,7 @@ export class BrowserShell {
     contents.on('audio-state-changed', (event) => {
       tab.audible = event.audible
       tab.muted = contents.isAudioMuted()
-      this.syncState()
+      tab.owner.syncState()
     })
 
     contents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
@@ -1379,11 +1454,11 @@ export class BrowserShell {
       if (tab.pendingHttp) {
         const pending = tab.pendingHttp
         tab.pendingHttp = null
-        const policy = this.deps.httpPolicies[tab.kind]
+        const policy = tab.owner.deps.httpPolicies[tab.kind]
         if (policy.isAllowed(pending.key) || (policy.mode() !== 'only' && !policy.warn())) {
-          void this.loadWebTarget(tab, pending.original)
+          void tab.owner.loadWebTarget(tab, pending.original)
         } else {
-          this.showInsecurePrompt(tab, pending.original, pending.key)
+          tab.owner.showInsecurePrompt(tab, pending.original, pending.key)
         }
         return
       }
@@ -1392,16 +1467,16 @@ export class BrowserShell {
         code: validatedURL.startsWith('ncc://') ? 'endpoint-unreachable' : 'load-failed',
         message: errorDescription
       }
-      this.syncState()
+      tab.owner.syncState()
     })
 
     contents.on('render-process-gone', (_event, details) => {
       tab.failure = { code: 'renderer-gone', message: details.reason }
-      this.syncState()
+      tab.owner.syncState()
     })
 
     contents.setWindowOpenHandler(({ url }) => {
-      void this.openInNewTab(url, tab.kind)
+      void tab.owner.openInNewTab(url, tab.kind)
       return { action: 'deny' }
     })
 
@@ -1410,7 +1485,7 @@ export class BrowserShell {
       const protocol = safeProtocol(url)
       if (!protocol) return
       if (protocol === 'http:' || protocol === 'https:') {
-        const policy = this.deps.httpPolicies[tab.kind]
+        const policy = tab.owner.deps.httpPolicies[tab.kind]
         const key = webHttpKey(url)
         if (
           protocol === 'http:' &&
@@ -1420,7 +1495,7 @@ export class BrowserShell {
           (shouldUpgradeHttp(url, policy.mode()) || policy.warn())
         ) {
           event.preventDefault()
-          void this.navigateInTab(tab, url)
+          void tab.owner.navigateInTab(tab, url)
           return
         }
       }
@@ -1441,15 +1516,15 @@ export class BrowserShell {
     contents.on('will-attach-webview', (event) => event.preventDefault())
 
     installContentContextMenu(contents, {
-      getWindow: () => this.window,
+      getWindow: () => tab.owner.window,
       openInNewTab: (url) => {
-        void this.openInNewTab(url, tab.kind)
+        void tab.owner.openInNewTab(url, tab.kind)
       },
-      extensionItems: (url) => this.deps.extensionContextItems?.(url) ?? []
+      extensionItems: (url) => tab.owner.deps.extensionContextItems?.(url) ?? []
     })
 
     // Keyboard shortcuts are routed in main so they work while the page has focus.
-    contents.on('before-input-event', (event, input) => this.handleInput(event, input))
+    contents.on('before-input-event', (event, input) => tab.owner.handleInput(event, input))
   }
 
   private async openInNewTab(url: string, kind: TabKind = 'normal'): Promise<void> {
@@ -1575,6 +1650,7 @@ export class BrowserShell {
     this.window.on('close', () => this.saveSessionNow())
 
     this.window.on('closed', () => {
+      shellsByChrome.delete(this.chromeWebContentsId)
       if (this.saveTimer) {
         clearTimeout(this.saveTimer)
         this.saveTimer = null
@@ -1588,8 +1664,9 @@ export class BrowserShell {
       }
       this.tabs.length = 0
       this.activeId = null
-      this.deps.releaseSession('private')
-      this.deps.releaseSession('tor')
+      if (this.deps.onSessionChanged) this.deps.onSessionChanged()
+      if (!browserShells().some((shell) => shell.usesTabKind('private'))) this.deps.releaseSession('private')
+      if (!browserShells().some((shell) => shell.usesTabKind('tor'))) this.deps.releaseSession('tor')
     })
   }
 

@@ -14,12 +14,16 @@ export interface SavedWindow {
   maximized: boolean
 }
 
-export interface SavedSession {
-  version: 1
+export interface SavedWindowSession {
   tabs: SavedTab[]
   activeIndex: number
   window: SavedWindow
+}
+
+export interface SavedSession extends SavedWindowSession {
+  version: 1
   savedAt: number
+  windows?: SavedWindowSession[]
 }
 
 const FILE_VERSION = 1
@@ -49,28 +53,16 @@ export class SessionStore {
     try {
       if (!existsSync(this.filePath)) return null
       const parsed = JSON.parse(readFileSync(this.filePath, 'utf8')) as Partial<SavedSession>
-      if (parsed.version !== FILE_VERSION || !Array.isArray(parsed.tabs)) return null
+      if (parsed.version !== FILE_VERSION || (!Array.isArray(parsed.tabs) && !Array.isArray(parsed.windows))) return null
 
-      const tabs: SavedTab[] = parsed.tabs
-        .slice(0, MAX_TABS)
-        .map((tab) => ({ url: validUrl((tab as Partial<SavedTab> | null)?.url) }))
-      if (tabs.length === 0) return null
-
-      const window = (parsed.window ?? {}) as Partial<SavedWindow>
-      const maximized = window.maximized === true
-      return {
-        version: FILE_VERSION,
-        tabs,
-        activeIndex: finite(parsed.activeIndex, 0, tabs.length - 1, 0),
-        window: {
-          width: finite(window.width, 760, 10_000, 1280),
-          height: finite(window.height, 480, 10_000, 860),
-          x: typeof window.x === 'number' && Number.isFinite(window.x) ? Math.round(window.x) : undefined,
-          y: typeof window.y === 'number' && Number.isFinite(window.y) ? Math.round(window.y) : undefined,
-          maximized
-        },
-        savedAt: typeof parsed.savedAt === 'number' ? parsed.savedAt : 0
+      if (Array.isArray(parsed.windows)) {
+        const windows = [parseWindowSession(parsed), ...parsed.windows.slice(0, 19).map((entry) => parseWindowSession(entry))]
+          .filter((entry): entry is SavedWindowSession => Boolean(entry))
+        return windows.length ? { version: FILE_VERSION, ...windows[0], windows: windows.slice(1), savedAt: typeof parsed.savedAt === 'number' ? parsed.savedAt : 0 } : null
       }
+
+      const legacy = parseWindowSession(parsed)
+      return legacy ? { version: FILE_VERSION, ...legacy, savedAt: typeof parsed.savedAt === 'number' ? parsed.savedAt : 0 } : null
     } catch (error) {
       console.warn('[session] ignoring unreadable session:', error)
       return null
@@ -78,11 +70,12 @@ export class SessionStore {
   }
 
   save(session: Omit<SavedSession, 'version' | 'savedAt'>): void {
+    const primary = normalizeWindowSession(session)
+    const windows = (session.windows ?? []).slice(0, 19).map(normalizeWindowSession)
     const payload: SavedSession = {
       version: FILE_VERSION,
-      tabs: session.tabs.slice(0, MAX_TABS).map((tab) => ({ url: validUrl(tab.url) })),
-      activeIndex: Math.max(0, Math.min(session.activeIndex, Math.max(0, session.tabs.length - 1))),
-      window: session.window,
+      ...primary,
+      windows,
       savedAt: Date.now()
     }
 
@@ -94,5 +87,38 @@ export class SessionStore {
     } catch (error) {
       console.warn('[session] could not write session:', error)
     }
+  }
+
+  saveWindows(sessions: SavedWindowSession[]): void {
+    const [primary, ...windows] = sessions.length ? sessions : [{ tabs: [{ url: '' }], activeIndex: 0, window: { width: 1280, height: 860, maximized: false } }]
+    this.save({ ...primary, windows })
+  }
+}
+
+function parseWindowSession(value: unknown): SavedWindowSession | null {
+  if (!value || typeof value !== 'object' || !Array.isArray((value as Partial<SavedSession>).tabs)) return null
+  const parsed = value as Partial<SavedSession>
+  const tabs: SavedTab[] = parsed.tabs!.slice(0, MAX_TABS).map((tab) => ({ url: validUrl((tab as Partial<SavedTab> | null)?.url) }))
+  if (!tabs.length) return null
+  const window = (parsed.window ?? {}) as Partial<SavedWindow>
+  return {
+    tabs,
+    activeIndex: finite(parsed.activeIndex, 0, tabs.length - 1, 0),
+    window: {
+      width: finite(window.width, 760, 10_000, 1280),
+      height: finite(window.height, 480, 10_000, 860),
+      x: typeof window.x === 'number' && Number.isFinite(window.x) ? Math.round(window.x) : undefined,
+      y: typeof window.y === 'number' && Number.isFinite(window.y) ? Math.round(window.y) : undefined,
+      maximized: window.maximized === true
+    }
+  }
+}
+
+function normalizeWindowSession(session: SavedWindowSession): SavedWindowSession {
+  const tabs = session.tabs.slice(0, MAX_TABS).map((tab) => ({ url: validUrl(tab.url) }))
+  return {
+    tabs,
+    activeIndex: Math.max(0, Math.min(session.activeIndex, Math.max(0, tabs.length - 1))),
+    window: session.window
   }
 }

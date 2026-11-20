@@ -499,6 +499,10 @@ globalThis.__nccContent = (state) => {
   const id = state.tab
 
   if (state.type === 'nwc-request') return
+  if (state.type === 'webauthn-request') {
+    void passwordFeature.handleWebauthnRequest(state)
+    return
+  }
 
   if (state.type === 'loading') progressByTab[id] = progressByTab[id] ?? 8
   if (state.type === 'progress') {

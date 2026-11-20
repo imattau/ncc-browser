@@ -448,6 +448,43 @@ async fn vault_save(
     Ok(vault.0.save(draft).await)
 }
 
+/// Save a WebAuthn credential created by the browser's isolated authenticator bridge.
+/// The command is only invoked by NCC's shell WebView; remote content never receives
+/// the Tauri command bridge or the private JWK.
+#[tauri::command]
+async fn vault_passkey_save(
+    vault: tauri::State<'_, VaultHandle>,
+    origin: String,
+    username: String,
+    passkey: serde_json::Value,
+) -> Result<(), String> {
+    let page = url::Url::parse(&origin).map_err(|_| "Invalid passkey origin".to_string())?;
+    if page.scheme() != "https" || page.host_str().is_none() {
+        return Err("Passkeys require a secure website".into());
+    }
+    let rp_id = passkey.get("rpId").and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "Invalid passkey relying party".to_string())?;
+    let host = page.host_str().unwrap_or_default().to_ascii_lowercase();
+    let rp = rp_id.to_ascii_lowercase();
+    let localhost = host == "localhost" && rp == "localhost";
+    let is_ip = rp.parse::<std::net::IpAddr>().is_ok();
+    if rp.is_empty() || is_ip || (!localhost && (!rp.contains('.') || psl::suffix_str(&rp) == Some(rp.as_str()))) || !(host == rp || host.ends_with(&format!(".{rp}"))) {
+        return Err("The passkey relying party does not match this website".into());
+    }
+    let outcome = vault.0.save(Draft {
+        id: None,
+        origin: origin.clone(),
+        title: format!("{} passkey", page.host_str().unwrap_or_default()),
+        username: username.chars().take(ncc_vault::MAX_USERNAME).collect(),
+        password: String::new(),
+        notes: String::new(),
+        totp: String::new(),
+        passkey: Some(passkey),
+    }).await;
+    if outcome.ok && outcome.error.is_none() { Ok(()) }
+    else { Err(outcome.error.unwrap_or_else(|| "The passkey could not be saved".into())) }
+}
+
 #[tauri::command]
 async fn vault_remove(
     vault: tauri::State<'_, VaultHandle>,
@@ -1617,6 +1654,7 @@ pub fn run() {
             vault_totp,
             vault_generate,
             vault_save,
+            vault_passkey_save,
             vault_remove,
             vault_capture,
             vault_respond,

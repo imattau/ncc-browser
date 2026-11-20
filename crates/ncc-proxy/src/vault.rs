@@ -79,6 +79,8 @@ pub struct Draft {
     pub notes: String,
     #[serde(default)]
     pub totp: String,
+    #[serde(default)]
+    pub passkey: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -627,6 +629,7 @@ impl VaultService {
                         .and_then(|id| self.entry(id).ok())
                         .map(|entry| entry.totp)
                         .unwrap_or_default(),
+                    passkey: None,
                 })
                 .await
             }
@@ -725,6 +728,7 @@ impl VaultService {
                 .unwrap_or(now),
             updated_at: now,
             deleted: false,
+            passkey: draft.passkey.or_else(|| existing.as_ref().and_then(|entry| entry.passkey.clone())),
         };
 
         let next = apply_entry(&vault, entry.clone());
@@ -1195,6 +1199,7 @@ mod tests {
                 password: "hunter2".into(),
                 notes: String::new(),
                 totp: String::new(),
+                passkey: None,
             })
             .await;
 
@@ -1218,6 +1223,7 @@ mod tests {
                 password: "secret".into(),
                 notes: String::new(),
                 totp: String::new(),
+                passkey: None,
             })
             .await;
 
@@ -1361,6 +1367,7 @@ mod tests {
                 password: "hunter2".into(),
                 notes: String::new(),
                 totp: String::new(),
+                passkey: None,
             })
             .await;
 
@@ -1386,6 +1393,7 @@ mod tests {
             password: String::new(),
             notes: String::new(),
             totp: String::new(),
+            passkey: None,
         }));
         assert_send(vault.remove("0123456789abcdef"));
         assert_send(vault.respond_to_save("0123456789abcdef", "dismiss"));
@@ -1485,6 +1493,7 @@ mod tests {
             password: "secret".into(),
             notes: String::new(),
             totp: String::new(),
+            passkey: None,
         }
     }
 
@@ -1572,6 +1581,7 @@ mod tests {
                     password: "phone password with spaces ".into(),
                     notes: "from android".into(),
                     totp: String::new(),
+                    passkey: None,
                 })
                 .await;
             assert!(outcome.ok && !outcome.pending, "{outcome:?}");

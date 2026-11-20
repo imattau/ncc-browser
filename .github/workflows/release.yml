@@ -112,12 +112,22 @@ jobs:
           VERSION="$(node -p "require('./package.json').version")"
           scripts/pack-npk.sh "$VERSION" "$PUBLISHER" release
 
-      - name: Install the .npk into a scratch store and run it
+      - name: Install the .npk into a scratch store and check its launcher
         run: |
           npack install release/ncc-browser-*-linux-x86_64.npk --store "$RUNNER_TEMP/store"
           exe=$(find "$RUNNER_TEMP/store" -name ncc-browser -perm -u+x \( -type f -o -type l \) | head -1)
           test -n "$exe" || { find "$RUNNER_TEMP/store"; exit 1; }
           echo "installed $exe"
+          # The launcher must identify the app the way Electron does: WM_CLASS
+          # and the Wayland app_id are "nostr-navigator" (app.setName), and
+          # GNOME/COSMIC match those against the desktop file id and
+          # StartupWMClass. A mismatch shows a generic icon for the running app.
+          desktop="$RUNNER_TEMP/store/packages/share/applications/nostr-navigator.desktop"
+          test -f "$desktop"
+          grep -qx 'Icon=ncc-browser' "$desktop"
+          grep -qx 'StartupWMClass=nostr-navigator' "$desktop"
+          ! grep -q '{{prefix}}' "$desktop"
+          test -f "$RUNNER_TEMP/store/packages/share/icons/hicolor/256x256/apps/ncc-browser.png"
 
       - uses: actions/upload-artifact@v7
         with:

@@ -524,7 +524,7 @@ export function PasswordSettings({
                       </p>
                       <p className="mt-0.5 flex items-center gap-1.5 truncate text-ui-105 text-[color:var(--color-faint)]">
                         <KeyRound className="h-3 w-3" />
-                        {entry.username || 'No username'}
+                        {entry.isPasskey ? 'Passkey' : entry.username || 'No username'}
                         {entry.hasTotp ? (
                           <span className="ml-1 rounded border border-[color:var(--color-accent)]/30 px-1 text-ui-9 text-[color:var(--color-accent)]">
                             2FA
@@ -534,25 +534,14 @@ export function PasswordSettings({
                     </div>
                     <div className="flex flex-wrap items-center gap-1">
                       {entry.hasTotp ? <TotpCell id={entry.id} onCopy={copy} /> : null}
-                      <RowButton label="Copy username" onClick={() => void copy(entry.id, 'username')}>
-                        <Copy className="h-3.5 w-3.5" />
-                      </RowButton>
-                      <RowButton label="Copy password" onClick={() => void copy(entry.id, 'password')}>
-                        <KeyRound className="h-3.5 w-3.5" />
-                      </RowButton>
-                      <RowButton
-                        label={revealed?.id === entry.id ? 'Hide password' : 'Reveal password'}
-                        onClick={() => void reveal(entry.id)}
-                      >
-                        {revealed?.id === entry.id ? (
-                          <EyeOff className="h-3.5 w-3.5" />
-                        ) : (
-                          <Eye className="h-3.5 w-3.5" />
-                        )}
-                      </RowButton>
-                      <RowButton label="Edit login" onClick={() => void startEdit(entry.id)}>
-                        <Pencil className="h-3.5 w-3.5" />
-                      </RowButton>
+                      {!entry.isPasskey ? <>
+                        <RowButton label="Copy username" onClick={() => void copy(entry.id, 'username')}><Copy className="h-3.5 w-3.5" /></RowButton>
+                        <RowButton label="Copy password" onClick={() => void copy(entry.id, 'password')}><KeyRound className="h-3.5 w-3.5" /></RowButton>
+                        <RowButton label={revealed?.id === entry.id ? 'Hide password' : 'Reveal password'} onClick={() => void reveal(entry.id)}>
+                          {revealed?.id === entry.id ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                        </RowButton>
+                        <RowButton label="Edit login" onClick={() => void startEdit(entry.id)}><Pencil className="h-3.5 w-3.5" /></RowButton>
+                      </> : null}
                       <button
                         type="button"
                         aria-label={confirmDelete === entry.id ? 'Confirm delete' : 'Delete login'}

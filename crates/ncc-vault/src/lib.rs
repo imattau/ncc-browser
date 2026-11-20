@@ -67,6 +67,10 @@ pub struct PasswordEntry {
     /// still has the entry.
     #[serde(default, skip_serializing_if = "is_false")]
     pub deleted: bool,
+    /// Optional WebAuthn software-authenticator record. Its private JWK is inside the
+    /// encrypted vault payload and must be preserved by every platform implementation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub passkey: Option<Value>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -111,6 +115,8 @@ pub struct PasswordSummary {
     pub title: String,
     pub username: String,
     pub has_totp: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub is_passkey: bool,
     pub created_at: u64,
     pub updated_at: u64,
 }
@@ -200,7 +206,44 @@ pub fn normalize_entry(input: &Value) -> Option<PasswordEntry> {
             .get("deleted")
             .and_then(Value::as_bool)
             .unwrap_or(false),
+        passkey: input.get("passkey").and_then(normalize_passkey),
     })
+}
+
+fn normalize_passkey(value: &Value) -> Option<Value> {
+    let string = |key: &str, max: usize| {
+        value.get(key).and_then(Value::as_str)
+            .filter(|item| !item.is_empty() && item.len() <= max)
+    };
+    let credential_id = string("credentialId", 1024)?;
+    if credential_id.len() < 20 || !credential_id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-') { return None; }
+    let rp_id = string("rpId", 253)?.to_ascii_lowercase();
+    if !rp_id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-') { return None; }
+    let user_handle = value.get("userHandle").and_then(Value::as_str).filter(|item| item.len() <= 1024)?;
+    let jwk = |key: &str, private: bool| -> Option<Value> {
+        let item = value.get(key)?.as_object()?;
+        if item.get("kty")?.as_str()? != "EC" || item.get("crv")?.as_str()? != "P-256" { return None; }
+        for coordinate in ["x", "y"] {
+            let bytes = item.get(coordinate)?.as_str()?;
+            if bytes.len() != 43 || !bytes.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-') { return None; }
+        }
+        if private {
+            let scalar = item.get("d")?.as_str()?;
+            if scalar.len() != 43 || !scalar.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-') { return None; }
+        }
+        Some(Value::Object(item.clone()))
+    };
+    Some(json!({
+        "credentialId": credential_id,
+        "rpId": rp_id,
+        "userHandle": user_handle,
+        "userName": string("userName", MAX_USERNAME).unwrap_or(""),
+        "userDisplayName": string("userDisplayName", MAX_TITLE).unwrap_or(""),
+        "privateKeyJwk": jwk("privateKeyJwk", true)?,
+        "publicKeyJwk": jwk("publicKeyJwk", false)?,
+        "signCount": value.get("signCount").and_then(Value::as_u64).unwrap_or(0),
+        "discoverable": value.get("discoverable").and_then(Value::as_bool).unwrap_or(false)
+    }))
 }
 
 /// Sixteen to sixty-four hex characters, matching the desktop's validator.
@@ -313,6 +356,7 @@ pub fn summarize(entry: &PasswordEntry) -> PasswordSummary {
         title: entry.title.clone(),
         username: entry.username.clone(),
         has_totp: !entry.totp.is_empty(),
+        is_passkey: entry.passkey.is_some(),
         created_at: entry.created_at,
         updated_at: entry.updated_at,
     }
@@ -399,6 +443,7 @@ mod tests {
             created_at: 1,
             updated_at,
             deleted: false,
+            passkey: None,
         }
     }
 
@@ -472,6 +517,34 @@ mod tests {
         assert_eq!(entry.id, "0123456789abcdef");
         assert_eq!(entry.origin, "https://example.com");
         assert_eq!(entry.title, "Example");
+    }
+
+    #[test]
+    fn normalization_preserves_desktop_passkey_records_and_marks_summaries() {
+        let input = json!({
+            "entries": [{
+                "id": "0123456789abcdef",
+                "origin": "https://webauthn.io",
+                "username": "ncc-passkey-smoke-test",
+                "passkey": {
+                    "credentialId": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                    "rpId": "webauthn.io",
+                    "userHandle": "AQID",
+                    "userName": "ncc-passkey-smoke-test",
+                    "userDisplayName": "NCC smoke test",
+                    "privateKeyJwk": { "kty": "EC", "crv": "P-256", "x": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "y": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "d": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" },
+                    "publicKeyJwk": { "kty": "EC", "crv": "P-256", "x": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "y": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" },
+                    "signCount": 0,
+                    "discoverable": true
+                }
+            }]
+        });
+        let vault = normalize_vault(&input);
+        let entry = &vault.entries[0];
+        assert_eq!(entry.passkey.as_ref().unwrap()["rpId"], "webauthn.io");
+        assert!(summarize(entry).is_passkey);
+        let round_trip = serde_json::to_value(entry).unwrap();
+        assert_eq!(round_trip["passkey"]["privateKeyJwk"]["d"], "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
     }
 
     #[test]

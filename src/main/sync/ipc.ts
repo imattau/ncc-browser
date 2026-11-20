@@ -1,5 +1,5 @@
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
-import type { BrowserShell } from '../shell'
+import { browserShellFor, type BrowserShell } from '../shell'
 import type { SyncService } from './service'
 import { isSyncableUrl } from '@shared/sync'
 
@@ -10,7 +10,7 @@ export function registerSyncIpc(
 ): void {
   const handle = <T>(channel: string, action: (...args: unknown[]) => T | Promise<T>): void => {
     ipcMain.handle(channel, async (event: IpcMainInvokeEvent, ...args) => {
-      if (event.sender !== deps.shell.window.webContents) {
+      if (browserShellFor(event.sender) === null) {
         throw new Error('Sync is only available to the browser chrome')
       }
       return action(...args)

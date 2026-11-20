@@ -10,6 +10,7 @@ import type {
   IdentityStatus,
   NavState,
   OverlayReason,
+  PasskeyConfirmationRequest,
   PasswordContext,
   PasswordSaveRequest,
   PasswordToast,
@@ -25,6 +26,7 @@ import { HistoryPanel } from './components/HistoryPanel'
 import { IdentityChooser } from './components/IdentityChooser'
 import { PasswordsPanel } from './components/PasswordsPanel'
 import { PasswordSavePrompt } from './components/PasswordSavePrompt'
+import { PasskeyConfirmationPrompt } from './components/PasskeyConfirmationPrompt'
 import { PaymentCardSavePrompt } from './components/PaymentCardSavePrompt'
 import { type PopoverAnchor } from './components/Popover'
 import { InsecureWarning, SecurityBanner } from './components/SecurityNotice'
@@ -89,6 +91,8 @@ export function App() {
   const [paymentCardSave, setPaymentCardSave] = useState<PaymentCardSaveRequest | null>(null)
   const [paymentCardSaveBusy, setPaymentCardSaveBusy] = useState(false)
   const [paymentCardSaveError, setPaymentCardSaveError] = useState<string | null>(null)
+  const [passkeyConfirmations, setPasskeyConfirmations] = useState<PasskeyConfirmationRequest[]>([])
+  const passkeyConfirmation = passkeyConfirmations[0] ?? null
   const [passwordDraftOrigin, setPasswordDraftOrigin] = useState<string | null>(null)
   const [passwordToast, setPasswordToast] = useState<PasswordToast | null>(null)
   const [extensions, setExtensions] = useState<ExtensionsState | null>(null)
@@ -227,6 +231,26 @@ export function App() {
       offToast()
     }
   }, [showOverlay])
+
+  useEffect(() => {
+    const offRequest = window.ncc.onPasskeyConfirmation((request) => {
+      setPasskeyConfirmations((current) =>
+        current.some((item) => item.id === request.id) ? current : [...current, request]
+      )
+    })
+    const offResolved = window.ncc.onPasskeyConfirmationResolved((id) => {
+      setPasskeyConfirmations((current) => current.filter((item) => item.id !== id))
+    })
+    return () => {
+      offRequest()
+      offResolved()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (passkeyConfirmation) showOverlay('passkey-confirmation')
+    else if (overlayRef.current === 'passkey-confirmation') closeOverlay()
+  }, [passkeyConfirmation, showOverlay, closeOverlay])
 
   const respondToPaymentCardSave = async (action: 'save' | 'dismiss'): Promise<void> => {
     if (!paymentCardSave) return
@@ -599,6 +623,13 @@ export function App() {
     [signerRequest]
   )
 
+  const respondToPasskeyConfirmation = useCallback((choice: number | null) => {
+    if (!passkeyConfirmation) return
+    const id = passkeyConfirmation.id
+    setPasskeyConfirmations((current) => current.filter((item) => item.id !== id))
+    void window.ncc.respondToPasskeyConfirmation(id, choice)
+  }, [passkeyConfirmation])
+
   useEffect(() => {
     // Escape stops a loading page from the chrome side; main handles it while the
     // remote page has focus, and dialogs close themselves with the same key.
@@ -629,6 +660,7 @@ export function App() {
         onNew={newTab}
         onNewMenu={() => void window.ncc.showNewTabMenu()}
         onMove={moveTab}
+        onDetach={(id, screenX, screenY) => void window.ncc.detachTab(id, screenX, screenY)}
         onContextMenu={tabContextMenu}
         onToggleMute={toggleMute}
         onOverflow={() => showOverlay('tabs')}
@@ -828,6 +860,13 @@ export function App() {
           busy={paymentCardSaveBusy}
           error={paymentCardSaveError}
           onRespond={(action) => void respondToPaymentCardSave(action)}
+        />
+      ) : null}
+
+      {passkeyConfirmation ? (
+        <PasskeyConfirmationPrompt
+          request={passkeyConfirmation}
+          onRespond={respondToPasskeyConfirmation}
         />
       ) : null}
 

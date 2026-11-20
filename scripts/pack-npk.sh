@@ -17,6 +17,15 @@ UNPACKED="$ROOT/release/linux-unpacked"
 [ -x "$UNPACKED/ncc-browser" ] || { echo "missing $UNPACKED/ncc-browser -- run npm run dist:linux first" >&2; exit 1; }
 
 NAME=ncc-browser
+# Electron derives the Linux WM_CLASS and Wayland app_id from
+# app.setName('Nostr Navigator') (src/main/index.ts), so both are
+# "nostr-navigator". The desktop file name and StartupWMClass must use that id:
+# GNOME matches the Wayland app_id against the desktop id, and COSMIC matches
+# it against the desktop id or StartupWMClass. A mismatch leaves the running
+# window without a launcher, which shows up as the generic icon in the dock.
+# electron-builder's deb/flatpak entries use the same id, so a system package
+# and this npk share one launcher instead of adding a duplicate.
+APP_ID=nostr-navigator
 ARTIFACT="$NAME-$VERSION-linux-x86_64.npk"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -24,33 +33,40 @@ SRC="$WORK/pkg"
 
 npack init "$SRC" --name "$NAME" --version "$VERSION" --publisher "$PUBLISHER" >/dev/null
 
-mkdir -p "$SRC/share" "$SRC/bin" "$SRC/share/applications" "$SRC/share/icons/hicolor/256x256/apps"
+mkdir -p "$SRC/share" "$SRC/bin" "$SRC/share/applications" \
+  "$SRC/share/icons/hicolor/128x128/apps" \
+  "$SRC/share/icons/hicolor/256x256/apps" \
+  "$SRC/share/icons/hicolor/512x512/apps"
 cp -a "$UNPACKED" "$SRC/share/$NAME"
 ln -s "../share/$NAME/$NAME" "$SRC/bin/$NAME"
-cp "$ROOT/build/icons/256x256.png" "$SRC/share/icons/hicolor/256x256/apps/$NAME.png"
+for size in 128 256 512; do
+  cp "$ROOT/build/icons/${size}x${size}.png" "$SRC/share/icons/hicolor/${size}x${size}/apps/$NAME.png"
+done
 
 # {{prefix}} is filled in by npack with the install location (listed in templates.txt).
-cat > "$SRC/share/applications/$NAME.desktop" <<DESKTOP
+# Icon names are resolved by the theme (hicolor) into the sizes installed above;
+# both GTK/GNOME and COSMIC fall back to the closest size, so 256px alone would
+# work, and no icon-cache refresh is needed. Quote Exec because the user prefix
+# is under $HOME, which may contain spaces.
+cat > "$SRC/share/applications/$APP_ID.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
 Name=Nostr Navigator
 Comment=Browse Nostr identity services without DNS
-Exec={{prefix}}/bin/$NAME %U
-# Use the installed icon's absolute path. Some GNOME installations do not
-# refresh the hicolor icon cache when npack installs into a user prefix, so
-# resolving the theme name alone can leave the launcher with a generic icon.
-Icon={{prefix}}/share/icons/hicolor/256x256/apps/$NAME.png
+Exec="{{prefix}}/bin/$NAME" %U
+TryExec={{prefix}}/bin/$NAME
+Icon=$NAME
 Terminal=false
 Categories=Network;WebBrowser;
 MimeType=x-scheme-handler/ncc;
-# Electron exposes the executable's WM_CLASS on Linux, not the display name.
-StartupWMClass=$NAME
+StartupNotify=true
+StartupWMClass=$APP_ID
 DESKTOP
-echo "share/applications/$NAME.desktop" > "$SRC/.npack/templates.txt"
+echo "share/applications/$APP_ID.desktop" > "$SRC/.npack/templates.txt"
 
-python3 - "$SRC/.npack/manifest.json" "$VERSION" <<'PY'
+python3 - "$SRC/.npack/manifest.json" "$VERSION" "$APP_ID" <<'PY'
 import json, sys
-path, version = sys.argv[1:]
+path, version, app_id = sys.argv[1:]
 with open(path) as f:
     m = json.load(f)
 m["app"] = {
@@ -60,7 +76,7 @@ m["app"] = {
     "license": "MIT",
     "categories": ["Network", "WebBrowser"],
     "icon": f"share/icons/hicolor/256x256/apps/{m['name']}.png",
-    "desktop_file": f"share/applications/{m['name']}.desktop",
+    "desktop_file": f"share/applications/{app_id}.desktop",
     "support_url": "https://github.com/imattau/ncc-browser/issues",
 }
 with open(path, "w") as f:

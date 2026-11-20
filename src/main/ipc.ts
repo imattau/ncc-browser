@@ -20,7 +20,7 @@ import type { IdentityManager } from './signer/manager'
 import type { PasswordService } from './passwords/service'
 import type { PermissionStore } from './signer/permissions'
 import { signerOriginFromUrl } from './signer/origin'
-import type { BrowserShell } from './shell'
+import { browserShellFor, browserShells, type BrowserShell } from './shell'
 import type { ProtectionService } from './protection'
 
 export interface IpcDeps {
@@ -46,98 +46,105 @@ export interface IpcDeps {
 export function registerIpc(deps: IpcDeps): void {
   const commandIds = new Set<string>(COMMANDS.map((command) => command.id))
   const overlayReasons = new Set<string>(OVERLAY_REASONS)
-  const fromChrome = (event: Electron.IpcMainInvokeEvent): boolean =>
-    event.sender === deps.shell.window.webContents
+  const shellFor = (event: Electron.IpcMainInvokeEvent): BrowserShell => browserShellFor(event.sender) ?? deps.shell
+  const fromChrome = (event: Electron.IpcMainInvokeEvent): boolean => browserShellFor(event.sender) !== null
 
-  ipcMain.handle('ncc:navigate', (_event, input: unknown) => deps.shell.navigate(String(input ?? '')))
+  ipcMain.handle('ncc:navigate', (event, input: unknown) => shellFor(event).navigate(String(input ?? '')))
 
-  ipcMain.handle('ncc:back', () => deps.shell.back())
-  ipcMain.handle('ncc:forward', () => deps.shell.forward())
-  ipcMain.handle('ncc:reload', () => deps.shell.reload())
-  ipcMain.handle('ncc:force-reload', () => deps.shell.forceReload())
-  ipcMain.handle('ncc:stop', () => deps.shell.stop())
+  ipcMain.handle('ncc:back', (event) => shellFor(event).back())
+  ipcMain.handle('ncc:forward', (event) => shellFor(event).forward())
+  ipcMain.handle('ncc:reload', (event) => shellFor(event).reload())
+  ipcMain.handle('ncc:force-reload', (event) => shellFor(event).forceReload())
+  ipcMain.handle('ncc:stop', (event) => shellFor(event).stop())
   ipcMain.handle('ncc:toggle-tor', (event) => {
     if (!fromChrome(event)) return
-    deps.shell.toggleTor()
+    shellFor(event).toggleTor()
   })
   ipcMain.handle('ncc:insecure-choice', (event, choice: unknown) => {
     if (!fromChrome(event)) return
     if (choice !== 'cancel' && choice !== 'continue' && choice !== 'always') return
-    deps.shell.insecureChoice(choice)
+    shellFor(event).insecureChoice(choice)
   })
 
-  ipcMain.handle('ncc:new-tab', (_event, input: unknown) =>
-    deps.shell.newTab(typeof input === 'string' ? input : undefined)
+  ipcMain.handle('ncc:new-tab', (event, input: unknown) =>
+    shellFor(event).newTab(typeof input === 'string' ? input : undefined)
   )
   ipcMain.handle('ncc:new-private-tab', (event, input: unknown) => {
     if (!fromChrome(event)) return ''
-    return deps.shell.newPrivateTab(typeof input === 'string' ? input : undefined)
+    return shellFor(event).newPrivateTab(typeof input === 'string' ? input : undefined)
   })
   ipcMain.handle('ncc:new-tor-tab', (event, input: unknown) => {
     if (!fromChrome(event)) return ''
-    return deps.shell.newTorTab(typeof input === 'string' ? input : undefined)
+    return shellFor(event).newTorTab(typeof input === 'string' ? input : undefined)
   })
-  ipcMain.handle('ncc:close-tab', (_event, id: unknown) =>
-    deps.shell.closeTab(typeof id === 'string' ? id : undefined)
+  ipcMain.handle('ncc:close-tab', (event, id: unknown) =>
+    shellFor(event).closeTab(typeof id === 'string' ? id : undefined)
   )
-  ipcMain.handle('ncc:select-tab', (_event, id: unknown) => {
-    if (typeof id === 'string') deps.shell.selectTab(id)
+  ipcMain.handle('ncc:select-tab', (event, id: unknown) => {
+    if (typeof id === 'string') shellFor(event).selectTab(id)
   })
-  ipcMain.handle('ncc:move-tab', (_event, payload: unknown) => {
+  ipcMain.handle('ncc:move-tab', (event, payload: unknown) => {
     if (!payload || typeof payload !== 'object') return
     const { id, toIndex } = payload as { id?: unknown; toIndex?: unknown }
     if (typeof id !== 'string' || typeof toIndex !== 'number') return
-    deps.shell.moveTab(id, toIndex)
+    shellFor(event).moveTab(id, toIndex)
+  })
+  ipcMain.handle('ncc:detach-tab', (event, payload: unknown) => {
+    if (!fromChrome(event) || !payload || typeof payload !== 'object') return
+    const { id, screenX, screenY } = payload as { id?: unknown; screenX?: unknown; screenY?: unknown }
+    if (typeof id !== 'string' || typeof screenX !== 'number' || typeof screenY !== 'number') return
+    shellFor(event).detachTab(id, screenX, screenY)
   })
   ipcMain.handle('ncc:duplicate-tab', (event, id: unknown) => {
     if (!fromChrome(event)) return
-    deps.shell.duplicateTab(typeof id === 'string' ? id : undefined)
+    shellFor(event).duplicateTab(typeof id === 'string' ? id : undefined)
   })
   ipcMain.handle('ncc:reload-tab', (event, id: unknown) => {
     if (!fromChrome(event)) return
-    deps.shell.reloadTab(typeof id === 'string' ? id : undefined)
+    shellFor(event).reloadTab(typeof id === 'string' ? id : undefined)
   })
   ipcMain.handle('ncc:toggle-mute', (event, id: unknown) => {
     if (!fromChrome(event)) return
-    deps.shell.toggleMute(typeof id === 'string' ? id : undefined)
+    shellFor(event).toggleMute(typeof id === 'string' ? id : undefined)
   })
   ipcMain.handle('ncc:close-other-tabs', (event, id: unknown) => {
     if (!fromChrome(event)) return
-    deps.shell.closeOtherTabs(typeof id === 'string' ? id : undefined)
+    shellFor(event).closeOtherTabs(typeof id === 'string' ? id : undefined)
   })
   ipcMain.handle('ncc:close-tabs-right', (event, id: unknown) => {
     if (!fromChrome(event)) return
-    deps.shell.closeTabsToRight(typeof id === 'string' ? id : undefined)
+    shellFor(event).closeTabsToRight(typeof id === 'string' ? id : undefined)
   })
-  ipcMain.handle('ncc:new-tab-menu', () => {
-    deps.shell.showNewTabMenu()
+  ipcMain.handle('ncc:new-tab-menu', (event) => {
+    if (!fromChrome(event)) return
+    shellFor(event).showNewTabMenu()
   })
 
   ipcMain.handle('ncc:tab-menu', (event, id: unknown) => {
     if (!fromChrome(event) || typeof id !== 'string') return
-    deps.shell.showTabMenu(id)
+    shellFor(event).showTabMenu(id)
   })
 
-  ipcMain.handle('ncc:tab-history', (_event, id: unknown) =>
-    deps.shell.getTabHistory(typeof id === 'string' ? id : undefined)
+  ipcMain.handle('ncc:tab-history', (event, id: unknown) =>
+    shellFor(event).getTabHistory(typeof id === 'string' ? id : undefined)
   )
   ipcMain.handle('ncc:go-history-index', (event, index: unknown) => {
     if (!fromChrome(event) || typeof index !== 'number') return
-    deps.shell.goToHistoryIndex(index)
+    shellFor(event).goToHistoryIndex(index)
   })
   ipcMain.handle('ncc:clear-history', (event) => {
     if (!fromChrome(event)) return
-    deps.shell.clearHistory()
+    shellFor(event).clearHistory()
   })
   ipcMain.handle('ncc:history-menu', (event, direction: unknown) => {
     if (!fromChrome(event)) return
     if (direction !== 'back' && direction !== 'forward') return
-    deps.shell.showHistoryMenu(direction)
+    shellFor(event).showHistoryMenu(direction)
   })
 
-  ipcMain.handle('ncc:get-state', () => deps.shell.getState())
+  ipcMain.handle('ncc:get-state', (event) => shellFor(event).getState())
   ipcMain.handle('ncc:get-config', () => deps.config.get())
-  ipcMain.handle('ncc:protection-summary', (_event, rawUrl: unknown, rawKind: unknown) => {
+  ipcMain.handle('ncc:protection-summary', (event, rawUrl: unknown, rawKind: unknown) => {
     const url = typeof rawUrl === 'string' ? rawUrl : ''
     const kind = rawKind === 'private' || rawKind === 'tor' ? rawKind : 'normal'
     let origin = ''
@@ -148,15 +155,15 @@ export function registerIpc(deps: IpcDeps): void {
 
   ipcMain.handle('ncc:omnibox-suggest', (event, input: unknown) => {
     if (!fromChrome(event)) return []
-    return deps.shell.suggest(typeof input === 'string' ? input : '')
+    return shellFor(event).suggest(typeof input === 'string' ? input : '')
   })
 
   ipcMain.handle('ncc:clear-browsing-history', (event) => {
     if (!fromChrome(event)) return
-    deps.shell.clearBrowsingHistory()
+    shellFor(event).clearBrowsingHistory()
   })
 
-  ipcMain.handle('ncc:set-search-config', (_event, payload: unknown) => {
+  ipcMain.handle('ncc:set-search-config', (event, payload: unknown) => {
     try {
       if (!payload || typeof payload !== 'object') {
         return { ok: false, error: 'Invalid search settings' }
@@ -198,15 +205,15 @@ export function registerIpc(deps: IpcDeps): void {
       if (config.appearance.theme !== before.theme) {
         applyThemeSource(config.appearance.theme)
       }
-      deps.shell.applyAppearance()
-      deps.shell.sendConfig(config)
+      for (const browserShell of browserShells()) browserShell.applyAppearance()
+      for (const browserShell of browserShells()) browserShell.sendConfig(config)
       return { ok: true, config }
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
   })
 
-  ipcMain.handle('ncc:set-relays', (_event, relays: unknown) => {
+  ipcMain.handle('ncc:set-relays', (event, relays: unknown) => {
     try {
       const previous = deps.config.getRelayEntries()
       const config = deps.config.setRelays(relays)
@@ -221,14 +228,14 @@ export function registerIpc(deps: IpcDeps): void {
     }
   })
 
-  ipcMain.handle('ncc:resolve-relay-locator', async (_event, input: unknown) => {
+  ipcMain.handle('ncc:resolve-relay-locator', async (event, input: unknown) => {
     if (typeof input !== 'string') {
       return { ok: false, code: 'invalid-address', error: 'Enter an ncc:// relay address' }
     }
     return deps.relayLocator.resolve(input)
   })
 
-  ipcMain.handle('ncc:set-gossip', (_event, value: unknown) => {
+  ipcMain.handle('ncc:set-gossip', (event, value: unknown) => {
     try {
       const config = deps.config.setGossip(value)
       resetCaches(deps)
@@ -238,7 +245,7 @@ export function registerIpc(deps: IpcDeps): void {
     }
   })
 
-  ipcMain.handle('ncc:set-anchor-required', (_event, value: unknown) => {
+  ipcMain.handle('ncc:set-anchor-required', (event, value: unknown) => {
     try {
       const config = deps.config.setAnchorRequired(value)
       // Anchoring changes trust policy, not resolution inputs. Drop memoised outcomes
@@ -250,11 +257,11 @@ export function registerIpc(deps: IpcDeps): void {
     }
   })
 
-  ipcMain.handle('ncc:set-prefer-tor', (_event, value: unknown) => {
+  ipcMain.handle('ncc:set-prefer-tor', (event, value: unknown) => {
     try {
       const config = deps.config.setPreferTor(value)
       deps.transport.clear()
-      deps.shell.applyTorPreference()
+      for (const browserShell of browserShells()) browserShell.applyTorPreference()
       if (config.preferTor) void deps.tor.ensureReady().catch(() => undefined)
       return { ok: true, config }
     } catch (error) {
@@ -266,39 +273,39 @@ export function registerIpc(deps: IpcDeps): void {
     if (!fromChrome(event)) return { ok: false, error: 'Settings can only change from the browser chrome' }
     try {
       const config = deps.config.setEphemeralSigner(value)
-      deps.shell.window.webContents.send('ncc:config', config)
+      for (const browserShell of browserShells()) browserShell.window.webContents.send('ncc:config', config)
       return { ok: true, config }
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
   })
 
-  ipcMain.handle('ncc:set-tor-mode', async (_event, value: unknown) => {
+  ipcMain.handle('ncc:set-tor-mode', async (event, value: unknown) => {
     try {
       const config = deps.config.setTorMode(value)
       await deps.tor.reset()
       deps.transport.clear()
-      deps.shell.applyTorPreference()
+      for (const browserShell of browserShells()) browserShell.applyTorPreference()
       return { ok: true, config }
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
   })
 
-  ipcMain.handle('ncc:set-tor-socks', async (_event, value: unknown) => {
+  ipcMain.handle('ncc:set-tor-socks', async (event, value: unknown) => {
     try {
       const normalized = normalizeTorProxy(value)
       const config = deps.config.setTorSocks(normalized)
       await deps.tor.reset()
       deps.transport.clear()
-      deps.shell.applyTorPreference()
+      for (const browserShell of browserShells()) browserShell.applyTorPreference()
       return { ok: true, config }
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
   })
 
-  ipcMain.handle('ncc:set-tor-config', async (_event, payload: unknown) => {
+  ipcMain.handle('ncc:set-tor-config', async (event, payload: unknown) => {
     try {
       if (!payload || typeof payload !== 'object') {
         return { ok: false, error: 'Invalid Tor settings' }
@@ -324,7 +331,7 @@ export function registerIpc(deps: IpcDeps): void {
         await deps.tor.reset()
       }
       deps.transport.clear()
-      deps.shell.applyTorPreference()
+      for (const browserShell of browserShells()) browserShell.applyTorPreference()
       if (config.preferTor) void deps.tor.ensureReady().catch(() => undefined)
       return { ok: true, config }
     } catch (error) {
@@ -332,7 +339,7 @@ export function registerIpc(deps: IpcDeps): void {
     }
   })
 
-  ipcMain.handle('ncc:set-security-config', (_event, payload: unknown) => {
+  ipcMain.handle('ncc:set-security-config', (event, payload: unknown) => {
     try {
       if (!payload || typeof payload !== 'object') {
         return { ok: false, error: 'Invalid security settings' }
@@ -347,7 +354,7 @@ export function registerIpc(deps: IpcDeps): void {
       deps.config.setWarnInsecure(warnInsecure)
       const config = deps.config.setProtection(protection)
       if (before.httpsMode !== config.httpsMode || before.warnInsecure !== config.warnInsecure || JSON.stringify(before.protection) !== JSON.stringify(config.protection)) {
-        deps.shell.applySecuritySettings()
+        for (const browserShell of browserShells()) browserShell.applySecuritySettings()
       }
       return { ok: true, config }
     } catch (error) {
@@ -355,10 +362,10 @@ export function registerIpc(deps: IpcDeps): void {
     }
   })
 
-  ipcMain.handle('ncc:remove-http-exception', (_event, key: unknown) => {
+  ipcMain.handle('ncc:remove-http-exception', (event, key: unknown) => {
     if (typeof key !== 'string') return deps.config.get()
     const config = deps.config.removeHttpException(key)
-    deps.shell.applySecuritySettings()
+    for (const browserShell of browserShells()) browserShell.applySecuritySettings()
     return config
   })
 
@@ -368,7 +375,7 @@ export function registerIpc(deps: IpcDeps): void {
       const origin = new URL(rawOrigin).origin
       const kind = rawKind === 'private' || rawKind === 'tor' ? rawKind : 'normal'
       const config = deps.protection.setSiteException(origin, allowed === true, kind)
-      deps.shell.applySecuritySettings()
+      for (const browserShell of browserShells()) browserShell.applySecuritySettings()
       return config
     } catch {
       return deps.config.get()
@@ -377,7 +384,7 @@ export function registerIpc(deps: IpcDeps): void {
 
   ipcMain.handle('ncc:clear-http-exceptions', () => {
     const config = deps.config.clearHttpExceptions()
-    deps.shell.applySecuritySettings()
+    for (const browserShell of browserShells()) browserShell.applySecuritySettings()
     return config
   })
 
@@ -393,7 +400,7 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle('ncc:tor-restart', async () => {
     await deps.tor.reset()
     deps.transport.clear()
-    deps.shell.applyTorPreference()
+    for (const browserShell of browserShells()) browserShell.applyTorPreference()
     return deps.tor.test()
   })
 
@@ -419,9 +426,9 @@ export function registerIpc(deps: IpcDeps): void {
   })
   ipcMain.handle('ncc:share-nostr', async (event, rawComment: unknown) => {
     if (!fromChrome(event)) throw new Error('Not allowed')
-    const page = deps.shell.getActivePage()
+    const page = shellFor(event).getActivePage()
     if (!page) throw new Error('Open a page first')
-    const state = deps.shell.getState()
+    const state = shellFor(event).getState()
     if (state.tabKind !== 'normal') throw new Error('Normal tabs only')
     const provider = deps.identity.provider()
     if (!provider) throw new Error('Sign in first')
@@ -435,7 +442,7 @@ export function registerIpc(deps: IpcDeps): void {
     return { accepted: results.filter((result) => result.status === 'fulfilled').length, relays: relays.length, error: results.every((result) => result.status === 'rejected') ? String((results[0] as PromiseRejectedResult)?.reason ?? '') : undefined }
   })
 
-  ipcMain.handle('ncc:identity-import', async (_event, secret: unknown) => {
+  ipcMain.handle('ncc:identity-import', async (event, secret: unknown) => {
     const status = await deps.identity.importLocal(String(secret ?? ''))
     deps.passwords.onIdentityChanged()
     resetCaches(deps)
@@ -456,7 +463,7 @@ export function registerIpc(deps: IpcDeps): void {
     return status
   })
 
-  ipcMain.handle('ncc:identity-connect-bunker', async (_event, url: unknown) => {
+  ipcMain.handle('ncc:identity-connect-bunker', async (event, url: unknown) => {
     const status = await deps.identity.connectRemote(String(url ?? ''))
     deps.passwords.onIdentityChanged()
     resetCaches(deps)
@@ -492,7 +499,7 @@ export function registerIpc(deps: IpcDeps): void {
     return { ...resolved, trusted: deps.permissions.isTrusted(resolved.origin) }
   })
 
-  ipcMain.handle('ncc:revoke-permission', (_event, origin: unknown) => {
+  ipcMain.handle('ncc:revoke-permission', (event, origin: unknown) => {
     if (typeof origin === 'string') deps.permissions.revoke(origin)
     return deps.permissions.list()
   })
@@ -513,7 +520,7 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle('ncc:command', (event, command: unknown) => {
     if (!fromChrome(event)) return
     if (typeof command !== 'string' || !commandIds.has(command)) return
-    deps.shell.runCommand(command as CommandId)
+    shellFor(event).runCommand(command as CommandId)
   })
 
   ipcMain.handle('ncc:set-overlay', (event, payload: unknown) => {
@@ -521,19 +528,19 @@ export function registerIpc(deps: IpcDeps): void {
     if (!payload || typeof payload !== 'object') return
     const { reason, active } = payload as { reason?: unknown; active?: unknown }
     if (typeof reason !== 'string' || !overlayReasons.has(reason)) return
-    deps.shell.setOverlay(reason, active === true)
+    shellFor(event).setOverlay(reason, active === true)
   })
 
-  ipcMain.handle('ncc:bookmarks', () => deps.shell.getBookmarks())
+  ipcMain.handle('ncc:bookmarks', (event) => shellFor(event).getBookmarks())
 
   ipcMain.handle('ncc:toggle-bookmark', (event) => {
     if (!fromChrome(event)) return []
-    return deps.shell.toggleBookmark()
+    return shellFor(event).toggleBookmark()
   })
 
   ipcMain.handle('ncc:remove-bookmark', (event, url: unknown) => {
-    if (!fromChrome(event) || typeof url !== 'string') return deps.shell.getBookmarks()
-    return deps.shell.removeBookmark(url)
+    if (!fromChrome(event) || typeof url !== 'string') return shellFor(event).getBookmarks()
+    return shellFor(event).removeBookmark(url)
   })
 
   ipcMain.handle('ncc:get-downloads', () => deps.downloads.list())
@@ -556,13 +563,13 @@ export function registerIpc(deps: IpcDeps): void {
   })
 
   ipcMain.handle('ncc:window-minimize', (event) => {
-    if (fromChrome(event)) deps.shell.minimizeWindow()
+    if (fromChrome(event)) shellFor(event).minimizeWindow()
   })
   ipcMain.handle('ncc:window-toggle-maximize', (event) => {
-    if (fromChrome(event)) deps.shell.toggleMaximizeWindow()
+    if (fromChrome(event)) shellFor(event).toggleMaximizeWindow()
   })
   ipcMain.handle('ncc:window-close', (event) => {
-    if (fromChrome(event)) deps.shell.closeWindow()
+    if (fromChrome(event)) shellFor(event).closeWindow()
   })
 }
 

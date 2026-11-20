@@ -32,6 +32,7 @@ import android.webkit.WebViewClient
 import android.webkit.CookieManager
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import androidx.webkit.WebSettingsCompat
 import androidx.webkit.ScriptHandler
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
@@ -128,6 +129,172 @@ private const val WEBLN_SHIM = """
   var provider = { enable:function(){return call('enable')}, getInfo:function(){return call('get_info')}, getBalance:function(){return call('get_balance')}, sendPayment:function(value){return call('pay_invoice',typeof value === 'string' ? {paymentRequest:value} : value)}, makeInvoice:function(value){return call('make_invoice',value)} };
   document.addEventListener('click', function (event) { var target=event.target; var anchor=target && target.closest ? target.closest('a[href]') : null; var href=anchor && /^lightning:/i.test(anchor.href) ? anchor.href.replace(/^lightning:/i,'') : ''; var text=target && target.textContent ? target.textContent.slice(0,5000) : ''; var match=text.match(/\bln(?:bc|tb|bcrt)[0-9a-z]{20,}/i); var invoice=href || (match && match[0]); if (!invoice || !/^ln(?:bc|tb|bcrt)[0-9a-z]+$/i.test(invoice)) return; if (href) event.preventDefault(); provider.sendPayment({paymentRequest:invoice}).catch(function(){}); }, true);
   try { Object.defineProperty(window,'webln',{value:provider,writable:false,configurable:false}); } catch (_) { window.webln=provider; }
+})();
+"""
+
+/**
+ * Route WebAuthn through the encrypted NCC vault first. Private key data never leaves
+ * the browser shell; the page receives only the standard WebAuthn response fields.
+ */
+private const val PASSKEY_SHIM = """
+(function () {
+  var port = window.__nccPasskeys;
+  if (!port || window.top !== window || !navigator.credentials || !window.PublicKeyCredential) return;
+  var credentials = navigator.credentials;
+  var nativeCreate = credentials.create.bind(credentials);
+  var nativeGet = credentials.get.bind(credentials);
+  var pending = {}, sequence = 0, conditionals = new Set(), suggestion = null;
+  function encode(value) {
+    if (value instanceof ArrayBuffer) value = new Uint8Array(value);
+    if (ArrayBuffer.isView(value)) value = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+    if (!(value instanceof Uint8Array)) return '';
+    var binary = ''; for (var i = 0; i < value.length; i++) binary += String.fromCharCode(value[i]);
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  }
+  function decode(value) {
+    var raw = atob(value.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - value.length % 4) % 4));
+    var output = new Uint8Array(raw.length); for (var i = 0; i < raw.length; i++) output[i] = raw.charCodeAt(i);
+    return output.buffer;
+  }
+  function pack(value) {
+    return Object.assign({}, value, {
+      challenge: encode(value.challenge),
+      user: value.user ? Object.assign({}, value.user, { id: encode(value.user.id) }) : undefined,
+      allowCredentials: value.allowCredentials && value.allowCredentials.map(function (item) { return Object.assign({}, item, { id: encode(item.id) }); }),
+      excludeCredentials: value.excludeCredentials && value.excludeCredentials.map(function (item) { return Object.assign({}, item, { id: encode(item.id) }); })
+    });
+  }
+  function request(operation, options, credentialId, signal) {
+    return new Promise(function (resolve, reject) {
+      if (signal && signal.aborted) { reject(new DOMException('The operation was aborted', 'AbortError')); return; }
+      var id = ++sequence;
+      var item = { resolve: resolve, reject: reject, signal: signal, onAbort: null };
+      item.onAbort = function () {
+        delete pending[id];
+        try { port.postMessage(JSON.stringify({ id: id, operation: 'cancel' })); } catch (_) {}
+        reject(new DOMException('The operation was aborted', 'AbortError'));
+      };
+      pending[id] = item;
+      if (signal) signal.addEventListener('abort', item.onAbort, { once: true });
+      var payload = { id: id, operation: operation };
+      if (options) payload.options = pack(options);
+      if (credentialId) payload.credentialId = credentialId;
+      try { port.postMessage(JSON.stringify(payload)); }
+      catch (error) { delete pending[id]; reject(error); }
+    });
+  }
+  port.onmessage = function (event) {
+    var message; try { message = JSON.parse(event.data); } catch (_) { return; }
+    var item = pending[message.id]; if (!item) return;
+    delete pending[message.id];
+    if (item.signal) item.signal.removeEventListener('abort', item.onAbort);
+    item.resolve(message);
+  };
+  function responseObject(value, creation) {
+    var response = Object.create(creation ? AuthenticatorAttestationResponse.prototype : AuthenticatorAssertionResponse.prototype);
+    var members = { clientDataJSON: { value: decode(value.clientDataJSON), enumerable: true } };
+    if (creation) {
+      members.attestationObject = { value: decode(value.attestationObject), enumerable: true };
+      members.getTransports = { value: function () { return ['internal']; } };
+      if (value.publicKey) members.getPublicKey = { value: function () { return decode(value.publicKey); } };
+      members.getPublicKeyAlgorithm = { value: function () { return -7; } };
+    } else {
+      members.authenticatorData = { value: decode(value.authenticatorData), enumerable: true };
+      members.signature = { value: decode(value.signature), enumerable: true };
+      members.userHandle = { value: value.userHandle ? decode(value.userHandle) : null, enumerable: true };
+    }
+    Object.defineProperties(response, members);
+    var rawId = decode(value.rawId);
+    var result = Object.create(PublicKeyCredential.prototype);
+    Object.defineProperties(result, {
+      id: { value: value.id, enumerable: true }, rawId: { value: rawId, enumerable: true },
+      type: { value: 'public-key', enumerable: true }, response: { value: response, enumerable: true },
+      authenticatorAttachment: { value: 'platform', enumerable: true },
+      getClientExtensionResults: { value: function () { return {}; }, enumerable: true },
+      toJSON: { value: function () {
+        return { id: value.id, rawId: value.rawId, type: 'public-key', authenticatorAttachment: 'platform', clientExtensionResults: {}, response: creation
+          ? { clientDataJSON: value.clientDataJSON, attestationObject: value.attestationObject, transports: ['internal'] }
+          : { clientDataJSON: value.clientDataJSON, authenticatorData: value.authenticatorData, signature: value.signature, userHandle: value.userHandle || null } };
+      } }
+    });
+    return result;
+  }
+  async function resolve(operation, options, credentialId, signal) {
+    var result = await request(operation, options, credentialId, signal);
+    if (!result.handled) return null;
+    if (result.error) throw new DOMException(result.error === 'InvalidStateError' ? 'Credential already exists' : result.error, result.error === 'InvalidStateError' ? 'InvalidStateError' : 'NotAllowedError');
+    if (operation === 'candidates') return result.candidates || [];
+    return result.response ? responseObject(result.response, operation === 'create') : null;
+  }
+  function usernameField(element) {
+    if (!(element instanceof HTMLElement)) return false;
+    var input = element instanceof HTMLInputElement ? element : element.querySelector && element.querySelector('input');
+    var tokens = (element.getAttribute('autocomplete') || (input && input.getAttribute('autocomplete')) || '').toLowerCase().split(/\s+/);
+    return tokens.indexOf('webauthn') >= 0 && (tokens.indexOf('username') >= 0 || (input && ['text', 'email'].indexOf(input.type) >= 0));
+  }
+  function hideSuggestion() { if (suggestion) suggestion.hidden = true; }
+  async function showSuggestion(element) {
+    if (!usernameField(element)) { hideSuggestion(); return; }
+    var requestItem = Array.from(conditionals).find(function (entry) { return !entry.settled; });
+    if (!requestItem || !requestItem.accounts.length) { hideSuggestion(); return; }
+    if (!suggestion) {
+      suggestion = document.createElement('div'); suggestion.id = 'ncc-passkey-suggestion';
+      suggestion.style.cssText = 'position:fixed;z-index:2147483647;background:white;color:#222;border:1px solid #bbb;border-radius:10px;box-shadow:0 8px 28px #0004;padding:6px;font:14px system-ui;';
+      document.documentElement.appendChild(suggestion);
+    }
+    suggestion.replaceChildren();
+    requestItem.accounts.forEach(function (account) {
+      var button = document.createElement('button'); button.type = 'button'; button.textContent = 'Use NCC passkey · ' + account.name;
+      button.style.cssText = 'display:block;width:100%;padding:10px;border:0;background:white;text-align:left;color:#222;';
+      button.addEventListener('pointerdown', function (event) { event.preventDefault(); });
+      button.addEventListener('click', async function () {
+        hideSuggestion(); requestItem.settled = true; conditionals.delete(requestItem);
+        try {
+          var credential = await resolve('get', requestItem.options, account.credentialId, requestItem.signal);
+          requestItem.resolve(credential || await nativeGet(requestItem.nativeOptions));
+        } catch (error) { requestItem.reject(error); }
+      });
+      suggestion.appendChild(button);
+    });
+    var rect = element.getBoundingClientRect();
+    suggestion.style.left = Math.max(4, Math.min(rect.left, innerWidth - 320)) + 'px';
+    suggestion.style.top = Math.max(4, Math.min(rect.bottom, innerHeight - 160)) + 'px';
+    suggestion.hidden = false;
+  }
+  document.addEventListener('focusin', function (event) {
+    var target = event.composedPath && event.composedPath().find(usernameField) || event.target;
+    void showSuggestion(target);
+  }, true);
+  document.addEventListener('focusout', function () { setTimeout(function () { if (!suggestion || !suggestion.contains(document.activeElement)) hideSuggestion(); }, 150); }, true);
+  document.addEventListener('keydown', function (event) { if (event.key === 'Escape') hideSuggestion(); }, true);
+  Object.defineProperty(credentials, 'create', { configurable: true, value: async function (options) {
+    if (!options || !options.publicKey) return nativeCreate(options);
+    var result = await resolve('create', options.publicKey);
+    return result || nativeCreate(options);
+  } });
+  Object.defineProperty(credentials, 'get', { configurable: true, value: async function (options) {
+    if (!options || !options.publicKey) return nativeGet(options);
+    if (options.mediation === 'conditional') {
+      var accounts;
+      try { accounts = await resolve('candidates', options.publicKey); } catch (_) { return nativeGet(options); }
+      if (!accounts || !accounts.length) return nativeGet(options);
+      return new Promise(function (resolvePromise, rejectPromise) {
+        var requestItem = { accounts: accounts, options: options.publicKey, nativeOptions: options, signal: options.signal, resolve: resolvePromise, reject: rejectPromise, settled: false };
+        if (options.signal && options.signal.aborted) { rejectPromise(new DOMException('The operation was aborted', 'AbortError')); return; }
+        if (options.signal) options.signal.addEventListener('abort', function () {
+          if (requestItem.settled) return; requestItem.settled = true; conditionals.delete(requestItem); hideSuggestion(); rejectPromise(new DOMException('The operation was aborted', 'AbortError'));
+        }, { once: true });
+        conditionals.add(requestItem);
+        if (usernameField(document.activeElement)) void showSuggestion(document.activeElement);
+      });
+    }
+    var result = await resolve('get', options.publicKey, null, options.signal);
+    return result || nativeGet(options);
+  } });
+  var nativeConditional = PublicKeyCredential.isConditionalMediationAvailable && PublicKeyCredential.isConditionalMediationAvailable.bind(PublicKeyCredential);
+  Object.defineProperty(PublicKeyCredential, 'isConditionalMediationAvailable', { configurable: true, value: async function () { return true; } });
+  var nativeCapabilities = PublicKeyCredential.getClientCapabilities && PublicKeyCredential.getClientCapabilities.bind(PublicKeyCredential);
+  if (nativeCapabilities) Object.defineProperty(PublicKeyCredential, 'getClientCapabilities', { configurable: true, value: async function () { return Object.assign({}, await nativeCapabilities(), { conditionalGet: true, passkeyPlatformAuthenticator: true, userVerifyingPlatformAuthenticator: true }); } });
 })();
 """
 
@@ -301,6 +468,7 @@ class ContentSurface(
   private external fun nativeCosmeticSelectors(url: String, kind: String): String
   private val cosmeticScripts = LinkedHashMap<String, ScriptHandler>()
   private val pendingNwc = ConcurrentHashMap<String, (String) -> Unit>()
+  private val pendingPasskeys = ConcurrentHashMap<String, (String) -> Unit>()
   private external fun nativeClearProtectionSession(kind: String)
   private external fun nativeNip07(kind: String, origin: String, method: String, body: String): String
   private var webView: WebView? = null
@@ -471,6 +639,61 @@ class ContentSurface(
    * Offer NIP-07 to web pages. Private tabs sign with a key that lives in memory and
    * Tor tabs with another; neither can reach the person's own key.
    */
+  /** Route page WebAuthn requests to the browser shell and back to their originating tab. */
+  private fun installPasskeyBridge(web: WebView) {
+    if (isPrivate || isTor || !WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER) ||
+      !WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) return
+    try {
+      WebViewCompat.addWebMessageListener(web, "__nccPasskeys", setOf("https://*")) { _, message, sourceOrigin, isMainFrame, replyProxy ->
+        if (destroyed) return@addWebMessageListener
+        val request = try { JSONObject(message.data ?: return@addWebMessageListener) } catch (_: Exception) { return@addWebMessageListener }
+        val callId = request.optInt("id", -1)
+        val operation = request.optString("operation")
+        if (operation == "cancel") {
+          pendingPasskeys.entries.firstOrNull { it.key.startsWith("$id:$callId:") }?.let { (key, responder) ->
+            pendingPasskeys.remove(key)
+            responder(JSONObject().put("id", callId).put("handled", true).put("error", "AbortError").toString())
+          }
+          return@addWebMessageListener
+        }
+        val pageUrl = Uri.parse(web.url ?: currentUrl ?: "")
+        val scheme = sourceOrigin.scheme?.lowercase()
+        val host = sourceOrigin.host?.lowercase() ?: ""
+        val pageOrigin = buildString {
+          append(pageUrl.scheme?.lowercase() ?: "")
+          append("://")
+          append(pageUrl.host?.lowercase() ?: "")
+          if (pageUrl.port > 0) append(":${pageUrl.port}")
+        }
+        if (callId < 0 || !isMainFrame || scheme != "https" || host.endsWith(".localhost") || sourceOrigin.toString().trimEnd('/') != pageOrigin) {
+          replyProxy.postMessage(JSONObject().put("id", callId).put("handled", true).put("error", "NotAllowedError").toString())
+          return@addWebMessageListener
+        }
+        val requestId = "$id:$callId:${System.nanoTime()}"
+        val responder: (String) -> Unit = { raw ->
+          val answer = try { JSONObject(raw) } catch (_: Exception) { JSONObject().put("handled", false) }
+          val result = JSONObject().put("id", callId).put("handled", answer.optBoolean("handled"))
+          if (answer.has("error")) result.put("error", answer.optString("error"))
+          if (answer.has("response")) result.put("response", answer.optJSONObject("response") ?: JSONObject())
+          if (answer.has("candidates")) result.put("candidates", answer.optJSONArray("candidates") ?: org.json.JSONArray())
+          Handler(Looper.getMainLooper()).post { if (!destroyed) replyProxy.postMessage(result.toString()) }
+        }
+        pendingPasskeys[requestId] = responder
+        Handler(Looper.getMainLooper()).postDelayed({ pendingPasskeys.remove(requestId)?.invoke("{\"handled\":true,\"error\":\"NotAllowedError\"}") }, 120_000)
+        emit(JSONObject()
+          .put("type", "webauthn-request")
+          .put("requestId", requestId)
+          .put("operation", operation)
+          .put("origin", sourceOrigin.toString().trimEnd('/'))
+          .put("credentialId", request.optString("credentialId"))
+          .put("options", request.optJSONObject("options") ?: JSONObject()))
+      }
+      WebViewCompat.addDocumentStartJavaScript(web, PASSKEY_SHIM, setOf("https://*"))
+    } catch (_: Throwable) {
+      // Fall back to the WebView's platform implementation when the bridge is unavailable.
+    }
+  }
+
   private fun installNip07(web: WebView) {
     if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER) ||
       !WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)
@@ -551,6 +774,10 @@ class ContentSurface(
 
   fun resolveNwc(requestId: String, response: String) {
     pendingNwc.remove(requestId)?.invoke(response)
+  }
+
+  fun resolvePasskey(requestId: String, response: String) {
+    pendingPasskeys.remove(requestId)?.invoke(response)
   }
 
   /**
@@ -867,6 +1094,15 @@ class ContentSurface(
       builtInZoomControls = true
       displayZoomControls = false
     }
+    // Use Android's credential providers for ordinary browsing. Keep private and Tor
+    // surfaces isolated from the persistent system credential store. Conditional UI
+    // is not supported by Android WebView, but explicit create/get ceremonies are.
+    if (!isPrivate && !isTor && WebViewFeature.isFeatureSupported(WebViewFeature.WEB_AUTHENTICATION)) {
+      WebSettingsCompat.setWebAuthenticationSupport(
+        web.settings,
+        WebSettingsCompat.WEB_AUTHENTICATION_SUPPORT_FOR_BROWSER,
+      )
+    }
     CookieManager.getInstance().setAcceptThirdPartyCookies(web, nativeProtectionLevel() != 2)
 
     web.setFindListener { active, total, _ ->
@@ -1051,6 +1287,7 @@ class ContentSurface(
     installPaymentBridge(web)
     installFaviconRefreshBridge(web)
     installNip07(web)
+    installPasskeyBridge(web)
 
     web.webViewClient = object : WebViewClient() {
       /**
@@ -1183,6 +1420,10 @@ class ContentSurface(
       }
 
       override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
+        pendingPasskeys.entries.toList().forEach { (requestId, reply) ->
+          pendingPasskeys.remove(requestId)
+          reply("{\"handled\":true,\"error\":\"AbortError\"}")
+        }
         CookieManager.getInstance().setAcceptThirdPartyCookies(view, nativeProtectionLevel() != 2)
         currentUrl = url
         refreshedFaviconPage = null

@@ -26,6 +26,7 @@ import type {
   HttpsMode,
   PasswordConfig,
   PasswordContext,
+  PasskeyConfirmationRequest,
   PasswordCopyResult,
   PasswordDraft,
   PasswordEntry,
@@ -84,6 +85,7 @@ export interface NccApi {
   closeTab(id?: string): Promise<void>
   selectTab(id: string): Promise<void>
   moveTab(id: string, toIndex: number): Promise<void>
+  detachTab(id: string, screenX: number, screenY: number): Promise<void>
   duplicateTab(id?: string): Promise<void>
   reloadTab(id?: string): Promise<void>
   toggleMute(id?: string): Promise<void>
@@ -199,6 +201,9 @@ export interface NccApi {
   onPasswordStatus(listener: (status: PasswordVaultStatus) => void): () => void
   onPasswordContext(listener: (context: PasswordContext) => void): () => void
   onPasswordSaveRequest(listener: (request: PasswordSaveRequest) => void): () => void
+  onPasskeyConfirmation(listener: (request: PasskeyConfirmationRequest) => void): () => void
+  onPasskeyConfirmationResolved(listener: (id: string) => void): () => void
+  respondToPasskeyConfirmation(id: string, choice: number | null): Promise<boolean>
   onPasswordToast(listener: (toast: PasswordToast) => void): () => void
   extensionsState(): Promise<ExtensionsState>
   extensionsSetDeveloper(value: boolean): Promise<ExtensionsState>

@@ -127,7 +127,7 @@ function csvQuote(value: string): string {
 export function exportPasswordCsv(entries: PasswordEntry[]): string {
   const header = ['name', 'url', 'username', 'password', 'notes', 'totp']
   const lines = [header.join(',')]
-  for (const entry of entries) {
+  for (const entry of entries.filter((value) => !value.passkey)) {
     lines.push(
       [
         csvCell(entry.title),

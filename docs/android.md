@@ -56,8 +56,9 @@ Three things that are easy to trip over again:
 The project-local toolchain lives in the ignored `.android-toolchain/` directory. It
 matches the Android workflow: Temurin Java 21, Android platform 37.2, build-tools
 37.0.0, NDK 27.2.12479018, and the Rust Android targets for arm64 and x86_64. The
-Android Emulator and an API 37 x86_64 system image are included for device-free
-debugging. Android Studio is not required.
+Android Emulator and an API 37 x86_64 AOSP system image are included for device-free
+debugging. Android Studio is not required. A separate Google Play image is installed on
+demand for Credential Manager/passkey-provider tests.
 
 Load the environment in each shell before building or using `adb`:
 
@@ -72,6 +73,20 @@ build is for the emulator. Start the headless virtual device with:
 ```bash
 scripts/android-emulator.sh
 ```
+
+This starts the existing AOSP AVD. For passkey-provider tests, use the separate Google
+Play AVD instead:
+
+```bash
+scripts/android-emulator.sh --credential-manager
+```
+
+That command installs `system-images;android-36.1;google_apis_playstore;x86_64` into the
+local toolchain if needed, then creates and starts `ncc-api-36.1-playstore-x86_64`. The
+Android SDK currently publishes the Google Play image at API 36.1; the existing AOSP
+emulator remains API 37. Google
+Password Manager may still require NCC to be approved as a privileged browser before it
+will provide credentials for third-party websites.
 
 The emulator command stays attached while the device is running. In another shell,
 install and launch a debug APK with `adb install -r <apk>` and

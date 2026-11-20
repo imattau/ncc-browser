@@ -11,6 +11,7 @@ import {
   type DownloadNotice,
   type NavState,
   type PasswordContext,
+  type PasskeyConfirmationRequest,
   type PasswordSaveRequest,
   type PasswordToast,
   type PasswordVaultStatus,
@@ -35,6 +36,7 @@ const api: NccApi = {
   closeTab: (id) => ipcRenderer.invoke('ncc:close-tab', id),
   selectTab: (id) => ipcRenderer.invoke('ncc:select-tab', id),
   moveTab: (id, toIndex) => ipcRenderer.invoke('ncc:move-tab', { id, toIndex }),
+  detachTab: (id, screenX, screenY) => ipcRenderer.invoke('ncc:detach-tab', { id, screenX, screenY }),
   duplicateTab: (id) => ipcRenderer.invoke('ncc:duplicate-tab', id),
   reloadTab: (id) => ipcRenderer.invoke('ncc:reload-tab', id),
   toggleMute: (id) => ipcRenderer.invoke('ncc:toggle-mute', id),
@@ -287,6 +289,18 @@ const api: NccApi = {
       ipcRenderer.removeListener('ncc:password-save-request', handler)
     }
   },
+  onPasskeyConfirmation: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, request: PasskeyConfirmationRequest): void => listener(request)
+    ipcRenderer.on('ncc:passkey-confirmation', handler)
+    return () => ipcRenderer.removeListener('ncc:passkey-confirmation', handler)
+  },
+  onPasskeyConfirmationResolved: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, id: string): void => listener(id)
+    ipcRenderer.on('ncc:passkey-confirmation-resolved', handler)
+    return () => ipcRenderer.removeListener('ncc:passkey-confirmation-resolved', handler)
+  },
+  respondToPasskeyConfirmation: (id, choice) =>
+    ipcRenderer.invoke('ncc:passkey-confirmation-response', { id, choice }),
   onPaymentCardSaveRequest: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, request: PaymentCardSaveRequest): void => listener(request)
     ipcRenderer.on('ncc:payment-card-save-request', handler)

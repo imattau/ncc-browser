@@ -109,6 +109,20 @@ export interface PasswordEntry {
   updatedAt: number
   /** Tombstone entries stay in the vault so deletions propagate across devices. */
   deleted?: boolean
+  /** A WebAuthn credential. Private key material is protected by the encrypted vault. */
+  passkey?: PasskeyCredential
+}
+
+export interface PasskeyCredential {
+  credentialId: string
+  rpId: string
+  userHandle: string
+  userName: string
+  userDisplayName: string
+  privateKeyJwk: JsonWebKey
+  publicKeyJwk: JsonWebKey
+  signCount: number
+  discoverable: boolean
 }
 
 /** Editable fields sent from the trusted chrome renderer. */
@@ -129,8 +143,16 @@ export interface PasswordSummary {
   title: string
   username: string
   hasTotp: boolean
+  isPasskey?: boolean
   createdAt: number
   updatedAt: number
+}
+
+export interface PasskeyConfirmationRequest {
+  id: string
+  site: string
+  accounts: string[]
+  action: 'Create passkey' | 'Use passkey'
 }
 
 export interface PasswordConfig {
@@ -293,6 +315,7 @@ export interface PasswordContext {
   configured: boolean
   status: PasswordVaultStatus
   matches: PasswordSummary[]
+  passkeys: PasswordSummary[]
   formDetected: boolean
   pendingSave: boolean
   canFill: boolean
@@ -683,6 +706,7 @@ export const OVERLAY_REASONS = [
   'insecure',
   'passwords',
   'password-save',
+  'passkey-confirmation',
   'payment-card-save',
   'wallet',
   'share-nostr'
