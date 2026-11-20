@@ -1,5 +1,11 @@
 # Nostr Navigator for Android
 
+## Fixes in 0.35.7
+
+- Media previews in nccsearch stop playing when they are closed, and when you leave
+  the page, instead of continuing in the background.
+- Updated embedded nccsearch to ncc-server v0.2.18.
+
 ## Fixes in 0.35.6
 
 - Fixed the Linux npack launcher icon on GNOME.
