@@ -1,5 +1,13 @@
 # Nostr Navigator for Android
 
+## Fixes in 0.35.3
+
+- Fixed the Identity screen failing to open from Settings.
+- Restored NIP-07 sign-in for Android's embedded nccsearch page, using the existing
+  signer approval flow.
+- Home-page icons now refresh when you revisit a site, so changed favicons replace
+  stale saved icons.
+
 ## New in 0.35.2
 
 - Updated embedded nccsearch with mobile-friendly search settings, local relay preferences,

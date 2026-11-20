@@ -506,6 +506,28 @@ async fn handle_inner(state: &ProxyState, request: Request) -> Response {
     let query = request.uri().query().unwrap_or_default().to_string();
 
     if authority_host(&authority).eq_ignore_ascii_case("nccsearch.localhost") {
+        if let Some(signer_method) = path.strip_prefix("/__ncc/nip07/") {
+            if request.method() != axum::http::Method::POST {
+                return text(StatusCode::METHOD_NOT_ALLOWED, "NIP-07 requests must use POST");
+            }
+            let body = match axum::body::to_bytes(request.into_body(), state.max_body_bytes).await {
+                Ok(body) => body,
+                Err(_) => return text(StatusCode::PAYLOAD_TOO_LARGE, "Request body too large"),
+            };
+            let origin = match Url::parse(&format!("http://{authority}")) {
+                Ok(url) if url.host_str().is_some_and(|host| host.eq_ignore_ascii_case("nccsearch.localhost")) => {
+                    url.origin().ascii_serialization()
+                }
+                _ => return json_error(StatusCode::BAD_REQUEST, "bad-origin", "Unknown nccsearch origin."),
+            };
+            let (status, body) = crate::signer::handle_web(state, &origin, signer_method, &body).await;
+            return Response::builder()
+                .status(StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR))
+                .header(header::CONTENT_TYPE, "application/json; charset=utf-8")
+                .header(header::CACHE_CONTROL, "no-store")
+                .body(Body::from(body))
+                .unwrap_or_else(|_| text(StatusCode::INTERNAL_SERVER_ERROR, "Could not answer NIP-07 request"));
+        }
         return serve_nccsearch(state, &path, request.method());
     }
 
@@ -734,20 +756,7 @@ fn serve_nccsearch(
         "woff2" => "font/woff2",
         _ => "application/octet-stream",
     };
-    let body = if method == axum::http::Method::HEAD {
-        Body::empty()
-    } else {
-        Body::from(bytes)
-    };
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, content_type)
-        .header(header::CACHE_CONTROL, "no-store")
-        .header("x-content-type-options", "nosniff")
-        .header(header::REFERRER_POLICY, "no-referrer")
-        .header("content-security-policy", "default-src 'self' data: blob:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src https:; connect-src 'self' wss: ws: https:; worker-src 'self' blob:; base-uri 'self'")
-        .body(body)
-        .unwrap_or_else(|_| text(StatusCode::INTERNAL_SERVER_ERROR, "Could not serve nccsearch"))
+    nccsearch_response(method, &bytes, content_type)
 }
 
 fn serve_nccsearch_embedded(request_path: &str, method: &axum::http::Method) -> Response {
@@ -763,18 +772,36 @@ fn serve_nccsearch_embedded(request_path: &str, method: &axum::http::Method) -> 
     else {
         return text(StatusCode::NOT_FOUND, "Not found");
     };
+    nccsearch_response(method, bytes, content_type)
+}
+
+fn nccsearch_response(
+    method: &axum::http::Method,
+    bytes: &[u8],
+    content_type: &str,
+) -> Response {
+    const POLICY: &str = "default-src 'self' data: blob:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src https:; connect-src 'self' wss: ws: https:; worker-src 'self' blob:; base-uri 'self'";
+    let (body_bytes, policy) = if content_type.starts_with("text/html") {
+        let injection = Injection::new("nccsearch");
+        let html = String::from_utf8_lossy(bytes);
+        let injected = inject_into_html(&html, &injection.script_tag());
+        let injected = crate::inject::relax_meta_csps(&injected, &injection.nonce);
+        (injected.into_bytes(), relax_csp(POLICY, &injection.nonce))
+    } else {
+        (bytes.to_vec(), POLICY.to_string())
+    };
     let body = if method == axum::http::Method::HEAD {
         Body::empty()
     } else {
-        Body::from(*bytes)
+        Body::from(body_bytes)
     };
     Response::builder()
         .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, *content_type)
+        .header(header::CONTENT_TYPE, content_type)
         .header(header::CACHE_CONTROL, "no-store")
         .header("x-content-type-options", "nosniff")
         .header(header::REFERRER_POLICY, "no-referrer")
-        .header("content-security-policy", "default-src 'self' data: blob:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src https:; connect-src 'self' wss: ws: https:; worker-src 'self' blob:; base-uri 'self'")
+        .header("content-security-policy", policy)
         .body(body)
         .unwrap_or_else(|_| text(StatusCode::INTERNAL_SERVER_ERROR, "Could not serve nccsearch"))
 }

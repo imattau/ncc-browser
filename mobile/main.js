@@ -645,7 +645,7 @@ function showPanel(name) {
   if (name === 'downloads') loadDownloads()
   if (name === 'identity') {
     void identityFeature.refreshIdentity()
-    void refreshBunker()
+    void identityFeature.refreshBunker()
   }
   if (name === 'home') homeFeature.renderHome()
 

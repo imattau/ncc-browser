@@ -218,6 +218,50 @@ private const val PAYMENT_HOOK = """
 })()
 """
 
+/** Refresh the declared icon without changing the page's normal HTTP cache policy. */
+private const val FAVICON_REFRESH_SCRIPT = """
+(function(){
+  var bridge=window.__nccFaviconBridge;
+  if(!bridge||window.top!==window)return;
+  var urls=[];
+  try{
+    document.querySelectorAll('link[rel]').forEach(function(link){
+      var rel=(link.rel||'').toLowerCase().split(/\s+/);
+      if(rel.indexOf('icon')!==-1&&link.href)urls.push(link.href);
+    });
+    urls.push(new URL('/favicon.ico',location.href).href);
+  }catch(_){return;}
+  var page=location.href;
+  function next(index){
+    if(index>=urls.length)return;
+    fetch(urls[index],{cache:'no-store',credentials:'same-origin'}).then(function(response){
+      if(!response.ok)return null;
+      var type=(response.headers.get('content-type')||'').split(';')[0].trim().toLowerCase();
+      if(type.indexOf('image/')!==0)return null;
+      return response.blob().then(function(blob){return {blob:blob};});
+    }).then(function(result){
+      if(!result||result.blob.size===0||result.blob.size>262144)return next(index+1);
+      var reader=new FileReader();
+      reader.onload=function(){try{bridge.postMessage(JSON.stringify({url:page,icon:reader.result}));}catch(_){}};
+      reader.onerror=function(){next(index+1);};
+      reader.readAsDataURL(result.blob);
+    }).catch(function(){next(index+1);});
+  }
+  next(0);
+})();
+"""
+
+private fun faviconPageKey(raw: String?): String? = raw?.substringBefore('#')?.takeIf { it.isNotBlank() }
+
+private fun faviconOrigin(raw: String?): String? {
+  val uri = raw?.let { try { Uri.parse(it) } catch (_: Exception) { null } } ?: return null
+  val scheme = uri.scheme?.lowercase() ?: return null
+  val host = uri.host?.lowercase() ?: return null
+  if (scheme != "http" && scheme != "https") return null
+  val port = if (uri.port == -1 || (scheme == "https" && uri.port == 443) || (scheme == "http" && uri.port == 80)) "" else ":${uri.port}"
+  return "$scheme://$host$port"
+}
+
 private fun webOrigin(raw: String?): String? {
   val uri = raw?.let { try { Uri.parse(it) } catch (_: Exception) { null } } ?: return null
   val scheme = uri.scheme?.lowercase() ?: return null
@@ -263,6 +307,8 @@ class ContentSurface(
   /** Captured from the first Tor URL so filtering does not race the shell bridge. */
   private var torListenerPort: Int? = null
   private var showingError = false
+  /** Page whose refreshed favicon supersedes a potentially stale WebView bitmap. */
+  private var refreshedFaviconPage: String? = null
   /// Set once the tab is gone, so a callback posted before that cannot touch it.
   private var destroyed = false
   private val sitePermissionDecisions = mutableMapOf<String, Boolean>()
@@ -390,6 +436,35 @@ class ContentSurface(
         }
       }
     } catch (_: Throwable) { /* Payment form assistance is unavailable on older WebView versions. */ }
+  }
+
+  /** Accept a freshly fetched favicon only from this tab's current top-level page. */
+  private fun installFaviconRefreshBridge(web: WebView) {
+    if (isPrivate || isTor || !WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) return
+    try {
+      WebViewCompat.addWebMessageListener(web, "__nccFaviconBridge", setOf("*")) { _, message, sourceOrigin, isMainFrame, _ ->
+        if (!isMainFrame || destroyed) return@addWebMessageListener
+        val request = try { JSONObject(message.data ?: return@addWebMessageListener) } catch (_: Exception) { return@addWebMessageListener }
+        val page = request.optString("url").takeIf { it.isNotBlank() } ?: return@addWebMessageListener
+        val icon = request.optString("icon").takeIf { it.startsWith("data:image/", ignoreCase = true) } ?: return@addWebMessageListener
+        if (icon.length > 360_000) return@addWebMessageListener
+        val pageKey = faviconPageKey(page) ?: return@addWebMessageListener
+        val origin = faviconOrigin(page) ?: return@addWebMessageListener
+        if (origin != faviconOrigin(sourceOrigin.toString()) || origin != faviconOrigin(currentUrl)) return@addWebMessageListener
+        if (pageKey == refreshedFaviconPage) return@addWebMessageListener
+        refreshedFaviconPage = pageKey
+
+        Handler(Looper.getMainLooper()).post {
+          if (destroyed || faviconPageKey(currentUrl) != pageKey || faviconPageKey(web.url) != pageKey) {
+            if (refreshedFaviconPage == pageKey) refreshedFaviconPage = null
+            return@post
+          }
+          emit(JSONObject().put("type", "icon").put("url", page).put("icon", icon))
+        }
+      }
+    } catch (_: Throwable) {
+      // The existing WebChromeClient favicon callback remains available on older WebViews.
+    }
   }
 
   /**
@@ -941,6 +1016,8 @@ class ContentSurface(
        * The shell keeps it per service, so it outlives the tab.
        */
       override fun onReceivedIcon(view: WebView, icon: Bitmap) {
+        val page = view.url ?: currentUrl ?: return
+        if (faviconPageKey(page) == refreshedFaviconPage) return
         val size = 96
         val scale = size.toFloat() / maxOf(icon.width, icon.height).coerceAtLeast(1)
         val small = if (scale < 1f) {
@@ -958,7 +1035,7 @@ class ContentSurface(
         emit(
           JSONObject()
             .put("type", "icon")
-            .put("url", view.url ?: currentUrl ?: "")
+            .put("url", page)
             .put("icon", "data:image/png;base64," + Base64.encodeToString(bytes.toByteArray(), Base64.NO_WRAP)),
         )
       }
@@ -972,6 +1049,7 @@ class ContentSurface(
 
     installPasswordBridge(web)
     installPaymentBridge(web)
+    installFaviconRefreshBridge(web)
     installNip07(web)
 
     web.webViewClient = object : WebViewClient() {
@@ -1107,6 +1185,7 @@ class ContentSurface(
       override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
         CookieManager.getInstance().setAcceptThirdPartyCookies(view, nativeProtectionLevel() != 2)
         currentUrl = url
+        refreshedFaviconPage = null
         emit(JSONObject().put("type", "loading").put("url", url ?: ""))
       }
 
@@ -1125,6 +1204,10 @@ class ContentSurface(
             .put("canGoBack", view.canGoBack())
             .put("canGoForward", view.canGoForward()),
         )
+
+        if (!isPrivate && !isTor && faviconOrigin(url) != null) {
+          view.evaluateJavascript(FAVICON_REFRESH_SCRIPT, null)
+        }
 
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
           val selectors = nativeCosmeticSelectors(url ?: "", tabKind())
