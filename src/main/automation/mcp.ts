@@ -18,6 +18,32 @@ export interface RpcResponse {
 }
 
 const SUPPORTED_PROTOCOLS = ['2025-06-18', '2025-03-26', '2024-11-05']
+const MAX_BATCH_CALLS = 20
+
+const BATCH_TOOL = {
+  name: 'batch',
+  description:
+    'Run up to 20 browser tools sequentially in one call. Each item has a tool name and arguments. Results are returned in order. Execution stops after the first tool error; earlier operations are not rolled back.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      calls: {
+        type: 'array',
+        minItems: 1,
+        maxItems: MAX_BATCH_CALLS,
+        items: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: 'Name of an available tool (batch cannot be nested).' },
+            arguments: { type: 'object', description: 'Arguments for the tool.' }
+          },
+          required: ['name']
+        }
+      }
+    },
+    required: ['calls']
+  }
+}
 
 export class McpHandler {
   constructor(
@@ -59,7 +85,7 @@ export class McpHandler {
           return ok(id, {})
         case 'tools/list':
           return ok(id, {
-            tools: TOOLS.map(({ name, description, inputSchema }) => ({
+            tools: [BATCH_TOOL, ...TOOLS].map(({ name, description, inputSchema }) => ({
               name,
               description,
               inputSchema
@@ -67,6 +93,50 @@ export class McpHandler {
           })
         case 'tools/call': {
           const name = request.params?.name
+          if (name === 'batch') {
+            const calls = request.params?.arguments && typeof request.params.arguments === 'object'
+              ? (request.params.arguments as Record<string, unknown>).calls
+              : undefined
+            if (!Array.isArray(calls) || calls.length === 0 || calls.length > MAX_BATCH_CALLS) {
+              return ok(id, {
+                content: [{ type: 'text', text: `calls must contain between 1 and ${MAX_BATCH_CALLS} tool calls.` }],
+                isError: true
+              })
+            }
+            const results: Array<{ name: string; result: unknown }> = []
+            for (const entry of calls) {
+              if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+                results.push({ name: '', result: toolFailure('Each call must be an object with a tool name.') })
+                break
+              }
+              const call = entry as Record<string, unknown>
+              const toolName = call.name
+              if (typeof toolName !== 'string' || toolName === 'batch') {
+                results.push({ name: typeof toolName === 'string' ? toolName : '', result: toolFailure('Each call needs a valid tool name; batch cannot be nested.') })
+                break
+              }
+              const tool = findTool(toolName)
+              if (!tool) {
+                results.push({ name: toolName, result: toolFailure(`Unknown tool: ${toolName}`) })
+                break
+              }
+              const args = call.arguments === undefined ? {} : call.arguments
+              if (typeof args !== 'object' || args === null || Array.isArray(args)) {
+                results.push({ name: toolName, result: toolFailure('arguments must be an object.') })
+                break
+              }
+              try {
+                const result = await tool.run(this.host, args as Record<string, unknown>, this.gate)
+                results.push({ name: toolName, result })
+                if (result.isError) break
+              } catch (cause) {
+                results.push({ name: toolName, result: toolFailure(cause instanceof Error ? cause.message : String(cause)) })
+                break
+              }
+            }
+            const failed = results.some(({ result }) => (result as { isError?: boolean }).isError)
+            return ok(id, { content: [{ type: 'text', text: JSON.stringify(results, null, 2) }], ...(failed ? { isError: true } : {}) })
+          }
           const tool = typeof name === 'string' ? findTool(name) : undefined
           if (!tool) return error(id, -32602, `Unknown tool: ${String(name)}`)
           const args = (request.params?.arguments ?? {}) as Record<string, unknown>
@@ -88,6 +158,10 @@ export class McpHandler {
       return error(id, -32603, cause instanceof Error ? cause.message : 'Internal error')
     }
   }
+}
+
+function toolFailure(message: string) {
+  return { content: [{ type: 'text', text: message }], isError: true }
 }
 
 function ok(id: string | number, result: unknown): RpcResponse {

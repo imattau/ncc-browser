@@ -66,6 +66,31 @@ describe('McpHandler', () => {
     const list = await handler.handle(rpc('tools/list'))
     const names = (list?.result as { tools: Array<{ name: string }> }).tools.map((t) => t.name)
     expect(names).toEqual(expect.arrayContaining(['tabs_list', 'screenshot', 'click', 'type']))
+    expect(names).toContain('batch')
+  })
+
+  it('runs batch calls in order and stops on the first error', async () => {
+    const { host, calls } = fakeHost()
+    const handler = new McpHandler(host, allowAll, info)
+    const reply = await handler.handle(
+      rpc('tools/call', {
+        name: 'batch',
+        arguments: {
+          calls: [
+            { name: 'click', arguments: { x: 5, y: 6 } },
+            { name: 'click', arguments: {} },
+            { name: 'type', arguments: { text: 'should not run' } }
+          ]
+        }
+      })
+    )
+    const result = reply?.result as { isError?: boolean; content: Array<{ text: string }> }
+    expect(result.isError).toBe(true)
+    const entries = JSON.parse(result.content[0]!.text) as Array<{ name: string; result: { isError?: boolean } }>
+    expect(entries.map((entry) => entry.name)).toEqual(['click', 'click'])
+    expect(entries[1]?.result.isError).toBe(true)
+    expect(calls).toContain('click 5,6')
+    expect(calls).not.toContain('type should not run')
   })
 
   it('treats notifications as one-way', async () => {

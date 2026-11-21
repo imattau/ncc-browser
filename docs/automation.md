@@ -29,9 +29,11 @@ XDG_CONFIG_HOME=/tmp/ncc-scratch NCC_AUTOMATION=1 npm run dev
 
 ## Tools
 
-`tabs_list`, `tab_new`, `tab_close`, `navigate`, `read_page` (numbered interactive
+`batch` (up to 20 ordered tool calls), `tabs_list`, `tab_new`, `tab_close`, `navigate`, `read_page` (numbered interactive
 elements), `get_page_text`, `get_console_logs`, `screenshot`, `click`, `hover`, `type`,
 `press_key`, `scroll`, `evaluate`, `approvals_status`, `approvals_revoke`.
+Batch calls run sequentially, stop on the first error, and return each completed result
+in order. Earlier actions are not rolled back if a later call fails.
 
 Browser development tools are a separate permission scope, independent of site access.
 The first `open_settings`, `chrome_read_page`, `chrome_screenshot`, `chrome_click`,

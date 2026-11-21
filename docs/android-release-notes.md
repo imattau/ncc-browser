@@ -1,5 +1,9 @@
 # Nostr Navigator for Android
 
+## Fixes in 0.36.4
+
+- Added a batch MCP tool for running up to 20 ordered browser operations in one call.
+
 ## Fixes in 0.36.1
 
 - Fixed Android WebAuthn requests bypassing the NCC passkey manager because the WebView
