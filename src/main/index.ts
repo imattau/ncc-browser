@@ -41,7 +41,7 @@ import { SyncPrefsStore } from './sync/prefs'
 import { SyncService } from './sync/service'
 import { registerSyncIpc } from './sync/ipc'
 import { EndpointHealth } from './ncc/health'
-import { closeSharedPool, NccResolver, signerFromSecret, type LocatorSigner } from './ncc/resolver'
+import { closeSharedPool, NccResolver, signerFromSecret, toHexPubkey, type LocatorSigner } from './ncc/resolver'
 import { NsiteBlobs } from './nsite/blob'
 import { NsiteResolver } from './nsite/resolver'
 import { installNsiteProtocol } from './nsite/protocol'
@@ -66,6 +66,9 @@ import {
 import { TransportPolicy } from './ncc/transport'
 import { HttpPolicy } from './security'
 import { ProtectionService } from './protection'
+import { HostingStore } from './hosting/store'
+import { HostingService } from './hosting/service'
+import { RelayHostingPublisher } from './hosting/relays'
 import {
   installShellCameraPermission,
   installSitePermissionPrompts,
@@ -245,6 +248,18 @@ app.whenReady().then(async () => {
       relayPins.setFromEntries([...config.getRelayEntries(), ...entries])
     },
     bunkerRelay: (urls) => createBunkerRelay({ urls, pool: relayPool })
+  })
+
+  const hosting = new HostingService({
+    store: new HostingStore(join(app.getPath('userData'), 'services.json')),
+    identity: {
+      provider: () => identity.provider(),
+      status: () => identity.status()
+    },
+    publisher: new RelayHostingPublisher(relayPool, config),
+    onChange: (state) => {
+      if (shell && !shell.window.isDestroyed()) shell.sendToChrome('ncc:hosting-changed', state)
+    }
   })
 
   const content = createContentSessions()
@@ -435,6 +450,18 @@ app.whenReady().then(async () => {
     },
     extensionContextItems: (url) => extensions?.contextMenuItems(url) ?? [],
     invalidateSite,
+    onHostedResolved: (activity) => {
+      if (!activity.locator?.encrypted) return
+      const owner = toHexPubkey(activity.pubkey)
+      if (!owner) return
+      hosting.recordReceived({
+        owner,
+        dTag: activity.locator.dTag,
+        expiresAt: activity.locator.expiresAt,
+        ...(activity.locator.notes ? { title: activity.locator.notes } : {}),
+        encrypted: true
+      })
+    },
     createWindow: (bounds) => createShellWindow(null, bounds),
     onSessionChanged: () => sessionStore.saveWindows(browserShells().map((entry) => entry.sessionSnapshot()))
   }
@@ -671,8 +698,14 @@ app.whenReady().then(async () => {
     permissions,
     approvals,
     downloads,
-    passwords: passwordService
+    passwords: passwordService,
+    hosting
   })
+
+  const hostingRenewal = setInterval(() => void hosting.renewDue(), 6 * 3600_000)
+  hostingRenewal.unref()
+  const hostingStartup = setTimeout(() => void hosting.renewDue(), 5_000)
+  hostingStartup.unref()
 
   // Optional launch address: `ncc-browser ncc://npub1…/service`. A fresh launch uses
   // the restored blank tab; a real restored session gets the address in a new tab.

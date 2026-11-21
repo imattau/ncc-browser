@@ -91,6 +91,8 @@ export interface ShellDeps {
   extensionContextItems?: (url: string) => Array<{ label: string; click: () => void }>
   /** Drop a cached NCC locator before a forced reload. */
   invalidateSite?: (url: string, kind: TabKind) => void
+  /** Remember a private share this identity just decrypted (normal tabs only). */
+  onHostedResolved?: (activity: ProtocolActivity) => void
   createWindow?: (bounds?: { x: number; y: number }) => BrowserShell
   onSessionChanged?: () => void
 }
@@ -629,6 +631,9 @@ export class BrowserShell {
       case 'open-settings':
         this.sendChrome('ncc:open-settings', { section: 'general' })
         break
+      case 'open-services':
+        this.sendChrome('ncc:open-settings', { section: 'services' })
+        break
       case 'open-identity':
         this.sendChrome('ncc:open-settings', { section: 'identity' })
         break
@@ -975,6 +980,13 @@ export class BrowserShell {
           locator: activity.locator ?? null
         }
       }
+    }
+    if (
+      !activity.failureCode &&
+      activity.locator?.encrypted === true &&
+      tabs.some((tab) => tab.kind === 'normal')
+    ) {
+      this.deps.onHostedResolved?.(activity)
     }
     this.syncState()
   }

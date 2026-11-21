@@ -459,7 +459,9 @@ function locatorSummary(record: ResolvedService): LocatorInfo {
     updatedAt: record.updatedAt,
     expiresAt: record.expiresAt,
     stale: record.stale === true,
-    fallback: record.anchor?.fallback === true
+    fallback: record.anchor?.fallback === true,
+    encrypted: record.encrypted,
+    ...(record.notes ? { notes: record.notes } : {})
   }
 }
 

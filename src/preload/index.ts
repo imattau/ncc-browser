@@ -19,6 +19,7 @@ import {
   type PaymentCardSaveRequest,
   type SignerRequest
 } from '@shared/types'
+import type { HostingState } from '@shared/hosting'
 
 const api: NccApi = {
   initialAppearance: readAppearanceBootArgument(process.argv) ?? DEFAULT_APPEARANCE,
@@ -83,6 +84,22 @@ const api: NccApi = {
   reResolveSite: () => ipcRenderer.invoke('ncc:re-resolve-site'),
   setSearchConfig: (config) => ipcRenderer.invoke('ncc:set-search-config', config),
   setAppearance: (appearance) => ipcRenderer.invoke('ncc:set-appearance', appearance),
+  hostingState: () => ipcRenderer.invoke('ncc:hosting-state'),
+  hostingCreate: (draft) => ipcRenderer.invoke('ncc:hosting-create', draft),
+  hostingUpdate: (id, draft) => ipcRenderer.invoke('ncc:hosting-update', id, draft),
+  hostingRemove: (id) => ipcRenderer.invoke('ncc:hosting-remove', id),
+  hostingPublish: (id) => ipcRenderer.invoke('ncc:hosting-publish', id),
+  hostingShare: (id, recipient, days, label) =>
+    ipcRenderer.invoke('ncc:hosting-share', { id, recipient, days, label }),
+  hostingRevokeShare: (shareId) => ipcRenderer.invoke('ncc:hosting-revoke-share', shareId),
+  hostingForgetReceived: (id) => ipcRenderer.invoke('ncc:hosting-forget-received', id),
+  onHostingChanged: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, state: HostingState): void => listener(state)
+    ipcRenderer.on('ncc:hosting-changed', handler)
+    return () => {
+      ipcRenderer.removeListener('ncc:hosting-changed', handler)
+    }
+  },
   syncStatus: () => ipcRenderer.invoke('ncc:sync-status'),
   syncNow: () => ipcRenderer.invoke('ncc:sync-now'),
   syncConfigure: (patch) => ipcRenderer.invoke('ncc:sync-configure', patch),

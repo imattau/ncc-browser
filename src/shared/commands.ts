@@ -24,6 +24,7 @@ export type CommandId =
   | 'open-history'
   | 'open-downloads'
   | 'open-settings'
+  | 'open-services'
   | 'open-identity'
   | 'open-passwords'
   | 'open-spec'
@@ -82,6 +83,7 @@ export const COMMANDS: CommandDefinition[] = [
     group: 'Developer'
   },
   { id: 'open-settings', label: 'Settings', group: 'Application' },
+  { id: 'open-services', label: 'Your services', group: 'Application' },
   { id: 'open-identity', label: 'Identity & signer', group: 'Application' },
   { id: 'open-passwords', label: 'Passwords', group: 'Application' },
   { id: 'open-downloads', label: 'Downloads', shortcut: 'Ctrl+J', group: 'Application' },

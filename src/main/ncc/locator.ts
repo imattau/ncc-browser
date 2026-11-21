@@ -45,6 +45,9 @@ export interface NormalizeEndpointOptions {
 export function candidateDTags(service?: string | null): string[] {
   const requested = (service ?? '').trim() || DEFAULT_D_TAG
   if (requested === DEFAULT_D_TAG) return [DEFAULT_D_TAG]
+  // A private share must never fall back to the author's generic `addr` record: an
+  // expired or missing share would otherwise open an unrelated service.
+  if (requested.startsWith('share-')) return [requested]
   return [...new Set([requested, `${requested}-locator`, DEFAULT_D_TAG])]
 }
 

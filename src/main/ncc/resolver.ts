@@ -487,7 +487,8 @@ export class NccResolver {
           expiresAt,
           updatedAt: decoded.value.payload.updated_at,
           eventId: event.id,
-          encrypted: decoded.value.encrypted
+          encrypted: decoded.value.encrypted,
+          ...(decoded.value.payload.notes ? { notes: decoded.value.payload.notes } : {})
         }
         break
       }

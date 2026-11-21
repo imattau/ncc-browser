@@ -20,6 +20,10 @@ describe('candidateDTags', () => {
     expect(candidateDTags('addr')).toEqual(['addr'])
   })
 
+  it('never falls back to addr for a private share', () => {
+    expect(candidateDTags('share-1a2b3c4d5e')).toEqual(['share-1a2b3c4d5e'])
+  })
+
   it('classifies which candidate matched', () => {
     expect(dTagSource('web', 'web')).toBe('exact')
     expect(dTagSource('web-locator', 'web')).toBe('locator-suffix')

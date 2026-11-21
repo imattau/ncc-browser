@@ -14,6 +14,8 @@ import {
   ShieldX,
   Trash2
 } from 'lucide-react'
+import { nip19 } from 'nostr-tools'
+import { parseNccAddress } from '@shared/ncc-url'
 import { ERROR_COPY } from '@shared/types'
 import type { SiteDataInfo } from '@shared/site-data'
 import type { AnchorInfo, LocatorInfo, NavState, SignerOriginState, TransportSecurity } from '@shared/types'
@@ -43,8 +45,38 @@ export function SiteInfoPanel({
   const [signerOrigin, setSignerOrigin] = useState<SignerOriginState | null>(null)
   const [protectionException, setProtectionException] = useState(false)
   const [protectionSummary, setProtectionSummary] = useState<{ level: string; blocked: number; excepted: boolean } | null>(null)
+  const [identityNpub, setIdentityNpub] = useState('')
 
   const pageUrl = state.url || state.displayUrl
+
+  useEffect(() => {
+    let alive = true
+    void window.ncc.identity().then((status) => {
+      if (!alive) return
+      if (status.npub) setIdentityNpub(status.npub)
+      else if (status.hexPubkey) {
+        try {
+          setIdentityNpub(nip19.npubEncode(status.hexPubkey))
+        } catch {
+          // ignore a malformed status
+        }
+      }
+    }).catch(() => undefined)
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  let ownerNpub = ''
+  if (state.mode === 'ncc') {
+    try {
+      const address = parseNccAddress(state.displayUrl)
+      ownerNpub = address.pubkey.startsWith('npub1') ? address.pubkey : nip19.npubEncode(address.pubkey)
+    } catch {
+      ownerNpub = ''
+    }
+  }
+  const owned = Boolean(identityNpub && ownerNpub && identityNpub === ownerNpub)
   useEffect(() => {
     if (!pageUrl) {
       setSignerOrigin(null)
@@ -181,7 +213,7 @@ export function SiteInfoPanel({
         ) : null}
 
         {!web && security?.locator ? (
-          <LocatorBlock locator={security.locator} onClose={onClose} />
+          <LocatorBlock locator={security.locator} owned={owned} onClose={onClose} />
         ) : null}
 
         {!web ? (
@@ -481,9 +513,11 @@ function TorBlock({
 
 function LocatorBlock({
   locator,
+  owned,
   onClose
 }: {
   locator: LocatorInfo
+  owned: boolean
   onClose: () => void
 }) {
   const [busy, setBusy] = useState(false)
@@ -550,6 +584,30 @@ function LocatorBlock({
           </dd>
         </div>
       </dl>
+
+      {owned ? (
+        <button
+          type="button"
+          onClick={() => {
+            void window.ncc.runCommand('open-services')
+            onClose()
+          }}
+          className="mt-2 w-full rounded-lg border border-[color:var(--color-line)] px-2.5 py-1.5 text-ui-11 text-[color:var(--color-text)] hover:bg-[color:var(--color-hover)]"
+        >
+          Manage this service
+        </button>
+      ) : null}
+
+      {locator.encrypted ? (
+        <p className="mt-2 flex items-start gap-2 rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-panel)] px-2.5 py-2 text-ui-105 leading-relaxed text-[color:var(--color-muted)]">
+          <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[color:var(--color-accent)]" />
+          <span>
+            <span className="font-medium text-[color:var(--color-text)]">Encrypted locator.</span>{' '}
+            Only the identity it was addressed to can read the endpoint.
+            {locator.notes ? ` ${locator.notes}` : ''}
+          </span>
+        </p>
+      ) : null}
 
       {locator.fallback ? (
         <p className="mt-2 text-ui-105 leading-relaxed text-[color:var(--color-muted)]">

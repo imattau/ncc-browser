@@ -12,6 +12,7 @@ import {
   RotateCcw,
   Vault,
   Search,
+  Server,
   Shield,
   ShieldCheck,
   SlidersHorizontal,
@@ -20,6 +21,7 @@ import {
 } from 'lucide-react'
 import { DEFAULT_APPEARANCE, DEFAULT_RELAYS, DEFAULT_TOR_SOCKS, DEFAULT_PROTECTION } from '@shared/types'
 import { SEARCH_ENGINES, type SearchEngineId } from '@shared/search'
+import type { HostingDraft } from '@shared/hosting'
 import { formatBytes, type CacheInfo } from '@shared/site-data'
 import type {
   AppInfo,
@@ -38,6 +40,7 @@ import { applyAppearance } from '../lib/appearance'
 import { AppearanceSettings } from './AppearanceSettings'
 import { AgentSettings } from './AgentSettings'
 import { ExtensionSettings } from './ExtensionSettings'
+import { HostingSettings } from './HostingSettings'
 import { PasswordSettings } from './PasswordSettings'
 import { SyncSettings } from './SyncSettings'
 
@@ -46,6 +49,7 @@ export type SettingsSection =
   | 'appearance'
   | 'security'
   | 'identity'
+  | 'services'
   | 'passwords'
   | 'sync'
   | 'extensions'
@@ -60,6 +64,8 @@ interface SettingsPageProps {
   onIdentityChange?: (status: IdentityStatus) => void
   passwordDraftOrigin?: string | null
   onPasswordDraftUsed?: () => void
+  hostingDraft?: HostingDraft | null
+  onHostingDraftUsed?: () => void
 }
 
 const SECTIONS: Array<{ id: SettingsSection; label: string; icon: typeof KeyRound }> = [
@@ -67,6 +73,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string; icon: typeof KeyRoun
   { id: 'appearance', label: 'Appearance', icon: Palette },
   { id: 'security', label: 'Security', icon: Shield },
   { id: 'identity', label: 'Identity & signer', icon: KeyRound },
+  { id: 'services', label: 'Services', icon: Server },
   { id: 'passwords', label: 'Passwords', icon: Vault },
   { id: 'sync', label: 'Sync', icon: RefreshCw },
   { id: 'extensions', label: 'Extensions', icon: Puzzle },
@@ -185,7 +192,9 @@ export function SettingsPage({
   onClose,
   onIdentityChange,
   passwordDraftOrigin,
-  onPasswordDraftUsed
+  onPasswordDraftUsed,
+  hostingDraft,
+  onHostingDraftUsed
 }: SettingsPageProps) {
   const [section, setSection] = useState<SettingsSection>(initialSection)
   const backRef = useRef<HTMLButtonElement>(null)
@@ -647,7 +656,7 @@ export function SettingsPage({
         <div className="min-w-0">
           <h1 className="text-ui-13 font-semibold text-[color:var(--color-text-strong)]">Settings</h1>
           <p className="truncate text-ui-105 text-[color:var(--color-muted)]">
-            Relays, appearance, identity, passwords, extensions and signing permissions.
+            Relays, appearance, identity, services, passwords, extensions and signing permissions.
           </p>
         </div>
         <span className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-[color:var(--color-line)] px-2 py-1 text-ui-105 text-[color:var(--color-muted)]">
@@ -1505,6 +1514,16 @@ export function SettingsPage({
                 ) : null}
               </div>
             </>
+          ) : null}
+
+          {section === 'services' ? (
+            <HostingSettings
+              identity={identity}
+              initialDraft={hostingDraft ?? null}
+              onDraftUsed={onHostingDraftUsed}
+              onOpenIdentity={() => setSection('identity')}
+              onClose={onClose}
+            />
           ) : null}
 
           {section === 'passwords' ? (

@@ -139,6 +139,28 @@ Build the static app with `npm run publisher:build` (`publisher/dist`). See
 
 ---
 
+## Hosted services and private links
+
+Settings → **Services** turns a service you run into an identity address:
+
+```
+ncc://<your-npub>/<service>
+```
+
+No domain, certificate or reverse proxy. The browser signs an NCC-05 locator, encrypts
+it to your own key by default, publishes it to your relays and renews it while it runs.
+The same panel shares a private service with one person's npub: the share is the same
+payload NIP-44 encrypted to that recipient under a reserved `share-…` tag. Relays see
+the author and the `d` tag, not the endpoint; a different identity gets an
+`undecryptable` page. A share never publishes a loopback endpoint, and refuses outright
+if that leaves nothing reachable.
+
+A locator is a hint, not a tunnel. Use a reachable LAN/public endpoint, or publish a
+`.onion` endpoint so a CGNAT or firewalled service is still reachable through the
+bundled Tor. Revocation is a best-effort tombstone: the real cut-off is rotating the
+endpoint or enforcing authentication at the service. See
+[`docs/hosting.md`](./docs/hosting.md) for the threat model and limits.
+
 ## Browser chrome
 
 The window is frameless: the tab strip doubles as the title bar, with a drag region and

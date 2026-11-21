@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react'
-import { Check, Copy, EyeOff, KeyRound, Settings2, ShieldCheck, TimerOff } from 'lucide-react'
+import { Check, Copy, EyeOff, KeyRound, Server, Settings2, ShieldCheck, TimerOff } from 'lucide-react'
 import type { TabKind } from '@shared/types'
+import { recipientNpub, serviceAddress, type HostedService } from '@shared/hosting'
 import { cn } from '../lib/cn'
 import { TAB_KIND_SUMMARY, TAB_KIND_TONE } from '../lib/tab-kind'
 import { OnionIcon } from './TransportIcons'
 
 interface WelcomeProps {
   onOpenSettings: () => void
+  onOpenServices: () => void
   onNewPrivateTab: () => void
   onNewTorTab: () => void
   kind?: TabKind
@@ -14,8 +16,10 @@ interface WelcomeProps {
 
 const EXAMPLE = 'ncc://npub1…/web'
 
-export function Welcome({ onOpenSettings, onNewPrivateTab, onNewTorTab, kind = 'normal' }: WelcomeProps) {
+export function Welcome({ onOpenSettings, onOpenServices, onNewPrivateTab, onNewTorTab, kind = 'normal' }: WelcomeProps) {
   const [relays, setRelays] = useState<string[]>([])
+  const [services, setServices] = useState<HostedService[]>([])
+  const [npub, setNpub] = useState('')
   const [copied, setCopied] = useState(false)
 
   useEffect(() => {
@@ -23,8 +27,19 @@ export function Welcome({ onOpenSettings, onNewPrivateTab, onNewTorTab, kind = '
     void window.ncc.getConfig().then((config) => {
       if (alive) setRelays(config.relays.map((entry) => entry.url))
     })
+    void window.ncc.hostingState().then((state) => {
+      if (alive) setServices(state.services)
+    }).catch(() => {})
+    const off = window.ncc.onHostingChanged((state) => {
+      if (alive) setServices(state.services)
+    })
+    void window.ncc.identity().then((status) => {
+      if (!alive) return
+      setNpub(status.npub ?? (status.hexPubkey ? recipientNpub(status.hexPubkey) : ''))
+    }).catch(() => {})
     return () => {
       alive = false
+      off()
     }
   }, [])
 
@@ -115,6 +130,60 @@ export function Welcome({ onOpenSettings, onNewPrivateTab, onNewTorTab, kind = '
               New Tor tab
             </button>
           </div>
+
+          {services.length > 0 ? (
+            <div className="mt-8 rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel)]/70 p-3.5">
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="flex items-center gap-2 text-ui-12 font-semibold text-[color:var(--color-text-strong)]">
+                  <Server className="h-3.5 w-3.5 text-[color:var(--color-accent)]" />
+                  Your services
+                </h2>
+                <button
+                  type="button"
+                  onClick={onOpenServices}
+                  className="rounded-lg border border-[color:var(--color-line)] px-2 py-1 text-ui-10 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)] hover:text-[color:var(--color-text-strong)]"
+                >
+                  Manage
+                </button>
+              </div>
+              <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
+                {services.slice(0, 4).map((service) => {
+                  const serviceNpub = service.owner ? recipientNpub(service.owner) : npub
+                  const address = serviceNpub ? serviceAddress(serviceNpub, service.service) : ''
+                  return (
+                    <button
+                      key={service.id}
+                      type="button"
+                      disabled={!address}
+                      onClick={() => address && void window.ncc.navigate(address)}
+                      className="flex min-w-0 items-center justify-between gap-2 rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-field)] px-2.5 py-2 text-left hover:border-[color:var(--color-accent)]/40 disabled:opacity-50"
+                    >
+                      <span className="truncate text-ui-11 text-[color:var(--color-text)]">{service.title}</span>
+                      <span className="shrink-0 text-ui-95 text-[color:var(--color-faint)]">
+                        {service.lastPublishedAt ? 'published' : 'not published'}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={onOpenServices}
+              className="mt-8 flex w-full items-center gap-3 rounded-xl border border-dashed border-[color:var(--color-line)] px-4 py-3 text-left hover:border-[color:var(--color-accent)]/40 hover:bg-[color:var(--color-hover-soft)]"
+            >
+              <Server className="h-4 w-4 shrink-0 text-[color:var(--color-accent)]" />
+              <span className="min-w-0">
+                <span className="block text-ui-12 font-medium text-[color:var(--color-text-strong)]">
+                  Publish a service you run
+                </span>
+                <span className="block text-ui-105 text-[color:var(--color-muted)]">
+                  Give it an npub address, then share it privately with one person.
+                </span>
+              </span>
+            </button>
+          )}
 
           <div className="mt-8 grid gap-3 sm:grid-cols-3">
             <Fact

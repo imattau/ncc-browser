@@ -567,6 +567,8 @@ export interface ResolvedService {
   stale?: boolean
   /** NCC-02 trust anchor, when one was found. */
   anchor?: AnchorInfo
+  /** Optional publisher note from the decrypted payload. */
+  notes?: string
 }
 
 export type ResolveErrorCode =
@@ -641,6 +643,10 @@ export interface LocatorInfo {
   stale: boolean
   /** Synthesised from the NCC-02 `u` endpoint because no NCC-05 record was usable. */
   fallback: boolean
+  /** The payload was NIP-44 encrypted; the recipient must hold the right identity. */
+  encrypted: boolean
+  /** The publisher's optional note, decrypted with the payload. */
+  notes?: string
 }
 
 export type PageMode = 'blank' | 'ncc' | 'nsite' | 'web' | 'error'
@@ -944,8 +950,8 @@ export const ERROR_COPY: Record<string, { title: string; hint: string }> = {
     hint: 'A record exists but its TTL has passed. NCC-05 forbids using expired locators, so the publisher needs to refresh it.'
   },
   undecryptable: {
-    title: 'Locator is private',
-    hint: 'This record is encrypted and you are not one of its recipients. Ask the publisher to add your npub, or use a public locator.'
+    title: 'Locator is encrypted',
+    hint: 'This record is addressed to a specific identity. Connect the identity it was shared with in Settings → Identity & signer, then reload. If it was shared with you, ask the owner to confirm your npub.'
   },
   'invalid-payload': {
     title: 'Malformed locator',

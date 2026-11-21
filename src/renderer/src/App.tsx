@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type { HostingDraft } from '@shared/hosting'
 import type { CommandId } from '@shared/commands'
 import type { ExtensionActionInfo, ExtensionsState } from '@shared/extensions'
 import { sortDownloads } from '@shared/downloads'
@@ -79,6 +80,7 @@ export function App() {
   const signerRequest = signerRequests[0] ?? null
   const [history, setHistory] = useState<TabHistory | null>(null)
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('general')
+  const [hostingDraft, setHostingDraft] = useState<HostingDraft | null>(null)
   const [siteInfoAnchor, setSiteInfoAnchor] = useState<PopoverAnchor | null>(null)
   const [passwordStatus, setPasswordStatus] = useState<PasswordVaultStatus | null>(null)
   const [passwordContext, setPasswordContext] = useState<PasswordContext | null>(null)
@@ -460,6 +462,7 @@ export function App() {
         payload.section === 'identity' ||
           payload.section === 'appearance' ||
           payload.section === 'passwords' ||
+          payload.section === 'services' ||
           payload.section === 'security' ||
           payload.section === 'trusted' ||
           payload.section === 'about'
@@ -716,6 +719,8 @@ export function App() {
           <SettingsPage
             open
             initialSection={settingsSection}
+            hostingDraft={hostingDraft}
+            onHostingDraftUsed={() => setHostingDraft(null)}
             onClose={closeOverlay}
             onIdentityChange={setIdentity}
             passwordDraftOrigin={passwordDraftOrigin}
@@ -726,6 +731,7 @@ export function App() {
         ) : state.mode === 'blank' ? (
           <Welcome
             onOpenSettings={() => openSettings('general')}
+            onOpenServices={() => openSettings('services')}
             onNewPrivateTab={newPrivateTab}
             onNewTorTab={newTorTab}
             kind={state.tabKind}
@@ -740,6 +746,13 @@ export function App() {
           bookmarks={bookmarks}
           onCommand={runCommand}
           onOpenWallet={() => showOverlay('wallet')}
+          onPublishService={(url) => {
+            setHostingDraft({
+              title: state.title && state.title !== 'New tab' ? state.title : 'My service',
+              endpoints: [url]
+            })
+            openSettings('services')
+          }}
           onOpenBookmark={openBookmark}
           onRemoveBookmark={removeBookmark}
           devices={syncDevices}

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { Bookmark as BookmarkIcon, Smartphone, WalletCards, X } from 'lucide-react'
+import { Bookmark as BookmarkIcon, Server, Smartphone, WalletCards, X } from 'lucide-react'
 import { COMMANDS, COMMAND_ORDER, type CommandId } from '@shared/commands'
 import type { Bookmark, IdentityStatus, NavState } from '@shared/types'
 import type { SyncDevice } from '@shared/sync-status'
@@ -13,6 +13,7 @@ interface ChromeMenuProps {
   bookmarks: Bookmark[]
   onCommand: (command: CommandId) => void
   onOpenWallet: () => void
+  onPublishService: (url: string) => void
   onOpenBookmark: (url: string) => void
   onRemoveBookmark: (url: string) => void
   devices?: SyncDevice[]
@@ -26,6 +27,7 @@ export function ChromeMenu({
   bookmarks,
   onCommand,
   onOpenWallet,
+  onPublishService,
   onOpenBookmark,
   onRemoveBookmark,
   devices = [],
@@ -47,6 +49,7 @@ export function ChromeMenu({
   }, [onClose])
 
   const isMac = navigator.platform.toLowerCase().includes('mac')
+  const publishUrl = loopbackServiceUrl(state.displayUrl)
 
   return (
     <div
@@ -93,6 +96,17 @@ export function ChromeMenu({
           <button type="button" role="menuitem" onClick={onOpenWallet} className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-ui-12 text-[color:var(--color-text-strong)] hover:bg-[color:var(--color-hover)]">
             <WalletCards className="h-4 w-4 text-[color:var(--color-accent)]" /> Wallet
           </button>
+          {publishUrl ? (
+            <button
+              type="button"
+              role="menuitem"
+              data-command="publish-service"
+              onClick={() => onPublishService(publishUrl)}
+              className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-ui-12 text-[color:var(--color-text-strong)] hover:bg-[color:var(--color-hover)]"
+            >
+              <Server className="h-4 w-4 text-[color:var(--color-accent)]" /> Publish this page…
+            </button>
+          ) : null}
         </div>
 
         {COMMAND_ORDER.map((group) => {
@@ -208,6 +222,21 @@ export function ChromeMenu({
       </div>
     </div>
   )
+}
+
+/** A local service the user can publish without leaving the browser. */
+function loopbackServiceUrl(value: string): string | null {
+  try {
+    const url = new URL(value)
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
+    const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '')
+    if (host === 'localhost' || host.endsWith('.localhost') || host === '::1' || /^127\./.test(host)) {
+      return url.origin
+    }
+    return null
+  } catch {
+    return null
+  }
 }
 
 function isEnabled(id: CommandId, state: NavState): boolean {

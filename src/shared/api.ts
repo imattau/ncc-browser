@@ -13,6 +13,12 @@ import type {
 } from './site-data'
 import type { SearchEngineId } from './search'
 import type {
+  HostingDraft,
+  HostingPublishResult,
+  HostingShareResult,
+  HostingState
+} from './hosting'
+import type {
   AppearanceConfig,
   AppConfig,
   AppInfo,
@@ -145,6 +151,15 @@ export interface NccApi {
     nccSearchEnabled: boolean
   }): Promise<SetRelaysResult>
   setAppearance(appearance: Partial<AppearanceConfig>): Promise<SetAppearanceResult>
+  hostingState(): Promise<HostingState>
+  hostingCreate(draft: HostingDraft): Promise<HostingState>
+  hostingUpdate(id: string, draft: HostingDraft): Promise<HostingState>
+  hostingRemove(id: string): Promise<HostingState>
+  hostingPublish(id: string): Promise<HostingPublishResult>
+  hostingShare(id: string, recipient: string, days: number, label?: string): Promise<HostingShareResult>
+  hostingRevokeShare(shareId: string): Promise<HostingShareResult>
+  hostingForgetReceived(id: string): Promise<HostingState>
+  onHostingChanged(listener: (state: HostingState) => void): () => void
   syncStatus(): Promise<SyncStatus>
   syncNow(): Promise<SyncStatus>
   syncConfigure(patch: SyncPrefsPatch): Promise<SyncStatus>

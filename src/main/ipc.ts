@@ -22,6 +22,8 @@ import type { PermissionStore } from './signer/permissions'
 import { signerOriginFromUrl } from './signer/origin'
 import { browserShellFor, browserShells, type BrowserShell } from './shell'
 import type { ProtectionService } from './protection'
+import type { HostingService } from './hosting/service'
+import type { HostingDraft } from '@shared/hosting'
 
 export interface IpcDeps {
   shell: BrowserShell
@@ -41,6 +43,7 @@ export interface IpcDeps {
   downloads: DownloadManager
   passwords: PasswordService
   protection: ProtectionService
+  hosting: HostingService
 }
 
 export function registerIpc(deps: IpcDeps): void {
@@ -211,6 +214,60 @@ export function registerIpc(deps: IpcDeps): void {
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
+  })
+
+  ipcMain.handle('ncc:hosting-state', () => deps.hosting.state())
+  ipcMain.handle('ncc:hosting-create', (event, draft: unknown) => {
+    if (!fromChrome(event)) throw new Error('Services are only available to the browser chrome')
+    deps.hosting.create(draft as HostingDraft)
+    return deps.hosting.state()
+  })
+  ipcMain.handle('ncc:hosting-update', (event, payload: unknown) => {
+    if (!fromChrome(event)) throw new Error('Services are only available to the browser chrome')
+    const { id, draft } = (payload ?? {}) as { id?: unknown; draft?: unknown }
+    if (typeof id !== 'string') throw new Error('A service id is required')
+    deps.hosting.update(id, draft as HostingDraft)
+    return deps.hosting.state()
+  })
+  ipcMain.handle('ncc:hosting-remove', (event, id: unknown) => {
+    if (!fromChrome(event)) throw new Error('Services are only available to the browser chrome')
+    if (typeof id !== 'string') throw new Error('A service id is required')
+    deps.hosting.remove(id)
+    return deps.hosting.state()
+  })
+  ipcMain.handle('ncc:hosting-publish', (event, id: unknown) => {
+    if (!fromChrome(event)) throw new Error('Services are only available to the browser chrome')
+    if (typeof id !== 'string') throw new Error('A service id is required')
+    return deps.hosting.publish(id)
+  })
+  ipcMain.handle('ncc:hosting-share', (event, payload: unknown) => {
+    if (!fromChrome(event)) throw new Error('Services are only available to the browser chrome')
+    const { id, recipient, days, label } = (payload ?? {}) as {
+      id?: unknown
+      recipient?: unknown
+      days?: unknown
+      label?: unknown
+    }
+    if (typeof id !== 'string' || typeof recipient !== 'string') {
+      throw new Error('A service id and a recipient npub are required')
+    }
+    return deps.hosting.share(
+      id,
+      recipient,
+      typeof days === 'number' ? days : 7,
+      typeof label === 'string' ? label : undefined
+    )
+  })
+  ipcMain.handle('ncc:hosting-revoke-share', (event, shareId: unknown) => {
+    if (!fromChrome(event)) throw new Error('Services are only available to the browser chrome')
+    if (typeof shareId !== 'string') throw new Error('A share id is required')
+    return deps.hosting.revokeShare(shareId)
+  })
+  ipcMain.handle('ncc:hosting-forget-received', (event, id: unknown) => {
+    if (!fromChrome(event)) throw new Error('Services are only available to the browser chrome')
+    if (typeof id !== 'string') throw new Error('A share id is required')
+    deps.hosting.forgetReceived(id)
+    return deps.hosting.state()
   })
 
   ipcMain.handle('ncc:set-relays', (event, relays: unknown) => {
