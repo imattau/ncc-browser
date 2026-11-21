@@ -58,7 +58,7 @@ TryExec={{prefix}}/bin/$NAME
 Icon=$NAME
 Terminal=false
 Categories=Network;WebBrowser;
-MimeType=x-scheme-handler/ncc;
+MimeType=x-scheme-handler/ncc;x-scheme-handler/http;x-scheme-handler/https;text/html;application/xhtml+xml;
 StartupNotify=true
 StartupWMClass=$APP_ID
 DESKTOP

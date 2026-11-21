@@ -126,6 +126,9 @@ jobs:
           test -f "$desktop"
           grep -qx 'Icon=ncc-browser' "$desktop"
           grep -qx 'StartupWMClass=nostr-navigator' "$desktop"
+          # Also a candidate default browser, not just the ncc:// handler.
+          grep -q 'x-scheme-handler/http;' "$desktop"
+          grep -q 'x-scheme-handler/https;' "$desktop"
           ! grep -q '{{prefix}}' "$desktop"
           test -f "$RUNNER_TEMP/store/packages/share/icons/hicolor/256x256/apps/ncc-browser.png"
           app_dir="$(dirname "$(readlink -f "$exe")")"
