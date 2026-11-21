@@ -755,6 +755,12 @@ default: it uses a fresh NCC-02 record when one exists and flags the service as
 `unanchored` when it does not. Settings → General → **Require NCC-02 service records**
 turns that into a hard requirement.
 
+In strict mode, publishing a service or a private share first publishes its anchor — for
+a private one, an anchor with `d` and `exp` but no `u` — and refuses to publish the
+locator if the anchor is rejected. A private share gets its own anchor under its
+`share-…` d tag. In optional mode the anchor is best effort and a failure is reported
+without blocking the locator.
+
 - **Site information** — click the address-bar padlock for the service id, anchor event,
   `u` endpoint, `k`, key relation, expiry and transport. A red padlock means the page
   failed; its panel carries the error code and explanation.

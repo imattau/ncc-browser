@@ -94,6 +94,7 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
   const [state, setState] = useState<HostingState | null>(null)
   const [draft, setDraft] = useState<DraftState | null>(null)
   const [busy, setBusy] = useState(false)
+  const [strictAnchors, setStrictAnchors] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
   const [sharing, setSharing] = useState<string | null>(null)
@@ -106,6 +107,9 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
 
   useEffect(() => {
     let alive = true
+    void window.ncc.getConfig().then((config) => {
+      if (alive) setStrictAnchors(config.anchorRequired)
+    })
     void window.ncc.hostingState().then((next) => alive && apply(next))
     const off = window.ncc.onHostingChanged((next) => alive && apply(next))
     return () => {
@@ -196,7 +200,7 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
         endpoints,
         ttlSeconds: Math.max(1, Number(draft.ttlDays) || 7) * 86_400,
         visibility: draft.visibility,
-        anchor: draft.anchor,
+        anchor: strictAnchors ? true : draft.anchor,
         notes: draft.notes
       }
       const next = draft.id
@@ -417,13 +421,16 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
             <label className="flex items-start gap-2 text-ui-11 text-[color:var(--color-muted)]">
               <input
                 type="checkbox"
-                checked={draft.anchor}
+                checked={draft.anchor || strictAnchors}
+                disabled={strictAnchors}
                 onChange={(event) => setDraft({ ...draft, anchor: event.target.checked })}
-                className="mt-0.5 h-4 w-4 accent-[color:var(--color-accent)]"
+                className="mt-0.5 h-4 w-4 accent-[color:var(--color-accent)] disabled:opacity-60"
               />
-              {draft.visibility === 'private'
-                ? 'Also publish an NCC-02 service record without the endpoint (identity/trust anchor).'
-                : 'Also publish a public NCC-02 service record (includes the endpoint; requires HTTPS).'}
+              {strictAnchors
+                ? 'Required by Settings → General. Private services publish the anchor without the endpoint.'
+                : draft.visibility === 'private'
+                  ? 'Also publish an NCC-02 service record without the endpoint (identity/trust anchor).'
+                  : 'Also publish a public NCC-02 service record (includes the endpoint; requires HTTPS).'}
             </label>
 
             <label className="block text-ui-105 text-[color:var(--color-muted)]">

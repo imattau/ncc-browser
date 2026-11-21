@@ -261,6 +261,7 @@ app.whenReady().then(async () => {
       status: () => identity.status()
     },
     publisher: new RelayHostingPublisher(relayPool, config),
+    anchorRequired: () => config.get().anchorRequired,
     onChange: (state) => {
       if (shell && !shell.window.isDestroyed()) shell.sendToChrome('ncc:hosting-changed', state)
     }

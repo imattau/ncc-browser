@@ -38,6 +38,7 @@ function providerFor(secret: Uint8Array): HostingProvider {
 class FakePublisher implements HostingPublisher {
   events: Array<{ event: Event; relays: string[] }> = []
   report: PublishReport = { ok: true, accepted: 1, relays: 1, errors: [] }
+  handler?: (event: Event) => PublishReport
 
   async relaysFor(): Promise<string[]> {
     return ['wss://relay.test']
@@ -45,7 +46,7 @@ class FakePublisher implements HostingPublisher {
 
   async publish(event: Event, relays: string[]): Promise<PublishReport> {
     this.events.push({ event, relays })
-    return this.report
+    return this.handler ? this.handler(event) : this.report
   }
 
   last(): Event {
@@ -66,7 +67,9 @@ class FakePublisher implements HostingPublisher {
   }
 }
 
-function setup(options: { mode?: 'local' | 'nip46'; configured?: boolean } = {}) {
+function setup(
+  options: { mode?: 'local' | 'nip46'; configured?: boolean; strictAnchors?: boolean } = {}
+) {
   const owner = generateSecretKey()
   const ownerHex = getPublicKey(owner)
   const publisher = new FakePublisher()
@@ -85,6 +88,7 @@ function setup(options: { mode?: 'local' | 'nip46'; configured?: boolean } = {})
     store,
     identity,
     publisher,
+    ...(options.strictAnchors ? { anchorRequired: () => true } : {}),
     now: () => now,
     onChange: (state) => changes.push(state.services.length)
   })
@@ -185,6 +189,34 @@ describe('HostingService publishing', () => {
     await expect(hosting.publish(service.id)).rejects.toMatchObject({ code: 'wrong-identity' })
   })
 
+  it('fails a publish when strict anchoring rejects the anchor', async () => {
+    const { hosting, publisher, store } = setup({ strictAnchors: true })
+    const service = hosting.create({ title: 'Photos', endpoints: ['https://photos.example'] })
+    publisher.handler = (event) =>
+      event.kind === 30059
+        ? { ok: false, accepted: 0, relays: 1, errors: [{ relay: 'wss://relay.test', error: 'blocked' }] }
+        : { ok: true, accepted: 1, relays: 1, errors: [] }
+    await expect(hosting.publish(service.id)).rejects.toMatchObject({ code: 'publish-failed' })
+    expect(store.find(service.id)?.lastPublishError).toContain('NCC-02')
+    expect(publisher.byTag('photos', 30058)).toBeUndefined()
+  })
+
+  it('keeps a publish when the optional anchor is rejected', async () => {
+    const { hosting, publisher } = setup()
+    const service = hosting.create({
+      title: 'Photos',
+      anchor: true,
+      endpoints: ['https://photos.example']
+    })
+    publisher.handler = (event) =>
+      event.kind === 30059
+        ? { ok: false, accepted: 0, relays: 1, errors: [{ relay: 'wss://relay.test', error: 'blocked' }] }
+        : { ok: true, accepted: 1, relays: 1, errors: [] }
+    const result = await hosting.publish(service.id)
+    expect(result.ok).toBe(true)
+    expect(result.errors).toContainEqual({ relay: 'anchor', error: expect.stringContaining('blocked') })
+  })
+
   it('bumps created_at so a replacement wins the resolver tie-break', async () => {
     const { publisher, hosting } = setup()
     const service = hosting.create({ title: 'Photos', endpoints: ['https://photos.example'] })
@@ -225,15 +257,29 @@ describe('HostingService shares', () => {
     expect(anchor?.tags.some(([name]) => name === 'u')).toBe(false)
 
     const recipientKey = nip44.getConversationKey(recipient, ownerHex)
-    const payload = JSON.parse(nip44.decrypt(event.content, recipientKey))
+    expect(event).toBeDefined()
+    const payload = JSON.parse(nip44.decrypt(event!.content, recipientKey))
     expect(payload.endpoints[0].url).toBe('https://photos.example/')
 
     const stranger = generateSecretKey()
     const strangerKey = nip44.getConversationKey(stranger, ownerHex)
-    expect(() => nip44.decrypt(event.content, strangerKey)).toThrow()
+    expect(() => nip44.decrypt(event!.content, strangerKey)).toThrow()
 
     const key = nip44.getConversationKey(owner, ownerHex)
-    expect(() => nip44.decrypt(event.content, key)).toThrow()
+    expect(() => nip44.decrypt(event!.content, key)).toThrow()
+  })
+
+  it('fails a share in strict mode when its anchor is rejected', async () => {
+    const { hosting, publisher } = setup({ strictAnchors: true })
+    const service = hosting.create({ title: 'Photos', endpoints: ['https://photos.example'] })
+    publisher.handler = (event) =>
+      event.kind === 30059
+        ? { ok: false, accepted: 0, relays: 1, errors: [{ relay: 'wss://relay.test', error: 'blocked' }] }
+        : { ok: true, accepted: 1, relays: 1, errors: [] }
+    await expect(hosting.share(service.id, getPublicKey(generateSecretKey()), 7)).rejects.toMatchObject({
+      code: 'publish-failed'
+    })
+    expect(hosting.state().shares).toHaveLength(0)
   })
 
   it('refuses a public service and a loopback share', async () => {

@@ -571,6 +571,10 @@ export function App() {
                   a: 'A signed locator convention: a kind 30058 event published to Nostr relays that says which endpoints currently serve a named service for an npub. The browser resolves it, enforces expiry, and optionally pins the endpoint TLS key.'
                 },
                 {
+                  q: 'Do I need NCC-02?',
+                  a: 'No. NCC-02 is the identity and trust anchor, but it is optional: NCC-05 locators work unanchored. You can require it in Settings → General. In strict mode, publishing a service or private share also publishes an NCC-02 anchor — without the endpoint for a private service — and fails if no relay accepts the anchor.'
+                },
+                {
                   q: 'What is an nsite?',
                   a: 'A NIP-5A static site: a signed manifest listing paths and sha256 hashes, with the files stored on Blossom. The browser fetches and verifies every file; there is no web server to trust.'
                 },

@@ -46,6 +46,28 @@ For a private service the anchor has no `u`: it cannot leak the endpoint, and NC
 remains the only source of reachability. The resolver already accepts an anchor without
 `u` and applies its `k` to the NCC-05 endpoints.
 
+### Strict anchoring
+
+When **Require NCC-02 service records** is on, publishing becomes a two-part operation:
+
+1. Publish the anchor (`kind 30059`) under the same `d` tag as the locator. A private
+   service or share uses an anchor with `d` and `exp` (and an optional `k`) but **no
+   `u`**.
+2. Only if the anchor was accepted, publish the NCC-05 locator (`kind 30058`).
+
+If no relay accepts the anchor, the locator is not published and the service/share is
+reported as failed; this is deliberate, because a strict recipient would reject the
+locator with `no-anchor`. In optional mode the anchor is best effort: a failure is
+reported on the share/service, but the locator still works for recipients that do not
+require anchoring.
+
+A private share has its own `d` tag, so it also gets its own no-`u` anchor. The canonical
+service anchor does not satisfy the share: anchored resolution looks up the anchor by the
+requested `d` tag.
+
+When strict mode is off, NCC-02 is shown as an optional trust anchor and a missing or
+rejected anchor does not block publishing.
+
 **Publish** signs a `kind 30058` locator and sends it to your configured relays plus
 your NIP-65 read and write relays. The Services card shows how many relays accepted it
 and the last error when none did.

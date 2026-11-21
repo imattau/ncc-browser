@@ -826,8 +826,9 @@ export function SettingsPage({
                     </span>
                     <span className="mt-0.5 block text-ui-115 leading-relaxed text-[color:var(--color-muted)]">
                       Fail closed unless the identity publishes a fresh kind 30059 service
-                      record with the same service id. When off, NCC-02 is shown as an
-                      optional trust anchor.
+                      record with the same service id. Publishing a service or share also
+                      fails if its anchor cannot be published; private anchors omit the
+                      endpoint. When off, NCC-02 is shown as an optional trust anchor.
                     </span>
                   </span>
                 </label>

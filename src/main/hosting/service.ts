@@ -76,6 +76,8 @@ export interface HostingServiceOptions {
   store: HostingStore
   identity: HostingIdentity
   publisher: HostingPublisher
+  /** Settings → General → Require NCC-02 service records. */
+  anchorRequired?: () => boolean
   now?: () => number
   onChange?: (state: HostingState) => void
 }
@@ -149,17 +151,11 @@ export class HostingService {
     })
     const event = await this.sign(provider, template)
     const relays = await this.relays(hex)
-    const report = await this.options.publisher.publish(event, relays)
+    const strict = this.options.anchorRequired?.() === true
+    const needsAnchor = strict || service.anchor
+    let anchorReport: PublishReport | null = null
 
-    if (!report.ok) {
-      const message = reportError(report)
-      this.options.store.markPublishError(id, message)
-      this.changed()
-      throw new HostingError('publish-failed', message)
-    }
-    this.options.store.markPublished(id, createdAt)
-
-    if (service.anchor) {
+    if (needsAnchor) {
       const anchor = buildAnchorTemplate({
         service: service.service,
         endpoint:
@@ -169,15 +165,45 @@ export class HostingService {
         now: createdAt,
         privateMode: service.visibility === 'private'
       })
-      if (anchor) {
+      if (!anchor) {
+        if (strict) {
+          const message = 'NCC-02 anchoring is required, but this service has no HTTPS endpoint for a public anchor'
+          this.options.store.markPublishError(id, message)
+          this.changed()
+          throw new HostingError('publish-failed', message)
+        }
+      } else {
         try {
           const anchorEvent = await this.sign(provider, anchor)
-          await this.options.publisher.publish(anchorEvent, relays)
-        } catch {
-          // The anchor is optional; the locator is already published.
+          anchorReport = await this.options.publisher.publish(anchorEvent, relays)
+          if (strict && !anchorReport.ok) {
+            const message = `NCC-02 anchor was rejected: ${reportError(anchorReport)}`
+            this.options.store.markPublishError(id, message)
+            this.changed()
+            throw new HostingError('publish-failed', message)
+          }
+        } catch (error) {
+          if (strict) {
+            const message = `NCC-02 anchor failed: ${messageOf(error)}`
+            this.options.store.markPublishError(id, message)
+            this.changed()
+            throw error instanceof HostingError ? error : new HostingError('publish-failed', message)
+          }
         }
       }
     }
+
+    const report = await this.options.publisher.publish(event, relays)
+    if (anchorReport && !anchorReport.ok) {
+      report.errors.push({ relay: 'anchor', error: reportError(anchorReport) })
+    }
+    if (!report.ok) {
+      const message = reportError(report)
+      this.options.store.markPublishError(id, message)
+      this.changed()
+      throw new HostingError('publish-failed', message)
+    }
+    this.options.store.markPublished(id, createdAt)
 
     const shares: Array<{ shareId: string; report: PublishReport }> = []
     if (service.visibility === 'private') {
@@ -373,32 +399,47 @@ export class HostingService {
       })
     )
     const relays = await this.relays(ownerHex)
+    const strict = this.options.anchorRequired?.() === true
+    // Anchored mode looks up the anchor by the requested `d` tag, and a share has its
+    // own. Publish a no-`u` NCC-02 anchor under that tag first: if it fails in strict
+    // mode the locator is not published, so a strict recipient never sees a share it
+    // cannot accept.
+    const anchor = buildAnchorTemplate({
+      service: share.dTag,
+      endpoint: endpoints.find((endpoint) => endpoint.url.startsWith('https://')),
+      days: Math.max(1, Math.ceil((share.expiresAt - createdAt) / 86_400)),
+      now: createdAt,
+      privateMode: true
+    })
+    let anchorReport: PublishReport | null = null
+    if (anchor) {
+      try {
+        const anchorEvent = await this.sign(provider, anchor)
+        anchorReport = await this.options.publisher.publish(anchorEvent, relays)
+        if (strict && !anchorReport.ok) {
+          throw new HostingError(
+            'publish-failed',
+            `NCC-02 anchor was rejected: ${reportError(anchorReport)}`
+          )
+        }
+      } catch (error) {
+        if (strict) {
+          throw error instanceof HostingError
+            ? error
+            : new HostingError('publish-failed', `NCC-02 anchor failed: ${messageOf(error)}`)
+        }
+      }
+    } else if (strict) {
+      throw new HostingError('publish-failed', 'NCC-02 anchoring is required, but no anchor could be built')
+    }
+
     const report = await this.options.publisher.publish(event, relays)
+    if (anchorReport && !anchorReport.ok) {
+      report.errors.push({ relay: 'anchor', error: reportError(anchorReport) })
+    }
     if (report.ok) {
       share.lastPublishedAt = createdAt
       this.options.store.markSharePublished(share.id, createdAt)
-      // Anchored mode looks up the anchor by the requested `d` tag, and a share has
-      // its own. Publish a no-`u` NCC-02 anchor under that tag so the recipient can
-      // accept the share when they require anchors. Best effort: optional-mode
-      // recipients do not need it.
-      const anchor = buildAnchorTemplate({
-        service: share.dTag,
-        endpoint: endpoints.find((endpoint) => endpoint.url.startsWith('https://')),
-        days: Math.max(1, Math.ceil((share.expiresAt - createdAt) / 86_400)),
-        now: createdAt,
-        privateMode: true
-      })
-      if (anchor) {
-        try {
-          const anchorEvent = await this.sign(provider, anchor)
-          const anchorReport = await this.options.publisher.publish(anchorEvent, relays)
-          if (!anchorReport.ok) {
-            report.errors.push({ relay: 'anchor', error: reportError(anchorReport) })
-          }
-        } catch (error) {
-          report.errors.push({ relay: 'anchor', error: messageOf(error) })
-        }
-      }
     }
     return report
   }
