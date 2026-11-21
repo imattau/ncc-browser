@@ -59,7 +59,7 @@ const EMPTY_DRAFT: DraftState = {
   endpoints: '',
   ttlDays: String(DEFAULT_HOSTED_TTL_SECONDS / 86_400),
   visibility: 'private',
-  anchor: false,
+  anchor: true,
   notes: ''
 }
 
@@ -392,8 +392,7 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
                   onChange={(event) =>
                     setDraft({
                       ...draft,
-                      visibility: event.target.value === 'public' ? 'public' : 'private',
-                      anchor: event.target.value === 'public' ? draft.anchor : false
+                      visibility: event.target.value === 'public' ? 'public' : 'private'
                     })
                   }
                   className="mt-1 w-full rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-ink)] px-2.5 py-1.5 text-ui-12 text-[color:var(--color-text)] outline-none focus:border-[color:var(--color-accent)]"
@@ -419,11 +418,12 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
               <input
                 type="checkbox"
                 checked={draft.anchor}
-                disabled={draft.visibility !== 'public'}
                 onChange={(event) => setDraft({ ...draft, anchor: event.target.checked })}
                 className="mt-0.5 h-4 w-4 accent-[color:var(--color-accent)]"
               />
-              Also publish a public NCC-02 service record (anchor). Only for public HTTPS services.
+              {draft.visibility === 'private'
+                ? 'Also publish an NCC-02 service record without the endpoint (identity/trust anchor).'
+                : 'Also publish a public NCC-02 service record (includes the endpoint; requires HTTPS).'}
             </label>
 
             <label className="block text-ui-105 text-[color:var(--color-muted)]">

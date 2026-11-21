@@ -36,8 +36,15 @@ Settings → **Services** → **Add service**.
 | Endpoints | One or more `http://`, `https://` or `.onion` URLs. The first is the preferred endpoint; the resolver falls back in order. |
 | Visibility | **Private** encrypts the locator to you. **Public** publishes plaintext, so anyone with the address can resolve it. |
 | Locator lifetime | How long the signed hint is valid. Default 7 days, maximum 30. |
-| Anchor | Optional NCC-02 record for a public HTTPS service. Never used for private services because it would leak the endpoint. |
+| Anchor | Optional NCC-02 service record. A public service includes the endpoint; a private service omits `u` and anchors only the identity, expiry and optional `k`. |
 | Note | Optional text, encrypted with the payload, shown to people you share with. |
+
+NCC-02 anchoring is recommended but not mandatory. NCC-02 is the identity, intent and
+trust context; NCC-05 supplies reachability. The browser's default is optional anchoring;
+**Settings → General → Require NCC-02 service records** makes a fresh anchor mandatory.
+For a private service the anchor has no `u`: it cannot leak the endpoint, and NCC-05
+remains the only source of reachability. The resolver already accepts an anchor without
+`u` and applies its `k` to the NCC-05 endpoints.
 
 **Publish** signs a `kind 30058` locator and sends it to your configured relays plus
 your NIP-65 read and write relays. The Services card shows how many relays accepted it

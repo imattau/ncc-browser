@@ -159,12 +159,15 @@ export class HostingService {
     }
     this.options.store.markPublished(id, createdAt)
 
-    if (service.visibility === 'public' && service.anchor) {
+    if (service.anchor) {
       const anchor = buildAnchorTemplate({
         service: service.service,
-        endpoint: service.endpoints[0],
+        endpoint:
+          service.endpoints.find((endpoint) => endpoint.url.startsWith('https://')) ??
+          service.endpoints[0],
         days: ANCHOR_DAYS,
-        now: createdAt
+        now: createdAt,
+        privateMode: service.visibility === 'private'
       })
       if (anchor) {
         try {
@@ -369,10 +372,33 @@ export class HostingService {
         expiresAt: share.expiresAt
       })
     )
-    const report = await this.options.publisher.publish(event, await this.relays(ownerHex))
+    const relays = await this.relays(ownerHex)
+    const report = await this.options.publisher.publish(event, relays)
     if (report.ok) {
       share.lastPublishedAt = createdAt
       this.options.store.markSharePublished(share.id, createdAt)
+      // Anchored mode looks up the anchor by the requested `d` tag, and a share has
+      // its own. Publish a no-`u` NCC-02 anchor under that tag so the recipient can
+      // accept the share when they require anchors. Best effort: optional-mode
+      // recipients do not need it.
+      const anchor = buildAnchorTemplate({
+        service: share.dTag,
+        endpoint: endpoints.find((endpoint) => endpoint.url.startsWith('https://')),
+        days: Math.max(1, Math.ceil((share.expiresAt - createdAt) / 86_400)),
+        now: createdAt,
+        privateMode: true
+      })
+      if (anchor) {
+        try {
+          const anchorEvent = await this.sign(provider, anchor)
+          const anchorReport = await this.options.publisher.publish(anchorEvent, relays)
+          if (!anchorReport.ok) {
+            report.errors.push({ relay: 'anchor', error: reportError(anchorReport) })
+          }
+        } catch (error) {
+          report.errors.push({ relay: 'anchor', error: messageOf(error) })
+        }
+      }
     }
     return report
   }

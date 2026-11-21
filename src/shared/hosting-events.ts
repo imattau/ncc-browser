@@ -69,6 +69,8 @@ export interface AnchorTemplateInput {
   endpoint: ServiceEndpoint | undefined
   days: number
   now: number
+  /** NCC-02 private mode: publish d/exp/k but never the endpoint `u`. */
+  privateMode?: boolean
 }
 
 /**
@@ -77,13 +79,29 @@ export interface AnchorTemplateInput {
  */
 export function buildAnchorTemplate(input: AnchorTemplateInput): NccEventTemplate | null {
   const endpoint = input.endpoint
+  const expiresAt = String(Math.floor(input.now + Math.max(1, input.days) * 86_400))
+
+  // NCC-02 private/invite-only mode: a valid Service Record may omit `u`; NCC-05 is
+  // then the exclusive endpoint source. A comparable `k` may still bind the transport
+  // key without revealing where the service is.
+  if (input.privateMode) {
+    const tags: string[][] = [
+      ['d', input.service],
+      ['exp', expiresAt]
+    ]
+    if (endpoint?.url.startsWith('https://') && endpoint.family !== 'onion' && endpoint.k) {
+      tags.push(['k', endpoint.k])
+    }
+    return { kind: ANCHOR_KIND, created_at: input.now, tags, content: '' }
+  }
+
   if (!endpoint || !endpoint.url.startsWith('https://')) return null
   // An onion address in a public anchor defeats the point of the onion endpoint.
   if (endpoint.family === 'onion') return null
   const tags: string[][] = [
     ['d', input.service],
     ['u', endpoint.url],
-    ['exp', String(Math.floor(input.now + Math.max(1, input.days) * 86_400))]
+    ['exp', expiresAt]
   ]
   if (endpoint.k) tags.push(['k', endpoint.k])
   return {

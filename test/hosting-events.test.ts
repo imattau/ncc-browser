@@ -90,14 +90,14 @@ describe('hosting validation', () => {
     ).toMatchObject({ ok: false })
   })
 
-  it('never anchors a private service', () => {
+  it('allows a private service to publish an NCC-02 identity anchor', () => {
     const draft = validateHostingDraft({
       title: 'Photos',
       visibility: 'private',
       anchor: true,
       endpoints: ['https://photos.example']
     })
-    expect(draft.ok && draft.value.anchor).toBe(false)
+    expect(draft.ok && draft.value.anchor).toBe(true)
   })
 
   it('parses npub and hex recipients', () => {
@@ -215,6 +215,21 @@ describe('hosting events', () => {
         now: NOW
       })
     ).toBeNull()
+  })
+
+  it('omits the endpoint from a private NCC-02 anchor', () => {
+    const anchor = buildAnchorTemplate({
+      service: 'photos',
+      endpoint: { url: 'https://photos.example/', priority: 1, k: 'SPKI' },
+      days: 7,
+      now: NOW,
+      privateMode: true
+    })
+    expect(anchor?.kind).toBe(30059)
+    expect(anchor?.tags).toContainEqual(['d', 'photos'])
+    expect(anchor?.tags).toContainEqual(['exp', String(NOW + 7 * 86_400)])
+    expect(anchor?.tags).toContainEqual(['k', 'SPKI'])
+    expect(anchor?.tags.some(([name]) => name === 'u')).toBe(false)
   })
 
   it('writes an expired, endpoint-less tombstone', () => {

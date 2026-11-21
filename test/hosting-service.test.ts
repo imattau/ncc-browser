@@ -54,11 +54,15 @@ class FakePublisher implements HostingPublisher {
     return entry.event
   }
 
-  byTag(tag: string): Event | undefined {
+  byTag(tag: string, kind?: number): Event | undefined {
     return this.events
       .map((entry) => entry.event)
       .reverse()
-      .find((event) => event.tags.some((item) => item[0] === 'd' && item[1] === tag))
+      .find(
+        (event) =>
+          (kind === undefined || event.kind === kind) &&
+          event.tags.some((item) => item[0] === 'd' && item[1] === tag)
+      )
   }
 }
 
@@ -191,9 +195,9 @@ describe('HostingService publishing', () => {
     expect(second).toBeGreaterThan(first)
 
     const share = await hosting.share(service.id, getPublicKey(generateSecretKey()), 7)
-    const shareEvent = publisher.byTag(share.share.dTag)
+    const shareEvent = publisher.byTag(share.share.dTag, 30058)
     await hosting.revokeShare(share.share.id)
-    const tombstone = publisher.byTag(share.share.dTag)
+    const tombstone = publisher.byTag(share.share.dTag, 30058)
     expect(tombstone?.created_at ?? 0).toBeGreaterThan(shareEvent?.created_at ?? 0)
   })
 })
@@ -211,10 +215,14 @@ describe('HostingService shares', () => {
     expect(result.share.recipient).toBe(recipientHex)
     expect(result.share.dTag.startsWith('share-')).toBe(true)
 
-    const event = publisher.last()
-    expect(event.tags).toContainEqual(['d', result.share.dTag])
-    expect(event.tags).toContainEqual(['private', 'true'])
-    expect(event.tags.some(([name]) => name === 'expiration')).toBe(true)
+    const event = publisher.byTag(result.share.dTag, 30058)
+    expect(event?.tags).toContainEqual(['d', result.share.dTag])
+    expect(event?.tags).toContainEqual(['private', 'true'])
+    expect(event?.tags.some(([name]) => name === 'expiration')).toBe(true)
+
+    const anchor = publisher.byTag(result.share.dTag, 30059)
+    expect(anchor?.tags).toContainEqual(['d', result.share.dTag])
+    expect(anchor?.tags.some(([name]) => name === 'u')).toBe(false)
 
     const recipientKey = nip44.getConversationKey(recipient, ownerHex)
     const payload = JSON.parse(nip44.decrypt(event.content, recipientKey))
@@ -297,8 +305,10 @@ describe('HostingService shares', () => {
     const { publisher, hosting } = setup()
     const service = hosting.create({ title: 'Photos', endpoints: ['https://photos.example'] })
     await hosting.share(service.id, getPublicKey(generateSecretKey()), 7)
-    const shareEvents = publisher.events.filter((entry) =>
-      entry.event.tags.some(([name, value]) => name === 'd' && value?.startsWith('share-'))
+    const shareEvents = publisher.events.filter(
+      (entry) =>
+        entry.event.kind === 30058 &&
+        entry.event.tags.some(([name, value]) => name === 'd' && value?.startsWith('share-'))
     )
     expect(shareEvents).toHaveLength(1)
 

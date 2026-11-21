@@ -313,7 +313,7 @@ export function validateHostingDraft(input: HostingDraft): Validation<Normalized
       endpoints,
       ttlSeconds,
       visibility,
-      anchor: visibility === 'public' && input.anchor === true,
+      anchor: input.anchor === true,
       ...(notes ? { notes } : {})
     }
   }
