@@ -1,0 +1,27 @@
+{
+  "name": "ncc-site-publisher",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Publish a static NIP-5A site to Blossom and Nostr relays with the Nostr Navigator signer",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "nostr-tools": "^2.26.0",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.10",
+    "vitest": "^3.2.7"
+  }
+}

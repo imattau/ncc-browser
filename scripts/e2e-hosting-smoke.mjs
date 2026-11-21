@@ -50,6 +50,24 @@ async function waitForHttp(url, timeout = 15000) {
   throw new Error(`timed out waiting for ${url}`)
 }
 
+
+async function waitForChromeTarget(timeout = 20000) {
+  const start = Date.now()
+  while (Date.now() - start < timeout) {
+    try {
+      const targets = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/list`)).json()
+      const chrome = targets.find(
+        (target) => target.type === 'page' && target.url.includes('out/renderer/index.html')
+      )
+      if (chrome) return chrome
+    } catch {
+      // Electron is still starting.
+    }
+    await sleep(200)
+  }
+  throw new Error('chrome target not found')
+}
+
 class Cdp {
   constructor(url) {
     this.ws = new WebSocket(url)
@@ -136,9 +154,7 @@ const electron = start(
 
 let cdp
 try {
-  const targets = await waitForHttp(`http://127.0.0.1:${CDP_PORT}/json/list`)
-  const chrome = targets.find((target) => target.type === 'page' && target.url.includes('out/renderer/index.html'))
-  if (!chrome) throw new Error(`chrome target not found: ${JSON.stringify(targets.map((t) => t.url))}`)
+  const chrome = await waitForChromeTarget()
   cdp = new Cdp(chrome.webSocketDebuggerUrl)
   await cdp.send('Runtime.enable')
   await waitFor(cdp, 'Boolean(window.ncc)', 'preload API')
@@ -246,6 +262,29 @@ try {
   if (state.services.length !== 1) throw new Error('service was not stored')
   if (state.shares.length !== 1) throw new Error('share was not stored')
   log('state file ok', JSON.stringify({ services: state.services.length, shares: state.shares.length }))
+
+  await cdp.evaluate("window.ncc.runCommand('open-site-publisher')")
+  await new Promise((resolve) => setTimeout(resolve, 1200))
+  const allTargets = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/list`)).json()
+  const publisherTarget = allTargets.find(
+    (target) => target.type === 'page' && target.url.startsWith('nccpublish://app')
+  )
+  if (!publisherTarget) {
+    throw new Error(`site publisher target not found: ${JSON.stringify(allTargets.map((t) => t.url))}`)
+  }
+  const publisher = new Cdp(publisherTarget.webSocketDebuggerUrl)
+  await publisher.send('Runtime.enable')
+  await waitFor(publisher, "Boolean(document.querySelector('h1'))", 'publisher heading', 15000)
+  const heading = await publisher.evaluate("document.querySelector('h1').textContent.trim()")
+  if (!heading.includes('Publish a site')) throw new Error(`unexpected heading: ${heading}`)
+  await waitFor(publisher, 'Boolean(window.nostr)', 'publisher signer', 15000)
+  const publisherKey = await publisher.evaluate('window.nostr.getPublicKey()')
+  if (!/^[0-9a-f]{64}$/.test(publisherKey)) {
+    throw new Error(`publisher signer returned an unexpected key: ${publisherKey}`)
+  }
+  publisher.close()
+  log('site publisher loaded with its signer')
+
   console.log('SMOKE OK')
 } finally {
   try {

@@ -8,8 +8,8 @@
   "author": "imattau",
   "license": "MIT",
   "scripts": {
-    "dev": "npm run nccsearch:build && electron-vite dev",
-    "build": "npm run nccsearch:build && npm run typecheck && electron-vite build",
+    "dev": "npm run nccsearch:build && npm run site-publisher:build && electron-vite dev",
+    "build": "npm run nccsearch:build && npm run site-publisher:build && npm run typecheck && electron-vite build",
     "start": "electron-vite preview",
     "mobile:dev": "npm run nccsearch:build && vite --config vite.mobile.config.ts",
     "mobile:build": "npm run nccsearch:build && vite build --config vite.mobile.config.ts",
@@ -31,7 +31,9 @@
     "ext:port": "node packages/extension-sdk/bin/ncc-ext.mjs port",
     "ext:pack": "node packages/extension-sdk/bin/ncc-ext.mjs pack",
     "tauri": "tauri",
-    "e2e:hosting": "npm run build && node scripts/e2e-hosting-smoke.mjs"
+    "e2e:hosting": "npm run build && node scripts/e2e-hosting-smoke.mjs",
+    "site-publisher:build": "node scripts/build-site-publisher.mjs",
+    "site-publisher:test": "npm --prefix site-publisher test"
   },
   "dependencies": {
     "@nostrify/nostrify": "^0.55.1",

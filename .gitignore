@@ -22,6 +22,9 @@ src-tauri/gen/android/tauri.settings.gradle
 tsconfig.tsbuildinfo
 resources/tor/*
 resources/nccsearch/
+resources/site-publisher/
+site-publisher/node_modules/
+site-publisher/dist-nsite/
 mobile/public/nccsearch/
 !resources/tor/README.md
 !resources/tor/TOR-LICENSE.txt

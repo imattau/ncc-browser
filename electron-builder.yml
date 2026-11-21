@@ -23,6 +23,8 @@ files:
 extraResources:
   - from: resources/nccsearch
     to: nccsearch
+  - from: resources/site-publisher
+    to: site-publisher
 
 asar: true
 asarUnpack:

@@ -102,6 +102,24 @@ Limits worth knowing:
 - Manifests are cached for 60 s and refreshed in the background; a forced reload asks
   the relays again. Snapshots (`nsite://v…`) are not supported yet.
 
+### Publishing a site
+
+**Menu → Publish a site** opens the bundled publisher at `nccpublish://app/`. Pick the
+built folder (the one with `index.html` at its root), set a site id and description,
+then publish. The page hashes every file locally, uploads the blobs to Blossom
+(BUD-02), signs a NIP-5A manifest with the built-in signer, and publishes it to your
+relays. The result is `nsite://<your npub>/<site>/`.
+
+Republishing with the same site id replaces the manifest. Files whose bytes did not
+change keep their hashes and are not uploaded again. The page can also verify every
+file against its manifest hash after publishing. This is the right path for a static
+site, blog, docs or SPA; use **Services** instead when the thing you are publishing
+needs a running HTTP endpoint, logins or server-side state.
+
+Sites are public: NIP-5A has no access control, and Blossom servers may garbage-collect
+unpinned blobs. Publish to more than one server and keep the source folder. See
+[`site-publisher/README.md`](./site-publisher/README.md).
+
 A gateway deployment still works and is a useful fallback: publish an NCC-05 locator
 whose endpoint is `<npub>.nsite-host.com`, then `ncc://<npub>/site/` resolves through
 NCC with TLS pinning as usual.
@@ -160,6 +178,10 @@ A locator is a hint, not a tunnel. Use a reachable LAN/public endpoint, or publi
 bundled Tor. Revocation is a best-effort tombstone: the real cut-off is rotating the
 endpoint or enforcing authentication at the service. See
 [`docs/hosting.md`](./docs/hosting.md) for the threat model and limits.
+
+For a **static** site, use **Menu → Publish a site** (`nsite://`), not a hosted
+service: there is no endpoint, no TTL and no renewal. See
+[`site-publisher/README.md`](./site-publisher/README.md).
 
 ## Browser chrome
 

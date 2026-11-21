@@ -46,6 +46,7 @@ import { NsiteBlobs } from './nsite/blob'
 import { NsiteResolver } from './nsite/resolver'
 import { installNsiteProtocol } from './nsite/protocol'
 import { installNccSearchProtocol } from './nccsearch/protocol'
+import { installSitePublisherProtocol } from './site-publisher/protocol'
 import { installCertificatePinning, PinStore } from './pins'
 import { installNccProtocol, type ProtocolActivity } from './protocol'
 import { registerPrivilegedSchemes } from './schemes'
@@ -279,6 +280,11 @@ app.whenReady().then(async () => {
       pubkey: identity.list().activeId
     })
   )
+  const sitePublisherAssets = app.isPackaged
+    ? join(process.resourcesPath, 'site-publisher')
+    : join(app.getAppPath(), 'resources', 'site-publisher')
+  // Normal tab only: publishing needs the durable identity, not a private/Tor session.
+  installSitePublisherProtocol(content.normal, sitePublisherAssets)
 
   const torGuard = new TorGuard()
   torGuard.install(content.normal, (details) => protection.shouldBlock(details, 'normal'))

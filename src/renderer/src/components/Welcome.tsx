@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Check, Copy, EyeOff, KeyRound, Server, Settings2, ShieldCheck, TimerOff } from 'lucide-react'
+import { Check, Copy, EyeOff, Globe, KeyRound, Server, Settings2, ShieldCheck, TimerOff } from 'lucide-react'
 import type { TabKind } from '@shared/types'
 import { recipientNpub, serviceAddress, type HostedService } from '@shared/hosting'
 import { cn } from '../lib/cn'
@@ -168,21 +168,38 @@ export function Welcome({ onOpenSettings, onOpenServices, onNewPrivateTab, onNew
               </div>
             </div>
           ) : (
-            <button
-              type="button"
-              onClick={onOpenServices}
-              className="mt-8 flex w-full items-center gap-3 rounded-xl border border-dashed border-[color:var(--color-line)] px-4 py-3 text-left hover:border-[color:var(--color-accent)]/40 hover:bg-[color:var(--color-hover-soft)]"
-            >
-              <Server className="h-4 w-4 shrink-0 text-[color:var(--color-accent)]" />
-              <span className="min-w-0">
-                <span className="block text-ui-12 font-medium text-[color:var(--color-text-strong)]">
-                  Publish a service you run
+            <div className="mt-8 grid gap-2 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={onOpenServices}
+                className="flex w-full items-center gap-3 rounded-xl border border-dashed border-[color:var(--color-line)] px-4 py-3 text-left hover:border-[color:var(--color-accent)]/40 hover:bg-[color:var(--color-hover-soft)]"
+              >
+                <Server className="h-4 w-4 shrink-0 text-[color:var(--color-accent)]" />
+                <span className="min-w-0">
+                  <span className="block text-ui-12 font-medium text-[color:var(--color-text-strong)]">
+                    Publish a service you run
+                  </span>
+                  <span className="block text-ui-105 text-[color:var(--color-muted)]">
+                    Give it an npub address, then share it privately with one person.
+                  </span>
                 </span>
-                <span className="block text-ui-105 text-[color:var(--color-muted)]">
-                  Give it an npub address, then share it privately with one person.
+              </button>
+              <button
+                type="button"
+                onClick={() => void window.ncc.runCommand('open-site-publisher')}
+                className="flex w-full items-center gap-3 rounded-xl border border-dashed border-[color:var(--color-line)] px-4 py-3 text-left hover:border-[color:var(--color-accent)]/40 hover:bg-[color:var(--color-hover-soft)]"
+              >
+                <Globe className="h-4 w-4 shrink-0 text-[color:var(--color-accent)]" />
+                <span className="min-w-0">
+                  <span className="block text-ui-12 font-medium text-[color:var(--color-text-strong)]">
+                    Publish a static site
+                  </span>
+                  <span className="block text-ui-105 text-[color:var(--color-muted)]">
+                    Files on Blossom, a signed manifest, no host: nsite://&lt;you&gt;/&lt;site&gt;.
+                  </span>
                 </span>
-              </span>
-            </button>
+              </button>
+            </div>
           )}
 
           <div className="mt-8 grid gap-3 sm:grid-cols-3">

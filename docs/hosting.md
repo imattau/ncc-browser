@@ -7,6 +7,10 @@ address instead of a domain:
 ncc://<your-npub>/<service>
 ```
 
+This is for **services** — things that need a running HTTP endpoint, logins or
+server-side state. For a **static site**, use **Menu → Publish a site** (`nsite://`):
+no endpoint, no TTL, no renewal. See [`../site-publisher/README.md`](../site-publisher/README.md).
+
 The service can be a home server, a laptop app, a dashboard, or anything that speaks
 HTTP. The browser holds the identity and signs the locator; you do not need a domain,
 a certificate, a reverse proxy, or a port-forward on a public IP.
