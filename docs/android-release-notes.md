@@ -1,5 +1,10 @@
 # Nostr Navigator for Android
 
+## Fixes in 0.36.1
+
+- Fixed Android WebAuthn requests bypassing the NCC passkey manager because the WebView
+  rejected its HTTPS origin rule.
+
 ## New in 0.36.0
 
 - Added passkey creation and sign-in through the NCC encrypted password vault, with
