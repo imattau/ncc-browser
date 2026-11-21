@@ -7,8 +7,8 @@ directories:
   output: release
   buildResources: build
 
-# The main and renderer bundles are self-contained (nostr-tools is inlined), apart
-# from adblock-rs, whose JavaScript loader and native binding are required at runtime.
+# The main and renderer bundles are self-contained except for runtime dependencies
+# that Electron must resolve from app.asar.
 files:
   - out/**/*
   - package.json
@@ -17,6 +17,8 @@ files:
   - node_modules/adblock-rs/package.json
   - node_modules/adblock-rs/js/index.js
   - node_modules/adblock-rs/js/index.node
+  - node_modules/tldts/**/*
+  - node_modules/tldts-core/**/*
 
 extraResources:
   - from: resources/nccsearch

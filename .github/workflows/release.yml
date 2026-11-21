@@ -128,6 +128,18 @@ jobs:
           grep -qx 'StartupWMClass=nostr-navigator' "$desktop"
           ! grep -q '{{prefix}}' "$desktop"
           test -f "$RUNNER_TEMP/store/packages/share/icons/hicolor/256x256/apps/ncc-browser.png"
+          app_dir="$(dirname "$(readlink -f "$exe")")"
+          node - "$app_dir/resources/app.asar" <<'NODE'
+          const assert = require('node:assert/strict')
+          const asar = require('@electron/asar')
+          const files = new Set(asar.listPackage(process.argv[2]).map((file) => file.replace(/^\/+/, '')))
+          for (const file of [
+            'node_modules/tldts/package.json',
+            'node_modules/tldts/dist/cjs/index.js',
+            'node_modules/tldts-core/package.json',
+            'node_modules/tldts-core/dist/cjs/index.js',
+          ]) assert(files.has(file), `missing runtime file in app.asar: ${file}`)
+          NODE
 
       - uses: actions/upload-artifact@v7
         with:
