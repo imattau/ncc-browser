@@ -481,7 +481,10 @@ async fn vault_passkey_save(
         totp: String::new(),
         passkey: Some(passkey),
     }).await;
-    if outcome.ok && outcome.error.is_none() { Ok(()) }
+    // A relay publish failure leaves the entry committed locally and marks sync
+    // pending. Return the credential to the relying party after that local commit;
+    // otherwise the site never stores the credential ID that NCC has saved.
+    if outcome.ok { Ok(()) }
     else { Err(outcome.error.unwrap_or_else(|| "The passkey could not be saved".into())) }
 }
 

@@ -222,7 +222,7 @@ private const val PASSKEY_SHIM = """
   async function resolve(operation, options, credentialId, signal) {
     var result = await request(operation, options, credentialId, signal);
     if (!result.handled) return null;
-    if (result.error) throw new DOMException(result.error === 'InvalidStateError' ? 'Credential already exists' : result.error, result.error === 'InvalidStateError' ? 'InvalidStateError' : 'NotAllowedError');
+    if (result.error) throw new DOMException(result.error === 'InvalidStateError' ? 'Credential already exists' : result.error, result.errorName || (result.error === 'InvalidStateError' ? 'InvalidStateError' : 'NotAllowedError'));
     if (operation === 'candidates') return result.candidates || [];
     return result.response ? responseObject(result.response, operation === 'create') : null;
   }
@@ -677,6 +677,7 @@ class ContentSurface(
           val answer = try { JSONObject(raw) } catch (_: Exception) { JSONObject().put("handled", false) }
           val result = JSONObject().put("id", callId).put("handled", answer.optBoolean("handled"))
           if (answer.has("error")) result.put("error", answer.optString("error"))
+          if (answer.has("errorName")) result.put("errorName", answer.optString("errorName"))
           if (answer.has("response")) result.put("response", answer.optJSONObject("response") ?: JSONObject())
           if (answer.has("candidates")) result.put("candidates", answer.optJSONArray("candidates") ?: org.json.JSONArray())
           Handler(Looper.getMainLooper()).post { if (!destroyed) replyProxy.postMessage(result.toString()) }

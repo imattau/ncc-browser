@@ -262,7 +262,11 @@ export function createPasswords(deps) {
   async function handleWebauthnRequest(request) {
     const reply = (value) => content?.resolvePasskey?.(request.tab, request.requestId, JSON.stringify(value))
     const fallback = () => reply({ handled: false })
-    const failed = (error) => reply({ handled: true, error: error?.message || 'NotAllowedError' })
+    const failed = (error) => reply({
+      handled: true,
+      error: error?.message || 'The passkey request failed',
+      errorName: error?.name || 'NotAllowedError'
+    })
     try {
       const tab = getTabs().find((entry) => entry.id === request.tab)
       if (!tab || tab.kind !== 'normal' || !request.origin || new URL(tab.url).origin !== request.origin) return fallback()

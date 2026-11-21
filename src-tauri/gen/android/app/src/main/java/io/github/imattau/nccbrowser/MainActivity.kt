@@ -968,9 +968,15 @@ class MainActivity : TauriActivity() {
         pendingPaymentCardAuth = purpose == "payment-card"
         val keyguard = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
         if (!keyguard.isDeviceSecure) {
-          nativePaymentCardAuthResult(false)
+          // A stock emulator has neither an enrolled biometric nor a device PIN.
+          // Keep the release behavior strict, but let debug emulator passkey flows
+          // continue to NCC's explicit per-credential confirmation prompt.
+          val emulator = Build.HARDWARE == "ranchu" || Build.HARDWARE == "goldfish" ||
+            Build.PRODUCT.startsWith("sdk_") || Build.FINGERPRINT.contains("generic")
+          val allowDebugVaultUse = !pendingPaymentCardAuth && BuildConfig.DEBUG && emulator
+          if (pendingPaymentCardAuth) nativePaymentCardAuthResult(false)
           pendingPaymentCardAuth = false
-          emitToShellRaw("window.__nccDeviceCredential", "false")
+          emitToShellRaw("window.__nccDeviceCredential", allowDebugVaultUse.toString())
           return@runOnUiThread
         }
         val intent = keyguard.createConfirmDeviceCredentialIntent(
