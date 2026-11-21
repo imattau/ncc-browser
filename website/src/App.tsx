@@ -28,6 +28,10 @@ import { NRelay1 } from '@nostrify/nostrify'
 
 const REPO = 'https://github.com/imattau/ncc-browser'
 const RELEASES = `${REPO}/releases/latest`
+const GIT_MIRROR =
+  'https://gitworkshop.dev/npub1khf5amw8mrupe649a5mhkk3d2d8wjj06urz6kwawpftk4f68tjlstdmd3q/relay.ngit.dev/nostr-navigator'
+const NOSTRHUB =
+  'https://nostrhub.io/npub1khf5amw8mrupe649a5mhkk3d2d8wjj06urz6kwawpftk4f68tjlstdmd3q/nostr-navigator'
 const DOCS = `${REPO}/tree/main/docs`
 const SPEC = 'https://github.com/nostr-community-conventions'
 const NPACK = 'https://github.com/imattau/npack'
@@ -579,6 +583,10 @@ export function App() {
                   a: 'Yes. Services → Share lists your Nostr follow list, cached for quick reuse and refreshable. Select any number of contacts; each gets their own encrypted link and no-endpoint NCC-02 anchor, because NIP-44 has one conversation key per recipient. Each link can be revoked or renewed independently.'
                 },
                 {
+                  q: 'Where is the source?',
+                  a: `The canonical repository is on GitHub. It is also mirrored as a Nostr git repository: the NIP-34 announcement is on relay.ngit.dev and the browser is at gitworkshop.dev. NostrHub is a second web index for the same repository.`
+                },
+                {
                   q: 'What is an nsite?',
                   a: 'A NIP-5A static site: a signed manifest listing paths and sha256 hashes, with the files stored on Blossom. The browser fetches and verifies every file; there is no web server to trust.'
                 },
@@ -621,6 +629,8 @@ export function App() {
             </div>
             <div className="grid grid-cols-2 gap-x-10 gap-y-2 text-[11px] text-muted sm:grid-cols-3">
               <a href={REPO} className="hover:text-text">GitHub</a>
+              <a href={GIT_MIRROR} className="hover:text-text">Nostr git mirror</a>
+              <a href={NOSTRHUB} className="hover:text-text">NostrHub</a>
               <a href={RELEASES} className="hover:text-text">Releases</a>
               <a href={DOCS} className="hover:text-text">Docs</a>
               <a href={SPEC} className="hover:text-text">NCC conventions</a>
