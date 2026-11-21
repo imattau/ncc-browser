@@ -33,7 +33,9 @@
     "tauri": "tauri",
     "e2e:hosting": "npm run build && node scripts/e2e-hosting-smoke.mjs",
     "site-publisher:build": "node scripts/build-site-publisher.mjs",
-    "site-publisher:test": "npm --prefix site-publisher test"
+    "site-publisher:test": "npm --prefix site-publisher test",
+    "website:dev": "npm --prefix website run dev",
+    "website:build": "npm --prefix website run build"
   },
   "dependencies": {
     "@nostrify/nostrify": "^0.55.1",

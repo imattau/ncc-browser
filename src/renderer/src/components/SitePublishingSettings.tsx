@@ -386,6 +386,7 @@ export function SitePublishingSettings({
               Description
               <input
                 value={draft.description}
+                data-nsite-description
                 onChange={(event) => setDraft({ ...draft, description: event.target.value })}
                 className="mt-1 w-full rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-ink)] px-2.5 py-1.5 text-ui-12 text-[color:var(--color-text)] outline-none focus:border-[color:var(--color-accent)]"
               />
@@ -395,6 +396,7 @@ export function SitePublishingSettings({
               Source (optional)
               <input
                 value={draft.source}
+                data-nsite-source
                 onChange={(event) => setDraft({ ...draft, source: event.target.value })}
                 placeholder="https://github.com/you/site"
                 className="mt-1 w-full rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-ink)] px-2.5 py-1.5 text-ui-12 text-[color:var(--color-text)] outline-none focus:border-[color:var(--color-accent)]"
@@ -493,7 +495,7 @@ export function SitePublishingSettings({
       </div>
 
       {result ? (
-        <div className="space-y-2 rounded-xl border border-[color:var(--color-ok)]/30 bg-[color:var(--color-ok)]/5 p-4">
+        <div data-nsite-result className="space-y-2 rounded-xl border border-[color:var(--color-ok)]/30 bg-[color:var(--color-ok)]/5 p-4">
           <h3 className="flex items-center gap-2 text-ui-12 font-semibold text-[color:var(--color-text-strong)]">
             <Check className="h-4 w-4 text-[color:var(--color-ok)]" />
             Published
