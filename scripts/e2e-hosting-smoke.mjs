@@ -259,6 +259,45 @@ try {
 
   await cdp.evaluate(`(() => {
     const form = document.querySelector('[data-hosting-settings] form')
+    const textarea = form.querySelector('textarea')
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(
+      textarea,
+      'http://127.0.0.1:${BLOSSOM_PORT}/'
+    )
+    textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    form.querySelector('[data-discover-endpoints]')?.click()
+    return true
+  })()`)
+  await waitFor(
+    cdp,
+    "document.querySelectorAll('[data-endpoint-candidate]').length >= 2",
+    'discovered endpoints',
+    15000
+  )
+  const discovered = await cdp.evaluate(`(() => {
+    const rows = [...document.querySelectorAll('[data-endpoint-candidate]')]
+    return rows.map((row) => row.getAttribute('data-endpoint-candidate'))
+  })()`)
+  if (!discovered.some((url) => url.includes('127.0.0.1'))) {
+    throw new Error(`loopback endpoint was not discovered: ${discovered.join(', ')}`)
+  }
+  const picked = discovered.find((url) => url.includes('localhost')) ?? discovered[0]
+  await cdp.evaluate(`(() => {
+    const row = document.querySelector('[data-endpoint-candidate=${JSON.stringify(picked)}]')
+    row?.querySelector('input')?.click()
+    return true
+  })()`)
+  await sleep(150)
+  const selected = await cdp.evaluate(
+    "document.querySelector('[data-hosting-settings] form textarea').value"
+  )
+  if (!selected.includes(picked)) {
+    throw new Error(`selecting ${picked} did not fill the endpoints field: ${selected}`)
+  }
+  log('endpoints discovered', discovered.length)
+
+  await cdp.evaluate(`(() => {
+    const form = document.querySelector('[data-hosting-settings] form')
     const set = (element, value) => {
       const proto = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype
       Object.getOwnPropertyDescriptor(proto, 'value').set.call(element, value)

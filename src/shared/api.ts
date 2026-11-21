@@ -29,6 +29,7 @@ import type {
   HostingShareResult,
   HostingState
 } from './hosting'
+import type { ReachabilityReport } from './reachability'
 import type {
   AppearanceConfig,
   AppConfig,
@@ -171,6 +172,7 @@ export interface NccApi {
   hostingShareMany(id: string, recipients: string[], days: number, label?: string): Promise<HostingShareBatchResult>
   hostingRevokeShare(shareId: string): Promise<HostingShareResult>
   hostingForgetReceived(id: string): Promise<HostingState>
+  hostingDiscoverEndpoints(seedUrl: string): Promise<ReachabilityReport>
   onHostingChanged(listener: (state: HostingState) => void): () => void
   nsiteState(): Promise<NsitePublishState>
   nsitePickFolder(): Promise<NsiteFolderScan | null>

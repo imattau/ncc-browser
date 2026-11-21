@@ -33,7 +33,7 @@ Settings → **Services** → **Add service**.
 | --- | --- |
 | Name | Human label shown in the browser. |
 | Service id | The `d` tag, e.g. `photos`. Lowercase letters, digits and hyphens. Immutable after creation. |
-| Endpoints | One or more `http://`, `https://` or `.onion` URLs. The first is the preferred endpoint; the resolver falls back in order. |
+| Endpoints | One or more `http://`, `https://` or `.onion` URLs. The first is the preferred endpoint; the resolver falls back in order. **Find endpoints** proposes candidates from the current page and this machine. |
 | Visibility | **Private** encrypts the locator to you. **Public** publishes plaintext, so anyone with the address can resolve it. |
 | Locator lifetime | How long the signed hint is valid. Default 7 days, maximum 30. |
 | Anchor | Optional NCC-02 service record. A public service includes the endpoint; a private service omits `u` and anchors only the identity, expiry and optional `k`. |
@@ -119,8 +119,8 @@ stop the old one) for a hard cut-off.
 
 ## Reachability and Tor
 
-A locator is a pointer, not a tunnel. The endpoint has to be reachable from the
-recipient's network:
+A locator is a pointer, not a tunnel. The address stays
+`ncc://<npub>/<service>`; the endpoint has to be reachable from the recipient's network:
 
 - **Direct** — a LAN address works on the same network; a public address needs the
   usual routing and firewall work.
@@ -133,6 +133,48 @@ recipient's network:
 A loopback endpoint (`127.0.0.1`, `localhost`, `::1`) is accepted for your own
 service but is dropped from a share: the recipient's machine would resolve to itself.
 A share with no non-loopback endpoint is refused.
+
+## Endpoint discovery
+
+Opening a page and choosing **Publish this page** (or clicking **Find endpoints** in
+the service form) fills the endpoint list from information that is already local. The
+service form shows each candidate with its source and a confidence label:
+
+| Candidate | Example | Confidence |
+| --- | --- | --- |
+| This machine | `http://127.0.0.1:8080` | owner only |
+| Local network | `http://192.168.1.20:8080` | same network |
+| IPv6 | `http://[2001:db8::20]:8080` | globally routable, firewall-dependent |
+| Current page | `https://photos.example/` | verified by the page |
+| Tor onion | `http://abc…onion:8080` | loaded through Tor |
+| Public IPv4 | `http://203.0.113.42:9000` | unverified |
+
+Discovery reads only the current page, `os.networkInterfaces()` and the local
+gateway. It does not contact an external address service. Link-local addresses
+(`169.254.0.0/16`, `fe80::/10`) and unique-local IPv6 (`fc00::/7`) are skipped.
+
+The router's WAN address is read over UPnP, then NAT-PMP. Its class decides the
+advice:
+
+- `100.64.0.0/10` is **carrier-grade NAT**: direct IPv4 cannot work without a tunnel,
+  so plan on Tor.
+- A private WAN address means **double NAT**; the public address cannot be confirmed
+  from the router alone.
+- A public WAN address still needs a port forward and a reachability check.
+
+A global IPv6 address is normally directly routable without NAT, so IPv6 is often the
+simplest direct path; the remaining question is the host or router firewall.
+
+Discovering an address is not a promise that a port is open. A public IPv4 candidate
+stays **unverified** until a port mapping and a reachability check confirm it.
+
+### External address confirmation
+
+Confirming the real internet egress needs an external service, because the router
+only reports what it believes its uplink to be. That check is a user choice, not a
+silent request: the publisher names the provider, sends no identity or service
+metadata, caches the result and never runs it while Tor is preferred. Declining keeps
+the router's classification and leaves direct IPv4 marked unverified.
 
 ## Relays and discovery
 

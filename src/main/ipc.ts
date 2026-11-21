@@ -24,6 +24,7 @@ import { browserShellFor, browserShells, type BrowserShell } from './shell'
 import type { ProtectionService } from './protection'
 import type { HostingService } from './hosting/service'
 import type { HostingDraft } from '@shared/hosting'
+import { discoverReachability } from './hosting/discover'
 
 export interface IpcDeps {
   shell: BrowserShell
@@ -288,6 +289,13 @@ export function registerIpc(deps: IpcDeps): void {
     if (typeof id !== 'string') throw new Error('A share id is required')
     deps.hosting.forgetReceived(id)
     return deps.hosting.state()
+  })
+  ipcMain.handle('ncc:hosting-discover-endpoints', (event, seedUrl: unknown) => {
+    if (!fromChrome(event)) throw new Error('Services are only available to the browser chrome')
+    if (typeof seedUrl !== 'string' || !seedUrl.trim()) {
+      throw new Error('Open an http(s) page to discover its endpoint')
+    }
+    return discoverReachability({ seedUrl: seedUrl.trim() })
   })
 
   ipcMain.handle('ncc:set-relays', (event, relays: unknown) => {

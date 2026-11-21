@@ -10,6 +10,7 @@ import {
   Lock,
   Pencil,
   Plus,
+  Radar,
   RefreshCw,
   Server,
   Share2,
@@ -33,6 +34,7 @@ import {
   type ServiceShare
 } from '@shared/hosting'
 import { contactLabel, type ContactList, type ContactProfile } from '@shared/contacts'
+import type { EndpointCandidate, EndpointConfidence, EndpointKind, ReachabilityReport } from '@shared/reachability'
 import type { IdentityStatus } from '@shared/types'
 import { cn } from '../lib/cn'
 
@@ -92,6 +94,24 @@ function shortIdentity(value: string): string {
   return value.length > 24 ? `${value.slice(0, 12)}…${value.slice(-6)}` : value
 }
 
+const ENDPOINT_KIND_LABEL: Record<EndpointKind, string> = {
+  loopback: 'This machine',
+  lan: 'Local network',
+  ipv6: 'IPv6',
+  'public-v4': 'Public IPv4',
+  onion: 'Tor onion',
+  'current-https': 'Current page'
+}
+
+const ENDPOINT_CONFIDENCE_LABEL: Record<EndpointConfidence, string> = {
+  'owner-only': 'owner only',
+  'same-network': 'same network',
+  'firewall-dependent': 'firewall-dependent',
+  mapped: 'mapped',
+  verified: 'verified',
+  unverified: 'unverified'
+}
+
 export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIdentity, onClose }: HostingSettingsProps) {
   const [state, setState] = useState<HostingState | null>(null)
   const [draft, setDraft] = useState<DraftState | null>(null)
@@ -110,6 +130,9 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
   const [shareLabel, setShareLabel] = useState('')
   const [shareResults, setShareResults] = useState<Array<{ recipient: string; address: string }>>([])
   const [shareFailures, setShareFailures] = useState<Array<{ recipient: string; error: string }>>([])
+  const [discovery, setDiscovery] = useState<ReachabilityReport | null>(null)
+  const [discoveryBusy, setDiscoveryBusy] = useState(false)
+  const [discoveryError, setDiscoveryError] = useState<string | null>(null)
 
   const apply = useCallback((next: HostingState) => setState(next), [])
 
@@ -139,6 +162,35 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
     }
   }, [apply])
 
+  const discover = useCallback(async (seed: string): Promise<void> => {
+    const target = seed.trim()
+    if (!target) {
+      setDiscoveryError('Open an http(s) page before discovering endpoints')
+      return
+    }
+    setDiscoveryBusy(true)
+    setDiscoveryError(null)
+    try {
+      setDiscovery(await window.ncc.hostingDiscoverEndpoints(target))
+    } catch (discoverFailure) {
+      setDiscoveryError(errorMessage(discoverFailure))
+    } finally {
+      setDiscoveryBusy(false)
+    }
+  }, [])
+
+  const toggleEndpoint = (url: string): void => {
+    setDraft((current) => {
+      if (!current) return current
+      const lines = current.endpoints
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+      const next = lines.includes(url) ? lines.filter((line) => line !== url) : [...lines, url]
+      return { ...current, endpoints: next.join('\n') }
+    })
+  }
+
   useEffect(() => {
     if (!initialDraft) return
     setDraft({
@@ -155,8 +207,12 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
       anchor: initialDraft.anchor === true,
       notes: initialDraft.notes ?? ''
     })
+    const seed = initialDraft.endpoints
+      .map((endpoint) => (typeof endpoint === 'string' ? endpoint : endpoint.url))
+      .find(Boolean)
+    if (seed && /^https?:\/\//i.test(seed)) void discover(seed)
     onDraftUsed?.()
-  }, [initialDraft, onDraftUsed])
+  }, [initialDraft, onDraftUsed, discover])
 
   const npub = useMemo(() => {
     if (identity?.npub) return identity.npub
@@ -188,6 +244,8 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
     setError(null)
     setShareResults([])
     setShareFailures([])
+    setDiscovery(null)
+    setDiscoveryError(null)
   }
 
   const startEdit = (service: HostedService): void => {
@@ -204,6 +262,8 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
     setError(null)
     setShareResults([])
     setShareFailures([])
+    setDiscovery(null)
+    setDiscoveryError(null)
   }
 
   const submit = async (): Promise<void> => {
@@ -450,16 +510,94 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
               </label>
             </div>
 
-            <label className="block text-ui-105 text-[color:var(--color-muted)]">
-              Endpoints, one per line
-              <textarea
-                value={draft.endpoints}
-                onChange={(event) => setDraft({ ...draft, endpoints: event.target.value })}
-                rows={2}
-                placeholder={'https://photos.example\nhttp://abc.onion'}
-                className="mt-1 w-full resize-y rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-ink)] px-2.5 py-1.5 font-mono text-ui-11 text-[color:var(--color-text)] outline-none focus:border-[color:var(--color-accent)]"
-              />
-            </label>
+            <div>
+              <label className="block text-ui-105 text-[color:var(--color-muted)]">
+                Endpoints, one per line
+                <textarea
+                  value={draft.endpoints}
+                  onChange={(event) => setDraft({ ...draft, endpoints: event.target.value })}
+                  rows={2}
+                  placeholder={'https://photos.example\nhttp://abc.onion'}
+                  className="mt-1 w-full resize-y rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-ink)] px-2.5 py-1.5 font-mono text-ui-11 text-[color:var(--color-text)] outline-none focus:border-[color:var(--color-accent)]"
+                />
+              </label>
+              <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  data-discover-endpoints
+                  disabled={discoveryBusy}
+                  onClick={() => void discover(draft.endpoints.split('\n')[0] ?? '')}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-[color:var(--color-line)] px-2.5 py-1 text-ui-11 text-[color:var(--color-text)] hover:bg-[color:var(--color-hover)] disabled:opacity-50"
+                >
+                  <Radar className={cn('h-3.5 w-3.5', discoveryBusy && 'animate-pulse')} />
+                  {discoveryBusy ? 'Checking this machine…' : 'Find endpoints'}
+                </button>
+                <span className="text-ui-10 text-[color:var(--color-faint)]">
+                  Uses this page, local interfaces and the router only.
+                </span>
+              </div>
+              {discoveryError ? (
+                <p className="mt-1.5 text-ui-10 text-[color:var(--color-danger)]">{discoveryError}</p>
+              ) : null}
+              {discovery ? (
+                <div data-discovery className="mt-2 space-y-1.5 rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-ink)] p-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-ui-10 font-semibold text-[color:var(--color-text-strong)]">
+                      Detected endpoints
+                    </span>
+                    <span className="font-mono text-ui-95 text-[color:var(--color-faint)]">
+                      {discovery.gateway.wanAddress
+                        ? `router WAN ${discovery.gateway.wanAddress} · ${discovery.gateway.wanClass}`
+                        : 'router WAN unknown'}
+                    </span>
+                  </div>
+                  {discovery.candidates.length === 0 ? (
+                    <p className="text-ui-10 text-[color:var(--color-faint)]">
+                      No local candidates. Add an endpoint by hand.
+                    </p>
+                  ) : null}
+                  {discovery.candidates.map((candidate: EndpointCandidate) => {
+                    const selected = draft.endpoints
+                      .split('\n')
+                      .map((line) => line.trim())
+                      .includes(candidate.url)
+                    return (
+                      <label
+                        key={candidate.url}
+                        data-endpoint-candidate={candidate.url}
+                        className="flex cursor-pointer items-start gap-2 rounded-md px-1 py-0.5 hover:bg-[color:var(--color-hover)]"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selected}
+                          onChange={() => toggleEndpoint(candidate.url)}
+                          className="mt-0.5 h-3.5 w-3.5 accent-[color:var(--color-accent)]"
+                        />
+                        <span className="min-w-0">
+                          <span className="block truncate font-mono text-ui-105 text-[color:var(--color-text)]">
+                            {candidate.url}
+                          </span>
+                          <span className="block text-ui-95 text-[color:var(--color-faint)]">
+                            {ENDPOINT_KIND_LABEL[candidate.kind]} ·{' '}
+                            {ENDPOINT_CONFIDENCE_LABEL[candidate.confidence]}
+                            {candidate.note ? ` — ${candidate.note}` : ''}
+                          </span>
+                        </span>
+                      </label>
+                    )
+                  })}
+                  {discovery.warnings.length ? (
+                    <ul className="space-y-0.5 border-t border-[color:var(--color-line)] pt-1.5">
+                      {discovery.warnings.map((warning) => (
+                        <li key={warning} className="text-ui-95 text-[color:var(--color-muted)]">
+                          {warning}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="block text-ui-105 text-[color:var(--color-muted)]">
