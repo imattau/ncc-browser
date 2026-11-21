@@ -1,26 +1,32 @@
 #!/usr/bin/env node
 /**
- * End-to-end smoke test for hosted services: real Electron window, local `nak` relay,
- * a development identity, and the actual Settings → Services UI driven over CDP.
+ * End-to-end smoke test for hosted services and site publishing: real Electron
+ * window, local `nak` relay, a local Blossom stand-in, a development identity, and
+ * the actual Settings UI driven over CDP.
  *
- * Covers: opening Services, creating a private service, publishing it, sharing it with
- * an npub, and the persisted `services.json`.
+ * Covers: Services create/publish/share, the native Sites scan/upload/sign/publish
+ * flow, the persisted JSON files, and the standalone `nccpublish://app` page with the
+ * built-in signer.
  *
  * Run: npm run build && node scripts/e2e-hosting-smoke.mjs
- * Needs: Xvfb, nak, and a free 10548 / 9333 port.
+ * Needs: Xvfb, nak, and free 10548 / 10550 / 9333 ports.
+ * `NCC_NSITE_FOLDER` is a test-only hook that replaces the native folder dialog.
  */
 import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { createServer } from 'node:http'
 import { mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import WebSocket from 'ws'
-import { generateSecretKey, getPublicKey, nip19 } from 'nostr-tools'
+import { SimplePool, generateSecretKey, getPublicKey, nip19 } from 'nostr-tools'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const SCRATCH = '/tmp/opencode/ncc-hosting-smoke'
 const DISPLAY = ':98'
 const CDP_PORT = 9333
 const RELAY_PORT = 10548
+const BLOSSOM_PORT = 10550
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 function log(...args) {
@@ -130,6 +136,35 @@ const recipient = nip19.npubEncode(getPublicKey(generateSecretKey()))
 mkdirSync(SCRATCH, { recursive: true })
 const userData = join(SCRATCH, 'config', 'NCC Browser')
 mkdirSync(userData, { recursive: true })
+const siteFolder = join(SCRATCH, 'site')
+mkdirSync(join(siteFolder, 'assets'), { recursive: true })
+writeFileSync(join(siteFolder, 'index.html'), '<!doctype html><h1>Smoke site</h1>')
+writeFileSync(join(siteFolder, 'assets', 'app.js'), 'console.log("smoke")')
+const blobs = new Map()
+const blossom = createServer((request, response) => {
+  const url = request.url ?? '/'
+  if (request.method === 'HEAD' && url.startsWith('/')) {
+    response.writeHead(blobs.has(url.slice(1)) ? 200 : 404).end()
+    return
+  }
+  if (request.method === 'PUT' && url === '/upload') {
+    const chunks = []
+    request.on('data', (chunk) => chunks.push(chunk))
+    request.on('end', () => {
+      const body = Buffer.concat(chunks)
+      blobs.set(createHash('sha256').update(body).digest('hex'), body)
+      response.writeHead(200).end()
+    })
+    return
+  }
+  if (request.method === 'GET' && url.startsWith('/')) {
+    const body = blobs.get(url.slice(1))
+    response.writeHead(body ? 200 : 404).end(body)
+    return
+  }
+  response.writeHead(404).end()
+})
+await new Promise((resolve) => blossom.listen(BLOSSOM_PORT, '127.0.0.1', resolve))
 writeFileSync(
   join(userData, 'config.json'),
   JSON.stringify({ relays: [{ url: `ws://127.0.0.1:${RELAY_PORT}` }], gossip: false })
@@ -148,7 +183,8 @@ const electron = start(
     XDG_DATA_HOME: join(SCRATCH, 'data'),
     XDG_CACHE_HOME: join(SCRATCH, 'cache'),
     NCC_IDENTITY_NSEC: secretHex,
-    NCC_SIGNER_AUTO_APPROVE: '1'
+    NCC_SIGNER_AUTO_APPROVE: '1',
+    NCC_NSITE_FOLDER: siteFolder
   }
 )
 
@@ -263,7 +299,55 @@ try {
   if (state.shares.length !== 1) throw new Error('share was not stored')
   log('state file ok', JSON.stringify({ services: state.services.length, shares: state.shares.length }))
 
-  await cdp.evaluate("window.ncc.runCommand('open-site-publisher')")
+  let sitesOpen = false
+  for (let attempt = 0; attempt < 25 && !sitesOpen; attempt += 1) {
+    await cdp.evaluate("window.ncc.runCommand('open-site-publisher')")
+    await sleep(200)
+    sitesOpen = await cdp.evaluate("Boolean(document.querySelector('[data-nsite-settings]'))")
+  }
+  if (!sitesOpen) throw new Error('Sites settings did not open')
+  log('sites settings open')
+
+  await cdp.evaluate("document.querySelector('[data-nsite-pick]').click()")
+  await waitFor(cdp, "Boolean(document.querySelector('[data-nsite-publish]'))", 'site scan', 15000)
+  const setField = (selector, value) =>
+    cdp.evaluate(`(() => {
+      const element = document.querySelector(${JSON.stringify(selector)})
+      if (!element) return false
+      const proto = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype
+      Object.getOwnPropertyDescriptor(proto, 'value').set.call(element, ${JSON.stringify(value)})
+      element.dispatchEvent(new Event('input', { bubbles: true }))
+      return true
+    })()`)
+  await setField('[data-nsite-site-id]', 'smoke-site')
+  await setField('[data-nsite-title]', 'Smoke site')
+  await setField('[data-nsite-servers]', `http://127.0.0.1:${BLOSSOM_PORT}`)
+  await setField('[data-nsite-relays]', `ws://127.0.0.1:${RELAY_PORT}`)
+  await sleep(200)
+  await cdp.evaluate("document.querySelector('[data-nsite-publish]').click()")
+  await waitFor(
+    cdp,
+    "Boolean(document.querySelector('[data-nsite-site=\"smoke-site\"]'))",
+    'published site',
+    30000
+  )
+  log('native site published')
+  if (blobs.size < 2) throw new Error(`expected at least 2 uploaded blobs, got ${blobs.size}`)
+  const sitesFile = join(userData, 'nsite-sites.json')
+  if (!existsSync(sitesFile)) throw new Error('nsite-sites.json was not written')
+  const sites = JSON.parse(readFileSync(sitesFile, 'utf8'))
+  if (sites.sites.length !== 1) throw new Error('site was not stored')
+  await sleep(400)
+  const pool = new SimplePool()
+  const manifests = await pool.querySync([`ws://127.0.0.1:${RELAY_PORT}`], {
+    kinds: [35128],
+    authors: [getPublicKey(secret)],
+    '#d': ['smoke-site']
+  })
+  if (manifests.length !== 1) throw new Error(`expected one manifest, got ${manifests.length}`)
+  log('manifest published to the relay', manifests[0].id.slice(0, 12))
+
+  await cdp.evaluate("window.ncc.newTab('nccpublish://app/')")
   await new Promise((resolve) => setTimeout(resolve, 1200))
   const allTargets = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/list`)).json()
   const publisherTarget = allTargets.find(
@@ -292,5 +376,6 @@ try {
   } catch {}
   electron.kill('SIGTERM')
   relay.kill('SIGTERM')
+  blossom.close()
   spawn('pkill', ['-f', `Xvfb ${DISPLAY}`])
 }

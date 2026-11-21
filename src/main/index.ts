@@ -70,6 +70,9 @@ import { ProtectionService } from './protection'
 import { HostingStore } from './hosting/store'
 import { HostingService } from './hosting/service'
 import { RelayHostingPublisher } from './hosting/relays'
+import { NsiteStore } from './nsite-publish/store'
+import { NsitePublishService, RelayNsiteNetwork } from './nsite-publish/service'
+import { registerNsitePublishIpc } from './nsite-publish/ipc'
 import {
   installShellCameraPermission,
   installSitePermissionPrompts,
@@ -260,6 +263,18 @@ app.whenReady().then(async () => {
     publisher: new RelayHostingPublisher(relayPool, config),
     onChange: (state) => {
       if (shell && !shell.window.isDestroyed()) shell.sendToChrome('ncc:hosting-changed', state)
+    }
+  })
+
+  const nsitePublish = new NsitePublishService({
+    store: new NsiteStore(join(app.getPath('userData'), 'nsite-sites.json')),
+    identity: {
+      provider: () => identity.provider(),
+      status: () => identity.status()
+    },
+    network: new RelayNsiteNetwork(relayPool, config),
+    onChange: (state) => {
+      if (shell && !shell.window.isDestroyed()) shell.sendToChrome('ncc:nsite-changed', state)
     }
   })
 
@@ -707,6 +722,8 @@ app.whenReady().then(async () => {
     passwords: passwordService,
     hosting
   })
+
+  registerNsitePublishIpc(nsitePublish, shell)
 
   const hostingRenewal = setInterval(() => void hosting.renewDue(), 6 * 3600_000)
   hostingRenewal.unref()

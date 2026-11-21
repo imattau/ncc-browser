@@ -20,6 +20,7 @@ import {
   type SignerRequest
 } from '@shared/types'
 import type { HostingState } from '@shared/hosting'
+import type { NsiteProgress, NsitePublishState } from '@shared/nsite-publish'
 
 const api: NccApi = {
   initialAppearance: readAppearanceBootArgument(process.argv) ?? DEFAULT_APPEARANCE,
@@ -98,6 +99,27 @@ const api: NccApi = {
     ipcRenderer.on('ncc:hosting-changed', handler)
     return () => {
       ipcRenderer.removeListener('ncc:hosting-changed', handler)
+    }
+  },
+  nsiteState: () => ipcRenderer.invoke('ncc:nsite-state'),
+  nsitePickFolder: () => ipcRenderer.invoke('ncc:nsite-pick-folder'),
+  nsitePublish: (input) => ipcRenderer.invoke('ncc:nsite-publish', input),
+  nsiteVerify: (id) => ipcRenderer.invoke('ncc:nsite-verify', id),
+  nsiteRemove: (id) => ipcRenderer.invoke('ncc:nsite-remove', id),
+  onNsiteProgress: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, progress: NsiteProgress): void =>
+      listener(progress)
+    ipcRenderer.on('ncc:nsite-progress', handler)
+    return () => {
+      ipcRenderer.removeListener('ncc:nsite-progress', handler)
+    }
+  },
+  onNsiteChanged: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, state: NsitePublishState): void =>
+      listener(state)
+    ipcRenderer.on('ncc:nsite-changed', handler)
+    return () => {
+      ipcRenderer.removeListener('ncc:nsite-changed', handler)
     }
   },
   syncStatus: () => ipcRenderer.invoke('ncc:sync-status'),

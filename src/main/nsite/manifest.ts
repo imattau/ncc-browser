@@ -5,9 +5,9 @@
 
 import { createHash } from 'node:crypto'
 import { verifyEvent, type Event } from 'nostr-tools'
+import { NSITE_NAMED_KIND, NSITE_ROOT_KIND } from '@shared/nsite-publish'
 
-export const NSITE_ROOT_KIND = 15128
-export const NSITE_NAMED_KIND = 35128
+export { NSITE_NAMED_KIND, NSITE_ROOT_KIND }
 
 const HASH_RE = /^[0-9a-f]{64}$/
 

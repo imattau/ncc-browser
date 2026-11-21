@@ -44,7 +44,6 @@ import type {
   TabSummary
 } from '@shared/types'
 import type { ProtocolActivity } from './protocol'
-import { SITE_PUBLISHER_URL } from './site-publisher/protocol'
 import type { EndpointHealth } from './ncc/health'
 import type { TransportPolicy } from './ncc/transport'
 import type { OmniboxService, OmniboxTab } from './omnibox'
@@ -636,7 +635,7 @@ export class BrowserShell {
         this.sendChrome('ncc:open-settings', { section: 'services' })
         break
       case 'open-site-publisher':
-        this.newTab(SITE_PUBLISHER_URL)
+        this.sendChrome('ncc:open-settings', { section: 'sites' })
         break
       case 'open-identity':
         this.sendChrome('ncc:open-settings', { section: 'identity' })

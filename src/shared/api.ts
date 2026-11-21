@@ -13,6 +13,14 @@ import type {
 } from './site-data'
 import type { SearchEngineId } from './search'
 import type {
+  NsiteFolderScan,
+  NsiteProgress,
+  NsitePublishInput,
+  NsitePublishResult,
+  NsitePublishState,
+  NsiteVerifyResult
+} from './nsite-publish'
+import type {
   HostingDraft,
   HostingPublishResult,
   HostingShareResult,
@@ -160,6 +168,13 @@ export interface NccApi {
   hostingRevokeShare(shareId: string): Promise<HostingShareResult>
   hostingForgetReceived(id: string): Promise<HostingState>
   onHostingChanged(listener: (state: HostingState) => void): () => void
+  nsiteState(): Promise<NsitePublishState>
+  nsitePickFolder(): Promise<NsiteFolderScan | null>
+  nsitePublish(input: NsitePublishInput): Promise<NsitePublishResult>
+  nsiteVerify(id: string): Promise<NsiteVerifyResult>
+  nsiteRemove(id: string): Promise<NsitePublishState>
+  onNsiteProgress(listener: (progress: NsiteProgress) => void): () => void
+  onNsiteChanged(listener: (state: NsitePublishState) => void): () => void
   syncStatus(): Promise<SyncStatus>
   syncNow(): Promise<SyncStatus>
   syncConfigure(patch: SyncPrefsPatch): Promise<SyncStatus>

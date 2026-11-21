@@ -104,21 +104,23 @@ Limits worth knowing:
 
 ### Publishing a site
 
-**Menu → Publish a site** opens the bundled publisher at `nccpublish://app/`. Pick the
-built folder (the one with `index.html` at its root), set a site id and description,
-then publish. The page hashes every file locally, uploads the blobs to Blossom
-(BUD-02), signs a NIP-5A manifest with the built-in signer, and publishes it to your
-relays. The result is `nsite://<your npub>/<site>/`.
+**Settings → Sites** (or **Menu → Publish a site**) is the native publisher. Choose the
+built folder (the one with `index.html` at its root), set a site id or tick **root
+site**, and publish. The folder is scanned and hashed in the main process, every file
+is uploaded to Blossom (BUD-02), and a NIP-5A manifest is signed by your identity and
+published through the relay pool. The result is `nsite://<your npub>/<site>/`; the
+Sites list can open, copy, verify or republish it.
 
 Republishing with the same site id replaces the manifest. Files whose bytes did not
-change keep their hashes and are not uploaded again. The page can also verify every
-file against its manifest hash after publishing. This is the right path for a static
-site, blog, docs or SPA; use **Services** instead when the thing you are publishing
-needs a running HTTP endpoint, logins or server-side state.
+change keep their hashes and are not uploaded again. This is the right path for a
+static site, blog, docs or SPA; use **Services** instead when the thing you are
+publishing needs a running HTTP endpoint, logins or server-side state.
 
 Sites are public: NIP-5A has no access control, and Blossom servers may garbage-collect
-unpinned blobs. Publish to more than one server and keep the source folder. See
-[`site-publisher/README.md`](./site-publisher/README.md).
+unpinned blobs. Publish to more than one server and keep the source folder. The
+standalone page at `nccpublish://app/` remains available from the Sites page for a
+machine where the native publisher is unavailable. See
+[`docs/site-publishing.md`](./docs/site-publishing.md).
 
 A gateway deployment still works and is a useful fallback: publish an NCC-05 locator
 whose endpoint is `<npub>.nsite-host.com`, then `ncc://<npub>/site/` resolves through

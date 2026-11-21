@@ -463,6 +463,7 @@ export function App() {
           payload.section === 'appearance' ||
           payload.section === 'passwords' ||
           payload.section === 'services' ||
+          payload.section === 'sites' ||
           payload.section === 'security' ||
           payload.section === 'trusted' ||
           payload.section === 'about'

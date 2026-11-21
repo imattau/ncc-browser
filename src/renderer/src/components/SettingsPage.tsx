@@ -41,6 +41,7 @@ import { AppearanceSettings } from './AppearanceSettings'
 import { AgentSettings } from './AgentSettings'
 import { ExtensionSettings } from './ExtensionSettings'
 import { HostingSettings } from './HostingSettings'
+import { SitePublishingSettings } from './SitePublishingSettings'
 import { PasswordSettings } from './PasswordSettings'
 import { SyncSettings } from './SyncSettings'
 
@@ -50,6 +51,7 @@ export type SettingsSection =
   | 'security'
   | 'identity'
   | 'services'
+  | 'sites'
   | 'passwords'
   | 'sync'
   | 'extensions'
@@ -74,6 +76,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string; icon: typeof KeyRoun
   { id: 'security', label: 'Security', icon: Shield },
   { id: 'identity', label: 'Identity & signer', icon: KeyRound },
   { id: 'services', label: 'Services', icon: Server },
+  { id: 'sites', label: 'Sites', icon: Globe },
   { id: 'passwords', label: 'Passwords', icon: Vault },
   { id: 'sync', label: 'Sync', icon: RefreshCw },
   { id: 'extensions', label: 'Extensions', icon: Puzzle },
@@ -656,7 +659,7 @@ export function SettingsPage({
         <div className="min-w-0">
           <h1 className="text-ui-13 font-semibold text-[color:var(--color-text-strong)]">Settings</h1>
           <p className="truncate text-ui-105 text-[color:var(--color-muted)]">
-            Relays, appearance, identity, services, passwords, extensions and signing permissions.
+            Relays, appearance, identity, services, sites, passwords, extensions and signing permissions.
           </p>
         </div>
         <span className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-[color:var(--color-line)] px-2 py-1 text-ui-105 text-[color:var(--color-muted)]">
@@ -1521,6 +1524,14 @@ export function SettingsPage({
               identity={identity}
               initialDraft={hostingDraft ?? null}
               onDraftUsed={onHostingDraftUsed}
+              onOpenIdentity={() => setSection('identity')}
+              onClose={onClose}
+            />
+          ) : null}
+
+          {section === 'sites' ? (
+            <SitePublishingSettings
+              identity={identity}
               onOpenIdentity={() => setSection('identity')}
               onClose={onClose}
             />
