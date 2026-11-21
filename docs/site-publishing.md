@@ -46,6 +46,11 @@ change keep their hash and are not uploaded again; only new or changed assets ar
 uploaded. The browser stores the manifest index in `userData/nsite-sites.json` (mode
 `0600`), not the site files.
 
+**Cancel** aborts the in-flight upload or relay publish between files and tears down the
+current request. Blobs that were already accepted stay on Blossom (their address is
+their hash); no site record or manifest is written for a cancelled publish. Verify can
+also be cancelled.
+
 ## Blossom and relays
 
 - BUD-02 upload: `PUT /upload` with `X-Sha-256` and a signed `kind 24242`

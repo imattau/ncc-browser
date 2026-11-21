@@ -13,6 +13,7 @@ import type {
 } from './site-data'
 import type { SearchEngineId } from './search'
 import type {
+  NsiteCancelled,
   NsiteFolderScan,
   NsiteProgress,
   NsitePublishInput,
@@ -170,8 +171,9 @@ export interface NccApi {
   onHostingChanged(listener: (state: HostingState) => void): () => void
   nsiteState(): Promise<NsitePublishState>
   nsitePickFolder(): Promise<NsiteFolderScan | null>
-  nsitePublish(input: NsitePublishInput): Promise<NsitePublishResult>
-  nsiteVerify(id: string): Promise<NsiteVerifyResult>
+  nsitePublish(input: NsitePublishInput): Promise<NsitePublishResult | NsiteCancelled>
+  nsiteVerify(id: string): Promise<NsiteVerifyResult | NsiteCancelled>
+  nsiteCancel(): Promise<boolean>
   nsiteRemove(id: string): Promise<NsitePublishState>
   onNsiteProgress(listener: (progress: NsiteProgress) => void): () => void
   onNsiteChanged(listener: (state: NsitePublishState) => void): () => void

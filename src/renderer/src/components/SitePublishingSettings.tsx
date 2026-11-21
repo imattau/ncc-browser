@@ -198,6 +198,12 @@ export function SitePublishingSettings({
         servers,
         relays
       })
+      if ('cancelled' in next) {
+        setLog((entries) => [...entries, 'Publish cancelled'])
+        setResult(null)
+        apply(await window.ncc.nsiteState())
+        return
+      }
       setResult(next)
       apply(await window.ncc.nsiteState())
       setScan(null)
@@ -216,13 +222,24 @@ export function SitePublishingSettings({
     setVerification(null)
     setLog([])
     try {
-      setVerification(await window.ncc.nsiteVerify(site.id))
+      const next = await window.ncc.nsiteVerify(site.id)
+      if ('cancelled' in next) {
+        setLog((entries) => [...entries, 'Verification cancelled'])
+        setVerification(null)
+        return
+      }
+      setVerification(next)
     } catch (verifyError) {
       setError(errorMessage(verifyError))
     } finally {
       setBusy(false)
       setProgress(null)
     }
+  }
+
+  const cancel = async (): Promise<void> => {
+    const accepted = await window.ncc.nsiteCancel()
+    if (accepted) setLog((entries) => [...entries, 'Cancelling…'])
   }
 
   const remove = async (site: PublishedNsite): Promise<void> => {
@@ -281,6 +298,19 @@ export function SitePublishingSettings({
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           {error}
         </p>
+      ) : null}
+
+      {busy && !scan ? (
+        <div className="flex items-center justify-between gap-2 rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-field)] px-3 py-2 text-ui-11 text-[color:var(--color-muted)]">
+          <span>Working…</span>
+          <button
+            type="button"
+            onClick={() => void cancel()}
+            className="rounded-lg border border-[color:var(--color-line)] px-2.5 py-1 text-ui-10 hover:bg-[color:var(--color-danger)]/10 hover:text-[color:var(--color-danger)]"
+          >
+            Cancel
+          </button>
+        </div>
       ) : null}
 
       <div className="space-y-3 rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-4">
@@ -407,6 +437,15 @@ export function SitePublishingSettings({
                 <Upload className="h-3.5 w-3.5" />
                 {busy ? 'Publishing…' : 'Upload and publish'}
               </button>
+              {busy ? (
+                <button
+                  type="button"
+                  onClick={() => void cancel()}
+                  className="rounded-lg border border-[color:var(--color-line)] px-3 py-1.5 text-ui-11 text-[color:var(--color-muted)] hover:bg-[color:var(--color-danger)]/10 hover:text-[color:var(--color-danger)]"
+                >
+                  Cancel
+                </button>
+              ) : null}
               <span className="text-ui-10 text-[color:var(--color-faint)]">
                 {scan.files.length} files · {formatBytes(scan.totalBytes)}
               </span>

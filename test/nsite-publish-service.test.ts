@@ -181,6 +181,36 @@ describe('NsitePublishService.publish', () => {
     expect(store.state().sites).toHaveLength(1)
   })
 
+  it('stops between uploads when the job is cancelled', async () => {
+    const { service, network } = setup()
+    const scan = await service.scanFolder(tempFolder())
+    const controller = new AbortController()
+    let calls = 0
+    network.upload = async (options) => {
+      calls += 1
+      controller.abort()
+      return { server: options.server, ok: true, message: 'ok' }
+    }
+    await expect(
+      service.publish(
+        {
+          token: 'token',
+          folder: scan.folder,
+          files: scan.files,
+          siteId: 'my-site',
+          title: '',
+          description: '',
+          source: '',
+          servers: ['https://a.example'],
+          relays: ['wss://relay.test']
+        },
+        undefined,
+        controller.signal
+      )
+    ).rejects.toMatchObject({ name: 'NsitePublishCancelled' })
+    expect(calls).toBe(1)
+  })
+
   it('refuses without an identity or with no server', async () => {
     const { service } = setup()
     const scan = await service.scanFolder(tempFolder())

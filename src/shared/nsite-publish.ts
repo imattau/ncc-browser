@@ -188,6 +188,10 @@ export interface NsiteVerifyResult {
   missing: string[]
 }
 
+export interface NsiteCancelled {
+  cancelled: true
+}
+
 export interface NsiteProgress {
   phase: 'uploading' | 'publishing' | 'verifying'
   done: number

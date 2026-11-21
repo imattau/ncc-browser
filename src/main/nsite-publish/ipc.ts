@@ -2,13 +2,14 @@ import { randomBytes } from 'node:crypto'
 import { basename } from 'node:path'
 import { dialog, ipcMain } from 'electron'
 import type {
+  NsiteCancelled,
   NsiteFolderScan,
   NsiteProgress,
   NsitePublishInput,
   NsiteSiteFile
 } from '@shared/nsite-publish'
 import type { BrowserShell } from '../shell'
-import type { NsitePublishService } from './service'
+import { NsitePublishCancelled, type NsitePublishService } from './service'
 
 interface ScanToken {
   folder: string
@@ -28,6 +29,17 @@ export function registerNsitePublishIpc(
   shell: BrowserShell
 ): void {
   const tokens = new Map<string, ScanToken>()
+  let job: { controller: AbortController; kind: 'publish' | 'verify' } | null = null
+
+  const begin = (kind: 'publish' | 'verify'): AbortController => {
+    if (job) throw new Error('Another site job is running. Cancel it first.')
+    const controller = new AbortController()
+    job = { controller, kind }
+    return controller
+  }
+  const end = (controller: AbortController): void => {
+    if (job?.controller === controller) job = null
+  }
 
   const fromChrome = (sender: Electron.WebContents): boolean =>
     !shell.window.isDestroyed() && sender === shell.window.webContents
@@ -70,36 +82,67 @@ export function registerNsitePublishIpc(
     }
   })
 
-  ipcMain.handle('ncc:nsite-publish', async (event, payload: Partial<NsitePublishInput>) => {
-    if (!fromChrome(event.sender)) throw new Error('Sites are only available to the browser chrome')
-    if (!payload || typeof payload.token !== 'string') throw new Error('Choose a site folder first')
-    prune()
-    const scan = tokens.get(payload.token)
-    if (!scan) throw new Error('That folder scan expired. Choose the folder again.')
-    return service.publish(
-      {
-        token: payload.token,
-        folder: scan.folder,
-        files: scan.files,
-        siteId: typeof payload.siteId === 'string' ? payload.siteId : null,
-        title: typeof payload.title === 'string' ? payload.title : '',
-        description: typeof payload.description === 'string' ? payload.description : '',
-        source: typeof payload.source === 'string' ? payload.source : '',
-        servers: Array.isArray(payload.servers)
-          ? payload.servers.filter((server): server is string => typeof server === 'string')
-          : [],
-        relays: Array.isArray(payload.relays)
-          ? payload.relays.filter((relay): relay is string => typeof relay === 'string')
-          : []
-      },
-      (value) => progress(event, value)
-    )
-  })
+  ipcMain.handle(
+    'ncc:nsite-publish',
+    async (event, payload: Partial<NsitePublishInput>): Promise<Awaited<ReturnType<NsitePublishService['publish']>> | NsiteCancelled> => {
+      if (!fromChrome(event.sender)) throw new Error('Sites are only available to the browser chrome')
+      if (!payload || typeof payload.token !== 'string') throw new Error('Choose a site folder first')
+      prune()
+      const scan = tokens.get(payload.token)
+      if (!scan) throw new Error('That folder scan expired. Choose the folder again.')
+      const controller = begin('publish')
+      try {
+        return await service.publish(
+          {
+            token: payload.token,
+            folder: scan.folder,
+            files: scan.files,
+            siteId: typeof payload.siteId === 'string' ? payload.siteId : null,
+            title: typeof payload.title === 'string' ? payload.title : '',
+            description: typeof payload.description === 'string' ? payload.description : '',
+            source: typeof payload.source === 'string' ? payload.source : '',
+            servers: Array.isArray(payload.servers)
+              ? payload.servers.filter((server): server is string => typeof server === 'string')
+              : [],
+            relays: Array.isArray(payload.relays)
+              ? payload.relays.filter((relay): relay is string => typeof relay === 'string')
+              : []
+          },
+          (value) => progress(event, value),
+          controller.signal
+        )
+      } catch (error) {
+        if (error instanceof NsitePublishCancelled || controller.signal.aborted) {
+          return { cancelled: true }
+        }
+        throw error
+      } finally {
+        end(controller)
+      }
+    }
+  )
 
   ipcMain.handle('ncc:nsite-verify', async (event, id: unknown) => {
     if (!fromChrome(event.sender)) throw new Error('Sites are only available to the browser chrome')
     if (typeof id !== 'string') throw new Error('A site id is required')
-    return service.verify(id, (value) => progress(event, value))
+    const controller = begin('verify')
+    try {
+      return await service.verify(id, (value) => progress(event, value), controller.signal)
+    } catch (error) {
+      if (error instanceof NsitePublishCancelled || controller.signal.aborted) {
+        return { cancelled: true }
+      }
+      throw error
+    } finally {
+      end(controller)
+    }
+  })
+
+  ipcMain.handle('ncc:nsite-cancel', (event) => {
+    if (!fromChrome(event.sender)) return false
+    if (!job) return false
+    job.controller.abort()
+    return true
   })
 
   ipcMain.handle('ncc:nsite-remove', (event, id: unknown) => {

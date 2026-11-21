@@ -41,9 +41,22 @@ export interface NsiteNetwork {
     bytes: Uint8Array
     path: string
     signer: NsiteSigner
+    signal?: AbortSignal
   }): Promise<ServerOutcome>
-  verify(server: string, hash: string): Promise<boolean>
-  publish(event: Event, relays: string[], signer: NsiteSigner): Promise<NsiteRelayReport[]>
+  verify(server: string, hash: string, signal?: AbortSignal): Promise<boolean>
+  publish(
+    event: Event,
+    relays: string[],
+    signer: NsiteSigner,
+    signal?: AbortSignal
+  ): Promise<NsiteRelayReport[]>
+}
+
+export class NsitePublishCancelled extends Error {
+  constructor() {
+    super('Cancelled')
+    this.name = 'NsitePublishCancelled'
+  }
 }
 
 export interface NsiteProvider extends NsiteSigner {
@@ -93,7 +106,8 @@ export class NsitePublishService {
 
   async publish(
     input: NsitePublishInput & { folder: string; files: NsiteSiteFile[] },
-    onProgress?: (progress: NsiteProgress) => void
+    onProgress?: (progress: NsiteProgress) => void,
+    signal?: AbortSignal
   ): Promise<NsitePublishResult> {
     const siteId = input.siteId === '' ? null : input.siteId
     const siteIdError = validateNsiteSiteId(siteId)
@@ -123,18 +137,21 @@ export class NsitePublishService {
         label: 'Uploading files'
       })
       for (const file of input.files) {
+        throwIfCancelled(signal)
         const bytes = await readFile(join(input.folder, file.path.replace(/^\/+/, '')))
         if (sha256Hex(bytes) !== file.hash) {
           throw new Error(`${file.path} changed on disk after it was scanned. Choose the folder again.`)
         }
         let stored = false
         for (const server of servers) {
+          throwIfCancelled(signal)
           const outcome = await this.deps.network.upload({
             server,
             hash: file.hash,
             bytes,
             path: file.path,
-            signer: provider
+            signer: provider,
+            ...(signal ? { signal } : {})
           })
           onProgress?.({
             phase: 'uploading',
@@ -160,6 +177,7 @@ export class NsitePublishService {
         })
       }
 
+      throwIfCancelled(signal)
       onProgress?.({
         phase: 'publishing',
         done: 0,
@@ -178,7 +196,8 @@ export class NsitePublishService {
         provider,
         createdAt
       )
-      const reports = await this.deps.network.publish(manifest, relays, provider)
+      throwIfCancelled(signal)
+      const reports = await this.deps.network.publish(manifest, relays, provider, signal)
       onProgress?.({
         phase: 'publishing',
         done: reports.filter((report) => report.ok).length,
@@ -211,13 +230,19 @@ export class NsitePublishService {
         reports
       }
     } catch (error) {
-      if (existing) this.deps.store.markError(existing.id, messageOf(error))
+      if (!(error instanceof NsitePublishCancelled) && existing) {
+        this.deps.store.markError(existing.id, messageOf(error))
+      }
       this.changed()
       throw error
     }
   }
 
-  async verify(id: string, onProgress?: (progress: NsiteProgress) => void): Promise<NsiteVerifyResult> {
+  async verify(
+    id: string,
+    onProgress?: (progress: NsiteProgress) => void,
+    signal?: AbortSignal
+  ): Promise<NsiteVerifyResult> {
     const site = this.deps.store.find(id)
     if (!site) throw new Error('That site is not in this browser.')
     const missing: string[] = []
@@ -229,9 +254,11 @@ export class NsitePublishService {
       label: 'Verifying uploaded files'
     })
     for (const file of site.files) {
+      throwIfCancelled(signal)
       let found = false
       for (const server of site.servers) {
-        if (await this.deps.network.verify(server, file.hash)) {
+        throwIfCancelled(signal)
+        if (await this.deps.network.verify(server, file.hash, signal)) {
           found = true
           break
         }
@@ -286,19 +313,28 @@ export class RelayNsiteNetwork implements NsiteNetwork {
     return uploadBlob(options)
   }
 
-  verify(server: string, hash: string): Promise<boolean> {
-    return verifyBlob(server, hash)
+  verify(server: string, hash: string, signal?: AbortSignal): Promise<boolean> {
+    return verifyBlob(server, hash, signal)
   }
 
-  async publish(event: Event, relays: string[], signer: NsiteSigner): Promise<NsiteRelayReport[]> {
+  async publish(
+    event: Event,
+    relays: string[],
+    signer: NsiteSigner,
+    signal?: AbortSignal
+  ): Promise<NsiteRelayReport[]> {
+    throwIfCancelled(signal)
     return Promise.all(
       [...new Set(relays)].slice(0, MAX_RELAYS).map(async (relay) => {
         try {
-          const message = await withTimeout(
-            this.pool.publishWithAuth(relay, event, (template: EventTemplate) =>
-              signer.signEvent(template)
+          const message = await withAbort(
+            withTimeout(
+              this.pool.publishWithAuth(relay, event, (template: EventTemplate) =>
+                signer.signEvent(template)
+              ),
+              PUBLISH_TIMEOUT_MS
             ),
-            PUBLISH_TIMEOUT_MS
+            signal
           )
           return { relay, ok: true, message }
         } catch (error) {
@@ -360,4 +396,27 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+function throwIfCancelled(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new NsitePublishCancelled()
+}
+
+function withAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise
+  if (signal.aborted) return Promise.reject(new NsitePublishCancelled())
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => reject(new NsitePublishCancelled())
+    signal.addEventListener('abort', onAbort, { once: true })
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort)
+        resolve(value)
+      },
+      (error) => {
+        signal.removeEventListener('abort', onAbort)
+        reject(error)
+      }
+    )
+  })
 }

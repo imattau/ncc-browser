@@ -105,6 +105,7 @@ const api: NccApi = {
   nsitePickFolder: () => ipcRenderer.invoke('ncc:nsite-pick-folder'),
   nsitePublish: (input) => ipcRenderer.invoke('ncc:nsite-publish', input),
   nsiteVerify: (id) => ipcRenderer.invoke('ncc:nsite-verify', id),
+  nsiteCancel: () => ipcRenderer.invoke('ncc:nsite-cancel'),
   nsiteRemove: (id) => ipcRenderer.invoke('ncc:nsite-remove', id),
   onNsiteProgress: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, progress: NsiteProgress): void =>

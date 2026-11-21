@@ -49,11 +49,15 @@ async function authHeader(hash: string, signer: NsiteSigner): Promise<string> {
   return `Nostr ${toBase64UrlUtf8(JSON.stringify(event))}`
 }
 
-export async function blobExists(server: string, hash: string): Promise<boolean> {
+export async function blobExists(
+  server: string,
+  hash: string,
+  signal?: AbortSignal
+): Promise<boolean> {
   try {
     const response = await fetch(`${server.replace(/\/+$/, '')}/${hash}`, {
       method: 'HEAD',
-      signal: AbortSignal.timeout(READ_TIMEOUT_MS)
+      signal: requestSignal(signal, READ_TIMEOUT_MS)
     })
     return response.ok
   } catch {
@@ -68,10 +72,11 @@ export async function uploadBlob(options: {
   bytes: Uint8Array
   path: string
   signer: NsiteSigner
+  signal?: AbortSignal
 }): Promise<ServerOutcome> {
   const server = options.server.replace(/\/+$/, '')
   try {
-    if (await blobExists(server, options.hash)) {
+    if (await blobExists(server, options.hash, options.signal)) {
       return { server, ok: true, message: 'already stored' }
     }
     const authorization = await authHeader(options.hash, options.signer)
@@ -84,7 +89,7 @@ export async function uploadBlob(options: {
         'X-Sha-256': options.hash
       },
       body: options.bytes as unknown as BodyInit,
-      signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS)
+      signal: requestSignal(options.signal, UPLOAD_TIMEOUT_MS)
     })
     if (response.ok || response.status === 409) {
       return { server, ok: true, message: `uploaded (${response.status})` }
@@ -104,11 +109,15 @@ export async function uploadBlob(options: {
 }
 
 /** Downloads a blob and checks its bytes against the manifest hash. */
-export async function verifyBlob(server: string, hash: string): Promise<boolean> {
+export async function verifyBlob(
+  server: string,
+  hash: string,
+  signal?: AbortSignal
+): Promise<boolean> {
   try {
     const response = await fetch(`${server.replace(/\/+$/, '')}/${hash}`, {
       cache: 'no-store',
-      signal: AbortSignal.timeout(READ_TIMEOUT_MS)
+      signal: requestSignal(signal, READ_TIMEOUT_MS)
     })
     if (!response.ok) return false
     const bytes = new Uint8Array(await response.arrayBuffer())
@@ -116,4 +125,9 @@ export async function verifyBlob(server: string, hash: string): Promise<boolean>
   } catch {
     return false
   }
+}
+
+function requestSignal(signal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs)
+  return signal ? AbortSignal.any([signal, timeout]) : timeout
 }
