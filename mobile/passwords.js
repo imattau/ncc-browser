@@ -22,13 +22,13 @@ export function createPasswords(deps) {
     showPanel('password-fill')
   }
 
-  function askDeviceCredential() {
+  function askDeviceCredential(purpose = 'password-vault') {
     if (!content || typeof content.unlockWithDeviceCredential !== 'function') {
       return Promise.resolve(false)
     }
     return new Promise((resolve) => {
       deviceWaiter = resolve
-      content.unlockWithDeviceCredential('password-vault')
+      content.unlockWithDeviceCredential(purpose)
       // A device with no prompt path answers immediately; this only guards a lost reply.
       setTimeout(() => {
         if (deviceWaiter === resolve) {
@@ -37,6 +37,21 @@ export function createPasswords(deps) {
         }
       }, 180_000)
     })
+  }
+
+  async function approvePasskey(purpose, message) {
+    if (typeof content?.unlockWithDeviceCredential === 'function') {
+      if (typeof content.passkeyConfirmationFallback === 'function' && content.passkeyConfirmationFallback()) {
+        return window.confirm(message)
+      }
+      return askDeviceCredential(purpose)
+    }
+    return window.confirm(message)
+  }
+
+  function nativePasskeyApprovalAvailable() {
+    return typeof content?.unlockWithDeviceCredential === 'function' &&
+      !(typeof content.passkeyConfirmationFallback === 'function' && content.passkeyConfirmationFallback())
   }
 
   function vaultStateText(status) {
@@ -279,9 +294,15 @@ export function createPasswords(deps) {
 
       let status = await invoke('vault_status')
       if (!status.configured) return fallback()
+      let passkeyApprovedNatively = false
       if (!status.unlocked) {
-        const approved = await askDeviceCredential()
+        const host = new URL(request.origin).host
+        const purpose = request.operation === 'create'
+          ? `passkey-create|${host}`
+          : `passkey-use|${host}`
+        const approved = await askDeviceCredential(purpose)
         if (!approved) return fallback()
+        passkeyApprovedNatively = nativePasskeyApprovalAvailable()
         status = await invoke('vault_unlock')
         vaultStatus = status
       }
@@ -299,7 +320,8 @@ export function createPasswords(deps) {
           : []
         if (existing.length) return reply({ handled: true, error: 'InvalidStateError' })
         const username = String(options.user?.name || 'Passkey').slice(0, 320)
-        if (!window.confirm(`Create a passkey for ${username} at ${new URL(request.origin).host}? It will be stored in your encrypted NCC password vault and synced with that vault.`)) {
+        const host = new URL(request.origin).host
+        if (!passkeyApprovedNatively && !await approvePasskey(`passkey-create|${host}`, `Create a passkey for ${username} at ${host}? It will be stored in your encrypted NCC password vault and synced with that vault.`)) {
           return reply({ handled: true, error: 'NotAllowedError' })
         }
         const made = await makeVaultPasskey(options, request.origin)
@@ -323,7 +345,8 @@ export function createPasswords(deps) {
         if (!Number.isInteger(index) || index < 0 || index >= candidates.length) return reply({ handled: true, error: 'NotAllowedError' })
         chosen = candidates[index]
       }
-      if (!window.confirm(`Use the NCC passkey for ${chosen.name} on ${new URL(request.origin).host}?`)) {
+      const host = new URL(request.origin).host
+      if (!passkeyApprovedNatively && !await approvePasskey(`passkey-use|${host}|${chosen.name}`, `Use the NCC passkey for ${chosen.name} on ${host}?`)) {
         return reply({ handled: true, error: 'NotAllowedError' })
       }
       const entry = await invoke('vault_entry', { id: chosen.entryId })

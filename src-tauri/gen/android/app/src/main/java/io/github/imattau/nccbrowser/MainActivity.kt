@@ -20,6 +20,9 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
+import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricPrompt
+import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import org.json.JSONArray
@@ -106,9 +109,8 @@ class MainActivity : TauriActivity() {
       }
     }
   /**
-   * The vault's unlock prompt. Android's own device-credential screen is used rather
-   * than a biometric library: one prompt, nothing new to ship, and it falls back to
-   * the PIN or pattern the device already trusts.
+   * The device-credential fallback for Android versions that cannot combine it with
+   * biometrics in BiometricPrompt.
    */
   private val confirmDevice =
     registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -965,7 +967,8 @@ class MainActivity : TauriActivity() {
     @JavascriptInterface
     fun unlockWithDeviceCredential(purpose: String?) {
       runOnUiThread {
-        pendingPaymentCardAuth = purpose == "payment-card"
+        val request = purpose.orEmpty()
+        pendingPaymentCardAuth = request == "payment-card"
         val keyguard = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
         if (!keyguard.isDeviceSecure) {
           // A stock emulator has neither an enrolled biometric nor a device PIN.
@@ -979,6 +982,60 @@ class MainActivity : TauriActivity() {
           emitToShellRaw("window.__nccDeviceCredential", allowDebugVaultUse.toString())
           return@runOnUiThread
         }
+
+        // On Android 11+, let the system offer biometrics first and the trusted
+        // device credential as its fallback. Older releases cannot combine the two
+        // authenticators in one BiometricPrompt, so they keep the credential screen.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+          val authenticators = BiometricManager.Authenticators.BIOMETRIC_WEAK or
+            BiometricManager.Authenticators.DEVICE_CREDENTIAL
+          if (BiometricManager.from(this@MainActivity).canAuthenticate(authenticators) ==
+            BiometricManager.BIOMETRIC_SUCCESS
+          ) {
+            val parts = request.split('|', limit = 3)
+            val (title, subtitle) = when {
+              request == "payment-card" -> "Confirm card autofill" to "Confirm to fill the selected payment card."
+              parts.firstOrNull() == "passkey-use" -> "Use passkey" to
+                listOfNotNull(parts.getOrNull(1), parts.getOrNull(2)).joinToString(" · ").ifBlank { "Confirm this sign-in." }
+              parts.firstOrNull() == "passkey-create" -> "Create passkey" to
+                "Confirm saving a passkey for ${parts.getOrNull(1) ?: "this website"}."
+              else -> "Unlock passwords" to "Confirm it is you to open the vault."
+            }
+            try {
+              val prompt = BiometricPrompt(
+                this@MainActivity,
+                ContextCompat.getMainExecutor(this@MainActivity),
+                object : BiometricPrompt.AuthenticationCallback() {
+                  override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    nativePaymentCardAuthResult(pendingPaymentCardAuth)
+                    pendingPaymentCardAuth = false
+                    emitToShellRaw("window.__nccDeviceCredential", "true")
+                  }
+
+                  override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    nativePaymentCardAuthResult(false)
+                    pendingPaymentCardAuth = false
+                    emitToShellRaw("window.__nccDeviceCredential", "false")
+                  }
+                },
+              )
+              prompt.authenticate(
+                BiometricPrompt.PromptInfo.Builder()
+                  .setTitle(title)
+                  .setSubtitle(subtitle)
+                  .setAllowedAuthenticators(authenticators)
+                  .build(),
+              )
+              return@runOnUiThread
+            } catch (error: Exception) {
+              nativePaymentCardAuthResult(false)
+              pendingPaymentCardAuth = false
+              emitToShellRaw("window.__nccDeviceCredential", "false")
+              return@runOnUiThread
+            }
+          }
+        }
+
         val intent = keyguard.createConfirmDeviceCredentialIntent(
           if (pendingPaymentCardAuth) "Confirm card autofill" else "Unlock passwords",
           if (pendingPaymentCardAuth) "Confirm to fill the selected payment card." else "Confirm it is you to open the vault.",
@@ -1051,6 +1108,14 @@ class MainActivity : TauriActivity() {
       val value = position ?: return
       runOnUiThread { applyBarPosition(value) }
     }
+  }
+
+  @JavascriptInterface
+  fun passkeyConfirmationFallback(): Boolean {
+    val keyguard = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+    val emulator = Build.HARDWARE == "ranchu" || Build.HARDWARE == "goldfish" ||
+      Build.PRODUCT.startsWith("sdk_") || Build.FINGERPRINT.contains("generic")
+    return BuildConfig.DEBUG && emulator && !keyguard.isDeviceSecure
   }
 
   override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
