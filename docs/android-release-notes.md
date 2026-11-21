@@ -1,5 +1,11 @@
 # Nostr Navigator for Android
 
+## Fixes in 0.36.5
+
+- The Linux npack and deb/rpm/flatpak launchers now declare the HTTP and HTTPS
+  handlers, so Nostr Navigator appears in the default-browser lists on GNOME and
+  COSMIC instead of only handling `ncc://` links.
+
 ## Fixes in 0.36.4
 
 - Added a batch MCP tool for running up to 20 ordered browser operations in one call.
