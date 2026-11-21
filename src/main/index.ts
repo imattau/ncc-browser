@@ -70,6 +70,9 @@ import { ProtectionService } from './protection'
 import { HostingStore } from './hosting/store'
 import { HostingService } from './hosting/service'
 import { RelayHostingPublisher } from './hosting/relays'
+import { ContactsStore } from './contacts/store'
+import { ContactsService } from './contacts/service'
+import { registerContactsIpc } from './contacts/ipc'
 import { NsiteStore } from './nsite-publish/store'
 import { NsitePublishService, RelayNsiteNetwork } from './nsite-publish/service'
 import { registerNsitePublishIpc } from './nsite-publish/ipc'
@@ -264,6 +267,16 @@ app.whenReady().then(async () => {
     anchorRequired: () => config.get().anchorRequired,
     onChange: (state) => {
       if (shell && !shell.window.isDestroyed()) shell.sendToChrome('ncc:hosting-changed', state)
+    }
+  })
+
+  const contacts = new ContactsService({
+    store: new ContactsStore(join(app.getPath('userData'), 'contacts.json')),
+    relays: relayPool,
+    config,
+    owner: () => identity.status().hexPubkey ?? null,
+    onChange: (state) => {
+      if (shell && !shell.window.isDestroyed()) shell.sendToChrome('ncc:contacts-changed', state)
     }
   })
 
@@ -725,6 +738,7 @@ app.whenReady().then(async () => {
   })
 
   registerNsitePublishIpc(nsitePublish, shell)
+  registerContactsIpc(contacts, shell)
 
   const hostingRenewal = setInterval(() => void hosting.renewDue(), 6 * 3600_000)
   hostingRenewal.unref()

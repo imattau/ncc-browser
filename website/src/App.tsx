@@ -575,6 +575,10 @@ export function App() {
                   a: 'No. NCC-02 is the identity and trust anchor, but it is optional: NCC-05 locators work unanchored. You can require it in Settings → General. In strict mode, publishing a service or private share also publishes an NCC-02 anchor — without the endpoint for a private service — and fails if no relay accepts the anchor.'
                 },
                 {
+                  q: 'Can I share with more than one person?',
+                  a: 'Yes. Services → Share lists your Nostr follow list, cached for quick reuse and refreshable. Select any number of contacts; each gets their own encrypted link and no-endpoint NCC-02 anchor, because NIP-44 has one conversation key per recipient. Each link can be revoked or renewed independently.'
+                },
+                {
                   q: 'What is an nsite?',
                   a: 'A NIP-5A static site: a signed manifest listing paths and sha256 hashes, with the files stored on Blossom. The browser fetches and verifies every file; there is no web server to trust.'
                 },

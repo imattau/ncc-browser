@@ -258,6 +258,26 @@ export function registerIpc(deps: IpcDeps): void {
       typeof label === 'string' ? label : undefined
     )
   })
+  ipcMain.handle('ncc:hosting-share-many', (event, payload: unknown) => {
+    if (!fromChrome(event)) throw new Error('Services are only available to the browser chrome')
+    const { id, recipients, days, label } = (payload ?? {}) as {
+      id?: unknown
+      recipients?: unknown
+      days?: unknown
+      label?: unknown
+    }
+    if (typeof id !== 'string' || !Array.isArray(recipients)) {
+      throw new Error('A service id and at least one recipient are required')
+    }
+    const list = recipients.filter((recipient): recipient is string => typeof recipient === 'string')
+    return deps.hosting.shareMany(
+      id,
+      list,
+      typeof days === 'number' ? days : 7,
+      typeof label === 'string' ? label : undefined
+    )
+  })
+
   ipcMain.handle('ncc:hosting-revoke-share', (event, shareId: unknown) => {
     if (!fromChrome(event)) throw new Error('Services are only available to the browser chrome')
     if (typeof shareId !== 'string') throw new Error('A share id is required')

@@ -92,8 +92,20 @@ expired share never falls back to the owner's generic `addr` record.
 To share:
 
 1. Open **Services**, choose a private service, and click **Share**.
-2. Enter the recipient's npub (or 64-character hex key) and an expiry.
-3. **Create link** publishes the encrypted record and shows the link to copy.
+2. Choose one or more people from your Nostr follow list (kind 3), search by name,
+   NIP-05 or npub, or paste an npub manually.
+3. Pick an expiry and click **Create links**. Each recipient gets their own
+   `ncc://…/share-…` link and their own no-`u` NCC-02 anchor.
+
+Choosing several people creates several locator records: NIP-44 has one conversation
+key per recipient, so a single ciphertext cannot address a group. The action is a batch
+in the UI; each recipient's link is independent and can be revoked or renewed on its
+own.
+
+The contact list is cached in `userData/contacts.json` for instant opening and refreshed
+from kind-3 and kind-0 events when it is older than six hours or when you press
+**Refresh**. Profiles provide display names, NIP-05 identifiers and pictures; a contact
+with no profile still appears under their npub. The cache is per signed-in identity.
 
 The recipient opens the link in Nostr Navigator. Their active identity decrypts the
 payload, the page loads, and the link appears under **Shared with me**. A different

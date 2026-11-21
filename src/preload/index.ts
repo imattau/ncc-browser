@@ -20,6 +20,7 @@ import {
   type SignerRequest
 } from '@shared/types'
 import type { HostingState } from '@shared/hosting'
+import type { ContactsState } from '@shared/contacts'
 import type { NsiteProgress, NsitePublishState } from '@shared/nsite-publish'
 
 const api: NccApi = {
@@ -92,6 +93,8 @@ const api: NccApi = {
   hostingPublish: (id) => ipcRenderer.invoke('ncc:hosting-publish', id),
   hostingShare: (id, recipient, days, label) =>
     ipcRenderer.invoke('ncc:hosting-share', { id, recipient, days, label }),
+  hostingShareMany: (id, recipients, days, label) =>
+    ipcRenderer.invoke('ncc:hosting-share-many', { id, recipients, days, label }),
   hostingRevokeShare: (shareId) => ipcRenderer.invoke('ncc:hosting-revoke-share', shareId),
   hostingForgetReceived: (id) => ipcRenderer.invoke('ncc:hosting-forget-received', id),
   onHostingChanged: (listener) => {
@@ -121,6 +124,15 @@ const api: NccApi = {
     ipcRenderer.on('ncc:nsite-changed', handler)
     return () => {
       ipcRenderer.removeListener('ncc:nsite-changed', handler)
+    }
+  },
+  contactsState: () => ipcRenderer.invoke('ncc:contacts-state'),
+  contactsRefresh: () => ipcRenderer.invoke('ncc:contacts-refresh'),
+  onContactsChanged: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, state: ContactsState): void => listener(state)
+    ipcRenderer.on('ncc:contacts-changed', handler)
+    return () => {
+      ipcRenderer.removeListener('ncc:contacts-changed', handler)
     }
   },
   syncStatus: () => ipcRenderer.invoke('ncc:sync-status'),

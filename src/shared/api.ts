@@ -12,6 +12,7 @@ import type {
   SiteDataInfo
 } from './site-data'
 import type { SearchEngineId } from './search'
+import type { ContactsState } from './contacts'
 import type {
   NsiteCancelled,
   NsiteFolderScan,
@@ -24,6 +25,7 @@ import type {
 import type {
   HostingDraft,
   HostingPublishResult,
+  HostingShareBatchResult,
   HostingShareResult,
   HostingState
 } from './hosting'
@@ -166,6 +168,7 @@ export interface NccApi {
   hostingRemove(id: string): Promise<HostingState>
   hostingPublish(id: string): Promise<HostingPublishResult>
   hostingShare(id: string, recipient: string, days: number, label?: string): Promise<HostingShareResult>
+  hostingShareMany(id: string, recipients: string[], days: number, label?: string): Promise<HostingShareBatchResult>
   hostingRevokeShare(shareId: string): Promise<HostingShareResult>
   hostingForgetReceived(id: string): Promise<HostingState>
   onHostingChanged(listener: (state: HostingState) => void): () => void
@@ -178,6 +181,9 @@ export interface NccApi {
   onNsiteProgress(listener: (progress: NsiteProgress) => void): () => void
   onNsiteChanged(listener: (state: NsitePublishState) => void): () => void
   syncStatus(): Promise<SyncStatus>
+  contactsState(): Promise<ContactsState>
+  contactsRefresh(): Promise<ContactsState>
+  onContactsChanged(listener: (state: ContactsState) => void): () => void
   syncNow(): Promise<SyncStatus>
   syncConfigure(patch: SyncPrefsPatch): Promise<SyncStatus>
   syncRemoveDevice(id: string): Promise<SyncStatus>

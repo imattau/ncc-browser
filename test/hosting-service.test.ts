@@ -11,6 +11,7 @@ import {
   type EventTemplate
 } from 'nostr-tools'
 import { HostingStore } from '../src/main/hosting/store'
+import { shareDTag } from '../src/shared/hosting'
 import {
   HostingError,
   HostingService,
@@ -300,6 +301,50 @@ describe('HostingService shares', () => {
     await expect(hosting.share(localService.id, 'a'.repeat(64), 7)).rejects.toMatchObject({
       code: 'loopback-share'
     })
+  })
+
+  it('shares with more than one recipient in one batch', async () => {
+    const { ownerHex, publisher, hosting } = setup()
+    const recipientA = generateSecretKey()
+    const recipientB = generateSecretKey()
+    const pubA = getPublicKey(recipientA)
+    const pubB = getPublicKey(recipientB)
+    const service = hosting.create({ title: 'Photos', endpoints: ['https://photos.example'] })
+
+    const result = await hosting.shareMany(service.id, [pubA, pubB, pubA], 7, 'friends')
+    expect(result.shares).toHaveLength(2)
+    expect(result.failures).toHaveLength(0)
+    expect(hosting.state().shares).toHaveLength(2)
+
+    const eventA = publisher.byTag(shareDTag('photos', pubA), 30058)
+    const eventB = publisher.byTag(shareDTag('photos', pubB), 30058)
+    expect(eventA).toBeDefined()
+    expect(eventB).toBeDefined()
+    expect(
+      JSON.parse(nip44.decrypt(eventA!.content, nip44.getConversationKey(recipientA, ownerHex))).endpoints[0].url
+    ).toBe('https://photos.example/')
+    expect(
+      JSON.parse(nip44.decrypt(eventB!.content, nip44.getConversationKey(recipientB, ownerHex))).endpoints[0].url
+    ).toBe('https://photos.example/')
+  })
+
+  it('continues a batch when one recipient cannot be shared', async () => {
+    const { hosting, publisher } = setup()
+    const recipientA = generateSecretKey()
+    const recipientB = generateSecretKey()
+    const pubA = getPublicKey(recipientA)
+    const pubB = getPublicKey(recipientB)
+    const service = hosting.create({ title: 'Photos', endpoints: ['https://photos.example'] })
+    publisher.handler = (event) =>
+      event.tags.some(([name, value]) => name === 'd' && value === shareDTag('photos', pubB))
+        ? { ok: false, accepted: 0, relays: 1, errors: [{ relay: 'wss://relay.test', error: 'blocked' }] }
+        : { ok: true, accepted: 1, relays: 1, errors: [] }
+
+    const result = await hosting.shareMany(service.id, [pubA, pubB], 7)
+    expect(result.shares).toHaveLength(1)
+    expect(result.failures).toHaveLength(1)
+    expect(result.failures[0]?.recipient).toBe(pubB)
+    expect(hosting.state().shares).toHaveLength(1)
   })
 
   it('replaces a share for the same recipient instead of duplicating it', async () => {

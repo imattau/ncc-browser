@@ -24,6 +24,7 @@ import {
   MIN_SHARE_DAYS,
   serviceAddress,
   recipientNpub,
+  parseRecipient,
   shareStatus,
   type HostedService,
   type HostingDraft,
@@ -31,6 +32,7 @@ import {
   type HostingVisibility,
   type ServiceShare
 } from '@shared/hosting'
+import { contactLabel, type ContactList, type ContactProfile } from '@shared/contacts'
 import type { IdentityStatus } from '@shared/types'
 import { cn } from '../lib/cn'
 
@@ -98,10 +100,16 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
   const [sharing, setSharing] = useState<string | null>(null)
-  const [shareRecipient, setShareRecipient] = useState('')
+  const [contacts, setContacts] = useState<ContactList | null>(null)
+  const [contactsLoading, setContactsLoading] = useState(false)
+  const [contactsError, setContactsError] = useState<string | null>(null)
+  const [shareRecipients, setShareRecipients] = useState<string[]>([])
+  const [shareQuery, setShareQuery] = useState('')
+  const [manualRecipient, setManualRecipient] = useState('')
   const [shareDays, setShareDays] = useState(String(DEFAULT_SHARE_DAYS))
   const [shareLabel, setShareLabel] = useState('')
-  const [shareAddress, setShareAddress] = useState<{ serviceId: string; address: string } | null>(null)
+  const [shareResults, setShareResults] = useState<Array<{ recipient: string; address: string }>>([])
+  const [shareFailures, setShareFailures] = useState<Array<{ recipient: string; error: string }>>([])
 
   const apply = useCallback((next: HostingState) => setState(next), [])
 
@@ -110,11 +118,24 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
     void window.ncc.getConfig().then((config) => {
       if (alive) setStrictAnchors(config.anchorRequired)
     })
+    void window.ncc.contactsState().then((state) => {
+      if (!alive) return
+      setContacts(state.list)
+      setContactsLoading(state.refreshing)
+      setContactsError(state.error ?? null)
+    }).catch(() => undefined)
+    const offContacts = window.ncc.onContactsChanged((state) => {
+      if (!alive) return
+      setContacts(state.list)
+      setContactsLoading(state.refreshing)
+      setContactsError(state.error ?? null)
+    })
     void window.ncc.hostingState().then((next) => alive && apply(next))
     const off = window.ncc.onHostingChanged((next) => alive && apply(next))
     return () => {
       alive = false
       off()
+      offContacts()
     }
   }, [apply])
 
@@ -165,7 +186,8 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
   const startCreate = (): void => {
     setDraft({ ...EMPTY_DRAFT })
     setError(null)
-    setShareAddress(null)
+    setShareResults([])
+    setShareFailures([])
   }
 
   const startEdit = (service: HostedService): void => {
@@ -180,7 +202,8 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
       notes: service.notes ?? ''
     })
     setError(null)
-    setShareAddress(null)
+    setShareResults([])
+    setShareFailures([])
   }
 
   const submit = async (): Promise<void> => {
@@ -242,19 +265,68 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
     }
   }
 
+  const refreshContacts = async (): Promise<void> => {
+    setContactsLoading(true)
+    try {
+      const state = await window.ncc.contactsRefresh()
+      setContacts(state.list)
+      setContactsError(state.error ?? null)
+    } catch (error) {
+      setContactsError(errorMessage(error))
+    } finally {
+      setContactsLoading(false)
+    }
+  }
+
+  const toggleRecipient = (pubkey: string): void => {
+    setShareRecipients((current) =>
+      current.includes(pubkey) ? current.filter((value) => value !== pubkey) : [...current, pubkey]
+    )
+  }
+
+  const addManualRecipient = (): void => {
+    const recipient = parseRecipient(manualRecipient)
+    if (!recipient) {
+      setError('Enter a valid npub or 64-character public key')
+      return
+    }
+    setShareRecipients((current) => (current.includes(recipient) ? current : [...current, recipient]))
+    setManualRecipient('')
+  }
+
+  const filteredContacts = useMemo(() => {
+    const query = shareQuery.trim().toLowerCase()
+    const list = [...(contacts?.contacts ?? [])].sort((a, b) => contactLabel(a).localeCompare(contactLabel(b)))
+    if (!query) return list
+    return list.filter((contact) =>
+      [contact.displayName, contact.name, contact.nip05, contact.pubkey].some((value) =>
+        value?.toLowerCase().includes(query)
+      )
+    )
+  }, [contacts, shareQuery])
+
   const createShare = async (service: HostedService): Promise<void> => {
+    if (shareRecipients.length === 0) {
+      setError('Choose at least one recipient')
+      return
+    }
     setBusy(true)
     setError(null)
+    setShareResults([])
+    setShareFailures([])
     try {
-      const result = await window.ncc.hostingShare(
+      const result = await window.ncc.hostingShareMany(
         service.id,
-        shareRecipient,
+        shareRecipients,
         Math.min(MAX_SHARE_DAYS, Math.max(MIN_SHARE_DAYS, Number(shareDays) || DEFAULT_SHARE_DAYS)),
         shareLabel
       )
-      setShareAddress({ serviceId: service.id, address: result.address })
-      setShareRecipient('')
-      setShareLabel('')
+      setShareResults(result.shares.map((entry) => ({ recipient: entry.recipient, address: entry.address })))
+      setShareFailures(result.failures)
+      if (result.shares.length > 0) {
+        setShareRecipients([])
+        setShareLabel('')
+      }
       apply(await window.ncc.hostingState())
     } catch (shareError) {
       setError(errorMessage(shareError))
@@ -286,7 +358,8 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
         DEFAULT_SHARE_DAYS,
         share.label
       )
-      setShareAddress({ serviceId: service.id, address: result.address })
+      setShareResults([{ recipient: share.recipient, address: result.address }])
+      setShareFailures([])
       apply(await window.ncc.hostingState())
     } catch (renewError) {
       setError(errorMessage(renewError))
@@ -574,7 +647,8 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
                     type="button"
                     onClick={() => {
                       setSharing(sharing === service.id ? null : service.id)
-                      setShareAddress(null)
+                      setShareResults([])
+    setShareFailures([])
                     }}
                     disabled={service.visibility !== 'private'}
                     className="inline-flex items-center gap-1 rounded-lg border border-[color:var(--color-line)] px-2 py-1 text-ui-10 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)] disabled:opacity-40"
@@ -599,13 +673,89 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
                     Only this identity can decrypt the endpoint. The recipient can still reach it until
                     the share expires; rotate the endpoint to cut access.
                   </p>
-                  <div className="grid gap-2 sm:grid-cols-[1fr_100px]">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-ui-10 font-medium text-[color:var(--color-text)]">Recipients from your contact list</p>
+                    <button
+                      type="button"
+                      onClick={() => void refreshContacts()}
+                      disabled={contactsLoading}
+                      className="inline-flex items-center gap-1 rounded border border-[color:var(--color-line)] px-1.5 py-0.5 text-ui-10 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)] disabled:opacity-50"
+                    >
+                      <RefreshCw className={cn('h-3 w-3', contactsLoading && 'animate-spin')} />
+                      {contactsLoading ? 'Refreshing…' : 'Refresh'}
+                    </button>
+                  </div>
+
+                  <input
+                    value={shareQuery}
+                    onChange={(event) => setShareQuery(event.target.value)}
+                    placeholder="Search contacts by name, NIP-05 or npub"
+                    className="w-full rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-ink)] px-2.5 py-1.5 text-ui-11 text-[color:var(--color-text)] outline-none focus:border-[color:var(--color-accent)]"
+                  />
+
+                  <div className="max-h-40 overflow-y-auto rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-ink)]/40">
+                    {filteredContacts.length === 0 ? (
+                      <p className="px-2.5 py-3 text-ui-10 text-[color:var(--color-faint)]">
+                        {contacts ? 'No contacts match.' : 'No contact list cached yet. Refresh, or add an npub below.'}
+                      </p>
+                    ) : null}
+                    {filteredContacts.slice(0, 80).map((contact) => {
+                      const selected = shareRecipients.includes(contact.pubkey)
+                      return (
+                        <label
+                          key={contact.pubkey}
+                          data-contact={contact.pubkey}
+                          className={cn(
+                            'flex cursor-pointer items-center gap-2 border-b border-[color:var(--color-line)]/60 px-2.5 py-1.5 text-ui-11 last:border-0',
+                            selected
+                              ? 'bg-[color:var(--color-accent)]/10 text-[color:var(--color-text)]'
+                              : 'text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)]'
+                          )}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selected}
+                            onChange={() => toggleRecipient(contact.pubkey)}
+                            className="h-3.5 w-3.5 accent-[color:var(--color-accent)]"
+                          />
+                          <span className="min-w-0 flex-1 truncate">{contactLabel(contact)}</span>
+                          <span className="shrink-0 font-mono text-ui-95 text-[color:var(--color-faint)]">
+                            {contact.nip05 || shortIdentity(recipientNpub(contact.pubkey))}
+                          </span>
+                        </label>
+                      )
+                    })}
+                  </div>
+
+                  {contacts?.stale ? (
+                    <p className="text-ui-10 text-[color:var(--color-faint)]">
+                      This contact list is cached. Refresh to check for follow-list changes.
+                    </p>
+                  ) : null}
+                  {contactsError ? (
+                    <p className="text-ui-10 text-[color:var(--color-danger)]">{contactsError}</p>
+                  ) : null}
+
+                  <div className="flex flex-wrap gap-2">
                     <input
-                      value={shareRecipient}
-                      onChange={(event) => setShareRecipient(event.target.value)}
-                      placeholder="npub1… of the recipient"
-                      className="rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-ink)] px-2.5 py-1.5 font-mono text-ui-11 text-[color:var(--color-text)] outline-none focus:border-[color:var(--color-accent)]"
+                      value={manualRecipient}
+                      onChange={(event) => setManualRecipient(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault()
+                          addManualRecipient()
+                        }
+                      }}
+                      placeholder="npub1… not in contacts"
+                      className="min-w-0 flex-1 rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-ink)] px-2.5 py-1.5 font-mono text-ui-11 text-[color:var(--color-text)] outline-none focus:border-[color:var(--color-accent)]"
                     />
+                    <button
+                      type="button"
+                      onClick={addManualRecipient}
+                      className="rounded-lg border border-[color:var(--color-line)] px-2.5 py-1.5 text-ui-11 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)]"
+                    >
+                      Add
+                    </button>
                     <select
                       value={shareDays}
                       onChange={(event) => setShareDays(event.target.value)}
@@ -616,34 +766,84 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
                       <option value="30">30 days</option>
                     </select>
                   </div>
+
+                  {shareRecipients.length > 0 ? (
+                    <div className="flex flex-wrap gap-1">
+                      {shareRecipients.map((recipient) => {
+                        const contact = contacts?.contacts.find((entry) => entry.pubkey === recipient)
+                        return (
+                          <span
+                            key={recipient}
+                            className="inline-flex items-center gap-1 rounded-full border border-[color:var(--color-accent)]/30 bg-[color:var(--color-accent)]/10 px-2 py-0.5 text-ui-10 text-[color:var(--color-text)]"
+                          >
+                            <span className="max-w-[160px] truncate">
+                              {contact ? contactLabel(contact) : shortIdentity(recipientNpub(recipient))}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => toggleRecipient(recipient)}
+                              aria-label="Remove recipient"
+                              className="text-[color:var(--color-muted)] hover:text-[color:var(--color-danger)]"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </span>
+                        )
+                      })}
+                    </div>
+                  ) : null}
+
                   <div className="flex gap-2">
                     <input
                       value={shareLabel}
                       onChange={(event) => setShareLabel(event.target.value)}
-                      placeholder="Label (optional)"
+                      placeholder="Label (optional, local only)"
                       className="flex-1 rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-ink)] px-2.5 py-1.5 text-ui-11 text-[color:var(--color-text)] outline-none focus:border-[color:var(--color-accent)]"
                     />
                     <button
                       type="button"
                       onClick={() => void createShare(service)}
-                      disabled={busy || !shareRecipient.trim()}
+                      disabled={busy || shareRecipients.length === 0}
                       className="rounded-lg bg-[color:var(--color-accent)] px-3 py-1.5 text-ui-11 font-semibold text-[color:var(--color-on-accent)] disabled:opacity-50"
                     >
-                      Create link
+                      {shareRecipients.length > 1
+                        ? `Create ${shareRecipients.length} links`
+                        : 'Create link'}
                     </button>
                   </div>
-                  {shareAddress?.serviceId === service.id ? (
-                    <button
-                      type="button"
-                      onClick={() => void copy('share-address', shareAddress.address)}
-                      className="flex w-full items-center gap-2 rounded-lg border border-[color:var(--color-ok)]/30 bg-[color:var(--color-ok)]/10 px-2.5 py-2 text-left font-mono text-ui-10 text-[color:var(--color-text)]"
-                    >
-                      <Link2 className="h-3.5 w-3.5 shrink-0" />
-                      <span className="truncate">{shareAddress.address}</span>
-                      <span className="ml-auto inline-flex items-center gap-1 text-[color:var(--color-ok)]">
-                        {copied === 'share-address' ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-                      </span>
-                    </button>
+
+                  {shareResults.length > 0 ? (
+                    <div className="space-y-1">
+                      {shareResults.map((link) => (
+                        <button
+                          key={`${link.recipient}:${link.address}`}
+                          data-share-result
+                          type="button"
+                          onClick={() => void copy(`share-result:${link.address}`, link.address)}
+                          className="flex w-full items-center gap-2 rounded-lg border border-[color:var(--color-ok)]/30 bg-[color:var(--color-ok)]/10 px-2.5 py-2 text-left font-mono text-ui-10 text-[color:var(--color-text)]"
+                        >
+                          <Link2 className="h-3.5 w-3.5 shrink-0" />
+                          <span className="truncate">{link.address}</span>
+                          <span className="ml-auto inline-flex items-center gap-1 text-[color:var(--color-ok)]">
+                            {copied === `share-result:${link.address}` ? (
+                              <Check className="h-3 w-3" />
+                            ) : (
+                              <Copy className="h-3 w-3" />
+                            )}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+
+                  {shareFailures.length > 0 ? (
+                    <ul className="space-y-0.5 rounded-lg bg-[color:var(--color-danger)]/10 px-2.5 py-2 text-ui-10 text-[color:var(--color-danger)]">
+                      {shareFailures.map((failure) => (
+                        <li key={failure.recipient}>
+                          {shortIdentity(recipientNpub(failure.recipient))}: {failure.error}
+                        </li>
+                      ))}
+                    </ul>
                   ) : null}
                 </div>
               ) : null}

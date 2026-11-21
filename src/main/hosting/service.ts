@@ -5,6 +5,7 @@ import type {
   HostingDraft,
   HostingPublishReport,
   HostingPublishResult,
+  HostingShareBatchResult,
   HostingShareResult,
   HostingState,
   ReceivedShare,
@@ -288,6 +289,39 @@ export class HostingService {
       address: serviceAddress(npub, dTag),
       report
     }
+  }
+
+  /**
+   * Share with several recipients in one action. Each recipient gets their own
+   * NIP-44 locator and no-`u` NCC-02 anchor, because NIP-44 has one conversation key
+   * per recipient and the anchor is keyed by the requested `d` tag. A failure for one
+   * recipient does not stop the others.
+   */
+  async shareMany(
+    id: string,
+    recipientInputs: string[],
+    days = DEFAULT_SHARE_DAYS,
+    label?: string
+  ): Promise<HostingShareBatchResult> {
+    const unique: string[] = []
+    for (const input of recipientInputs) {
+      const recipient = parseRecipient(input)
+      if (recipient && !unique.includes(recipient)) unique.push(recipient)
+    }
+    if (unique.length === 0) {
+      throw new HostingError('invalid-recipient', 'Choose at least one recipient')
+    }
+    const shares: HostingShareBatchResult['shares'] = []
+    const failures: HostingShareBatchResult['failures'] = []
+    for (const recipient of unique.slice(0, 100)) {
+      try {
+        const result = await this.share(id, recipient, days, label)
+        shares.push({ ...result, recipient })
+      } catch (error) {
+        failures.push({ recipient, error: messageOf(error) })
+      }
+    }
+    return { shares, failures }
   }
 
   async revokeShare(shareId: string): Promise<HostingShareResult> {

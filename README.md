@@ -169,10 +169,10 @@ ncc://<your-npub>/<service>
 
 No domain, certificate or reverse proxy. The browser signs an NCC-05 locator, encrypts
 it to your own key by default, publishes it to your relays and renews it while it runs.
-The same panel shares a private service with one person's npub: the share is the same
-payload NIP-44 encrypted to that recipient under a reserved `share-…` tag. Relays see
-the author and the `d` tag, not the endpoint; a different identity gets an
-`undecryptable` page. A share never publishes a loopback endpoint, and refuses outright
+The same panel shares a private service with one or more people: choose contacts from
+your Nostr follow list (or paste an npub), and each recipient gets their own NIP-44
+locator under a reserved `share-…` tag. Relays see the author and the `d` tag, not the
+endpoint; a different identity gets an `undecryptable` page. A share never publishes a loopback endpoint, and refuses outright
 if that leaves nothing reachable.
 
 A locator is a hint, not a tunnel. Use a reachable LAN/public endpoint, or publish a

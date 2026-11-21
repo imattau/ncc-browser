@@ -19,7 +19,7 @@ import { mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import WebSocket from 'ws'
-import { SimplePool, generateSecretKey, getPublicKey, nip19 } from 'nostr-tools'
+import { SimplePool, finalizeEvent, generateSecretKey, getPublicKey, nip19 } from 'nostr-tools'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const SCRATCH = '/tmp/opencode/ncc-hosting-smoke'
@@ -131,6 +131,10 @@ async function waitFor(cdp, expression, label, timeout = 15000) {
 
 const secret = generateSecretKey()
 const secretHex = Buffer.from(secret).toString('hex')
+const contactA = generateSecretKey()
+const contactB = generateSecretKey()
+const contactAHex = getPublicKey(contactA)
+const contactBHex = getPublicKey(contactB)
 const recipient = nip19.npubEncode(getPublicKey(generateSecretKey()))
 
 mkdirSync(SCRATCH, { recursive: true })
@@ -173,6 +177,39 @@ writeFileSync(
 start('Xvfb', [DISPLAY, '-screen', '0', '1440x900x24', '-nolisten', 'tcp'])
 const relay = start('nak', ['serve', '--port', String(RELAY_PORT)])
 await sleep(800)
+const seed = new SimplePool()
+const relayUrl = `ws://127.0.0.1:${RELAY_PORT}`
+const now = Math.floor(Date.now() / 1000)
+await seed.publish(
+  [relayUrl],
+  finalizeEvent(
+    {
+      kind: 3,
+      created_at: now,
+      tags: [['p', contactAHex], ['p', contactBHex]],
+      content: ''
+    },
+    secret
+  )
+)
+for (const [contactSecret, name] of [
+  [contactA, 'alice'],
+  [contactB, 'bob']
+]) {
+  await seed.publish(
+    [relayUrl],
+    finalizeEvent(
+      {
+        kind: 0,
+        created_at: now,
+        tags: [],
+        content: JSON.stringify({ name, display_name: `${name} Display`, nip05: `${name}@example.com` })
+      },
+      contactSecret
+    )
+  )
+}
+await sleep(400)
 
 const electron = start(
   join(ROOT, 'node_modules/.bin/electron'),
@@ -265,22 +302,31 @@ try {
     button?.click()
     return Boolean(button)
   })()`)
-  await sleep(100)
+  await waitFor(
+    cdp,
+    "document.querySelectorAll('[data-contact]').length >= 2",
+    'contacts',
+    15000
+  )
   await cdp.evaluate(`(() => {
-    const form = document.querySelector('[data-hosting-service="photos"]')
-    const input = form.querySelector('input[placeholder^="npub1"]')
-    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
-    set.call(input, ${JSON.stringify(recipient)})
-    input.dispatchEvent(new Event('input', { bubbles: true }))
+    for (const pubkey of [${JSON.stringify(contactAHex)}, ${JSON.stringify(contactBHex)}]) {
+      document.querySelector('[data-contact="' + pubkey + '"] input')?.click()
+    }
     return true
   })()`)
-  await sleep(100)
+  await sleep(200)
   await cdp.evaluate(`(() => {
     const card = document.querySelector('[data-hosting-service="photos"]')
-    const button = [...card.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Create link')
+    const button = [...card.querySelectorAll('button')].find((b) => b.textContent.trim().startsWith('Create'))
     button?.click()
     return Boolean(button)
   })()`)
+  await waitFor(
+    cdp,
+    "document.querySelectorAll('[data-share-result]').length >= 2",
+    'two share links',
+    30000
+  )
   await waitFor(
     cdp,
     `(() => {
@@ -296,7 +342,7 @@ try {
   if (!existsSync(servicesFile)) throw new Error('services.json was not written')
   const state = JSON.parse(readFileSync(servicesFile, 'utf8'))
   if (state.services.length !== 1) throw new Error('service was not stored')
-  if (state.shares.length !== 1) throw new Error('share was not stored')
+  if (state.shares.length !== 2) throw new Error('both shares were not stored')
   log('state file ok', JSON.stringify({ services: state.services.length, shares: state.shares.length }))
 
   let sitesOpen = false

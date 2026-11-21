@@ -133,6 +133,15 @@ export interface HostingShareResult {
   report: HostingPublishReport
 }
 
+export interface HostingShareBatchEntry extends HostingShareResult {
+  recipient: string
+}
+
+export interface HostingShareBatchResult {
+  shares: HostingShareBatchEntry[]
+  failures: Array<{ recipient: string; error: string }>
+}
+
 export const DEFAULT_HOSTED_TTL_SECONDS = 7 * 86_400
 export const MIN_HOSTED_TTL_SECONDS = 3_600
 export const MAX_HOSTED_TTL_SECONDS = 30 * 86_400
