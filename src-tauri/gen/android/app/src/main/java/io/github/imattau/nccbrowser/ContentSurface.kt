@@ -139,7 +139,7 @@ private const val WEBLN_SHIM = """
 private const val PASSKEY_SHIM = """
 (function () {
   var port = window.__nccPasskeys;
-  if (!port || window.top !== window || !navigator.credentials || !window.PublicKeyCredential) return;
+  if (location.protocol !== 'https:' || !port || window.top !== window || !navigator.credentials || !window.PublicKeyCredential) return;
   var credentials = navigator.credentials;
   var nativeCreate = credentials.create.bind(credentials);
   var nativeGet = credentials.get.bind(credentials);
@@ -644,7 +644,10 @@ class ContentSurface(
     if (isPrivate || isTor || !WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER) ||
       !WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) return
     try {
-      WebViewCompat.addWebMessageListener(web, "__nccPasskeys", setOf("https://*")) { _, message, sourceOrigin, isMainFrame, replyProxy ->
+      // The WebView origin-rule grammar has no HTTPS-only any-host rule: "https://*"
+      // throws IllegalArgumentException. Use the universal rule, then keep the object
+      // inert on non-HTTPS pages in PASSKEY_SHIM and reject non-HTTPS requests here.
+      WebViewCompat.addWebMessageListener(web, "__nccPasskeys", setOf("*")) { _, message, sourceOrigin, isMainFrame, replyProxy ->
         if (destroyed) return@addWebMessageListener
         val request = try { JSONObject(message.data ?: return@addWebMessageListener) } catch (_: Exception) { return@addWebMessageListener }
         val callId = request.optInt("id", -1)
@@ -688,8 +691,9 @@ class ContentSurface(
           .put("credentialId", request.optString("credentialId"))
           .put("options", request.optJSONObject("options") ?: JSONObject()))
       }
-      WebViewCompat.addDocumentStartJavaScript(web, PASSKEY_SHIM, setOf("https://*"))
-    } catch (_: Throwable) {
+      WebViewCompat.addDocumentStartJavaScript(web, PASSKEY_SHIM, setOf("*"))
+    } catch (error: Throwable) {
+      android.util.Log.w("NccPasskeys", "Could not install the WebAuthn bridge; using the native WebView authenticator", error)
       // Fall back to the WebView's platform implementation when the bridge is unavailable.
     }
   }
