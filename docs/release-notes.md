@@ -1,5 +1,36 @@
 # Release notes
 
+## 0.37.1 — private anchoring, strict publishing and multi-contact sharing
+
+### Fixed
+
+- **Private NCC-02 anchors** no longer expose the endpoint. A private service or share
+  publishes a `kind 30059` record with `d`, `exp` and an optional `k`, but no `u`;
+  NCC-05 remains the only endpoint source.
+- **Strict anchoring now applies to publishing.** When Require NCC-02 service records is
+  on, the anchor is written first and the locator is only published if at least one relay
+  accepted it. A rejected anchor fails the service/share instead of leaving a locator that
+  strict recipients would reject.
+- **A private share gets its own no-`u` anchor** under its `share-…` d tag. The canonical
+  service anchor does not satisfy a share because anchored resolution looks up the anchor
+  by the requested d tag.
+
+### Added
+
+- **Share with multiple contacts.** The share picker reads the active identity's kind-3
+  follow list and caches kind-0 names, NIP-05 identifiers and pictures in
+  `userData/contacts.json` (0600). The cache opens instantly, refreshes after six hours or
+  on demand, and is per identity. Search, select several people, or paste an npub.
+- **One link per recipient.** Each recipient gets their own NIP-44 locator and no-`u`
+  anchor, because NIP-44 has one conversation key per recipient. Duplicate recipients are
+  collapsed, one failure does not stop the rest, and each link can be revoked or renewed
+  independently.
+
+### Site
+
+- The project site now links the Nostr git mirror (gitworkshop.dev, announced on
+  `relay.ngit.dev`) alongside GitHub, with NostrHub as a secondary index.
+
 ## 0.37.0 — hosted services and static sites
 
 ### Hosted services (desktop)
