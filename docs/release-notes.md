@@ -1,5 +1,40 @@
 # Release notes
 
+## 0.39.0 — service identities, TLS certificates and standalone discovery
+
+### Added
+
+- **Choose the identity for a service.** The Add service form lists every saved
+  identity and reuses the selected one, so an existing signer no longer has to be
+  recreated.
+- **One New identity button with an Add to identity list checkbox.** Checked creates a
+  saved local identity; unchecked creates a one-off identity for this session, shows
+  its nsec, and can be promoted later. The promotion checkbox is disabled once the npub
+  is already saved. Switching away from or replacing a one-off asks for confirmation.
+- **TLS certificates for HTTPS endpoints.** Import a PEM/DER certificate to derive the
+  NCC-05 `k` pin, or generate a self-signed certificate with SANs for every endpoint
+  host. Generated `<name>-cert.pem` and `<name>-key.pem` (key `0600`) are written to a
+  folder you choose. Matching endpoints switch to `https://` and carry the pin; a
+  certificate that does not name an endpoint host leaves it unpinned. The browser does
+  not terminate TLS; install the files in the server.
+- **Find endpoints without opening a page.** Enter a port (or use the first endpoint,
+  then 80/443); discovery scans this machine's IPv4/IPv6 addresses, reports whether Tor
+  is running, and offers candidates as checkboxes. With a TLS pin it produces HTTPS
+  candidates; otherwise HTTP.
+- **`nsite://` bookmarks.** nsite addresses can be bookmarked and now sync with tabs and
+  history; the bookmark action no longer silently does nothing.
+
+### Changed
+
+- **Sharing after adding.** Adding a private service opens Share immediately so the
+  contact list is visible. The intro now describes the contact-list flow instead of
+  “share with one npub”.
+- **Loopback-only services** show a warning in Share and cannot create links until a
+  LAN, public or `.onion` endpoint exists.
+- **Bare endpoint addresses** such as `192.168.1.20:8080` or `[2001:db8::1]:8080` are
+  accepted and default to HTTP; an explicit `https://` keeps TLS. Editing a service
+  preserves its existing TLS pins.
+
 ## 0.38.1 — main-process TLS crash fix
 
 ### Fixed
