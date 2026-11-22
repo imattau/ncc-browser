@@ -20,6 +20,7 @@ import type {
   WanClass
 } from '@shared/reachability'
 import type { PublicAddress } from './public-address'
+import { requestText } from '../http-text'
 
 export interface DiscoverOptions {
   seedUrl: string
@@ -465,10 +466,21 @@ export async function upnpExternalAddress(
   return { address, mapping: true, gateway }
 }
 
-async function fetchText(url: string, timeoutMs: number, init?: RequestInit): Promise<string> {
-  const response = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) })
-  if (!response.ok) throw new Error(`HTTP ${response.status}`)
-  return response.text()
+async function fetchText(
+  url: string,
+  timeoutMs: number,
+  init?: { method?: string; headers?: Record<string, string>; body?: string }
+): Promise<string> {
+  const response = await requestText(url, {
+    timeoutMs,
+    ...(init?.method ? { method: init.method } : {}),
+    ...(init?.headers ? { headers: init.headers } : {}),
+    ...(init?.body !== undefined ? { body: init.body } : {})
+  })
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(`HTTP ${response.status}`)
+  }
+  return response.text
 }
 
 function ssdpLocation(timeoutMs: number): Promise<string | null> {

@@ -7,6 +7,7 @@
  */
 
 import { isIP } from 'node:net'
+import { requestText } from '../http-text'
 
 export const PUBLIC_ADDRESS_PROVIDER = 'https://api64.ipify.org?format=json'
 
@@ -21,7 +22,8 @@ export interface PublicAddressOptions {
   provider?: string
   ttlMs?: number
   timeoutMs?: number
-  fetchImpl?: typeof fetch
+  /** Injectable transport; defaults to the node:https helper. */
+  request?: typeof requestText
   now?: () => number
 }
 
@@ -54,14 +56,14 @@ export class PublicAddressService {
   private readonly provider: string
   private readonly ttlMs: number
   private readonly timeoutMs: number
-  private readonly fetchImpl: typeof fetch
+  private readonly request: typeof requestText
   private readonly now: () => number
 
   constructor(options: PublicAddressOptions = {}) {
     this.provider = options.provider ?? process.env.NCC_PUBLIC_ADDRESS_URL ?? PUBLIC_ADDRESS_PROVIDER
     this.ttlMs = options.ttlMs ?? 10 * 60_000
     this.timeoutMs = options.timeoutMs ?? 6000
-    this.fetchImpl = options.fetchImpl ?? fetch
+    this.request = options.request ?? requestText
     this.now = options.now ?? (() => Date.now())
   }
 
@@ -75,12 +77,14 @@ export class PublicAddressService {
     const cached = force ? null : this.existing()
     if (cached) return cached
 
-    const response = await this.fetchImpl(this.provider, {
-      signal: AbortSignal.timeout(this.timeoutMs),
+    const response = await this.request(this.provider, {
+      timeoutMs: this.timeoutMs,
       headers: { accept: 'application/json, text/plain' }
     })
-    if (!response.ok) throw new Error(`Public address service returned HTTP ${response.status}`)
-    const value = parsePublicAddress(await response.text(), this.provider, this.now())
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(`Public address service returned HTTP ${response.status}`)
+    }
+    const value = parsePublicAddress(response.text, this.provider, this.now())
     if (!value) throw new Error('Public address service returned no address')
     this.cache = { at: this.now(), value }
     return value

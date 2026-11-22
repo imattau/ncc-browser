@@ -1,3 +1,4 @@
+import { requestText } from './http-text'
 import { app, type Session } from 'electron'
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -171,9 +172,9 @@ export class ProtectionService {
     })
     await Promise.all(LISTS.map(async ([name, url], index) => {
       try {
-        const response = await fetch(url, { signal: AbortSignal.timeout(15_000) })
-        if (!response.ok) return
-        const body = await response.text()
+        const response = await requestText(url, { timeoutMs: 15_000, maxBytes: 12_000_000 })
+        if (response.status < 200 || response.status >= 300) return
+        const body = response.text
         if (body.length < 100 || body.length > 12_000_000) return
         writeFileSync(join(this.dataDir, `${name}.txt`), body, 'utf8')
         lists[index] = body

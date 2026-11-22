@@ -5,8 +5,8 @@ import {
   parsePublicAddress
 } from '../src/main/hosting/public-address'
 
-function response(body: string, status = 200): Response {
-  return new Response(body, { status })
+function reply(body: string, status = 200) {
+  return async (url: string) => ({ status, headers: {}, text: body, url })
 }
 
 describe('public address parsing', () => {
@@ -29,46 +29,42 @@ describe('public address parsing', () => {
 describe('PublicAddressService', () => {
   it('caches the lookup and can force a refresh', async () => {
     let now = 1_000
-    const fetchImpl = vi.fn(async () => response('{"ip":"203.0.113.42"}'))
+    const request = vi.fn(reply('{"ip":"203.0.113.42"}'))
     const service = new PublicAddressService({
-      fetchImpl: fetchImpl as unknown as typeof fetch,
+      request,
       now: () => now
     })
 
     expect(await service.lookup()).toMatchObject({ address: '203.0.113.42', family: 'ipv4' })
     await service.lookup()
-    expect(fetchImpl).toHaveBeenCalledOnce()
+    expect(request).toHaveBeenCalledOnce()
 
     now += 11 * 60_000
     await service.lookup()
-    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(request).toHaveBeenCalledTimes(2)
 
     await service.lookup(true)
-    expect(fetchImpl).toHaveBeenCalledTimes(3)
+    expect(request).toHaveBeenCalledTimes(3)
     expect(service.existing()).not.toBeNull()
     service.clear()
     expect(service.existing()).toBeNull()
   })
 
   it('fails clearly when the provider errors or returns junk', async () => {
-    const bad = new PublicAddressService({
-      fetchImpl: (async () => response('down', 503)) as unknown as typeof fetch
-    })
+    const bad = new PublicAddressService({ request: reply('down', 503) })
     await expect(bad.lookup()).rejects.toThrow('HTTP 503')
 
-    const junk = new PublicAddressService({
-      fetchImpl: (async () => response('nope')) as unknown as typeof fetch
-    })
+    const junk = new PublicAddressService({ request: reply('nope') })
     await expect(junk.lookup()).rejects.toThrow('no address')
   })
 
   it('sends no credentials and uses the disclosed provider', async () => {
     let requested = ''
     const service = new PublicAddressService({
-      fetchImpl: (async (url: string) => {
+      request: async (url: string) => {
         requested = url
-        return response('{"ip":"198.51.100.7"}')
-      }) as unknown as typeof fetch
+        return { status: 200, headers: {}, text: '{"ip":"198.51.100.7"}', url }
+      }
     })
     await service.lookup()
     expect(requested).toBe('https://api64.ipify.org?format=json')
