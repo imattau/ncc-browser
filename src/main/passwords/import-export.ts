@@ -1,6 +1,6 @@
 import { normalizeImportedOrigin } from '@shared/passwords'
-import type { PasswordEntry } from '@shared/types'
-import type { PasswordImportPreview } from '@shared/types'
+import type { PasswordEntry } from '@shared/passwords'
+import type { PasswordImportPreview } from '@shared/passwords'
 
 export interface ImportedRow {
   title: string

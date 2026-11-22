@@ -11,15 +11,17 @@ import type {
   IdentityStatus,
   NavState,
   OverlayReason,
+  SignerRequest,
+  TabHistory
+} from '@shared/types'
+import type {
   PasskeyConfirmationRequest,
   PasswordContext,
   PasswordSaveRequest,
   PasswordToast,
-  PasswordVaultStatus,
-  PaymentCardSaveRequest,
-  SignerRequest,
-  TabHistory
-} from '@shared/types'
+  PasswordVaultStatus
+} from '@shared/passwords'
+import type { PaymentCardSaveRequest } from '@shared/payment-cards'
 import { ChromeMenu } from './components/ChromeMenu'
 import type { SyncDevice } from '@shared/sync-status'
 import { DownloadsPanel } from './components/DownloadsPanel'

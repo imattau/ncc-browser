@@ -15,13 +15,8 @@ import {
   X
 } from 'lucide-react'
 import type { ExtensionActionInfo } from '@shared/extensions'
-import type {
-  DownloadNotice,
-  IdentityStatus,
-  NavState,
-  PasswordContext,
-  PasswordVaultStatus
-} from '@shared/types'
+import type { DownloadNotice, IdentityStatus, NavState } from '@shared/types'
+import type { PasswordContext, PasswordVaultStatus } from '@shared/passwords'
 import { isActiveDownload } from '@shared/downloads'
 import { AddressBar } from './AddressBar'
 import type { PopoverAnchor } from './Popover'

@@ -4,7 +4,7 @@ import {
   parseCsv,
   parsePasswordCsv
 } from '../src/main/passwords/import-export'
-import type { PasswordEntry } from '../src/shared/types'
+import type { PasswordEntry } from '../src/shared/passwords'
 
 const entry = (overrides: Partial<PasswordEntry> = {}): PasswordEntry => ({
   id: '0123456789abcdef',

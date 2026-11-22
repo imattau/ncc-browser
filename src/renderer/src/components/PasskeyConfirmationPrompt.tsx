@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { KeyRound, ShieldCheck } from 'lucide-react'
-import type { PasskeyConfirmationRequest } from '@shared/types'
+import type { PasskeyConfirmationRequest } from '@shared/passwords'
 import { useFocusTrap } from '../lib/useFocusTrap'
 
 interface PasskeyConfirmationPromptProps {

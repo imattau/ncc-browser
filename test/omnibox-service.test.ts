@@ -5,7 +5,8 @@ import { describe, expect, it } from 'vitest'
 import { BookmarkStore } from '../src/main/bookmarks'
 import { HistoryStore } from '../src/main/history'
 import { OmniboxService, type OmniboxTab } from '../src/main/omnibox'
-import { DEFAULT_APPEARANCE, DEFAULT_PASSWORD_CONFIG, type AppConfig } from '../src/shared/types'
+import { DEFAULT_APPEARANCE, type AppConfig } from '../src/shared/types'
+import { DEFAULT_PASSWORD_CONFIG } from '../src/shared/passwords'
 
 const NPUB = 'npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqhs2n3v'
 const NOW = 1_700_000_000_000

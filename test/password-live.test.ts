@@ -22,10 +22,10 @@ import { PasswordService } from '../src/main/passwords/service'
 import {
   DEFAULT_APPEARANCE,
   DEFAULT_HTTPS_MODE,
-  DEFAULT_PASSWORD_CONFIG,
   DEFAULT_TOR_SOCKS,
   type AppConfig
 } from '../src/shared/types'
+import { DEFAULT_PASSWORD_CONFIG } from '../src/shared/passwords'
 
 const relay = process.env.NCC_SYNC_RELAY
 const nsec = process.env.NCC_SYNC_NSEC
