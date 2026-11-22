@@ -142,7 +142,8 @@ export function certificateCoversHost(info: Pick<CertificateInfo, 'names'>, host
 export interface HostingDraft {
   title: string
   service?: string
-  endpoints: Array<string | ServiceEndpoint>
+  /** Optional until publishing; an address can exist before its transport. */
+  endpoints?: Array<string | ServiceEndpoint>
   ttlSeconds?: number
   visibility?: HostingVisibility
   anchor?: boolean
@@ -361,8 +362,6 @@ export function validateHostingDraft(input: HostingDraft): Validation<Normalized
       endpoints.push(normalized.value)
     }
   }
-  if (endpoints.length === 0) return { ok: false, error: 'Add at least one endpoint' }
-
   const visibility: HostingVisibility = input.visibility === 'public' ? 'public' : 'private'
   if (visibility === 'public' && endpoints.some(isLoopbackEndpoint)) {
     return { ok: false, error: 'A public service cannot use a loopback endpoint' }

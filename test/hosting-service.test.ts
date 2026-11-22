@@ -473,6 +473,20 @@ describe('HostingService renewal and received shares', () => {
     expect(hosting.state().received).toHaveLength(0)
   })
 
+  it('can create an address before endpoints, but cannot publish it yet', async () => {
+    const { hosting } = setup()
+    const service = hosting.create({ title: 'Draft' })
+    expect(service.endpoints).toEqual([])
+    expect(service.service).toBe('draft')
+    await expect(hosting.publish(service.id)).rejects.toMatchObject({ code: 'no-endpoint' })
+
+    hosting.update(service.id, {
+      title: 'Draft',
+      endpoints: ['https://draft.example']
+    })
+    expect(hosting.find(service.id)?.endpoints).toHaveLength(1)
+  })
+
   it('adds and removes an onion endpoint without dropping others', () => {
     const { hosting } = setup()
     const service = hosting.create({

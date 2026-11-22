@@ -33,7 +33,7 @@ Settings → **Services** → **Add service**.
 | --- | --- |
 | Name | Human label shown in the browser. |
 | Service id | The `d` tag, e.g. `photos`. Lowercase letters, digits and hyphens. Immutable after creation. |
-| Endpoints | One or more `http://`, `https://` or `.onion` URLs. A bare `IP:port` or `[IPv6]:port` is accepted and defaults to `http://`; an explicit `https://` keeps TLS (use it for a `k`-pinned endpoint). The first is preferred; the resolver falls back in order. **Find endpoints** proposes candidates from the typed endpoint, the current page and this machine. |
+| Endpoints | Optional until publishing: one or more `http://`, `https://` or `.onion` URLs. A bare `IP:port` or `[IPv6]:port` is accepted and defaults to `http://`; an explicit `https://` keeps TLS (use it for a `k`-pinned endpoint). The first is preferred; the resolver falls back in order. **Find endpoints** proposes candidates from this machine, the current page and the router. |
 | Visibility | **Private** encrypts the locator to you. **Public** publishes plaintext, so anyone with the address can resolve it. |
 | Locator lifetime | How long the signed hint is valid. Default 7 days, maximum 30. |
 | Anchor | Optional NCC-02 service record. A public service includes the endpoint; a private service omits `u` and anchors only the identity, expiry and optional `k`. |
@@ -45,6 +45,11 @@ trust context; NCC-05 supplies reachability. The browser's default is optional a
 For a private service the anchor has no `u`: it cannot leak the endpoint, and NCC-05
 remains the only source of reachability. The resolver already accepts an anchor without
 `u` and applies its `k` to the NCC-05 endpoints.
+
+The **address** (`ncc://<npub>/<service>`) is derived from the identity and service id,
+not from the endpoints. The form shows it and lets you copy it before adding any
+endpoint. You can save the address first; **Publish** and **Share** require at least one
+reachable endpoint because a locator is only a pointer.
 
 ### Signing identity
 

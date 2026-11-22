@@ -24,6 +24,7 @@ import {
   MAX_SHARE_DAYS,
   MIN_SHARE_DAYS,
   serviceAddress,
+  slugifyService,
   recipientNpub,
   parseRecipient,
   isLoopbackEndpoint,
@@ -621,15 +622,16 @@ export function HostingSettings({
 
   useEffect(() => {
     if (!initialDraft) return
+    const draftEndpoints = initialDraft.endpoints ?? []
     setDraft({
       ...EMPTY_DRAFT,
       title: initialDraft.title,
       service: initialDraft.service ?? '',
-      endpoints: initialDraft.endpoints
+      endpoints: draftEndpoints
         .map((endpoint) => (typeof endpoint === 'string' ? endpoint : endpoint.url))
         .join('\n'),
       pins: Object.fromEntries(
-        initialDraft.endpoints.flatMap((endpoint) =>
+        draftEndpoints.flatMap((endpoint) =>
           typeof endpoint !== 'string' && endpoint.k ? [[endpoint.url, endpoint.k]] : []
         )
       ),
@@ -640,7 +642,7 @@ export function HostingSettings({
       anchor: initialDraft.anchor === true,
       notes: initialDraft.notes ?? ''
     })
-    const seed = initialDraft.endpoints
+    const seed = draftEndpoints
       .map((endpoint) => (typeof endpoint === 'string' ? endpoint : endpoint.url))
       .find(Boolean)
     if (seed && normalizeEndpointSeed(seed)) void discover(seed)
@@ -661,6 +663,8 @@ export function HostingSettings({
 
   const services = state?.services ?? []
   const shares = state?.shares ?? []
+  const draftServiceId = draft?.service.trim() || (draft?.title.trim() ? slugifyService(draft.title) : '')
+  const draftAddress = npub && draftServiceId ? serviceAddress(npub, draftServiceId) : ''
 
   const copy = async (id: string, text: string): Promise<void> => {
     try {
@@ -713,7 +717,6 @@ export function HostingSettings({
         return pin ? { url: line, k: pin, priority: 1000 } : line
       })
     if (!draft.title.trim()) return setError('Give the service a name')
-    if (endpoints.length === 0) return setError('Add at least one endpoint')
     setBusy(true)
     setError(null)
     try {
@@ -1219,9 +1222,25 @@ export function HostingSettings({
               </label>
             </div>
 
+            <div className="rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-ink)]/50 px-2.5 py-1.5">
+              <span className="text-ui-95 text-[color:var(--color-muted)]">Address</span>
+              <button
+                type="button"
+                disabled={!identity?.npub || !(draft.service.trim() || draft.title.trim())}
+                onClick={() => void copy('draft-address', draftAddress)}
+                className="ml-2 max-w-full truncate font-mono text-ui-105 text-[color:var(--color-text)] hover:text-[color:var(--color-accent)] disabled:opacity-50"
+              >
+                {copied === 'draft-address' ? 'copied' : draftAddress || 'connect an identity first'}
+              </button>
+              <p className="mt-0.5 text-ui-95 text-[color:var(--color-faint)]">
+                This address comes from your identity and the service id, not from the endpoints. You can
+                save it now and add endpoints before publishing.
+              </p>
+            </div>
+
             <div>
               <label className="block text-ui-105 text-[color:var(--color-muted)]">
-                Endpoints, one per line
+                Endpoints, one per line (optional until publishing)
                 <textarea
                   value={draft.endpoints}
                   onChange={(event) => setDraft({ ...draft, endpoints: event.target.value })}
@@ -1802,8 +1821,9 @@ export function HostingSettings({
                   </p>
                   {!canShare ? (
                     <p className="rounded border border-[color:var(--color-warn)]/30 bg-[color:var(--color-warn)]/10 px-2 py-1 text-ui-10 text-[color:var(--color-muted)]">
-                      This service only has a loopback endpoint. Add a LAN, public or .onion endpoint
-                      with Edit before creating links.
+                      {service.endpoints.length === 0
+                        ? 'This service has no endpoints yet. Add one with Edit before creating links.'
+                        : 'This service only has a loopback endpoint. Add a LAN, public or .onion endpoint with Edit before creating links.'}
                     </p>
                   ) : null}
                   <div className="flex items-center justify-between gap-2">

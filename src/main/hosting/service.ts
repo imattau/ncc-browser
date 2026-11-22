@@ -38,6 +38,7 @@ import type { HostingStore } from './store'
 export type HostingErrorCode =
   | 'identity-required'
   | 'not-found'
+  | 'no-endpoint'
   | 'invalid-recipient'
   | 'public-service'
   | 'loopback-share'
@@ -235,6 +236,12 @@ export class HostingService {
   async publish(id: string): Promise<HostingPublishResult> {
     const service = this.options.store.find(id)
     if (!service) throw new HostingError('not-found', 'That service no longer exists')
+    if (service.endpoints.length === 0) {
+      throw new HostingError(
+        'no-endpoint',
+        'Add at least one endpoint before publishing. The ncc:// address exists, but a locator needs a reachable endpoint.'
+      )
+    }
     const { provider, hex } = await this.requireIdentity()
     this.assertOwner(service, hex)
     if (!service.owner) this.options.store.setOwner(id, hex)
@@ -351,6 +358,9 @@ export class HostingService {
         'public-service',
         'This service is public; anyone with the address can already open it.'
       )
+    }
+    if (service.endpoints.length === 0) {
+      throw new HostingError('no-endpoint', 'Add at least one endpoint before sharing this service.')
     }
     if (service.endpoints.length > 0 && service.endpoints.every(isLoopbackEndpoint)) {
       throw new HostingError(
