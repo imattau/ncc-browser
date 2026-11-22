@@ -37,12 +37,12 @@ import type {
   NavState,
   OmniboxSuggestion,
   PageMode,
-  PasswordPage,
   SecurityInfo,
   TabHistory,
   TabKind,
   TabSummary
 } from '@shared/types'
+import type { PasswordPage } from '@shared/passwords'
 import type { ProtocolActivity } from './protocol'
 import type { EndpointHealth } from './ncc/health'
 import type { TransportPolicy } from './ncc/transport'

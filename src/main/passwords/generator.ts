@@ -1,5 +1,5 @@
 import { randomInt } from 'node:crypto'
-import type { PasswordGeneratorOptions } from '@shared/types'
+import type { PasswordGeneratorOptions } from '@shared/passwords'
 
 const LOWER = 'abcdefghijkmnopqrstuvwxyz'
 const UPPER = 'ABCDEFGHJKLMNPQRSTUVWXYZ'

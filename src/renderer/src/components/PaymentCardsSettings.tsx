@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import { CreditCard, LockKeyhole, Plus, RefreshCw, Trash2 } from 'lucide-react'
-import type { PaymentCardDraft, PaymentCardSettingsStatus, PaymentCardSummary, PasswordVaultStatus } from '@shared/types'
+import type { PasswordVaultStatus } from '@shared/passwords'
+import type {
+  PaymentCardDraft,
+  PaymentCardSettingsStatus,
+  PaymentCardSummary
+} from '@shared/payment-cards'
 
 const EMPTY: PaymentCardDraft = { name: '', number: '', expMonth: '', expYear: '', nickname: '' }
 

@@ -1,5 +1,5 @@
 import { CreditCard, X } from 'lucide-react'
-import type { PaymentCardSaveRequest } from '@shared/types'
+import type { PaymentCardSaveRequest } from '@shared/payment-cards'
 
 export function PaymentCardSavePrompt({ request, busy, error, onRespond }: {
   request: PaymentCardSaveRequest

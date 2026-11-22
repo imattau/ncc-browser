@@ -1,6 +1,12 @@
 import { randomBytes } from 'node:crypto'
 import { verifyEvent, type Event, type EventTemplate, type Filter } from 'nostr-tools'
-import type { PaymentCard, PaymentCardDraft, PaymentCardSaveRequest, PaymentCardSummary, PasswordPage } from '@shared/types'
+import type { PasswordPage } from '@shared/passwords'
+import type {
+  PaymentCard,
+  PaymentCardDraft,
+  PaymentCardSaveRequest,
+  PaymentCardSummary
+} from '@shared/payment-cards'
 import {
   emptyPaymentCardVault, mergePaymentCardVaults, normalizePaymentCardDraft,
   normalizePaymentCardVault, paymentCardSummary, PAYMENT_CARDS_D, PAYMENT_CARDS_TAG,

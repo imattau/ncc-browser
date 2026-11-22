@@ -10,20 +10,22 @@ import {
 import {
   DEFAULT_APPEARANCE,
   DEFAULT_HTTPS_MODE,
-  DEFAULT_PASSWORD_CONFIG,
   DEFAULT_PROTECTION,
   DEFAULT_TOR_SOCKS,
   normalizeAppearance,
-  normalizePasswordConfig,
   normalizeProtection,
   type AppearanceConfig,
   type AppConfig,
   type HttpsMode,
-  type PasswordConfig,
   type ProtectionConfig,
   type RelayEntry,
   type TorMode
 } from '@shared/types'
+import {
+  DEFAULT_PASSWORD_CONFIG,
+  normalizePasswordConfig,
+  type PasswordConfig
+} from '@shared/passwords'
 
 /**
  * Tiny JSON settings store in `userData`: relay list, NIP-65 gossip, and whether a

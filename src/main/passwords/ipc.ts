@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path'
 import { browserShellFor, browserShellForTabContents, type BrowserShell } from '../shell'
 import { isChromeSender } from '../ipc-guard'
 import type { PasswordClipboard, PasswordFileDialogs, PasswordService } from './service'
-import type { PasskeyConfirmationRequest, PasswordConfig } from '@shared/types'
+import type { PasskeyConfirmationRequest, PasswordConfig } from '@shared/passwords'
 
 export interface PasswordIpcDeps {
   shell: BrowserShell

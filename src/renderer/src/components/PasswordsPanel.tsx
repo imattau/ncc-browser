@@ -9,7 +9,7 @@ import {
   ShieldCheck,
   Unlock
 } from 'lucide-react'
-import type { PasswordContext, PasswordSummary, PasswordTotpCode } from '@shared/types'
+import type { PasswordContext, PasswordSummary, PasswordTotpCode } from '@shared/passwords'
 import { cn } from '../lib/cn'
 import { Popover, type PopoverAnchor } from './Popover'
 

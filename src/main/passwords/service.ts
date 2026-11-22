@@ -28,9 +28,8 @@ import {
   vaultByteLength,
   type PasswordVault
 } from '@shared/passwords'
+import type { AppConfig, IdentityStatus } from '@shared/types'
 import type {
-  AppConfig,
-  IdentityStatus,
   PasswordConfig,
   PasswordContext,
   PasswordCopyResult,
@@ -49,7 +48,7 @@ import type {
   PasswordToast,
   PasswordTotpCode,
   PasswordVaultStatus
-} from '@shared/types'
+} from '@shared/passwords'
 import type { PasswordCache, CachedVault } from './cache'
 import { generatePassword } from './generator'
 import {

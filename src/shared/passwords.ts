@@ -8,14 +8,285 @@
 import { parseNccAddress } from './ncc-url'
 import { parseNsiteAddress } from './nsite-url'
 import { scorePassword } from './password-strength'
-import type {
-  PasskeyCredential,
-  PasswordEntry,
-  PasswordHealthEntry,
-  PasswordHealthReport,
-  PasswordPage,
-  PasswordSummary
-} from './types'
+import type { PageMode, TabKind } from './types/base'
+import type { IdentityMode } from './types/identity'
+import type { SecurityInfo } from './types/ncc'
+
+/* ------------------------------------------------------------------ */
+/*  Data model                                                        */
+/* ------------------------------------------------------------------ */
+
+/** One decrypted credential. Never exposed to page content. */
+export interface PasswordEntry {
+  id: string
+  /** Normalized page origin: https://host[:port] or ncc://<pubkey>/<service>. */
+  origin: string
+  title: string
+  username: string
+  password: string
+  notes: string
+  /** Base32 secret or otpauth:// URI. Empty when the entry has no TOTP. */
+  totp: string
+  createdAt: number
+  updatedAt: number
+  /** Tombstone entries stay in the vault so deletions propagate across devices. */
+  deleted?: boolean
+  /** A WebAuthn credential. Private key material is protected by the encrypted vault. */
+  passkey?: PasskeyCredential
+}
+
+export interface PasskeyCredential {
+  credentialId: string
+  rpId: string
+  userHandle: string
+  userName: string
+  userDisplayName: string
+  privateKeyJwk: JsonWebKey
+  publicKeyJwk: JsonWebKey
+  signCount: number
+  discoverable: boolean
+}
+
+/** Editable fields sent from the trusted chrome renderer. */
+export interface PasswordDraft {
+  id?: string
+  origin: string
+  title: string
+  username: string
+  password: string
+  notes: string
+  totp: string
+}
+
+/** Metadata safe to list in the toolbar and settings without revealing passwords. */
+export interface PasswordSummary {
+  id: string
+  origin: string
+  title: string
+  username: string
+  hasTotp: boolean
+  isPasskey?: boolean
+  createdAt: number
+  updatedAt: number
+}
+
+export interface PasskeyConfirmationRequest {
+  id: string
+  site: string
+  accounts: string[]
+  action: 'Create passkey' | 'Use passkey'
+}
+
+export interface PasswordConfig {
+  /** 0 disables automatic locking for this session. */
+  autoLockMinutes: number
+  offerSave: boolean
+  useNip65: boolean
+  /** When set, the vault uses only this relay and skips browser/NIP-65 relays. */
+  vaultRelay: string
+  /** Origins the user chose never to save for. */
+  neverSave: string[]
+  /** Allow checkout card-save prompts. */
+  offerPaymentCardSave: boolean
+  /** Show payment-card autofill suggestions on supported devices. */
+  fillPaymentCards: boolean
+  /** Opt in to capturing, storing, and autofilling card security codes. */
+  savePaymentCardSecurityCodes: boolean
+  /** Allow Nostr signer confirmation as an alternative to system authentication. */
+  allowNostrPaymentCardAuth: boolean
+  /** Make Nostr signer confirmation the default when card autofill is requested. */
+  defaultNostrPaymentCardAuth: boolean
+  /** Entries older than this flag as due for rotation in the health report. 0 disables the check. */
+  rotationDays: number
+}
+
+export const DEFAULT_PASSWORD_CONFIG: PasswordConfig = {
+  autoLockMinutes: 15,
+  offerSave: true,
+  useNip65: true,
+  vaultRelay: '',
+  neverSave: [],
+  offerPaymentCardSave: true,
+  fillPaymentCards: true,
+  savePaymentCardSecurityCodes: false,
+  allowNostrPaymentCardAuth: false,
+  defaultNostrPaymentCardAuth: false,
+  rotationDays: 365
+}
+
+export function normalizePasswordConfig(input: unknown): PasswordConfig {
+  const value = input && typeof input === 'object' ? (input as Partial<PasswordConfig>) : {}
+  const minutes =
+    typeof value.autoLockMinutes === 'number' && Number.isFinite(value.autoLockMinutes)
+      ? Math.max(0, Math.min(24 * 60, Math.round(value.autoLockMinutes)))
+      : DEFAULT_PASSWORD_CONFIG.autoLockMinutes
+  const vaultRelay =
+    typeof value.vaultRelay === 'string' ? value.vaultRelay.trim().slice(0, 2048) : ''
+  return {
+    autoLockMinutes: minutes,
+    offerSave: typeof value.offerSave === 'boolean' ? value.offerSave : true,
+    useNip65: typeof value.useNip65 === 'boolean' ? value.useNip65 : true,
+    vaultRelay:
+      vaultRelay.startsWith('ws://') || vaultRelay.startsWith('wss://') ? vaultRelay : '',
+    neverSave: Array.isArray(value.neverSave)
+      ? value.neverSave
+          .filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)
+          .slice(-200)
+      : [],
+    offerPaymentCardSave: typeof value.offerPaymentCardSave === 'boolean' ? value.offerPaymentCardSave : true,
+    fillPaymentCards: typeof value.fillPaymentCards === 'boolean' ? value.fillPaymentCards : true,
+    savePaymentCardSecurityCodes: typeof value.savePaymentCardSecurityCodes === 'boolean' ? value.savePaymentCardSecurityCodes : false,
+    allowNostrPaymentCardAuth: value.allowNostrPaymentCardAuth === true,
+    defaultNostrPaymentCardAuth: value.allowNostrPaymentCardAuth === true && value.defaultNostrPaymentCardAuth === true,
+    rotationDays:
+      typeof value.rotationDays === 'number' && Number.isFinite(value.rotationDays)
+        ? Math.max(0, Math.min(3650, Math.round(value.rotationDays)))
+        : DEFAULT_PASSWORD_CONFIG.rotationDays
+  }
+}
+
+export type PasswordRelaySource = 'dedicated' | 'browser' | 'browser+nip65'
+
+export interface PasswordVaultStatus {
+  /** An identity exists and can encrypt/decrypt. */
+  configured: boolean
+  available: boolean
+  unlocked: boolean
+  entryCount: number
+  pending: boolean
+  syncing: boolean
+  lastSyncedAt: number | null
+  relays: string[]
+  relaySource: PasswordRelaySource
+  mode: IdentityMode
+  error: string | null
+  autoLockMinutes: number
+  offerSave: boolean
+  useNip65: boolean
+  vaultRelay: string
+  neverSave: string[]
+  rotationDays: number
+}
+
+/** One vault entry flagged by the local health scan. An entry may carry more than one flag. */
+export interface PasswordHealthEntry {
+  id: string
+  title: string
+  origin: string
+  username: string
+  weak: boolean
+  reused: boolean
+  old: boolean
+}
+
+export interface PasswordHealthReport {
+  scannedAt: number
+  weakCount: number
+  reusedCount: number
+  oldCount: number
+  entries: PasswordHealthEntry[]
+}
+
+export interface PasswordContext {
+  origin: string | null
+  title: string
+  secure: boolean
+  scheme: 'https' | 'http' | 'ncc' | 'nsite' | null
+  tabKind: TabKind
+  locked: boolean
+  configured: boolean
+  status: PasswordVaultStatus
+  matches: PasswordSummary[]
+  passkeys: PasswordSummary[]
+  formDetected: boolean
+  pendingSave: boolean
+  canFill: boolean
+  canSave: boolean
+  warning: string | null
+}
+
+export interface PasswordSaveRequest {
+  id: string
+  origin: string
+  title: string
+  username: string
+  mode: 'create' | 'update'
+  existingId?: string
+  secure: boolean
+  tabKind: TabKind
+  locked: boolean
+}
+
+export interface PasswordSaveResult {
+  ok: boolean
+  error?: string
+  status?: PasswordVaultStatus
+  pending?: boolean
+  path?: string
+}
+
+export interface PasswordFillResult {
+  ok: boolean
+  error?: string
+}
+
+export interface PasswordCopyResult {
+  ok: boolean
+  error?: string
+  clearsAt?: number
+}
+
+export interface PasswordTotpCode {
+  code: string
+  remaining: number
+  period: number
+}
+
+export interface PasswordGeneratorOptions {
+  length?: number
+  uppercase?: boolean
+  lowercase?: boolean
+  digits?: boolean
+  symbols?: boolean
+  avoidAmbiguous?: boolean
+}
+
+export interface PasswordImportPreview {
+  id: string
+  cancelled?: boolean
+  format: 'chrome' | 'bitwarden' | 'ncc' | 'encrypted'
+  count: number
+  duplicates: number
+  projectedBytes: number
+  entries: Array<{ title: string; origin: string; username: string }>
+  error?: string
+}
+
+export interface PasswordExportResult {
+  ok: boolean
+  path?: string
+  error?: string
+}
+
+export interface PasswordToast {
+  tone: 'ok' | 'warn' | 'error'
+  message: string
+}
+
+/** Main-process view of the active tab, handed to the password service. */
+export interface PasswordPage {
+  tabId: string
+  kind: TabKind
+  mode: PageMode
+  url: string
+  displayUrl: string
+  title: string
+  security: SecurityInfo | null
+}
+
+/* ------------------------------------------------------------------ */
+/*  Vault                                                             */
+/* ------------------------------------------------------------------ */
 
 export const PASSWORD_VAULT_KIND = 30078
 export const PASSWORD_VAULT_VERSION = 1
