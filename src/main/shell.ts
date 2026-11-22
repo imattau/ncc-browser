@@ -1,21 +1,12 @@
 import {
   BrowserWindow,
-  Menu,
   WebContentsView,
-  app,
-  clipboard,
-  screen,
   shell,
   type Input,
   type WebContents
 } from 'electron'
 import { parseNccAddress, toDisplayUrl, toInternalUrl, type NccAddress } from '@shared/ncc-url'
-import {
-  buildNsiteUrl,
-  parseNsiteAddress,
-  toNsiteDisplayUrl,
-  type NsiteAddress
-} from '@shared/nsite-url'
+import { buildNsiteUrl, parseNsiteAddress, type NsiteAddress } from '@shared/nsite-url'
 import type { NsiteActivity } from './nsite/protocol'
 import { BANNER_HEIGHT, CHROME_HEIGHT } from '@shared/layout'
 import type { CommandId } from '@shared/commands'
@@ -27,7 +18,7 @@ import { fetchFavicon } from './favicon'
 import { renderErrorPage } from './error-page'
 import { windowBackground } from './appearance'
 import type { BookmarkStore } from './bookmarks'
-import type { SavedSession, SavedWindow, SavedWindowSession, SessionStore } from './session-store'
+import type { SavedSession, SavedWindowSession, SessionStore } from './session-store'
 import type { ExtensionPage } from '@shared/extensions'
 import type {
   AppearanceConfig,
@@ -36,11 +27,8 @@ import type {
   DownloadNotice,
   NavState,
   OmniboxSuggestion,
-  PageMode,
-  SecurityInfo,
   TabHistory,
-  TabKind,
-  TabSummary
+  TabKind
 } from '@shared/types'
 import type { PasswordPage } from '@shared/passwords'
 import type { ProtocolActivity } from './protocol'
@@ -54,7 +42,18 @@ import {
   webHttpKey,
   type HttpPolicy
 } from './security'
-import { isAllowedTorUrl, isOnionHost, type TorGuard } from './tor/guard'
+import { isAllowedTorUrl, type TorGuard } from './tor/guard'
+import { restoreWindowBounds } from './shell/bounds'
+import { runShellCommand } from './shell/commands'
+import { formatDisplayUrl, isOnionPageUrl, safeProtocol, tabTitle } from './shell/format'
+import { showHistoryMenu, showNewTabMenu, showTabMenu } from './shell/menus'
+import { browserShellFor, browserShellForTabContents, browserShells, registerShell, unregisterShell } from './shell/registry'
+import { restoredTabPlan, savedWindowSession } from './shell/session'
+import { buildNavState, tabSummaries } from './shell/state'
+import { CONTENT_WEB_PREFERENCES, type Tab } from './shell/types'
+
+// Keep the historical entry point working: other main modules import the registry here.
+export { browserShellFor, browserShellForTabContents, browserShells } from './shell/registry'
 import type { TorManager } from './tor/manager'
 
 /**
@@ -96,55 +95,6 @@ export interface ShellDeps {
   createWindow?: (bounds?: { x: number; y: number }) => BrowserShell
   onSessionChanged?: () => void
 }
-
-const shellsByChrome = new Map<number, BrowserShell>()
-
-export function browserShellFor(contents: WebContents): BrowserShell | null {
-  return shellsByChrome.get(contents.id) ?? null
-}
-
-/** Resolve a page WebContents to the browser window currently owning its tab. */
-export function browserShellForTabContents(contents: WebContents): BrowserShell | null {
-  for (const shell of shellsByChrome.values()) {
-    if (shell.tabIdForContents(contents.id) !== null) return shell
-  }
-  return null
-}
-
-export function browserShells(): BrowserShell[] {
-  return [...shellsByChrome.values()]
-}
-
-interface Tab {
-  owner: BrowserShell
-  id: string
-  kind: TabKind
-  view: WebContentsView
-  mode: PageMode
-  displayUrl: string
-  pubkey: string | null
-  service: string | null
-  security: SecurityInfo | null
-  failure: { code: string; message: string } | null
-  tor: { onionAvailable: boolean; active: boolean }
-  pendingHttp: { original: string; key: string; httpsUrl: string } | null
-  programmatic: boolean
-  loading: boolean
-  favicon: string | null
-  audible: boolean
-  muted: boolean
-}
-
-const CONTENT_WEB_PREFERENCES = {
-  sandbox: true,
-  contextIsolation: true,
-  nodeIntegration: false,
-  nodeIntegrationInSubFrames: false,
-  webSecurity: true,
-  allowRunningInsecureContent: false,
-  spellcheck: false,
-  safeDialogs: true
-} as const
 
 /**
  * Window layout and tab management: a trusted local chrome renderer on top, and one
@@ -201,7 +151,7 @@ export class BrowserShell {
 
     this.chromeWebContentsId = this.window.webContents.id
     this.wireWindow()
-    shellsByChrome.set(this.chromeWebContentsId, this)
+    registerShell(this.chromeWebContentsId, this)
     installChromeContextMenu(this.window.webContents, () => this.window)
     this.window.webContents.on('before-input-event', (event, input) =>
       this.handleInput(event, input)
@@ -321,40 +271,29 @@ export class BrowserShell {
     const contents = active?.view.webContents
     const history = contents?.navigationHistory
 
-    const tabs: TabSummary[] = this.tabs.map((tab) => ({
-      id: tab.id,
-      kind: tab.kind,
-      title: tabTitle(tab),
-      url: tab.displayUrl,
-      loading: tab.loading,
-      favicon: tab.favicon,
-      audible: tab.audible,
-      muted: tab.muted
-    }))
-
-    return {
-      mode: active?.mode ?? 'blank',
-      displayUrl: active?.displayUrl ?? '',
-      url: contents && !contents.isDestroyed() ? contents.getURL() : '',
-      title: active ? tabTitle(active) : '',
-      loading: active?.loading ?? false,
-      canGoBack: history?.canGoBack() ?? false,
-      canGoForward: history?.canGoForward() ?? false,
-      security: active?.security ?? null,
-      failure: active?.failure ?? null,
-      tor: {
-        preferTor: this.deps.preferTor(),
-        onionAvailable: active?.tor.onionAvailable ?? false,
-        active: active?.tor.active ?? false,
-        tabTor: active?.kind === 'tor'
-      },
-      tabKind: active?.kind ?? 'normal',
-      banner: this.bannerFor(active),
-      insecurePrompt: this.insecurePromptFor(active),
-      tabs,
+    return buildNavState({
+      active: active
+        ? {
+            mode: active.mode,
+            displayUrl: active.displayUrl,
+            url: contents && !contents.isDestroyed() ? contents.getURL() : '',
+            title: tabTitle(active),
+            loading: active.loading,
+            canGoBack: history?.canGoBack() ?? false,
+            canGoForward: history?.canGoForward() ?? false,
+            security: active.security,
+            failure: active.failure,
+            tor: active.tor,
+            kind: active.kind
+          }
+        : null,
+      tabs: tabSummaries(this.tabs),
       activeTabId: this.activeId,
-      windowMaximized: this.window.isMaximized()
-    }
+      preferTor: this.deps.preferTor(),
+      windowMaximized: this.window.isMaximized(),
+      banner: this.bannerFor(active),
+      insecurePrompt: this.insecurePromptFor(active)
+    })
   }
 
   newTab(input?: string, kind: TabKind = 'normal'): string {
@@ -491,19 +430,7 @@ export class BrowserShell {
 
   /** The `+` button's menu: the only place a normal tab user meets private and Tor. */
   showNewTabMenu(): void {
-    Menu.buildFromTemplate([
-      { label: 'New tab', accelerator: 'CmdOrCtrl+T', click: () => this.newTab() },
-      {
-        label: 'New private tab',
-        accelerator: 'CmdOrCtrl+Shift+N',
-        click: () => this.newPrivateTab()
-      },
-      {
-        label: 'New Tor tab',
-        accelerator: 'CmdOrCtrl+Shift+O',
-        click: () => this.newTorTab()
-      }
-    ]).popup({ window: this.window })
+    showNewTabMenu(this)
   }
 
   closeTabsToRight(id?: string): void {
@@ -564,96 +491,7 @@ export class BrowserShell {
   }
 
   runCommand(command: CommandId): void {
-    switch (command) {
-      case 'new-tab':
-        this.newTab()
-        this.focusAddress()
-        break
-      case 'new-private-tab':
-        this.newPrivateTab()
-        this.focusAddress()
-        break
-      case 'new-tor-tab':
-        this.newTorTab()
-        this.focusAddress()
-        break
-      case 'close-tab':
-        this.closeTab()
-        break
-      case 'next-tab':
-        this.nextTab()
-        break
-      case 'previous-tab':
-        this.previousTab()
-        break
-      case 'focus-address':
-        this.focusAddress()
-        break
-      case 'back':
-        this.back()
-        break
-      case 'forward':
-        this.forward()
-        break
-      case 'reload':
-        this.reload()
-        break
-      case 'force-reload':
-        void this.forceReload()
-        break
-      case 'stop':
-        this.stop()
-        break
-      case 'zoom-in':
-        this.zoomIn()
-        break
-      case 'zoom-out':
-        this.zoomOut()
-        break
-      case 'zoom-reset':
-        this.zoomReset()
-        break
-      case 'toggle-page-devtools':
-        this.togglePageDevTools()
-        break
-      case 'toggle-browser-devtools':
-        this.toggleChromeDevTools()
-        break
-      case 'toggle-bookmark':
-        this.toggleBookmark()
-        break
-      case 'open-history':
-        this.sendChrome('ncc:open-history')
-        break
-      case 'open-downloads':
-        this.sendChrome('ncc:open-downloads')
-        break
-      case 'open-settings':
-        this.sendChrome('ncc:open-settings', { section: 'general' })
-        break
-      case 'open-services':
-        this.sendChrome('ncc:open-settings', { section: 'services' })
-        break
-      case 'open-site-publisher':
-        this.sendChrome('ncc:open-settings', { section: 'sites' })
-        break
-      case 'open-identity':
-        this.sendChrome('ncc:open-settings', { section: 'identity' })
-        break
-      case 'open-passwords':
-        this.sendChrome('ncc:open-settings', { section: 'passwords' })
-        break
-      case 'open-spec':
-        // Open documentation in a tab, not the desktop browser: history, zoom and the
-        // current transport mode all apply, and a Tor tab does not leak to clearnet.
-        if (this.activeTab()?.kind === 'tor') this.newTorTab(NCC_SPEC_URL)
-        else if (this.activeTab()?.kind === 'private') this.newPrivateTab(NCC_SPEC_URL)
-        else this.newTab(NCC_SPEC_URL)
-        break
-      case 'quit':
-        app.quit()
-        break
-    }
+    runShellCommand(this, command)
   }
 
   async navigate(input: string): Promise<void> {
@@ -783,67 +621,30 @@ export class BrowserShell {
 
   /** Right-click (or long-press) jump list for the back/forward buttons. */
   showHistoryMenu(direction: 'back' | 'forward'): void {
-    const tab = this.activeTab()
-    if (!tab) return
-    const history = tab.view.webContents.navigationHistory
-    const entries = history.getAllEntries()
-    const activeIndex = history.getActiveIndex()
-    const candidates =
-      direction === 'back'
-        ? entries.map((entry, index) => ({ entry, index })).filter((item) => item.index < activeIndex).reverse()
-        : entries.map((entry, index) => ({ entry, index })).filter((item) => item.index > activeIndex)
-
-    if (candidates.length === 0) return
-    Menu.buildFromTemplate(
-      candidates.map(({ entry, index }) => ({
-        label: historyLabel(entry.title, entry.url),
-        click: () => history.goToIndex(index)
-      }))
-    ).popup({ window: this.window })
+    showHistoryMenu(this, direction)
   }
 
   showTabMenu(id: string): void {
-    const tab = this.tabs.find((entry) => entry.id === id)
-    if (!tab) return
-    const index = this.tabs.indexOf(tab)
-    const contents = tab.view.webContents
+    showTabMenu(this, id)
+  }
 
-    Menu.buildFromTemplate([
-      { label: 'Reload', click: () => contents.reload() },
-      { label: 'Duplicate', click: () => void this.duplicateTab(tab.id) },
-      { label: 'Open in new window', click: () => this.openTabInNewWindow(tab.id) },
-      {
-        label: tab.muted ? 'Unmute tab' : 'Mute tab',
-        click: () => this.toggleMute(tab.id)
-      },
-      { type: 'separator' },
-      {
-        label: 'Copy address',
-        enabled: Boolean(tab.displayUrl),
-        click: () => clipboard.writeText(tab.displayUrl)
-      },
-      { type: 'separator' },
-      { label: 'Close tab', click: () => this.closeTab(tab.id) },
-      {
-        label: 'Close other tabs',
-        enabled: this.tabs.length > 1,
-        click: () => this.closeOtherTabs(tab.id)
-      },
-      {
-        label: 'Close tabs to the right',
-        enabled: index < this.tabs.length - 1,
-        click: () => this.closeTabsToRight(tab.id)
-      },
-      ...(tab.kind === 'normal'
-        ? []
-        : [
-            { type: 'separator' as const },
-            {
-              label: tab.kind === 'tor' ? 'Close all Tor tabs' : 'Close all private tabs',
-              click: () => this.closeTabsOfKind(tab.kind)
-            }
-          ])
-    ]).popup({ window: this.window })
+  /** The fields the tab context menu needs, without exposing the tab list. */
+  tabMenuInfo(id: string): {
+    kind: TabKind
+    displayUrl: string
+    muted: boolean
+    index: number
+    count: number
+  } | null {
+    const tab = this.tabs.find((entry) => entry.id === id)
+    if (!tab) return null
+    return {
+      kind: tab.kind,
+      displayUrl: tab.displayUrl,
+      muted: tab.muted,
+      index: this.tabs.indexOf(tab),
+      count: this.tabs.length
+    }
   }
 
   getBookmarks(): Bookmark[] {
@@ -923,27 +724,12 @@ export class BrowserShell {
 
   sessionSnapshot(): SavedWindowSession {
     const bounds = this.window.getNormalBounds()
-    const normalTabs = this.tabs.filter((tab) => tab.kind === 'normal')
-    const savedTabs = normalTabs.length
-      ? normalTabs.map((tab) => ({
-          url: tab.mode === 'blank' ? '' : tab.displayUrl
-        }))
-      : [{ url: '' }]
-    const activeIndex = Math.max(
-      0,
-      normalTabs.findIndex((tab) => tab.id === this.activeId)
+    return savedWindowSession(
+      this.tabs,
+      this.activeId,
+      bounds,
+      this.window.isMaximized()
     )
-    return {
-      tabs: savedTabs,
-      activeIndex,
-      window: {
-        width: bounds.width,
-        height: bounds.height,
-        x: bounds.x,
-        y: bounds.y,
-        maximized: this.window.isMaximized()
-      }
-    }
   }
 
   usesTabKind(kind: TabKind): boolean {
@@ -1676,7 +1462,7 @@ export class BrowserShell {
     this.window.on('close', () => this.saveSessionNow())
 
     this.window.on('closed', () => {
-      shellsByChrome.delete(this.chromeWebContentsId)
+      unregisterShell(this.chromeWebContentsId)
       if (this.saveTimer) {
         clearTimeout(this.saveTimer)
         this.saveTimer = null
@@ -1697,18 +1483,13 @@ export class BrowserShell {
   }
 
   private restoreTabs(session?: SavedSession | null): void {
-    const saved = session?.tabs?.length ? session.tabs : [{ url: '' }]
-    const tabs = saved.map((entry) => {
+    const plan = restoredTabPlan(session)
+    const tabs = plan.tabs.map((entry) => {
       const tab = this.createTab()
       if (entry.url) void this.navigateInTab(tab, entry.url)
       return tab
     })
-
-    const activeIndex = Math.min(
-      Math.max(session?.activeIndex ?? 0, 0),
-      Math.max(0, tabs.length - 1)
-    )
-    const active = tabs[activeIndex]
+    const active = tabs[plan.activeIndex]
     if (active) this.activateTab(active.id)
   }
 
@@ -1789,69 +1570,4 @@ export class BrowserShell {
     }
     this.window.webContents.send('ncc:state', this.getState())
   }
-}
-
-function tabTitle(tab: Tab): string {
-  const contents = tab.view.webContents
-  if (contents.isDestroyed()) return tab.displayUrl || 'New tab'
-  const title = contents.getTitle()
-  if (title && !title.startsWith('ncc://') && !title.startsWith('http')) return title
-  return tab.displayUrl || 'New tab'
-}
-
-function safeProtocol(url: string): string | null {
-  try {
-    return new URL(url).protocol
-  } catch {
-    return null
-  }
-}
-
-function formatDisplayUrl(url: string): string {
-  if (url.startsWith('ncc://')) return toDisplayUrl(url)
-  if (url.startsWith('nsite://')) return toNsiteDisplayUrl(url)
-  return url
-}
-
-function isOnionPageUrl(url: string): boolean {
-  if (!/^https?:\/\//i.test(url)) return false
-  try {
-    return isOnionHost(new URL(url).hostname.toLowerCase())
-  } catch {
-    return false
-  }
-}
-
-function historyLabel(title: string, url: string): string {
-  const label = title?.trim() || url
-  return label.length > 100 ? `${label.slice(0, 100)}…` : label
-}
-
-/**
- * Restore the saved window size, but only restore the position when a meaningful part
- * of the window still lands on a connected display (monitors get unplugged).
- */
-function restoreWindowBounds(
-  saved?: SavedWindow
-): { width: number; height: number; x?: number; y?: number } {
-  const width = saved?.width ?? 1280
-  const height = saved?.height ?? 860
-  if (!saved || saved.x === undefined || saved.y === undefined) return { width, height }
-
-  const bounds = { x: saved.x, y: saved.y, width, height }
-  const visible = screen.getAllDisplays().some((display) => {
-    const overlapX = Math.max(
-      0,
-      Math.min(bounds.x + bounds.width, display.workArea.x + display.workArea.width) -
-        Math.max(bounds.x, display.workArea.x)
-    )
-    const overlapY = Math.max(
-      0,
-      Math.min(bounds.y + bounds.height, display.workArea.y + display.workArea.height) -
-        Math.max(bounds.y, display.workArea.y)
-    )
-    return overlapX * overlapY >= 100 * 100
-  })
-
-  return visible ? bounds : { width, height }
 }
