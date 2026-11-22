@@ -19,6 +19,7 @@ import {
   type NsitePublishResult,
   type NsitePublishState,
   type NsiteRelayReport,
+  type NsiteRemoveResult,
   type NsiteSiteFile,
   type NsiteVerifyResult,
   type PublishedNsite
@@ -151,6 +152,32 @@ export class NsitePublishService {
       return { state: this.state(), found: 0, relays: relays.length, error: messageOf(error) }
     }
 
+    // NIP-09 deletions are advisory but a relay that retains a deleted manifest must
+    // not make it reappear. A newer manifest for the same address wins over a deletion.
+    const deletedIds = new Set<string>()
+    const deletedAddresses = new Map<string, number>()
+    try {
+      const deletions = await this.deps.network.query(
+        relays,
+        { kinds: [5], authors: [owner], limit: 500 },
+        signal
+      )
+      for (const deletion of deletions) {
+        for (const [name, value] of deletion.tags) {
+          if (name === 'e' && value) deletedIds.add(value)
+          if (name !== 'a' || !value) continue
+          const [kindText, pubkey, siteId] = value.split(':')
+          if (pubkey?.toLowerCase() !== owner) continue
+          const kind = Number(kindText)
+          if (kind !== NSITE_NAMED_KIND && kind !== NSITE_ROOT_KIND) continue
+          const key = nsiteSiteKey(owner, siteId || null)
+          deletedAddresses.set(key, Math.max(deletedAddresses.get(key) ?? 0, deletion.created_at))
+        }
+      }
+    } catch {
+      // A deletion query failure should not hide otherwise valid manifests.
+    }
+
     const latest = new Map<string, Event>()
     for (const event of events) {
       if (event.pubkey.toLowerCase() !== owner) continue
@@ -174,6 +201,8 @@ export class NsitePublishService {
     const hidden = new Set(this.deps.store.hidden())
     for (const [key, event] of latest) {
       if (hidden.has(key)) continue
+      if (deletedIds.has(event.id)) continue
+      if (event.created_at <= (deletedAddresses.get(key) ?? 0)) continue
       const siteId =
         event.kind === NSITE_ROOT_KIND
           ? null
@@ -392,9 +421,51 @@ export class NsitePublishService {
     return { id, checked, missing }
   }
 
-  remove(id: string): void {
+  async remove(id: string): Promise<NsiteRemoveResult> {
+    const site = this.deps.store.find(id)
+    if (!site) return { state: this.state(), reports: [] }
+
+    let reports: NsiteRelayReport[] = []
+    let error: string | undefined
+    const provider = this.deps.identity.provider()
+    if (!provider) {
+      error = 'No identity is available to sign the deletion request; removed locally only.'
+    } else {
+      const owner = (await provider.getPublicKey()).toLowerCase()
+      if (owner !== site.owner) {
+        error = 'The active identity does not own this site; removed locally only.'
+      } else {
+        try {
+          const kind = site.siteId ? NSITE_NAMED_KIND : NSITE_ROOT_KIND
+          const address = `${kind}:${owner}:${site.siteId ?? ''}`
+          const event = await provider.signEvent({
+            kind: 5,
+            created_at: Math.max(this.now(), site.lastPublishedAt ?? 0) + 1,
+            tags: [
+              ['a', address],
+              ['e', site.manifestEventId],
+              ['k', String(kind)]
+            ],
+            content: 'Delete nsite manifest'
+          })
+          const relays = await this.resolveRelays(owner, [])
+          if (relays.length === 0) {
+            error = 'No relays are available; removed locally only.'
+          } else {
+            reports = await this.deps.network.publish(event, relays, provider)
+            if (!reports.some((report) => report.ok)) {
+              error = 'No relay accepted the deletion request; removed locally only.'
+            }
+          }
+        } catch (publishError) {
+          error = `Could not publish the deletion request: ${messageOf(publishError)}`
+        }
+      }
+    }
+
     this.deps.store.remove(id)
     this.changed()
+    return { state: this.state(), reports, ...(error ? { error } : {}) }
   }
 
   private async resolveRelays(owner: string, requested: string[]): Promise<string[]> {

@@ -263,10 +263,26 @@ export function SitePublishingSettings({
   }
 
   const remove = async (site: PublishedNsite): Promise<void> => {
-    if (!window.confirm('Remove this site from this browser? The published files and manifest stay on Blossom and the relays.')) return
+    if (
+      !window.confirm(
+        'Remove this site and publish a deletion request (NIP-09) to Nostr?\n\n' +
+          'Relays may delete the manifest. Republishing the same address from its folder restores it.'
+      )
+    ) {
+      return
+    }
     setBusy(true)
+    setError(null)
     try {
-      apply(await window.ncc.nsiteRemove(site.id))
+      const removed = await window.ncc.nsiteRemove(site.id)
+      apply(removed.state)
+      if (removed.error) setError(removed.error)
+      else {
+        const accepted = removed.reports.filter((report) => report.ok).length
+        setDiscoveryNote(
+          `Deletion request accepted by ${accepted} of ${removed.reports.length} relay${removed.reports.length === 1 ? '' : 's'}.`
+        )
+      }
       if (result?.site.id === site.id) setResult(null)
       if (verification?.id === site.id) setVerification(null)
     } catch (removeError) {

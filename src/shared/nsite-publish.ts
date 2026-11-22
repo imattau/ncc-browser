@@ -164,6 +164,12 @@ export interface NsiteDiscoverResult {
   error?: string
 }
 
+export interface NsiteRemoveResult {
+  state: NsitePublishState
+  reports: NsiteRelayReport[]
+  error?: string
+}
+
 export interface NsiteFolderScan {
   /** Main-process handle for the scanned folder; the renderer never gets a path. */
   token: string

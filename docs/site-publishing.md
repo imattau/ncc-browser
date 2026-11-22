@@ -58,6 +58,21 @@ current request. Blobs that were already accepted stay on Blossom (their address
 their hash); no site record or manifest is written for a cancelled publish. Verify can
 also be cancelled.
 
+## Removing and restoring
+
+**Remove** asks for confirmation, signs a NIP-09 deletion request (`kind 5`) with an `a`
+tag for the site address (`35128:<pubkey>:<siteId>`, or `15128:<pubkey>:` for the root)
+and an `e` tag for the manifest, and publishes it to the site relays. The local record
+is removed and added to the hidden list. Relays treat deletion as advisory: a manifest
+that is merely retained does not reappear because discovery also queries `kind 5` and
+skips manifests covered by a deletion.
+
+To restore a deleted site, republish it from its source folder with the same site id.
+The new manifest has a newer `created_at`, so it wins over the deletion, and publishing
+clears the hidden entry. Without the source folder the old manifest cannot be
+reconstructed once relays honour the deletion. If no identity is available or the active
+identity does not own the site, Remove stays local and says so.
+
 ## Blossom and relays
 
 - BUD-02 upload: `PUT /upload` with `X-Sha-256` and a signed `kind 24242`

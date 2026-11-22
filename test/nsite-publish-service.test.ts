@@ -28,6 +28,7 @@ class FakeNetwork implements NsiteNetwork {
   uploads: Array<{ server: string; hash: string; path: string }> = []
   events: Event[] = []
   queryEvents: Event[] = []
+  deletionEvents: Event[] = []
   verifyResult = true
 
   async relaysFor(): Promise<string[]> {
@@ -53,8 +54,11 @@ class FakeNetwork implements NsiteNetwork {
     return relays.map((relay) => ({ relay, ok: true, message: 'ok' }))
   }
 
-  async query(): Promise<Event[]> {
-    return this.queryEvents
+  async query(
+    _relays: string[],
+    filter: { kinds?: number[] }
+  ): Promise<Event[]> {
+    return filter?.kinds?.includes(5) ? this.deletionEvents : this.queryEvents
   }
 }
 
@@ -161,6 +165,56 @@ describe('NsiteStore address identity', () => {
   })
 })
 
+describe('NsitePublishService.remove', () => {
+  it('publishes a NIP-09 deletion for the manifest and address', async () => {
+    const { service, network, store, pubkey } = setup()
+    const site: PublishedNsite = {
+      id: 'site-1',
+      owner: pubkey,
+      siteId: 'blog',
+      servers: ['https://blossom.test'],
+      files: [{ path: '/index.html', hash: 'a'.repeat(64), size: 0 }],
+      manifestEventId: 'b'.repeat(64),
+      createdAt: NOW,
+      updatedAt: NOW,
+      lastPublishedAt: NOW
+    }
+    store.upsert(site)
+    const result = await service.remove(site.id)
+    expect(result.error).toBeUndefined()
+    expect(result.state.sites).toEqual([])
+    const deletion = network.events.find((event) => event.kind === 5)
+    expect(deletion).toBeDefined()
+    expect(deletion?.tags).toEqual(
+      expect.arrayContaining([
+        ['a', `35128:${pubkey}:blog`],
+        ['e', site.manifestEventId],
+        ['k', '35128']
+      ])
+    )
+    expect(deletion?.created_at).toBeGreaterThan(NOW)
+    expect(store.isHidden(pubkey, 'blog')).toBe(true)
+  })
+
+  it('removes locally when the active identity does not own the site', async () => {
+    const { service, network, store } = setup()
+    store.upsert({
+      id: 'site-2',
+      owner: 'c'.repeat(64),
+      siteId: 'other',
+      servers: ['https://blossom.test'],
+      files: [{ path: '/index.html', hash: 'a'.repeat(64), size: 0 }],
+      manifestEventId: 'd'.repeat(64),
+      createdAt: NOW,
+      updatedAt: NOW
+    })
+    const result = await service.remove('site-2')
+    expect(result.error).toMatch(/does not own/)
+    expect(network.events).toEqual([])
+    expect(result.state.sites).toEqual([])
+  })
+})
+
 describe('NsitePublishService.discover', () => {
   const HASH = 'a'.repeat(64)
 
@@ -212,6 +266,33 @@ describe('NsitePublishService.discover', () => {
     await service.discover()
     expect(store.state().sites[0].id).toBe(localId)
     expect(store.state().sites[0].title).toBe('Renamed')
+  })
+
+  it('ignores manifests covered by a NIP-09 deletion until a newer one wins', async () => {
+    const { service, network, secret, pubkey } = setup()
+    const deleted = manifest(secret, NOW + 10, 'Deleted')
+    network.queryEvents = [deleted]
+    network.deletionEvents = [
+      finalizeEvent(
+        {
+          kind: 5,
+          created_at: NOW + 15,
+          tags: [
+            ['a', `35128:${pubkey}:blog`],
+            ['e', deleted.id],
+            ['k', '35128']
+          ],
+          content: ''
+        },
+        secret
+      )
+    ]
+    expect((await service.discover()).found).toBe(0)
+
+    network.queryEvents = [manifest(secret, NOW + 20, 'Restored')]
+    const result = await service.discover()
+    expect(result.found).toBe(1)
+    expect(service.state().sites[0]?.title).toBe('Restored')
   })
 
   it('does not resurrect a removed site until it is republished', async () => {

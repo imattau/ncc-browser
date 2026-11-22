@@ -21,6 +21,7 @@ import type {
   NsitePublishInput,
   NsitePublishResult,
   NsitePublishState,
+  NsiteRemoveResult,
   NsiteVerifyResult
 } from './nsite-publish'
 import type {
@@ -222,7 +223,7 @@ export interface NccApi {
   nsitePublish(input: NsitePublishInput): Promise<NsitePublishResult | NsiteCancelled>
   nsiteVerify(id: string): Promise<NsiteVerifyResult | NsiteCancelled>
   nsiteCancel(): Promise<boolean>
-  nsiteRemove(id: string): Promise<NsitePublishState>
+  nsiteRemove(id: string): Promise<NsiteRemoveResult>
   onNsiteProgress(listener: (progress: NsiteProgress) => void): () => void
   onNsiteChanged(listener: (state: NsitePublishState) => void): () => void
   syncStatus(): Promise<SyncStatus>

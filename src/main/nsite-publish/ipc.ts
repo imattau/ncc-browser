@@ -150,10 +150,9 @@ export function registerNsitePublishIpc(
     return true
   })
 
-  ipcMain.handle('ncc:nsite-remove', (event, id: unknown) => {
+  ipcMain.handle('ncc:nsite-remove', async (event, id: unknown) => {
     if (!fromChrome(event.sender)) throw new Error('Sites are only available to the browser chrome')
     if (typeof id !== 'string') throw new Error('A site id is required')
-    service.remove(id)
-    return service.state()
+    return service.remove(id)
   })
 }
