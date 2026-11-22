@@ -89,8 +89,14 @@ export class SessionStore {
     }
   }
 
+  /**
+   * Persist every open window. An empty list is ignored: the shell also calls this
+   * from its `closed` handler, and on the quit path that must not replace the tabs
+   * the `close` handler just flushed.
+   */
   saveWindows(sessions: SavedWindowSession[]): void {
-    const [primary, ...windows] = sessions.length ? sessions : [{ tabs: [{ url: '' }], activeIndex: 0, window: { width: 1280, height: 860, maximized: false } }]
+    if (sessions.length === 0) return
+    const [primary, ...windows] = sessions
     this.save({ ...primary, windows })
   }
 }
