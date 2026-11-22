@@ -11,19 +11,21 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSy
 import { networkInterfaces, type NetworkInterfaceInfo } from 'node:os'
 import { dirname } from 'node:path'
 import type { PortMapping } from '@shared/reachability'
+import { classifyWanAddress } from '../net/ip-class'
+import { defaultGateway } from '../net/gateway'
 import {
-  addUpnpPortMapping,
-  classifyWanAddress,
-  defaultGateway,
-  deleteUpnpPortMapping,
-  findUpnpGateway,
   natPmpDeletePort,
   natPmpExternalAddress,
   natPmpMapPort,
+  type NatPmpMapRequest
+} from '../net/nat-pmp'
+import {
+  addUpnpPortMapping,
+  deleteUpnpPortMapping,
+  findUpnpGateway,
   upnpExternalAddressOn,
-  type NatPmpMapRequest,
   type UpnpGateway
-} from './discover'
+} from '../net/upnp'
 
 interface MappingFile {
   version: 1
