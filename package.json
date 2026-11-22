@@ -1,6 +1,6 @@
 {
   "name": "ncc-browser",
-  "version": "0.37.1",
+  "version": "0.38.0",
   "private": true,
   "description": "A cross-platform Nostr browser for desktop and Android, with NCC-05 browsing and Bitcoin, Monero, and Lightning wallets",
   "main": "./out/main/index.js",

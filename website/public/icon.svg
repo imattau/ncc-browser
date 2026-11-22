@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="120" y1="80" x2="900" y2="960" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#21134f"/>
+      <stop offset=".52" stop-color="#171b49"/>
+      <stop offset="1" stop-color="#09142b"/>
+    </linearGradient>
+    <linearGradient id="globe" x1="290" y1="232" x2="756" y2="790" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#b4a3ff"/>
+      <stop offset=".46" stop-color="#795bff"/>
+      <stop offset="1" stop-color="#4b31d5"/>
+    </linearGradient>
+    <linearGradient id="swoosh" x1="175" y1="710" x2="871" y2="353" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#36d6ed"/>
+      <stop offset=".48" stop-color="#9d76ff"/>
+      <stop offset="1" stop-color="#ff78cf"/>
+    </linearGradient>
+    <radialGradient id="shine" cx="0" cy="0" r="1" gradientTransform="matrix(356 375 -370 351 379 292)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff" stop-opacity=".25"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="globeClip"><circle cx="512" cy="496" r="265"/></clipPath>
+  </defs>
+  <rect width="1024" height="1024" rx="224" fill="url(#bg)"/>
+  <circle cx="512" cy="496" r="265" fill="url(#globe)"/>
+  <g clip-path="url(#globeClip)" fill="none" stroke="#e7e2ff" stroke-opacity=".22" stroke-width="15">
+    <ellipse cx="512" cy="496" rx="126" ry="265"/>
+    <ellipse cx="512" cy="496" rx="238" ry="265"/>
+    <path d="M247 496h530M284 380h456M284 612h456"/>
+  </g>
+  <circle cx="512" cy="496" r="265" fill="url(#shine)"/>
+  <!-- Fast, open orbit: a navigator's path around a Nostr globe. -->
+  <path d="M173 620c104 118 281 175 473 130 108-25 195-79 244-150" fill="none" stroke="url(#swoosh)" stroke-width="46" stroke-linecap="round"/>
+  <path d="M219 469c34-161 186-278 365-278 106 0 205 44 272 116" fill="none" stroke="url(#swoosh)" stroke-width="30" stroke-linecap="round" opacity=".9"/>
+  <!-- A clear N mark built from a single confident path. -->
+  <path d="M389 650V344l246 304V344" fill="none" stroke="#fff" stroke-width="68" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="852" cy="704" r="23" fill="#ff8ad7"/>
+</svg>

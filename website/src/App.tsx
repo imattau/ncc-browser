@@ -9,7 +9,6 @@ import {
   Download,
   ExternalLink,
   FileCode2,
-  Fingerprint,
   Github,
   Globe,
   KeyRound,
@@ -38,7 +37,7 @@ const NPACK = 'https://github.com/imattau/npack'
 const PUBLISHER_NPUB = 'npub1g3vdg46zq7xpkmtdnta7l8u9684zd2p4e9wrp3xd7wv4xk7vq03svh653x'
 const SITE_NPUB = 'npub1khf5amw8mrupe649a5mhkk3d2d8wjj06urz6kwawpftk4f68tjlstdmd3q'
 const PUBLISHER_HEX = '4458d45742078c1b6d6d9afbef9f85d1ea26a835c95c30c4cdf399535bcc03e3'
-const FALLBACK_VERSION = '0.37.1'
+const FALLBACK_VERSION = '0.38.0'
 const NPACK_COMMAND = `npack install ${PUBLISHER_NPUB}/ncc-browser`
 
 interface Release {
@@ -242,9 +241,7 @@ export function App() {
       <header className="sticky top-0 z-40 border-b border-line/70 bg-ink/80 backdrop-blur-xl">
         <div className="mx-auto flex max-w-6xl items-center gap-4 px-5 py-3 sm:px-8">
           <a href="#top" className="flex items-center gap-2.5">
-            <span className="flex h-8 w-8 items-center justify-center rounded-xl border border-accent/30 bg-accent/10">
-              <Fingerprint className="h-4 w-4 text-accent" />
-            </span>
+            <img src="/icon.svg" alt="" className="h-8 w-8" />
             <span className="text-[13px] font-semibold tracking-tight text-text">Nostr Navigator</span>
           </a>
           <nav className="ml-auto hidden items-center gap-6 text-[12px] text-muted sm:flex">
@@ -641,9 +638,7 @@ export function App() {
           <div className="flex flex-wrap items-start justify-between gap-6">
             <div>
               <div className="flex items-center gap-2.5">
-                <span className="flex h-8 w-8 items-center justify-center rounded-xl border border-accent/30 bg-accent/10">
-                  <Fingerprint className="h-4 w-4 text-accent" />
-                </span>
+                <img src="/icon.svg" alt="" className="h-8 w-8" />
                 <span className="text-[13px] font-semibold text-text">Nostr Navigator</span>
               </div>
               <p className="mt-2 max-w-sm text-[11px] leading-relaxed text-faint">
