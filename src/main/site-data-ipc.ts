@@ -4,6 +4,7 @@
  */
 
 import { ipcMain } from 'electron'
+import { isChromeSender } from './ipc-guard'
 import { browserShellFor, type BrowserShell } from './shell'
 import type { SiteDataService } from './site-data'
 
@@ -12,8 +13,7 @@ export interface SiteDataIpcDeps {
 }
 
 export function registerSiteDataIpc(service: SiteDataService, deps: SiteDataIpcDeps): void {
-  const fromChrome = (event: Electron.IpcMainInvokeEvent): boolean =>
-    browserShellFor(event.sender) !== null
+  const fromChrome = (event: Electron.IpcMainInvokeEvent): boolean => isChromeSender(event)
 
   ipcMain.handle('ncc:site-data', (event) => {
     if (!fromChrome(event)) throw new Error('Site data is only available to the browser chrome')

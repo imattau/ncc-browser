@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { browserShellFor, browserShellForTabContents, type BrowserShell } from '../shell'
+import { isChromeSender } from '../ipc-guard'
 import type { PasswordClipboard, PasswordFileDialogs, PasswordService } from './service'
 import type { PasskeyConfirmationRequest, PasswordConfig } from '@shared/types'
 
@@ -25,8 +26,7 @@ export function registerPasswordIpc(service: PasswordService, deps: PasswordIpcD
   }>()
   const pendingWebauthnRequests = new Map<string, { controller: AbortController; senderId: number }>()
 
-  const fromChrome = (event: IpcMainInvokeEvent): boolean =>
-    browserShellFor(event.sender) !== null
+  const fromChrome = (event: IpcMainInvokeEvent): boolean => isChromeSender(event)
 
   const pageRequest = (event: IpcMainEvent | IpcMainInvokeEvent): { tabId: string; origin: string; shell: BrowserShell; page: ReturnType<BrowserShell['pageForTab']> } | null => {
     const shell = browserShellForTabContents(event.sender)

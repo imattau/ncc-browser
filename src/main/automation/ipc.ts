@@ -1,5 +1,6 @@
 import { clipboard, ipcMain, type IpcMainInvokeEvent } from 'electron'
-import { browserShellFor, type BrowserShell } from '../shell'
+import { requireChrome } from '../ipc-guard'
+import type { BrowserShell } from '../shell'
 import type { AutomationController } from './controller'
 
 /** Settings → Agent control. Only the trusted chrome renderer may call these. */
@@ -9,9 +10,7 @@ export function registerAutomationIpc(
 ): void {
   const handle = <T>(channel: string, action: (...args: unknown[]) => T | Promise<T>): void => {
     ipcMain.handle(channel, (event: IpcMainInvokeEvent, ...args) => {
-      if (browserShellFor(event.sender) === null) {
-        throw new Error('Agent control is only managed by the browser chrome')
-      }
+      requireChrome(event, 'Agent control')
       return action(...args)
     })
   }
