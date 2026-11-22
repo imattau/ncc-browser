@@ -158,6 +158,7 @@ export function HostingSettings({
   const [discoveryBusy, setDiscoveryBusy] = useState(false)
   const [discoveryError, setDiscoveryError] = useState<string | null>(null)
   const [discoveryPort, setDiscoveryPort] = useState('')
+  const [localOnly, setLocalOnly] = useState(false)
   const [externalChecks, setExternalChecks] = useState<'ask' | 'always' | 'never'>('ask')
   const [mapping, setMapping] = useState<PortMapping | null>(null)
   const [mappingBusy, setMappingBusy] = useState(false)
@@ -315,6 +316,39 @@ export function HostingSettings({
   const localEndpoint = useMemo(() => {
     return discovery?.candidates.find((candidate) => candidate.kind === 'loopback') ?? null
   }, [discovery])
+
+  const externalCandidate = useMemo(() => {
+    return discovery?.candidates.find((candidate) => candidate.source === 'external') ?? null
+  }, [discovery])
+
+  const visibleCandidates = useMemo(() => {
+    if (!discovery) return []
+    return discovery.candidates.filter((candidate) => {
+      if (candidate.source === 'external') return false
+      if (!localOnly) return true
+      return candidate.kind !== 'public-v4' && candidate.kind !== 'current-https'
+    })
+  }, [discovery, localOnly])
+
+  const setLocalNetworkOnly = (value: boolean): void => {
+    setLocalOnly(value)
+    if (!value || !discovery) return
+    const publicUrls = new Set(
+      discovery.candidates
+        .filter((candidate) => candidate.kind === 'public-v4' || candidate.kind === 'current-https')
+        .map((candidate) => candidate.url)
+    )
+    setDraft((current) => {
+      if (!current) return current
+      const lines = current.endpoints
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line && !publicUrls.has(line))
+      const pins = { ...current.pins }
+      for (const url of publicUrls) delete pins[url]
+      return { ...current, endpoints: lines.join('\n'), pins }
+    })
+  }
 
   const mapPort = async (): Promise<void> => {
     if (!localEndpoint) return
@@ -1278,6 +1312,15 @@ export function HostingSettings({
                   <Radar className={cn('h-3.5 w-3.5', discoveryBusy && 'animate-pulse')} />
                   {discoveryBusy ? 'Checking this machine…' : 'Find endpoints'}
                 </button>
+                <label className="flex cursor-pointer items-center gap-1.5 text-ui-95 text-[color:var(--color-muted)]">
+                  <input
+                    type="checkbox"
+                    checked={localOnly}
+                    onChange={(event) => setLocalNetworkOnly(event.target.checked)}
+                    className="h-3.5 w-3.5 accent-[color:var(--color-accent)]"
+                  />
+                  Local network only
+                </label>
                 <span className="text-ui-10 text-[color:var(--color-faint)]">
                   Scans this machine and the router; checks the TLS pin and Tor status.
                 </span>
@@ -1314,7 +1357,7 @@ export function HostingSettings({
                       No local candidates. Add an endpoint by hand.
                     </p>
                   ) : null}
-                  {discovery.candidates.map((candidate: EndpointCandidate) => {
+                  {visibleCandidates.map((candidate: EndpointCandidate) => {
                     const selected = draft.endpoints
                       .split('\n')
                       .map((line) => line.trim())
@@ -1386,6 +1429,32 @@ export function HostingSettings({
                       <p className="font-mono text-ui-95 text-[color:var(--color-muted)]">
                         Internet sees {discovery.externalAddress}
                         {discovery.externalProvider ? ` · ${discovery.externalProvider}` : ''}
+                      </p>
+                    ) : null}
+                    {externalCandidate && !localOnly ? (
+                      <label className="flex cursor-pointer items-start gap-2 rounded-md px-1 py-0.5 hover:bg-[color:var(--color-hover)]">
+                        <input
+                          type="checkbox"
+                          checked={draft.endpoints
+                            .split('\n')
+                            .map((line) => line.trim())
+                            .includes(externalCandidate.url)}
+                          onChange={() => toggleEndpoint(externalCandidate.url)}
+                          className="mt-0.5 h-3.5 w-3.5 accent-[color:var(--color-accent)]"
+                        />
+                        <span className="min-w-0">
+                          <span className="block truncate font-mono text-ui-105 text-[color:var(--color-text)]">
+                            Include {externalCandidate.url} in the locator
+                          </span>
+                          <span className="block text-ui-95 text-[color:var(--color-faint)]">
+                            Public endpoint · unverified until a port is forwarded and checked
+                          </span>
+                        </span>
+                      </label>
+                    ) : null}
+                    {localOnly && externalCandidate ? (
+                      <p className="text-ui-95 text-[color:var(--color-faint)]">
+                        Public address hidden by Local network only.
                       </p>
                     ) : null}
                     {discovery.externalCheck === 'not-run' && externalChecks === 'ask' ? (
