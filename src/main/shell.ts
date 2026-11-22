@@ -12,10 +12,8 @@ import { BANNER_HEIGHT, CHROME_HEIGHT } from '@shared/layout'
 import type { CommandId } from '@shared/commands'
 import { reorderTabs } from '@shared/tabs'
 import { appearanceBootArgument } from '@shared/appearance'
-import { installChromeContextMenu, installContentContextMenu } from './context-menu'
+import { installChromeContextMenu } from './context-menu'
 import { commandForInput } from './shortcuts'
-import { fetchFavicon } from './favicon'
-import { renderErrorPage } from './error-page'
 import { windowBackground } from './appearance'
 import type { BookmarkStore } from './bookmarks'
 import type { SavedSession, SavedWindowSession, SessionStore } from './session-store'
@@ -35,17 +33,14 @@ import type { ProtocolActivity } from './protocol'
 import type { EndpointHealth } from './ncc/health'
 import type { TransportPolicy } from './ncc/transport'
 import type { OmniboxService, OmniboxTab } from './omnibox'
-import {
-  isHttpExemptUrl,
-  shouldUpgradeHttp,
-  upgradeToHttps,
-  webHttpKey,
-  type HttpPolicy
-} from './security'
-import { isAllowedTorUrl, type TorGuard } from './tor/guard'
+import type { HttpPolicy } from './security'
+import type { TorGuard } from './tor/guard'
 import { restoreWindowBounds } from './shell/bounds'
 import { runShellCommand } from './shell/commands'
-import { formatDisplayUrl, isOnionPageUrl, safeProtocol, tabTitle } from './shell/format'
+import { formatDisplayUrl, isOnionPageUrl, tabTitle } from './shell/format'
+import type { ShellInternals } from './shell/internals'
+import { applyUrlToTab, loadWebTarget, navigateInTab as navigateTabTo } from './shell/navigation'
+import { wireTab as wireTabListeners } from './shell/wiring'
 import { showHistoryMenu, showNewTabMenu, showTabMenu } from './shell/menus'
 import { browserShellFor, browserShellForTabContents, browserShells, registerShell, unregisterShell } from './shell/registry'
 import { restoredTabPlan, savedWindowSession } from './shell/session'
@@ -106,6 +101,7 @@ export class BrowserShell {
   readonly window: BrowserWindow
   private readonly chromeWebContentsId: number
   private readonly deps: ShellDeps
+  private readonly internals: ShellInternals
   private readonly tabs: Tab[] = []
   private activeId: string | null = null
   private nextTabId = 1
@@ -120,6 +116,18 @@ export class BrowserShell {
 
   constructor(deps: ShellDeps) {
     this.deps = deps
+    this.internals = {
+      deps,
+      syncState: () => this.syncState(),
+      scheduleSessionSave: () => this.scheduleSessionSave(),
+      activateTab: (id) => this.activateTab(id),
+      showOnly: (id) => this.showOnly(id),
+      applyUrlToTab,
+      openInNewTab: (url, kind) => this.openInNewTab(url, kind),
+      handleInput: (event, input) => this.handleInput(event, input),
+      hasTab: (tab) => this.tabs.includes(tab),
+      showInsecurePrompt: (tab, url, key) => this.showInsecurePrompt(tab, url, key)
+    }
     const savedWindow = deps.initialSession?.window
     const bounds = deps.initialBounds
       ? { ...restoreWindowBounds(undefined), ...deps.initialBounds }
@@ -881,150 +889,7 @@ export class BrowserShell {
   }
 
   private async navigateInTab(tab: Tab, input: string): Promise<void> {
-    const text = input.trim()
-    if (!text) return
-
-    this.activateTab(tab.id)
-
-    if (tab.kind === 'tor') {
-      tab.loading = true
-      this.syncState()
-      try {
-        await this.deps.tor.ensureReady()
-      } catch (error) {
-        await this.loadWebError(
-          tab,
-          text,
-          'tor-unavailable',
-          error instanceof Error ? error.message : String(error)
-        )
-        return
-      }
-    }
-
-    const target = this.deps.omnibox.classify(text, tab.kind)
-    if (target.kind === 'invalid') {
-      tab.failure = { code: target.code, message: target.message }
-      this.syncState()
-      return
-    }
-
-    if (target.kind === 'web' || target.kind === 'search') {
-      await this.openWebUrl(tab, target.url)
-      return
-    }
-
-    if (target.kind === 'nsite') {
-      let nsite: NsiteAddress
-      try {
-        nsite = parseNsiteAddress(target.url)
-      } catch (error) {
-        tab.failure = {
-          code: 'invalid-address',
-          message: error instanceof Error ? error.message : 'Invalid nsite address'
-        }
-        this.syncState()
-        return
-      }
-      tab.mode = 'nsite'
-      tab.pubkey = nsite.pubkey
-      tab.service = nsite.site
-      tab.displayUrl = buildNsiteUrl(nsite)
-      tab.security = null
-      tab.failure = null
-      tab.tor = { onionAvailable: false, active: tab.kind === 'tor' }
-      this.deps.torGuard.set(tab.view.webContents.id, tab.kind === 'tor')
-      this.showOnly(tab.id)
-      await this.load(tab, buildNsiteUrl(nsite))
-      return
-    }
-
-    let address: NccAddress
-    try {
-      address = parseNccAddress(target.url)
-    } catch (error) {
-      tab.failure = {
-        code: 'invalid-address',
-        message: error instanceof Error ? error.message : 'Invalid address'
-      }
-      this.syncState()
-      return
-    }
-
-    this.deps.activeServices[tab.kind].set(address.pubkey, address.service)
-    tab.mode = 'ncc'
-    tab.pubkey = address.pubkey
-    tab.service = address.service
-    const internal = toInternalUrl(address)
-    tab.displayUrl = toDisplayUrl(internal)
-    tab.security = null
-    tab.failure = null
-    this.showOnly(tab.id)
-    await this.load(tab, internal)
-  }
-
-  /** Open a web or search URL, applying the same HTTPS policy as typed addresses. */
-  private async openWebUrl(tab: Tab, text: string): Promise<void> {
-    const policy = this.deps.httpPolicies[tab.kind]
-    const key = webHttpKey(text)
-    const http = /^http:\/\//i.test(text)
-    const exempt = isHttpExemptUrl(text)
-
-    if (http && key && !exempt && !policy.isAllowed(key)) {
-      if (shouldUpgradeHttp(text, policy.mode())) {
-        const httpsUrl = upgradeToHttps(text)
-        await this.loadWebTarget(tab, httpsUrl, { original: text, key, httpsUrl })
-        return
-      }
-      if (policy.warn()) {
-        this.showInsecurePrompt(tab, text, key)
-        return
-      }
-    }
-
-    await this.loadWebTarget(tab, text)
-  }
-
-  private async loadWebTarget(
-    tab: Tab,
-    text: string,
-    pending: Tab['pendingHttp'] = null
-  ): Promise<void> {
-    tab.mode = 'web'
-    tab.pubkey = null
-    tab.service = null
-    tab.displayUrl = text
-    tab.security = null
-    tab.failure = null
-    tab.pendingHttp = pending
-    tab.tor = { onionAvailable: false, active: false }
-    this.deps.torGuard.set(tab.view.webContents.id, false)
-    this.showOnly(tab.id)
-
-    if (isOnionPageUrl(text)) {
-      tab.loading = true
-      this.syncState()
-      try {
-        await this.deps.tor.ensureReady()
-      } catch (error) {
-        await this.loadWebError(
-          tab,
-          text,
-          'tor-unavailable',
-          error instanceof Error ? error.message : String(error)
-        )
-        return
-      }
-      tab.tor.active = true
-      this.deps.torGuard.set(tab.view.webContents.id, true)
-    }
-
-    tab.programmatic = true
-    try {
-      await this.load(tab, text)
-    } finally {
-      tab.programmatic = false
-    }
+    await navigateTabTo(this.internals, tab, input)
   }
 
   private showInsecurePrompt(tab: Tab, url: string, key: string): void {
@@ -1054,7 +919,7 @@ export class BrowserShell {
       return
     }
     if (choice === 'always') this.deps.httpPolicies[tab.kind].allow(pending.key)
-    void this.loadWebTarget(tab, pending.url)
+    void loadWebTarget(this.internals, tab, pending.url)
   }
 
   private cancelInsecurePrompt(): void {
@@ -1065,39 +930,6 @@ export class BrowserShell {
     const tab = this.tabs.find((entry) => entry.id === pending.tabId)
     if (tab) tab.displayUrl = pending.previous
     this.syncState()
-  }
-
-  private async loadWebError(
-    tab: Tab,
-    address: string,
-    code: string,
-    message: string
-  ): Promise<void> {
-    const html = renderErrorPage({ code, message, address })
-    await this.load(tab, `data:text/html;base64,${Buffer.from(html).toString('base64')}`)
-    tab.mode = 'web'
-    tab.displayUrl = address
-    tab.security = null
-    tab.failure = { code, message }
-    tab.tor = { onionAvailable: false, active: false }
-    this.deps.torGuard.set(tab.view.webContents.id, false)
-    this.syncState()
-  }
-
-  private async load(tab: Tab, url: string): Promise<void> {
-    try {
-      await tab.view.webContents.loadURL(url)
-    } catch (error) {
-      // Chromium reports aborted navigations as errors too; only surface real failures.
-      const message = error instanceof Error ? error.message : String(error)
-      if (!/ERR_ABORTED/i.test(message)) {
-        tab.failure ??= {
-          code: url.startsWith('ncc://') ? 'endpoint-unreachable' : 'load-failed',
-          message
-        }
-      }
-      this.syncState()
-    }
   }
 
   private createTab(kind: TabKind = 'normal'): Tab {
@@ -1176,167 +1008,7 @@ export class BrowserShell {
   }
 
   private wireTab(tab: Tab): void {
-    const contents = tab.view.webContents
-
-    contents.on('did-start-loading', () => {
-      tab.loading = true
-      tab.owner.syncState()
-    })
-
-    contents.on('did-stop-loading', () => {
-      tab.loading = false
-      const url = contents.isDestroyed() ? '' : contents.getURL()
-      const script = url ? tab.owner.deps.protectionScriptForUrl?.(url, tab.kind) ?? '' : ''
-      if (script) void contents.executeJavaScript(script, true).catch(() => undefined)
-      tab.owner.scheduleSessionSave()
-      tab.owner.syncState()
-    })
-
-    contents.on('did-start-navigation', (_event, url, _isInPlace, isMainFrame) => {
-      if (!isMainFrame) return
-      tab.failure = null
-      tab.security = null
-      const onion = tab.kind === 'tor' || isOnionPageUrl(url)
-      tab.tor = { onionAvailable: false, active: onion }
-      if (tab.kind !== 'tor') tab.owner.deps.torGuard.set(contents.id, onion)
-      tab.displayUrl = formatDisplayUrl(url)
-      tab.owner.applyUrlToTab(tab, url)
-      tab.owner.syncState()
-    })
-
-    contents.on('did-navigate', (_event, url) => {
-      tab.displayUrl = formatDisplayUrl(url)
-      tab.owner.applyUrlToTab(tab, url)
-      // Only normal tabs contribute to address-bar suggestions.
-      if (tab.kind === 'normal' && /^(ncc:\/\/|nsite:\/\/|https?:\/\/)/i.test(url)) {
-        tab.owner.deps.omnibox.recordVisit(tab.displayUrl, tabTitle(tab), 'normal')
-      }
-      tab.owner.scheduleSessionSave()
-      tab.owner.syncState()
-    })
-
-    contents.on('did-navigate-in-page', (_event, url, isMainFrame) => {
-      if (!isMainFrame) return
-      tab.displayUrl = formatDisplayUrl(url)
-      tab.owner.scheduleSessionSave()
-      tab.owner.syncState()
-    })
-
-    contents.on('page-title-updated', () => {
-      if (tab.kind === 'normal' && tab.displayUrl) {
-        const title = contents.isDestroyed() ? '' : contents.getTitle()
-        if (title) tab.owner.deps.omnibox.updateTitle(tab.displayUrl, title, 'normal')
-      }
-      tab.owner.syncState()
-    })
-
-    contents.on('page-favicon-updated', (_event, favicons) => {
-      const candidate = favicons.find((favicon) => /^(https?|ncc|data:image\/)/i.test(favicon))
-      if (!candidate) return
-      if (candidate.startsWith('data:image/')) {
-        if (candidate.length <= 350_000) {
-          tab.favicon = candidate
-          tab.owner.syncState()
-        }
-        return
-      }
-      // Main-process fetches are not attributed to a webContents, so apply the
-      // Tor-page allowlist here as well; a clearnet favicon would leak the IP.
-      if (tab.tor.active && !isAllowedTorUrl(candidate)) return
-      const referer = contents.getURL()
-      void fetchFavicon(contents.session, candidate, referer).then((dataUrl) => {
-        if (!dataUrl || tab.favicon === dataUrl || !tab.owner.tabs.includes(tab)) return
-        tab.favicon = dataUrl
-        tab.owner.syncState()
-      })
-    })
-
-    tab.audible = contents.isCurrentlyAudible()
-    tab.muted = contents.isAudioMuted()
-    contents.on('audio-state-changed', (event) => {
-      tab.audible = event.audible
-      tab.muted = contents.isAudioMuted()
-      tab.owner.syncState()
-    })
-
-    contents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
-      if (!isMainFrame || errorCode === -3) return
-      if (/ERR_ABORTED/.test(errorDescription)) return
-
-      if (tab.pendingHttp) {
-        const pending = tab.pendingHttp
-        tab.pendingHttp = null
-        const policy = tab.owner.deps.httpPolicies[tab.kind]
-        if (policy.isAllowed(pending.key) || (policy.mode() !== 'only' && !policy.warn())) {
-          void tab.owner.loadWebTarget(tab, pending.original)
-        } else {
-          tab.owner.showInsecurePrompt(tab, pending.original, pending.key)
-        }
-        return
-      }
-
-      tab.failure ??= {
-        code: validatedURL.startsWith('ncc://') ? 'endpoint-unreachable' : 'load-failed',
-        message: errorDescription
-      }
-      tab.owner.syncState()
-    })
-
-    contents.on('render-process-gone', (_event, details) => {
-      tab.failure = { code: 'renderer-gone', message: details.reason }
-      tab.owner.syncState()
-    })
-
-    contents.setWindowOpenHandler(({ url }) => {
-      void tab.owner.openInNewTab(url, tab.kind)
-      return { action: 'deny' }
-    })
-
-    contents.on('will-navigate', (event, url) => {
-      if (tab.programmatic) return
-      const protocol = safeProtocol(url)
-      if (!protocol) return
-      if (protocol === 'http:' || protocol === 'https:') {
-        const policy = tab.owner.deps.httpPolicies[tab.kind]
-        const key = webHttpKey(url)
-        if (
-          protocol === 'http:' &&
-          key &&
-          !isHttpExemptUrl(url) &&
-          !policy.isAllowed(key) &&
-          (shouldUpgradeHttp(url, policy.mode()) || policy.warn())
-        ) {
-          event.preventDefault()
-          void tab.owner.navigateInTab(tab, url)
-          return
-        }
-      }
-      if (
-        protocol === 'ncc:' ||
-        protocol === 'nsite:' ||
-        protocol === 'http:' ||
-        protocol === 'https:'
-      ) {
-        // Same-origin links navigate natively; the origin already names the service or
-        // site, so there is nothing to disambiguate here.
-        return
-      }
-      event.preventDefault()
-      void shell.openExternal(url)
-    })
-
-    contents.on('will-attach-webview', (event) => event.preventDefault())
-
-    installContentContextMenu(contents, {
-      getWindow: () => tab.owner.window,
-      openInNewTab: (url) => {
-        void tab.owner.openInNewTab(url, tab.kind)
-      },
-      extensionItems: (url) => tab.owner.deps.extensionContextItems?.(url) ?? []
-    })
-
-    // Keyboard shortcuts are routed in main so they work while the page has focus.
-    contents.on('before-input-event', (event, input) => tab.owner.handleInput(event, input))
+    wireTabListeners(this.internals, tab)
   }
 
   private async openInNewTab(url: string, kind: TabKind = 'normal'): Promise<void> {
@@ -1350,37 +1022,6 @@ export class BrowserShell {
       await tab.view.webContents.loadURL(url)
     } catch (error) {
       console.warn('[shell] could not open popup:', error)
-    }
-  }
-
-  private applyUrlToTab(tab: Tab, url: string): void {
-    if (url.startsWith('nsite://')) {
-      tab.mode = 'nsite'
-      try {
-        const address = parseNsiteAddress(url)
-        tab.pubkey = address.pubkey
-        tab.service = address.site
-      } catch {
-        // The error page's own URL may not parse; keep the previous site.
-      }
-      return
-    }
-
-    if (!url.startsWith('ncc://')) {
-      tab.mode = url.startsWith('http') ? 'web' : tab.mode
-      if (!url.startsWith('http')) return
-      tab.pubkey = null
-      tab.service = null
-      return
-    }
-
-    tab.mode = 'ncc'
-    try {
-      const address = parseNccAddress(url)
-      tab.pubkey = address.pubkey
-      tab.service = address.service
-    } catch {
-      // The error page's own URL may not parse; keep the previous service.
     }
   }
 
