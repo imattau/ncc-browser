@@ -1,5 +1,22 @@
 # Release notes
 
+## 0.39.3 — deletion requests for nsites
+
+### Added
+
+- **Removing a site publishes a NIP-09 deletion request.** The signed `kind 5` event
+  carries an `a` tag for the site address (`35128:<pubkey>:<siteId>`, or
+  `15128:<pubkey>:` for the root site) and an `e` tag for the manifest, and is sent to
+  the site relays before the local record is removed. If there is no identity, the
+  active identity does not own the site, or no relay accepts it, the removal stays
+  local and the UI reports why.
+- **Discovery respects deletions.** It queries the owner's `kind 5` events and skips a
+  manifest whose event id was deleted or whose address has a deletion at or after its
+  `created_at`.
+- **Restoring a deleted site** works by republishing the same site id from its source
+  folder. The new manifest has a newer `created_at`, so it wins over the deletion and
+  clears the hidden entry.
+
 ## 0.39.2 — address before endpoints and opt-in public reachability
 
 ### Added
