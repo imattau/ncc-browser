@@ -529,10 +529,10 @@ export class PasswordService {
         username: identityKey,
         password: credential
       }
-      await this.ensureLatest(provider, this.pubkey)
+      await this.syncEngine.ensureLatest(provider, this.pubkey)
       const current = this.vault ?? emptyVault()
       const next = applyEntry(current, entry)
-      return await this.commit(provider, this.pubkey, next)
+      return await this.syncEngine.commit(provider, this.pubkey, next)
     } catch (error) {
       this.error = messageOf(error)
       this.sendStatus()
