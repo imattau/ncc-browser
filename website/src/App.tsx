@@ -32,7 +32,7 @@ const GIT_MIRROR =
 const NOSTRHUB =
   'https://nostrhub.io/npub1khf5amw8mrupe649a5mhkk3d2d8wjj06urz6kwawpftk4f68tjlstdmd3q/nostr-navigator'
 const DOCS = `${REPO}/tree/main/docs`
-const SPEC = 'https://github.com/nostr-community-conventions'
+const SPEC = 'https://github.com/imattau/nostr-community-conventions'
 const NPACK = 'https://github.com/imattau/npack'
 const PUBLISHER_NPUB = 'npub1g3vdg46zq7xpkmtdnta7l8u9684zd2p4e9wrp3xd7wv4xk7vq03svh653x'
 const SITE_NPUB = 'npub1khf5amw8mrupe649a5mhkk3d2d8wjj06urz6kwawpftk4f68tjlstdmd3q'
