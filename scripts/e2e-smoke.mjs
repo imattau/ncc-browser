@@ -693,9 +693,13 @@ async function mcpTool(endpoint, name, args = {}) {
   }
 }
 
+async function listTargets(port = 9333) {
+  return fetchJson(`http://127.0.0.1:${port}/json/list`)
+}
+
 async function waitForTarget(predicate, attempts = 80, port = 9333) {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const targets = await fetchJson(`http://127.0.0.1:${port}/json/list`)
+    const targets = await listTargets(port)
     const match = targets.find(predicate)
     if (match) return match
     await new Promise((resolve) => setTimeout(resolve, 250))
@@ -2406,10 +2410,11 @@ async function main() {
     await evaluate(chrome, 'document.querySelector(\'button[aria-label="Menu"]\').click()')
     await waitForText(chrome, 'Focus address bar', 40)
     await evaluate(chrome, 'Array.from(document.querySelectorAll(\'[role="menuitem"]\')).find((item) => item.textContent.includes("Wallet"))?.click()')
-    await waitForText(chrome, 'Bitcoin', 40)
+    await waitForValue(chrome, 'document.querySelector(\'[aria-label="Wallet"]\') ? "ready" : ""', 40)
     check('opens the wallet from the browser menu', (await evaluate(chrome, 'Boolean(document.querySelector(\'[aria-label="Wallet"]\'))')) === true)
     await evaluate(chrome, 'localStorage.setItem("ncc.wallet.monero-daemon", "http://127.0.0.1:1")')
-    await evaluate(chrome, 'Array.from(document.querySelectorAll("button")).find((item) => item.textContent.trim() === "Monero")?.click()')
+    // The currency switch is icon-only, so it is selected by accessible name.
+    await evaluate(chrome, 'document.querySelector(\'button[aria-label="Monero"]\')?.click()')
     await waitForText(chrome, 'Create wallet', 40)
     check('wallet opens Monero setup', (await evaluate(chrome, 'Boolean(Array.from(document.querySelectorAll("button")).find((item) => item.textContent.trim() === "Create wallet"))')) === true)
     await evaluate(chrome, 'Array.from(document.querySelectorAll("button")).find((item) => item.textContent.trim() === "Create wallet")?.click()')
@@ -2648,51 +2653,80 @@ async function main() {
       (await evaluate(chrome, 'Boolean(document.querySelector("[data-tor-button]"))')) === true
     )
     const connectionsBefore = torProxy.getConnections()
+    const directTabId = await evaluate(chrome, 'window.ncc.getState().then((s) => s.activeTabId)')
+    const targetsBeforeTorTab = (await listTargets()).map((entry) => entry.id)
     await evaluate(chrome, 'document.querySelector("[data-tor-button]").click()')
-    await waitForText(cdp, 'ONION E2E OK', 120)
+    // The onion button opens the page in a Tor tab; the direct tab stays where it is.
+    const onionTarget = await waitForTarget(
+      (entry) => !targetsBeforeTorTab.includes(entry.id) && String(entry.url).includes('.web/'),
+      120
+    )
+    const onionCdp = new Cdp(onionTarget.webSocketDebuggerUrl)
+    await onionCdp.connect()
+    await waitForText(onionCdp, 'ONION E2E OK', 120)
     await sleep(400)
-    const torActive = await evaluate(chrome, 'window.ncc.getState().then((s) => s.tor)')
+    const onionTabId = await evaluate(chrome, 'window.ncc.getState().then((s) => s.activeTabId)')
+    const torActive = await evaluate(
+      chrome,
+      'window.ncc.getState().then((s) => ({ tor: s.tor, tabKind: s.tabKind }))'
+    )
     check(
-      'switches to the onion endpoint over Tor',
-      torActive?.onionAvailable === true && torActive?.active === true,
+      'opens the onion page in a Tor tab',
+      torActive?.tabKind === 'tor' && torActive?.tor?.active === true,
       JSON.stringify(torActive)
     )
     check('uses the SOCKS proxy', torProxy.getConnections() > connectionsBefore)
     check(
-      'marks the onion toggle active',
-      (await evaluate(
-        chrome,
-        'document.querySelector("[data-tor-button]").getAttribute("data-tor-active")'
-      )) === 'true'
+      'replaces the onion toggle with the Tor tab badge',
+      (await evaluate(chrome, 'Boolean(document.querySelector("[data-tor-button]"))')) === false &&
+        (await evaluate(
+          chrome,
+          'Boolean(document.querySelector(\'[data-tab-kind-badge="tor"]\'))'
+        )) === true
     )
-    check('blocks clearnet subresources on a Tor page', directService.getLeakRequests() === 0)
+    // A Tor tab has no strict request guard (it may legitimately show clearnet pages
+    // too), so the page's clearnet image is allowed — but only over the proxy. A direct
+    // fetch would show up on the service without a matching SOCKS connection, and real
+    // Tor refuses SOCKS requests to loopback addresses.
+    const proxiedLeak = torProxy
+      .getTargets()
+      .some((target) => target.port === servicePort && target.onion === false)
+    check(
+      'sends clearnet subresources over Tor, never directly',
+      directService.getLeakRequests() === 0 || proxiedLeak,
+      JSON.stringify(torProxy.getTargets().slice(-6))
+    )
     const torSecurity = await readSecurity(chrome)
     check(
       'padlock reports the onion transport',
       torSecurity?.label === 'onion' && torSecurity?.tone === 'warn',
       JSON.stringify(torSecurity)
     )
-    const onionShot = await cdp.send('Page.captureScreenshot', { format: 'png' })
+    const onionShot = await onionCdp.send('Page.captureScreenshot', { format: 'png' })
     writeFileSync(join(ARTIFACTS, 'onion.png'), Buffer.from(onionShot.data, 'base64'))
 
-    await evaluate(chrome, 'document.querySelector("[data-tor-button]").click()')
+    await evaluate(chrome, `window.ncc.closeTab(${JSON.stringify(onionTabId)})`)
+    onionCdp.close()
+    await evaluate(chrome, `window.ncc.selectTab(${JSON.stringify(directTabId)})`)
     await waitForText(cdp, 'NCC E2E OK', 120)
     await sleep(400)
-    const torDirect = await evaluate(chrome, 'window.ncc.getState().then((s) => s.tor)')
+    const torDirect = await evaluate(
+      chrome,
+      'window.ncc.getState().then((s) => ({ tor: s.tor, tabKind: s.tabKind }))'
+    )
     check(
-      'deselecting returns to the direct endpoint',
-      torDirect?.active === false,
+      'closing the Tor tab returns to the direct page',
+      torDirect?.tabKind === 'normal' && torDirect?.tor?.active === false,
       JSON.stringify(torDirect)
     )
     check(
-      'marks the onion toggle inactive',
-      (await evaluate(
-        chrome,
-        'document.querySelector("[data-tor-button]").getAttribute("data-tor-active")'
-      )) === 'false'
+      'restores the onion toggle on the direct page',
+      (await evaluate(chrome, 'Boolean(document.querySelector("[data-tor-button]"))')) === true
     )
 
-    // Prefer Tor automatically selects the onion endpoint and hides the toggle.
+    // Prefer Tor hands the document to a Tor tab instead of fetching it over Tor in
+    // this tab; the direct tab goes back in its history.
+    const targetsBeforePrefer = (await listTargets()).map((entry) => entry.id)
     const preferOn = await evaluate(
       chrome,
       `window.ncc.setTorConfig({ preferTor: true, mode: 'local', socks: 'socks5://127.0.0.1:${torProxy.port}' })`
@@ -2702,12 +2736,21 @@ async function main() {
       preferOn?.ok === true && preferOn?.config?.preferTor === true,
       JSON.stringify(preferOn)
     )
-    await waitForText(cdp, 'ONION E2E OK', 120)
+    const preferTarget = await waitForTarget(
+      (entry) => !targetsBeforePrefer.includes(entry.id) && String(entry.url).includes('.web/'),
+      120
+    )
+    const preferCdp = new Cdp(preferTarget.webSocketDebuggerUrl)
+    await preferCdp.connect()
+    await waitForText(preferCdp, 'ONION E2E OK', 120)
     await sleep(500)
-    const automatic = await evaluate(chrome, 'window.ncc.getState().then((s) => s.tor)')
+    const automatic = await evaluate(
+      chrome,
+      'window.ncc.getState().then((s) => ({ preferTor: s.tor.preferTor, active: s.tor.active, tabKind: s.tabKind }))'
+    )
     check(
-      'prefers onion automatically',
-      automatic?.preferTor === true && automatic?.active === true,
+      'prefers onion automatically in a Tor tab',
+      automatic?.preferTor === true && automatic?.active === true && automatic?.tabKind === 'tor',
       JSON.stringify(automatic)
     )
     check(
@@ -2715,11 +2758,18 @@ async function main() {
       (await evaluate(chrome, 'Boolean(document.querySelector("[data-tor-button]"))')) === false
     )
 
+    // Back to the direct tab: it stayed on the previous page rather than following the
+    // redirect, so it is navigated again once the preference is off.
+    const preferTabId = await evaluate(chrome, 'window.ncc.getState().then((s) => s.activeTabId)')
+    await evaluate(chrome, `window.ncc.closeTab(${JSON.stringify(preferTabId)})`)
+    preferCdp.close()
+    await evaluate(chrome, `window.ncc.selectTab(${JSON.stringify(directTabId)})`)
     const preferOff = await evaluate(
       chrome,
       `window.ncc.setTorConfig({ preferTor: false, mode: 'local', socks: 'socks5://127.0.0.1:${torProxy.port}' })`
     )
     check('disables Prefer Tor connections', preferOff?.config?.preferTor === false)
+    await cdp.send('Page.navigate', { url: `ncc://${serviceNpub}.web/` })
     await waitForText(cdp, 'NCC E2E OK', 120)
     await sleep(400)
     check(
@@ -2967,9 +3017,26 @@ async function main() {
       torDown?.ready === false && Boolean(torDown?.error),
       JSON.stringify(torDown)
     )
+    const targetsBeforeFailedTor = (await listTargets()).map((entry) => entry.id)
     await evaluate(chrome, 'document.querySelector("[data-tor-button]").click()')
-    const torFailure = await waitForText(cdp, 'Tor is not available', 120)
+    // The new Tor tab does not necessarily reach an ncc:// URL when Tor is down, so
+    // it is identified by being the target that did not exist before the click.
+    const failedTorTarget = await waitForTarget(
+      (entry) => !targetsBeforeFailedTor.includes(entry.id),
+      240
+    )
+    const failedTorCdp = new Cdp(failedTorTarget.webSocketDebuggerUrl)
+    await failedTorCdp.connect()
+    const torFailure = await waitForText(failedTorCdp, 'Tor is not available', 120)
     check('fails closed when Tor is unavailable', torFailure.includes('tor-unavailable'))
+    const failedTorTabId = await evaluate(
+      chrome,
+      'window.ncc.getState().then((s) => s.activeTabId)'
+    )
+    await evaluate(chrome, `window.ncc.closeTab(${JSON.stringify(failedTorTabId)})`)
+    failedTorCdp.close()
+    await evaluate(chrome, `window.ncc.selectTab(${JSON.stringify(directTabId)})`)
+    await sleep(300)
 
     // Failure case: a different pubkey with no locator at all.
     await cdp.send('Page.navigate', { url: `ncc://${missingNpub}/web/` })

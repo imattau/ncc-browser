@@ -15,7 +15,7 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
-import { mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs'
+import { mkdirSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import WebSocket from 'ws'
@@ -137,6 +137,9 @@ const contactAHex = getPublicKey(contactA)
 const contactBHex = getPublicKey(contactB)
 const recipient = nip19.npubEncode(getPublicKey(generateSecretKey()))
 
+// Each run signs as a fresh identity, so a profile left by an earlier run would have
+// services published by a different key and every share would be refused.
+rmSync(SCRATCH, { recursive: true, force: true })
 mkdirSync(SCRATCH, { recursive: true })
 const userData = join(SCRATCH, 'config', 'NCC Browser')
 mkdirSync(userData, { recursive: true })
