@@ -70,4 +70,18 @@ describe('SessionStore', () => {
     )
     expect(sessions.load()?.window).toMatchObject({ width: 760, height: 10_000 })
   })
+
+  it('keeps the saved session when the last window has closed', () => {
+    const { store: sessions } = store()
+    sessions.saveWindows([
+      {
+        tabs: [{ url: 'ncc://npub1abc/web' }],
+        activeIndex: 0,
+        window: { width: 1280, height: 860, maximized: false }
+      }
+    ])
+    // Quit path: the shell reports the closed window after flushing it.
+    sessions.saveWindows([])
+    expect(sessions.load()?.tabs).toEqual([{ url: 'ncc://npub1abc/web' }])
+  })
 })

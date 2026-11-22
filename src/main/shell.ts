@@ -963,10 +963,21 @@ export class BrowserShell {
     }
 
     const onionAvailable = activity.onionAvailable === true
-    for (const tab of tabs) {
+    // A document belongs to the tab whose transport fetched it: an onion document to
+    // the Tor tab, a direct one to the normal tab. Two tabs can show the same service
+    // at once, so updating every match would mark the direct tab as "over Tor" — and
+    // `isTorService()` would then push its own subresources through Tor.
+    const owners = tabs.filter((tab) =>
+      activity.viaTor === true ? tab.kind === 'tor' : tab.kind !== 'tor'
+    )
+    // Keep showing failures when no tab owns the activity (for example a failure
+    // reported for a service that only has a Tor tab open).
+    for (const tab of owners.length > 0 ? owners : tabs) {
       const active =
         !activity.failureCode && (tab.kind === 'tor' || activity.viaTor === true)
       tab.tor = { onionAvailable, active }
+      // A Tor tab may still open clearnet pages, so only normal and private tabs need
+      // the strict guard while they are showing Tor content.
       if (tab.kind !== 'tor') this.deps.torGuard.set(tab.view.webContents.id, active)
       if (activity.failureCode) {
         tab.failure = { code: activity.failureCode, message: activity.failureCode }
