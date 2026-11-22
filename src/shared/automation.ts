@@ -1,3 +1,17 @@
+/** One agent connected to the agent-control server, as shown in Settings → Agent control. */
+export interface AgentSummary {
+  id: string
+  name: string
+  /** Null only for an agent migrated from before per-agent Nostr identities existed. */
+  npub: string | null
+  /** The vault entry holding this agent's nsec, if one has been stored. */
+  passwordEntryId: string | null
+  /** Sites this agent may currently act on without asking. */
+  grants: string[]
+  /** The connect command with the nsec masked; null while the server isn't running. */
+  maskedCommand: string | null
+}
+
 /** State of the agent-control server, as shown in Settings → Agent control. */
 export interface AutomationState {
   enabled: boolean
@@ -5,9 +19,6 @@ export interface AutomationState {
   forced: boolean
   running: boolean
   url: string | null
-  /** Last characters of the access token, so the user can tell tokens apart. */
-  tokenHint: string
-  /** Sites the agent may currently act on without asking. */
-  grants: string[]
+  agents: AgentSummary[]
   error: string | null
 }

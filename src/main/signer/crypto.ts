@@ -57,6 +57,10 @@ export function npubOf(secret: Uint8Array): string {
   return nip19.npubEncode(getPublicKey(secret))
 }
 
+export function nsecOf(secret: Uint8Array): string {
+  return nip19.nsecEncode(secret)
+}
+
 export function hexPubkeyOf(secret: Uint8Array): string {
   return getPublicKey(secret)
 }

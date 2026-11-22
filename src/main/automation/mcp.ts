@@ -48,12 +48,16 @@ const BATCH_TOOL = {
 export class McpHandler {
   constructor(
     private readonly host: AutomationHost,
-    private readonly gate: AutomationGate,
+    /** Used when a call omits the per-request gate, e.g. in tests that exercise one agent. */
+    private readonly defaultGate: AutomationGate,
     private readonly info: { name: string; version: string }
   ) {}
 
-  /** Returns null for notifications, which take no reply. */
-  async handle(message: unknown): Promise<RpcResponse | null> {
+  /**
+   * Returns null for notifications, which take no reply. `gate` scopes this call to the
+   * agent that authenticated it; omit only when there is a single, fixed agent (tests).
+   */
+  async handle(message: unknown, gate: AutomationGate = this.defaultGate): Promise<RpcResponse | null> {
     if (typeof message !== 'object' || message === null) {
       return error(null, -32600, 'Invalid request')
     }
@@ -126,7 +130,7 @@ export class McpHandler {
                 break
               }
               try {
-                const result = await tool.run(this.host, args as Record<string, unknown>, this.gate)
+                const result = await tool.run(this.host, args as Record<string, unknown>, gate)
                 results.push({ name: toolName, result })
                 if (result.isError) break
               } catch (cause) {
@@ -141,7 +145,7 @@ export class McpHandler {
           if (!tool) return error(id, -32602, `Unknown tool: ${String(name)}`)
           const args = (request.params?.arguments ?? {}) as Record<string, unknown>
           try {
-            return ok(id, await tool.run(this.host, args, this.gate))
+            return ok(id, await tool.run(this.host, args, gate))
           } catch (cause) {
             return ok(id, {
               content: [
