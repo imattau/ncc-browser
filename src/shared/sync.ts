@@ -133,7 +133,7 @@ export function isSyncableUrl(url: unknown): url is string {
   if (typeof url !== 'string') return false
   const value = url.trim()
   if (!value || encoder.encode(value).length > MAX_URL) return false
-  return /^(ncc:\/\/|https?:\/\/)/i.test(value)
+  return /^(ncc:\/\/|nsite:\/\/|https?:\/\/)/i.test(value)
 }
 
 // ───────────────────────────── Bookmarks ─────────────────────────────

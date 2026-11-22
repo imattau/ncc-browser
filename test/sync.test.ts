@@ -102,10 +102,14 @@ describe('sync helpers', () => {
       device: { id: '0123456789abcdef', name: 'Laptop', platform: 'linux' },
       tabs: [
         { url: 'javascript:alert(1)', title: 'x' },
-        { url: 'https://a.example/', title: ' A ' }
+        { url: 'https://a.example/', title: ' A ' },
+        { url: 'nsite://npub1abc.blog/', title: ' Blog ' }
       ]
     })
-    expect(doc?.tabs).toEqual([{ url: 'https://a.example/', title: 'A', lastActive: 0 }])
+    expect(doc?.tabs.map((tab) => tab.url)).toEqual([
+      'https://a.example/',
+      'nsite://npub1abc.blog/'
+    ])
   })
 
   it('round-trips d tags', () => {

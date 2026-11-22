@@ -18,8 +18,10 @@ afterEach(() => {
 })
 
 describe('isBookmarkable', () => {
-  it('accepts ncc and web addresses only', () => {
+  it('accepts ncc, nsite and web addresses only', () => {
     expect(isBookmarkable('ncc://npub1abc/web')).toBe(true)
+    expect(isBookmarkable('nsite://npub1abc.blog/')).toBe(true)
+    expect(isBookmarkable('NSITE://npub1abc.blog/')).toBe(true)
     expect(isBookmarkable('https://example.com')).toBe(true)
     expect(isBookmarkable('http://example.com')).toBe(true)
     expect(isBookmarkable('javascript:alert(1)')).toBe(false)
@@ -32,6 +34,9 @@ describe('BookmarkStore', () => {
   it('adds, deduplicates and toggles', () => {
     const { store: bookmarks } = store()
     bookmarks.add('ncc://npub1abc/web', 'Web')
+    bookmarks.add('nsite://npub1abc.blog/', 'Blog')
+    expect(bookmarks.list()).toHaveLength(2)
+    bookmarks.toggle('nsite://npub1abc.blog/', 'Blog')
     bookmarks.add('ncc://npub1abc/web', 'Renamed')
     expect(bookmarks.list()).toHaveLength(1)
     expect(bookmarks.list()[0].title).toBe('Renamed')

@@ -28,7 +28,7 @@ export function isBookmarkable(url: string): boolean {
   if (typeof url !== 'string') return false
   const value = url.trim()
   if (value.length === 0 || value.length > 4096) return false
-  return /^(ncc:\/\/|https?:\/\/)/i.test(value)
+  return /^(ncc:\/\/|nsite:\/\/|https?:\/\/)/i.test(value)
 }
 
 function normaliseTitle(title: string, url: string): string {
