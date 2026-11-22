@@ -1568,6 +1568,10 @@ export function SettingsPage({
               initialDraft={hostingDraft ?? null}
               onDraftUsed={onHostingDraftUsed}
               onOpenIdentity={() => setSection('identity')}
+              onIdentityChange={(status) => {
+                setIdentity(status)
+                onIdentityChange?.(status)
+              }}
               onClose={onClose}
             />
           ) : null}

@@ -91,6 +91,8 @@ export interface ReachabilityReport {
   externalAddress?: string
   /** Disclosed provider used for the public address check. */
   externalProvider?: string
+  /** Whether the bundled/external Tor was ready when discovery ran. */
+  torReady?: boolean
   warnings: string[]
 }
 

@@ -54,6 +54,11 @@ async function makeManager(directory = tempDir(), signer = fakeSigner()) {
     local,
     sessions,
     encryptionAvailable: true,
+    localFactory: (id) =>
+      IdentityStore.open({
+        filePath: join(directory, `local-${id}.json`),
+        codec: base64Codec()
+      }),
     remoteFactory: (args) =>
       new RemoteIdentityProvider({ ...args, createSigner: () => signer })
   })
@@ -73,6 +78,57 @@ describe('IdentityManager', () => {
     expect(status.mode).toBe('local')
     expect(status.persisted).toBe(true)
     expect(manager.provider()).not.toBeNull()
+  })
+
+  it('creates a session-only identity and returns to the saved one', async () => {
+    const { manager } = await makeManager()
+    const saved = await manager.generateLocal()
+    const ephemeral = manager.generateEphemeral()
+
+    expect(ephemeral.status.source).toBe('session')
+    expect(ephemeral.status.persisted).toBe(false)
+    expect(ephemeral.status.npub).toMatch(/^npub1/)
+    const decoded = nip19.decode(ephemeral.nsec)
+    expect(decoded.type).toBe('nsec')
+    expect(nip19.npubEncode(getPublicKey(decoded.data as Uint8Array))).toBe(ephemeral.status.npub)
+    expect(manager.status().hexPubkey).toBe(ephemeral.status.hexPubkey)
+    expect(manager.ephemeralNsec()).toBe(ephemeral.nsec)
+
+    const event = await manager.provider()!.signEvent({
+      kind: 1,
+      created_at: 1,
+      tags: [],
+      content: 'one-off'
+    })
+    expect(event.pubkey).toBe(ephemeral.status.hexPubkey)
+
+    const restored = manager.clearEphemeral()
+    expect(restored.hexPubkey).toBe(saved.hexPubkey)
+    expect(manager.ephemeralNsec()).toBeNull()
+  })
+
+  it('promotes a one-off identity into the saved list without duplicating it', async () => {
+    const { manager } = await makeManager()
+    await manager.generateLocal()
+    const existing = manager.list().identities.length
+    const ephemeral = manager.generateEphemeral()
+
+    const saved = await manager.saveEphemeral()
+    expect(saved.persisted).toBe(true)
+    expect(saved.hexPubkey).toBe(ephemeral.status.hexPubkey)
+    expect(manager.ephemeralNsec()).toBeNull()
+    expect(manager.list().identities).toHaveLength(existing + 1)
+    expect(manager.provider()!.status().hexPubkey).toBe(ephemeral.status.hexPubkey)
+    expect(manager.list().identities.at(-1)?.hexPubkey).toBeDefined()
+  })
+
+  it('drops a session-only identity when a saved one is created', async () => {
+    const { manager } = await makeManager()
+    manager.generateEphemeral()
+    const saved = await manager.generateLocal()
+    expect(saved.source).not.toBe('session')
+    expect(manager.ephemeralNsec()).toBeNull()
+    expect(manager.status().hexPubkey).toBe(saved.hexPubkey)
   })
 
   it('connects a remote signer and persists the session', async () => {

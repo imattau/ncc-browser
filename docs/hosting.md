@@ -46,6 +46,43 @@ For a private service the anchor has no `u`: it cannot leak the endpoint, and NC
 remains the only source of reachability. The resolver already accepts an anchor without
 `u` and applies its `k` to the NCC-05 endpoints.
 
+### Signing identity
+
+A service is signed by the **active Nostr identity**. The Add service form shows the
+identity list and uses the selected one; choosing another entry switches the active
+identity for this and later services.
+
+**New identity** creates a key with one checkbox:
+
+- **Add to identity list** on (default) creates a normal local identity, saved and
+  selectable in Settings → Identity.
+- Off creates a **one-off** identity that exists only for this session. Copy its nsec
+  before discarding it or closing the app; without the key the service cannot be
+  renewed or shared later. A one-off can still be promoted to the saved list, which
+  greys out the checkbox once its npub is present.
+- Replacing or switching away from a one-off asks for confirmation.
+
+Publishing never creates a signer implicitly: without an identity the submit is
+disabled and the panel says one is needed.
+
+### TLS certificate
+
+HTTPS endpoints can be pinned with `k`, a base64url SHA-256 of the certificate's SPKI.
+The service form offers:
+
+- **Import certificate** — choose a PEM/DER certificate; the browser derives the pin
+  and switches matching endpoints to `https://`.
+- **Generate self-signed** — picks a name from the endpoint, includes every endpoint
+  host in the SAN list, writes `<name>-cert.pem` and `<name>-key.pem` (key `0600`) to a
+  folder you choose, and pins it.
+- **Remove pin** — clears `k`; existing `https://` endpoints then use normal CA
+  validation.
+
+The browser never terminates TLS for the tested service; install the generated
+certificate and key in whatever serves it, then start that server on the HTTPS port.
+A certificate that does not name an endpoint host leaves that endpoint unpinned and
+the form reports it.
+
 ### Strict anchoring
 
 When **Require NCC-02 service records** is on, publishing becomes a two-part operation:
@@ -140,12 +177,13 @@ A share with no non-loopback endpoint is refused.
 
 ## Endpoint discovery
 
-Opening a page and choosing **Publish this page** (or clicking **Find endpoints** in
-the service form) fills the endpoint list from information that is already local. The
-seed can be a normal `http(s)://` page, a bare `IP:port`, an IPv4 address or a bracketed
-IPv6 address; a bare address defaults to `http://`, while an explicit `https://` keeps
-TLS (the form for a `k`-pinned endpoint). The service form shows each candidate with its
-source and a confidence label:
+**Find endpoints** works without opening a page. It scans this machine's interfaces
+using the **Port** field (or the first endpoint's port, or 80/443), checks whether a TLS
+pin is configured and whether Tor is running, and lists candidates as checkboxes. You
+can also seed it with a normal `http(s)://` page, a bare `IP:port`, an IPv4 address or a
+bracketed IPv6 address; a bare address defaults to `http://`, while an explicit
+`https://` (or any configured pin) keeps HTTPS. The service form shows each candidate
+with its source and a confidence label:
 
 | Candidate | Example | Confidence |
 | --- | --- | --- |
@@ -159,6 +197,9 @@ source and a confidence label:
 Discovery reads only the current page, `os.networkInterfaces()` and the local
 gateway. It does not contact an external address service. Link-local addresses
 (`169.254.0.0/16`, `fe80::/10`) and unique-local IPv6 (`fc00::/7`) are skipped.
+
+The panel also reports whether Tor is running. Creating an onion endpoint still
+happens after the service is saved; a loopback-only candidate needs Tor for remote use.
 
 The router's WAN address is read over UPnP, then NAT-PMP. Its class decides the
 advice:

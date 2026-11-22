@@ -30,6 +30,10 @@ export interface DiscoverOptions {
   /** Run the opt-in public address lookup. */
   external?: boolean
   lookupPublicAddress?: () => Promise<PublicAddress>
+  /** Force https candidates (a TLS pin is configured). */
+  secure?: boolean
+  /** Override the service port when the seed has none. */
+  port?: number
   timeoutMs?: number
   interfaces?: NodeJS.Dict<NetworkInterfaceInfo[]>
 }
@@ -156,21 +160,32 @@ function buildUrl(scheme: 'http' | 'https', host: string, port: number, seed: UR
  * Loopback stays owner-only; a public interface address is not proof of inbound
  * reachability, so it is marked unverified.
  */
+export interface InterfaceCandidateOptions {
+  secure?: boolean
+  port?: number
+}
+
 export function interfaceCandidates(
   seedUrl: string,
-  interfaces: NodeJS.Dict<NetworkInterfaceInfo[]> = networkInterfaces()
+  interfaces: NodeJS.Dict<NetworkInterfaceInfo[]> = networkInterfaces(),
+  options: InterfaceCandidateOptions = {}
 ): { candidates: EndpointCandidate[]; warnings: string[] } {
   const warnings: string[] = []
-  const seed = parseSeed(seedUrl)
+  const raw = seedUrl.trim()
+  let seed = parseSeed(seedUrl)
+  if (!seed && !raw) {
+    const fallbackPort = options.port ?? (options.secure ? 443 : 80)
+    seed = new URL(`${options.secure ? 'https' : 'http'}://127.0.0.1:${fallbackPort}`)
+  }
   if (!seed) {
     return {
       candidates: [],
       warnings: ['This page does not have an http(s) endpoint. Add one by hand.']
     }
   }
-  const secure = seed.protocol === 'https:'
+  const secure = options.secure ?? seed.protocol === 'https:'
   const scheme: 'http' | 'https' = secure ? 'https' : 'http'
-  const port = seedPort(seed)
+  const port = options.port ?? seedPort(seed)
   const host = seed.hostname.replace(/^\[|\]$/g, '').toLowerCase()
   const candidates: EndpointCandidate[] = []
   const seen = new Set<string>()
@@ -739,7 +754,10 @@ const GATEWAY_TTL_MS = 5 * 60_000
 let gatewayCache: { at: number; report: GatewayReport } | null = null
 
 export async function discoverReachability(options: DiscoverOptions): Promise<ReachabilityReport> {
-  const { candidates, warnings } = interfaceCandidates(options.seedUrl, options.interfaces)
+  const { candidates, warnings } = interfaceCandidates(options.seedUrl, options.interfaces, {
+    ...(options.secure === undefined ? {} : { secure: options.secure }),
+    ...(options.port === undefined ? {} : { port: options.port })
+  })
   const local = candidates.some(
     (candidate) =>
       candidate.kind === 'loopback' ||

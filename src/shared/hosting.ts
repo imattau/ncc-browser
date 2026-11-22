@@ -99,6 +99,46 @@ export interface HostingOnionResult {
   onion: OnionStatus
 }
 
+export interface CertificateInfo {
+  /** base64url(sha256(SPKI)), the value stored as endpoint `k`. */
+  pin: string
+  subject: string
+  issuer: string
+  validFrom: string
+  validTo: string
+  /** DNS names and IP addresses from the subjectAltName extension. */
+  names: string[]
+}
+
+export interface GeneratedCertificate extends CertificateInfo {
+  certPath: string
+  keyPath: string
+}
+
+/** Whether a certificate's SANs name this host (wildcards included). */
+export function certificateCoversHost(info: Pick<CertificateInfo, 'names'>, host: string): boolean {
+  const canonical = (value: string): string => {
+    const bare = value.trim().replace(/^\[|\]$/g, '')
+    if (!bare.includes(':')) return bare.toLowerCase()
+    try {
+      return new URL(`http://[${bare}]/`).hostname.replace(/^\[|\]$/g, '').toLowerCase()
+    } catch {
+      return bare.toLowerCase()
+    }
+  }
+  const target = canonical(host)
+  if (!target) return false
+  return info.names.some((name) => {
+    const raw = name.trim()
+    if (!raw) return false
+    if (raw.startsWith('*.')) {
+      const suffix = raw.slice(1).toLowerCase()
+      return target.endsWith(suffix) && target.split('.').length === raw.split('.').length
+    }
+    return canonical(raw) === target
+  })
+}
+
 export interface HostingDraft {
   title: string
   service?: string

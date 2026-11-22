@@ -1,4 +1,4 @@
-import { ipcMain, shell, app } from 'electron'
+import { dialog, ipcMain, shell, app } from 'electron'
 import { COMMANDS, type CommandId } from '@shared/commands'
 import { OVERLAY_REASONS, DEFAULT_PROTECTION } from '@shared/types'
 import type { LocatorCacheStore } from './cache-store'
@@ -29,6 +29,12 @@ import type { PortMappingService } from './hosting/port-mapping'
 import type { NetworkWatch } from './hosting/network-watch'
 import { isLoopbackEndpoint, type HostingDraft } from '@shared/hosting'
 import { normalizeEndpointSeed } from '@shared/reachability'
+import { readFileSync } from 'node:fs'
+import {
+  certificateInfo,
+  generateSelfSignedCertificate,
+  saveCertificateFiles
+} from './hosting/certificates'
 import { discoverReachability } from './hosting/discover'
 
 export interface IpcDeps {
@@ -307,16 +313,28 @@ export function registerIpc(deps: IpcDeps): void {
   })
   ipcMain.handle('ncc:hosting-discover-endpoints', async (event, seedUrl: unknown, options: unknown) => {
     if (!fromChrome(event)) throw new Error('Services are only available to the browser chrome')
-    if (typeof seedUrl !== 'string' || !seedUrl.trim()) {
-      throw new Error('Enter an endpoint as IP:port or http(s)://…')
+    if (typeof seedUrl !== 'string') throw new Error('An endpoint seed must be a string')
+    const optionBag = (options ?? {}) as {
+      external?: unknown
+      port?: unknown
+      secure?: unknown
     }
-    const seed = normalizeEndpointSeed(seedUrl)
-    if (!seed) {
-      throw new Error('Enter an endpoint as IP:port or http(s)://…')
+    let seed = ''
+    if (seedUrl.trim()) {
+      const normalized = normalizeEndpointSeed(seedUrl)
+      if (!normalized) throw new Error('Enter an endpoint as IP:port or http(s)://…')
+      seed = normalized
+    }
+    const port =
+      typeof optionBag.port === 'number' && Number.isInteger(optionBag.port) && optionBag.port > 0 && optionBag.port <= 65535
+        ? optionBag.port
+        : undefined
+    if (optionBag.port !== undefined && port === undefined) {
+      throw new Error('Enter a port between 1 and 65535')
     }
     const config = deps.config.get()
     const mode = config.externalAddressChecks ?? 'ask'
-    const explicit = Boolean((options as { external?: unknown } | null)?.external)
+    const explicit = Boolean(optionBag.external)
     if (explicit && mode === 'never') {
       throw new Error('Public address checks are off in Settings → General')
     }
@@ -325,10 +343,13 @@ export function registerIpc(deps: IpcDeps): void {
     const report = await discoverReachability({
       seedUrl: seed,
       external: runExternal,
+      ...(port === undefined ? {} : { port }),
+      ...(optionBag.secure === true ? { secure: true } : {}),
       ...(runExternal
         ? { lookupPublicAddress: () => deps.publicAddress.lookup(explicit) }
         : {})
     })
+    report.torReady = deps.tor.status().ready
     if (explicit && torPreferred) {
       report.externalCheck = 'declined'
       report.warnings.push('Public address checks are skipped while Tor is preferred.')
@@ -348,6 +369,58 @@ export function registerIpc(deps: IpcDeps): void {
     if (!fromChrome(event)) throw new Error('Services are only available to the browser chrome')
     if (typeof localPort !== 'number') throw new Error('A local port is required')
     await deps.portMappings.remove(localPort)
+  })
+  ipcMain.handle('ncc:hosting-import-certificate', async (event) => {
+    if (!fromChrome(event)) throw new Error('Services are only available to the browser chrome')
+    const browserShell = shellFor(event)
+    const result = await dialog.showOpenDialog(browserShell.window, {
+      title: 'Choose the server certificate',
+      properties: ['openFile'],
+      filters: [
+        { name: 'Certificates', extensions: ['pem', 'crt', 'cer'] },
+        { name: 'All files', extensions: ['*'] }
+      ]
+    })
+    const path = result.filePaths[0]
+    if (result.canceled || !path) return null
+    const info = certificateInfo(readFileSync(path))
+    if (!info) throw new Error('That file is not a readable PEM or DER certificate')
+    return info
+  })
+  ipcMain.handle('ncc:hosting-generate-certificate', async (event, input: unknown) => {
+    if (!fromChrome(event)) throw new Error('Services are only available to the browser chrome')
+    const payload = (input ?? {}) as {
+      commonName?: unknown
+      altNames?: unknown
+      days?: unknown
+    }
+    const commonName = typeof payload.commonName === 'string' ? payload.commonName.trim() : ''
+    if (!commonName || commonName.length > 255) throw new Error('A common name is required')
+    const altNames = Array.isArray(payload.altNames)
+      ? payload.altNames
+          .filter((name): name is string => typeof name === 'string')
+          .map((name) => name.trim())
+          .filter(Boolean)
+          .slice(0, 32)
+      : []
+    const days = typeof payload.days === 'number' ? payload.days : 365
+    let folder = process.env.NCC_CERTIFICATE_FOLDER?.trim() || ''
+    if (!folder) {
+      const result = await dialog.showOpenDialog(shellFor(event).window, {
+        title: 'Choose where to save the certificate and key',
+        properties: ['openDirectory', 'createDirectory']
+      })
+      folder = result.filePaths[0] ?? ''
+      if (result.canceled || !folder) return null
+    }
+    const generated = await generateSelfSignedCertificate({ commonName, altNames, days })
+    const paths = saveCertificateFiles(
+      folder,
+      `ncc-${commonName.replace(/[^a-zA-Z0-9.-]+/g, '-')}`,
+      generated.cert,
+      generated.key
+    )
+    return { ...generated.info, ...paths }
   })
   ipcMain.handle('ncc:hosting-verify-port', async (event, localPort: unknown) => {
     if (!fromChrome(event)) throw new Error('Services are only available to the browser chrome')
@@ -682,6 +755,23 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle('ncc:identity-generate', async () => {
     const status = await deps.identity.generateLocal()
     deps.passwords.onIdentityChanged()
+    resetCaches(deps)
+    return status
+  })
+  ipcMain.handle('ncc:identity-generate-ephemeral', () => {
+    const result = deps.identity.generateEphemeral()
+    resetCaches(deps)
+    return result
+  })
+  ipcMain.handle('ncc:identity-ephemeral-secret', () => deps.identity.ephemeralNsec())
+  ipcMain.handle('ncc:identity-save-ephemeral', async () => {
+    const status = await deps.identity.saveEphemeral()
+    deps.passwords.onIdentityChanged()
+    resetCaches(deps)
+    return status
+  })
+  ipcMain.handle('ncc:identity-clear-ephemeral', () => {
+    const status = deps.identity.clearEphemeral()
     resetCaches(deps)
     return status
   })

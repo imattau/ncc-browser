@@ -126,6 +126,9 @@ const api: NccApi = {
   hostingPortMappings: () => ipcRenderer.invoke('ncc:hosting-port-mappings'),
   hostingPublishOnion: (serviceId) => ipcRenderer.invoke('ncc:hosting-publish-onion', serviceId),
   hostingRemoveOnion: (serviceId) => ipcRenderer.invoke('ncc:hosting-remove-onion', serviceId),
+  hostingImportCertificate: () => ipcRenderer.invoke('ncc:hosting-import-certificate'),
+  hostingGenerateCertificate: (input) =>
+    ipcRenderer.invoke('ncc:hosting-generate-certificate', input),
   onHostingChanged: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, state: HostingState): void => listener(state)
     ipcRenderer.on('ncc:hosting-changed', handler)
@@ -259,6 +262,10 @@ const api: NccApi = {
   shareNostr: (comment) => ipcRenderer.invoke('ncc:share-nostr', comment),
   importIdentity: (secret) => ipcRenderer.invoke('ncc:identity-import', secret),
   generateIdentity: () => ipcRenderer.invoke('ncc:identity-generate'),
+  generateEphemeralIdentity: () => ipcRenderer.invoke('ncc:identity-generate-ephemeral'),
+  ephemeralIdentitySecret: () => ipcRenderer.invoke('ncc:identity-ephemeral-secret'),
+  saveEphemeralIdentity: () => ipcRenderer.invoke('ncc:identity-save-ephemeral'),
+  clearEphemeralIdentity: () => ipcRenderer.invoke('ncc:identity-clear-ephemeral'),
   removeIdentity: () => ipcRenderer.invoke('ncc:identity-remove'),
   identityConnectBunker: (url) => ipcRenderer.invoke('ncc:identity-connect-bunker', url),
   identityDisconnect: () => ipcRenderer.invoke('ncc:identity-disconnect'),

@@ -3,7 +3,7 @@
  * a NIP-46 remote signer are interchangeable.
  */
 
-import { generateSecretKey, type Event } from 'nostr-tools'
+import { generateSecretKey, nip19, type Event } from 'nostr-tools'
 import type { IdentityStatus } from '@shared/types'
 import {
   decryptNip04,
@@ -73,18 +73,27 @@ export class LocalIdentityProvider implements IdentityProvider {
 
 /** A generated NIP-07 identity held only for the lifetime of a private/Tor session. */
 export class EphemeralIdentityProvider implements IdentityProvider {
-  private readonly secret = generateSecretKey()
+  private readonly secret: Uint8Array
+
+  constructor(secret: Uint8Array = generateSecretKey()) {
+    this.secret = secret
+  }
+
+  getSecret(): Uint8Array {
+    return this.secret
+  }
 
   clear(): void {
     this.secret.fill(0)
   }
 
   status(): IdentityStatus {
+    const hexPubkey = hexPubkeyOf(this.secret)
     return {
       configured: true,
       mode: 'local',
-      npub: undefined,
-      hexPubkey: hexPubkeyOf(this.secret),
+      npub: nip19.npubEncode(hexPubkey),
+      hexPubkey,
       source: 'session',
       persisted: false,
       encryptionAvailable: false

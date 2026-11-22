@@ -28,6 +28,8 @@ import {
   parseRecipient,
   isLoopbackEndpoint,
   shareStatus,
+  certificateCoversHost,
+  type CertificateInfo,
   type HostedService,
   type HostingDraft,
   type HostingState,
@@ -45,7 +47,7 @@ import type {
   PortStatusEvent,
   ReachabilityReport
 } from '@shared/reachability'
-import type { IdentityStatus } from '@shared/types'
+import type { IdentityList, IdentityStatus } from '@shared/types'
 import { cn } from '../lib/cn'
 
 interface HostingSettingsProps {
@@ -53,6 +55,7 @@ interface HostingSettingsProps {
   initialDraft?: HostingDraft | null
   onDraftUsed?: () => void
   onOpenIdentity: () => void
+  onIdentityChange?: (status: IdentityStatus) => void
   onClose: () => void
 }
 
@@ -125,7 +128,14 @@ const ENDPOINT_CONFIDENCE_LABEL: Record<EndpointConfidence, string> = {
   unverified: 'unverified'
 }
 
-export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIdentity, onClose }: HostingSettingsProps) {
+export function HostingSettings({
+  identity,
+  initialDraft,
+  onDraftUsed,
+  onOpenIdentity,
+  onIdentityChange,
+  onClose
+}: HostingSettingsProps) {
   const [state, setState] = useState<HostingState | null>(null)
   const [draft, setDraft] = useState<DraftState | null>(null)
   const [busy, setBusy] = useState(false)
@@ -146,12 +156,23 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
   const [discovery, setDiscovery] = useState<ReachabilityReport | null>(null)
   const [discoveryBusy, setDiscoveryBusy] = useState(false)
   const [discoveryError, setDiscoveryError] = useState<string | null>(null)
+  const [discoveryPort, setDiscoveryPort] = useState('')
   const [externalChecks, setExternalChecks] = useState<'ask' | 'always' | 'never'>('ask')
   const [mapping, setMapping] = useState<PortMapping | null>(null)
   const [mappingBusy, setMappingBusy] = useState(false)
   const [verifyBusy, setVerifyBusy] = useState(false)
   const [networkChanges, setNetworkChanges] = useState<NetworkChange[]>([])
   const [portAlerts, setPortAlerts] = useState<PortStatusEvent[]>([])
+  const [certificateInfo, setCertificateInfo] = useState<CertificateInfo | null>(null)
+  const [certificatePaths, setCertificatePaths] = useState<{
+    certPath: string
+    keyPath: string
+  } | null>(null)
+  const [certificateBusy, setCertificateBusy] = useState(false)
+  const [identityBusy, setIdentityBusy] = useState(false)
+  const [ephemeralNsec, setEphemeralNsec] = useState<string | null>(null)
+  const [identityList, setIdentityList] = useState<IdentityList | null>(null)
+  const [addIdentityToList, setAddIdentityToList] = useState(true)
 
   const apply = useCallback((next: HostingState) => setState(next), [])
 
@@ -161,6 +182,9 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
       if (!alive) return
       setStrictAnchors(config.anchorRequired)
       setExternalChecks(config.externalAddressChecks ?? 'ask')
+    })
+    void window.ncc.identityList().then((list) => {
+      if (alive) setIdentityList(list)
     })
     void window.ncc.contactsState().then((state) => {
       if (!alive) return
@@ -258,28 +282,34 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
     }
   }
 
-  const discover = useCallback(async (seed: string, external = false): Promise<void> => {
-    const target = seed.trim()
-    if (!target) {
-      setDiscoveryError('Enter an endpoint (IP:port or URL) before discovering')
-      return
-    }
-    if (!normalizeEndpointSeed(target)) {
-      setDiscoveryError('Enter an endpoint as IP:port or http(s)://…')
-      return
-    }
-    setDiscoveryBusy(true)
-    setDiscoveryError(null)
-    try {
-      setDiscovery(
-        await window.ncc.hostingDiscoverEndpoints(target, external ? { external: true } : undefined)
-      )
-    } catch (discoverFailure) {
-      setDiscoveryError(errorMessage(discoverFailure))
-    } finally {
-      setDiscoveryBusy(false)
-    }
-  }, [])
+  const discover = useCallback(
+    async (
+      seed: string,
+      options: { external?: boolean; port?: number; secure?: boolean } = {}
+    ): Promise<void> => {
+      const target = seed.trim()
+      if (target && !normalizeEndpointSeed(target)) {
+        setDiscoveryError('Enter an endpoint as IP:port or http(s)://…')
+        return
+      }
+      setDiscoveryBusy(true)
+      setDiscoveryError(null)
+      try {
+        setDiscovery(
+          await window.ncc.hostingDiscoverEndpoints(target, {
+            ...(options.external ? { external: true } : {}),
+            ...(options.port === undefined ? {} : { port: options.port }),
+            ...(options.secure ? { secure: true } : {})
+          })
+        )
+      } catch (discoverFailure) {
+        setDiscoveryError(errorMessage(discoverFailure))
+      } finally {
+        setDiscoveryBusy(false)
+      }
+    },
+    []
+  )
 
   const localEndpoint = useMemo(() => {
     return discovery?.candidates.find((candidate) => candidate.kind === 'loopback') ?? null
@@ -349,6 +379,200 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
     }
   }
 
+  const refreshIdentities = async (): Promise<void> => {
+    try {
+      setIdentityList(await window.ncc.identityList())
+    } catch {
+      // keep the last known list
+    }
+  }
+
+  const selectIdentity = async (id: string): Promise<void> => {
+    if (!id || id === identity?.hexPubkey) return
+    if (
+      identity?.source === 'session' &&
+      !window.confirm('Switch identities and discard this one-off key? Copy its nsec first if you need it.')
+    ) {
+      return
+    }
+    setIdentityBusy(true)
+    setError(null)
+    try {
+      const status = await window.ncc.identitySelect(id)
+      setEphemeralNsec(null)
+      onIdentityChange?.(status)
+      await refreshIdentities()
+    } catch (identityError) {
+      setError(errorMessage(identityError))
+    } finally {
+      setIdentityBusy(false)
+    }
+  }
+
+  const createIdentity = async (): Promise<void> => {
+    if (
+      identity?.source === 'session' &&
+      !window.confirm('Replace this one-off identity? Copy its nsec first if you need it.')
+    ) {
+      return
+    }
+    setIdentityBusy(true)
+    setError(null)
+    try {
+      if (!addIdentityToList) {
+        const result = await window.ncc.generateEphemeralIdentity()
+        setEphemeralNsec(result.nsec)
+        onIdentityChange?.(result.status)
+      } else {
+        const status = await window.ncc.generateIdentity()
+        setEphemeralNsec(null)
+        onIdentityChange?.(status)
+      }
+      await refreshIdentities()
+    } catch (identityError) {
+      setError(errorMessage(identityError))
+    } finally {
+      setIdentityBusy(false)
+    }
+  }
+
+  const saveEphemeral = async (): Promise<void> => {
+    setIdentityBusy(true)
+    setError(null)
+    try {
+      const status = await window.ncc.saveEphemeralIdentity()
+      setEphemeralNsec(null)
+      onIdentityChange?.(status)
+      await refreshIdentities()
+    } catch (identityError) {
+      setError(errorMessage(identityError))
+    } finally {
+      setIdentityBusy(false)
+    }
+  }
+
+  const revealEphemeral = async (): Promise<void> => {
+    try {
+      const nsec = await window.ncc.ephemeralIdentitySecret()
+      if (nsec) setEphemeralNsec(nsec)
+    } catch (identityError) {
+      setError(errorMessage(identityError))
+    }
+  }
+
+  const discardEphemeral = async (): Promise<void> => {
+    setIdentityBusy(true)
+    try {
+      const status = await window.ncc.clearEphemeralIdentity()
+      setEphemeralNsec(null)
+      onIdentityChange?.(status)
+      await refreshIdentities()
+    } catch (identityError) {
+      setError(errorMessage(identityError))
+    } finally {
+      setIdentityBusy(false)
+    }
+  }
+
+  const applyCertificate = (info: CertificateInfo): void => {
+    setDraft((current) => {
+      if (!current) return current
+      const lines = current.endpoints
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+      if (lines.length === 0) {
+        setError('Add an endpoint before choosing a certificate')
+        return current
+      }
+      const uncovered: string[] = []
+      const pins: Record<string, string> = { ...current.pins }
+      const nextLines = lines.map((line) => {
+        const normalized = normalizeEndpointSeed(line)
+        if (!normalized) return line
+        try {
+          const url = new URL(normalized)
+          const host = url.hostname.replace(/^\[|\]$/g, '')
+          if (!certificateCoversHost(info, host)) {
+            uncovered.push(host)
+            return line
+          }
+          url.protocol = 'https:'
+          const secure = url.toString()
+          pins[secure] = info.pin
+          return secure
+        } catch {
+          return line
+        }
+      })
+      if (uncovered.length > 0) {
+        setError(
+          `The certificate does not name ${[...new Set(uncovered)].join(', ')}; those endpoints were left unchanged.`
+        )
+      }
+      return { ...current, endpoints: nextLines.join('\n'), pins }
+    })
+    setCertificateInfo(info)
+    setCertificatePaths(null)
+  }
+
+  const importCertificate = async (): Promise<void> => {
+    setCertificateBusy(true)
+    setError(null)
+    try {
+      const info = await window.ncc.hostingImportCertificate()
+      if (info) applyCertificate(info)
+    } catch (certificateError) {
+      setError(errorMessage(certificateError))
+    } finally {
+      setCertificateBusy(false)
+    }
+  }
+
+  const generateCertificate = async (): Promise<void> => {
+    if (!draft) return
+    const hosts = draft.endpoints
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .flatMap((line) => {
+        const normalized = normalizeEndpointSeed(line)
+        if (!normalized) return []
+        try {
+          return [new URL(normalized).hostname.replace(/^\[|\]$/g, '')]
+        } catch {
+          return []
+        }
+      })
+    const commonName = hosts[0]
+    if (!commonName) {
+      setError('Add an endpoint first so the certificate has a name')
+      return
+    }
+    setCertificateBusy(true)
+    setError(null)
+    try {
+      const generated = await window.ncc.hostingGenerateCertificate({
+        commonName,
+        altNames: [...new Set(hosts)]
+      })
+      if (generated) {
+        applyCertificate(generated)
+        setCertificatePaths({ certPath: generated.certPath, keyPath: generated.keyPath })
+      }
+    } catch (certificateError) {
+      setError(errorMessage(certificateError))
+    } finally {
+      setCertificateBusy(false)
+    }
+  }
+
+  const clearCertificate = (): void => {
+    setDraft((current) => (current ? { ...current, pins: {} } : current))
+    setCertificateInfo(null)
+    setCertificatePaths(null)
+  }
+
   const verifyMapping = async (): Promise<void> => {
     if (!mapping) return
     setVerifyBusy(true)
@@ -375,8 +599,23 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
         .split('\n')
         .map((line) => line.trim())
         .filter(Boolean)
-      const next = lines.includes(url) ? lines.filter((line) => line !== url) : [...lines, url]
-      return { ...current, endpoints: next.join('\n') }
+      const adding = !lines.includes(url)
+      const next = adding ? [...lines, url] : lines.filter((line) => line !== url)
+      const pins = { ...current.pins }
+      if (adding && certificateInfo) {
+        const normalized = normalizeEndpointSeed(url)
+        if (normalized) {
+          try {
+            const host = new URL(normalized).hostname.replace(/^\[|\]$/g, '')
+            if (certificateCoversHost(certificateInfo, host)) pins[url] = certificateInfo.pin
+          } catch {
+            // leave the candidate unpinned
+          }
+        }
+      } else if (!adding) {
+        delete pins[url]
+      }
+      return { ...current, endpoints: next.join('\n'), pins }
     })
   }
 
@@ -820,6 +1059,144 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
               void submit()
             }}
           >
+            {!draft.id ? (
+              <div data-service-identity className="rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-ink)]/40 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-ui-105 font-semibold text-[color:var(--color-text-strong)]">
+                      Signing identity
+                    </p>
+                    <p className="text-ui-95 leading-relaxed text-[color:var(--color-muted)]">
+                      The active identity signs this service. Pick an existing one, or create a new one.
+                    </p>
+                    {identityList && identityList.identities.length > 0 ? (
+                      <select
+                        data-service-identity-select
+                        value={identity?.source === 'session' ? 'session' : (identity?.hexPubkey ?? '')}
+                        disabled={identityBusy}
+                        onChange={(event) => void selectIdentity(event.target.value)}
+                        className="mt-1 w-full max-w-md rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-ink)] px-2 py-1 text-ui-11 text-[color:var(--color-text)] outline-none focus:border-[color:var(--color-accent)]"
+                      >
+                        {identity?.source === 'session' ? (
+                          <option value="session">
+                            One-off · {identity.npub ? shortIdentity(identity.npub) : 'session only'}
+                          </option>
+                        ) : null}
+                        {identityList.identities.map((entry) => (
+                          <option key={entry.id} value={entry.id}>
+                            {(entry.npub ? shortIdentity(entry.npub) : entry.id.slice(0, 12)) +
+                              ` · ${entry.mode}${entry.persisted ? '' : ' · session'}`}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <p className="mt-1 text-ui-105 text-[color:var(--color-muted)]">
+                        {identity?.npub ? shortIdentity(identity.npub) : 'No identity yet'}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <label className="flex cursor-pointer items-center gap-1.5 text-ui-95 text-[color:var(--color-muted)]">
+                      <input
+                        type="checkbox"
+                        checked={addIdentityToList}
+                        onChange={(event) => setAddIdentityToList(event.target.checked)}
+                        className="h-3.5 w-3.5 accent-[color:var(--color-accent)]"
+                      />
+                      Add to identity list
+                    </label>
+                    <button
+                      type="button"
+                      disabled={identityBusy}
+                      onClick={() => void createIdentity()}
+                      className="rounded-lg border border-[color:var(--color-line)] px-2.5 py-1 text-ui-105 text-[color:var(--color-text)] hover:bg-[color:var(--color-hover)] disabled:opacity-50"
+                    >
+                      New identity
+                    </button>
+                  </div>
+                </div>
+                {identity?.source === 'session' ? (
+                  <div className="mt-2 rounded-lg border border-[color:var(--color-warn)]/30 bg-[color:var(--color-warn)]/10 px-2 py-1.5">
+                    <p className="text-ui-95 text-[color:var(--color-muted)]">
+                      This one-off identity is not saved. Copy its nsec now if you may need to renew or
+                      share this service after the app closes. Discarding it leaves the service signed by
+                      a key you no longer have.
+                    </p>
+                    {ephemeralNsec ? (
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        <code className="min-w-0 break-all font-mono text-ui-95 text-[color:var(--color-text)]">
+                          {ephemeralNsec}
+                        </code>
+                        <button
+                          type="button"
+                          onClick={() => void copy('ephemeral-nsec', ephemeralNsec)}
+                          className="rounded border border-[color:var(--color-line)] px-1.5 py-0.5 text-ui-95 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)]"
+                        >
+                          {copied === 'ephemeral-nsec' ? 'copied' : 'Copy nsec'}
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => void revealEphemeral()}
+                        className="mt-1 rounded border border-[color:var(--color-line)] px-1.5 py-0.5 text-ui-95 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)]"
+                      >
+                        Show nsec
+                      </button>
+                    )}
+                    <div className="mt-1 flex flex-wrap items-center gap-3">
+                      <label
+                        className={cn(
+                          'flex items-center gap-1.5 text-ui-95',
+                          identityList?.identities.some(
+                            (entry) => entry.hexPubkey === identity?.hexPubkey
+                          )
+                            ? 'cursor-not-allowed text-[color:var(--color-faint)]'
+                            : 'cursor-pointer text-[color:var(--color-muted)]'
+                        )}
+                      >
+                        <input
+                          type="checkbox"
+                          data-add-one-off
+                          checked={Boolean(
+                            identityList?.identities.some(
+                              (entry) => entry.hexPubkey === identity?.hexPubkey
+                            )
+                          )}
+                          disabled={
+                            identityBusy ||
+                            Boolean(
+                              identityList?.identities.some(
+                                (entry) => entry.hexPubkey === identity?.hexPubkey
+                              )
+                            )
+                          }
+                          onChange={(event) => {
+                            if (event.target.checked) void saveEphemeral()
+                          }}
+                          className="h-3.5 w-3.5 accent-[color:var(--color-accent)]"
+                        />
+                        Add to identity list
+                        {identityList?.identities.some(
+                          (entry) => entry.hexPubkey === identity?.hexPubkey
+                        )
+                          ? ' (already added)'
+                          : ''}
+                      </label>
+                      <button
+                        type="button"
+                        disabled={identityBusy}
+                        onClick={() => void discardEphemeral()}
+                        className="rounded border border-[color:var(--color-line)] px-1.5 py-0.5 text-ui-95 text-[color:var(--color-muted)] hover:bg-[color:var(--color-danger)]/10 hover:text-[color:var(--color-danger)] disabled:opacity-50"
+                      >
+                        Discard one-off identity
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="block text-ui-105 text-[color:var(--color-muted)]">
                 Name
@@ -853,19 +1230,37 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
                   className="mt-1 w-full resize-y rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-ink)] px-2.5 py-1.5 font-mono text-ui-11 text-[color:var(--color-text)] outline-none focus:border-[color:var(--color-accent)]"
                 />
               </label>
-              <div className="mt-1.5 flex flex-wrap items-center gap-2">
+              <div className="mt-1.5 flex flex-wrap items-end gap-2">
+                <label className="text-ui-95 text-[color:var(--color-muted)]">
+                  Port
+                  <input
+                    type="number"
+                    min={1}
+                    max={65535}
+                    value={discoveryPort}
+                    onChange={(event) => setDiscoveryPort(event.target.value)}
+                    placeholder={Object.values(draft.pins).length ? '443' : '80'}
+                    className="ml-1.5 w-20 rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-ink)] px-2 py-1 font-mono text-ui-11 text-[color:var(--color-text)] outline-none focus:border-[color:var(--color-accent)]"
+                  />
+                </label>
                 <button
                   type="button"
                   data-discover-endpoints
                   disabled={discoveryBusy}
-                  onClick={() => void discover(draft.endpoints.split('\n')[0] ?? '')}
+                  onClick={() => {
+                    const port = Number(discoveryPort)
+                    void discover(draft.endpoints.split('\n')[0] ?? '', {
+                      ...(discoveryPort.trim() && Number.isInteger(port) ? { port } : {}),
+                      secure: Object.values(draft.pins).length > 0
+                    })
+                  }}
                   className="inline-flex items-center gap-1.5 rounded-lg border border-[color:var(--color-line)] px-2.5 py-1 text-ui-11 text-[color:var(--color-text)] hover:bg-[color:var(--color-hover)] disabled:opacity-50"
                 >
                   <Radar className={cn('h-3.5 w-3.5', discoveryBusy && 'animate-pulse')} />
                   {discoveryBusy ? 'Checking this machine…' : 'Find endpoints'}
                 </button>
                 <span className="text-ui-10 text-[color:var(--color-faint)]">
-                  Uses this page, local interfaces and the router only.
+                  Scans this machine and the router; checks the TLS pin and Tor status.
                 </span>
               </div>
               {discoveryError ? (
@@ -873,14 +1268,26 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
               ) : null}
               {discovery ? (
                 <div data-discovery className="mt-2 space-y-1.5 rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-ink)] p-2.5">
-                  <div className="flex items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="text-ui-10 font-semibold text-[color:var(--color-text-strong)]">
                       Detected endpoints
                     </span>
-                    <span className="font-mono text-ui-95 text-[color:var(--color-faint)]">
-                      {discovery.gateway.wanAddress
-                        ? `router WAN ${discovery.gateway.wanAddress} · ${discovery.gateway.wanClass}`
-                        : 'router WAN unknown'}
+                    <span className="flex flex-wrap items-center gap-2">
+                      <span
+                        className={cn(
+                          'rounded-full px-1.5 py-0.5 text-ui-95',
+                          discovery.torReady
+                            ? 'bg-[color:var(--color-ok)]/10 text-[color:var(--color-ok)]'
+                            : 'bg-[color:var(--color-hover)] text-[color:var(--color-muted)]'
+                        )}
+                      >
+                        {discovery.torReady ? 'Tor running' : 'Tor off'}
+                      </span>
+                      <span className="font-mono text-ui-95 text-[color:var(--color-faint)]">
+                        {discovery.gateway.wanAddress
+                          ? `router WAN ${discovery.gateway.wanAddress} · ${discovery.gateway.wanClass}`
+                          : 'router WAN unknown'}
+                      </span>
                     </span>
                   </div>
                   {discovery.candidates.length === 0 ? (
@@ -974,7 +1381,14 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
                           type="button"
                           data-check-public-address
                           disabled={discoveryBusy}
-                          onClick={() => void discover(draft.endpoints.split('\n')[0] ?? '', true)}
+                          onClick={() => {
+                            const port = Number(discoveryPort)
+                            void discover(draft.endpoints.split('\n')[0] ?? '', {
+                              external: true,
+                              ...(discoveryPort.trim() && Number.isInteger(port) ? { port } : {}),
+                              secure: Object.values(draft.pins).length > 0
+                            })
+                          }}
                           className="mt-1 rounded border border-[color:var(--color-line)] px-2 py-0.5 text-ui-95 text-[color:var(--color-text)] hover:bg-[color:var(--color-hover)] disabled:opacity-50"
                         >
                           Check public address
@@ -1041,6 +1455,74 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
                   </div>
                 </div>
               ) : null}
+            </div>
+
+            <div className="rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-field)] p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-ui-105 font-semibold text-[color:var(--color-text-strong)]">
+                    TLS certificate
+                  </p>
+                  <p className="text-ui-95 leading-relaxed text-[color:var(--color-muted)]">
+                    Pin the server&apos;s TLS key so recipients accept a self-signed certificate. Import
+                    an existing certificate, or generate a self-signed one and install it in your own
+                    server; the browser never terminates TLS for the service.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    data-import-certificate
+                    disabled={certificateBusy}
+                    onClick={() => void importCertificate()}
+                    className="rounded-lg border border-[color:var(--color-line)] px-2.5 py-1 text-ui-105 text-[color:var(--color-text)] hover:bg-[color:var(--color-hover)] disabled:opacity-50"
+                  >
+                    Import certificate
+                  </button>
+                  <button
+                    type="button"
+                    data-generate-certificate
+                    disabled={certificateBusy}
+                    onClick={() => void generateCertificate()}
+                    className="rounded-lg border border-[color:var(--color-line)] px-2.5 py-1 text-ui-105 text-[color:var(--color-text)] hover:bg-[color:var(--color-hover)] disabled:opacity-50"
+                  >
+                    {certificateBusy ? 'Working…' : 'Generate self-signed'}
+                  </button>
+                </div>
+              </div>
+              {Object.values(draft.pins).length > 0 ? (
+                <div className="mt-2 rounded-lg border border-[color:var(--color-ok)]/30 bg-[color:var(--color-ok)]/10 px-2 py-1.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-ui-95 text-[color:var(--color-ok)]">TLS pin set</span>
+                    <span className="min-w-0 break-all font-mono text-ui-95 text-[color:var(--color-muted)]">
+                      {Object.values(draft.pins)[0]}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={clearCertificate}
+                      className="ml-auto rounded border border-[color:var(--color-line)] px-1.5 py-0.5 text-ui-95 text-[color:var(--color-muted)] hover:bg-[color:var(--color-danger)]/10 hover:text-[color:var(--color-danger)]"
+                    >
+                      Remove pin
+                    </button>
+                  </div>
+                  {certificateInfo ? (
+                    <p className="mt-0.5 break-all text-ui-95 text-[color:var(--color-faint)]">
+                      {certificateInfo.subject} · valid to {certificateInfo.validTo}
+                      {certificateInfo.names.length ? ` · ${certificateInfo.names.join(', ')}` : ''}
+                    </p>
+                  ) : null}
+                  {certificatePaths ? (
+                    <p className="mt-0.5 break-all font-mono text-ui-95 text-[color:var(--color-faint)]">
+                      Saved {certificatePaths.certPath} and {certificatePaths.keyPath} (key 0600)
+                    </p>
+                  ) : null}
+                </div>
+              ) : (
+                <p className="mt-1 text-ui-95 text-[color:var(--color-faint)]">
+                  No pin. HTTPS endpoints use normal CA validation; plain HTTP endpoints need no
+                  certificate.
+                </p>
+              )}
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2">

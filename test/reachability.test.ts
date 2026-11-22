@@ -126,6 +126,22 @@ describe('interface candidates', () => {
     expect(candidates.find((candidate) => candidate.url.includes('2001:db8'))?.family).toBe('ipv6')
   })
 
+  it('discovers this machine without a seed and uses the chosen port', () => {
+    const { candidates } = interfaceCandidates('', interfaces, { port: 8080 })
+    expect(candidates).toContainEqual(
+      expect.objectContaining({ kind: 'loopback', url: 'http://127.0.0.1:8080/' })
+    )
+    expect(candidates).toContainEqual(
+      expect.objectContaining({ kind: 'lan', url: 'http://192.168.1.20:8080/' })
+    )
+  })
+
+  it('forces https when a certificate pin is configured', () => {
+    const { candidates } = interfaceCandidates('', interfaces, { port: 8443, secure: true })
+    expect(candidates.length).toBeGreaterThan(0)
+    expect(candidates.every((candidate) => candidate.url.startsWith('https://'))).toBe(true)
+  })
+
   it('derives candidates from a bare IP endpoint', () => {
     const { candidates } = interfaceCandidates('192.168.1.20:8080', interfaces)
     expect(candidates.find((candidate) => candidate.kind === 'lan')?.url).toBe(

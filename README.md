@@ -169,9 +169,11 @@ ncc://<your-npub>/<service>
 
 No domain, certificate or reverse proxy. The browser signs an NCC-05 locator, encrypts
 it to your own key by default, publishes it to your relays and renews it while it runs.
-**Publish this page** discovers endpoint candidates first: loopback, LAN addresses,
-global IPv6, the current HTTPS URL and any onion address, each with a confidence
-label. A local service can also be published as a **Tor onion endpoint**: the bundled
+**Publish this page** (or **Find endpoints**) discovers endpoint candidates from this
+machine's interfaces, the router and an optional page: loopback, LAN addresses, global
+IPv6, the current HTTPS URL and any onion address, each with a confidence label. A service can be signed by an existing identity or a new one, saved or one-off, and
+HTTPS endpoints can import or generate a certificate whose SPKI is pinned with `k`.
+A local service can also be published as a **Tor onion endpoint**: the bundled
 Tor creates it, the key is reused so the address is stable, and it is verified through
 the browser's own SOCKS proxy. That is the path that works behind CGNAT without a
 port forward. It also reads the router's WAN address over UPnP/NAT-PMP so CGNAT or double NAT

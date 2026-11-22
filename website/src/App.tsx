@@ -604,6 +604,14 @@ export function App() {
                   a: 'On a mapped port, “Check reachability” opens a TCP connection to the public address through a Tor exit node — an outside vantage point that needs no extra service. Success marks it reachable from the internet. While Tor runs, mappings are re-checked every ten minutes; two failures raise a Services alert with “Check again”. The mapping uses UPnP first and falls back to NAT-PMP, has a two-hour lease, and is removed when the browser quits.'
                 },
                 {
+                  q: 'Can a service use its own Nostr identity?',
+                  a: 'Yes. The Add service form lists your identities and lets you create another. One checkbox decides whether it is added to your identity list or used once for this session. A one-off key is shown as an nsec so you can save it; without it the service cannot be renewed or shared later. Publishing never creates an identity silently.'
+                },
+                {
+                  q: 'How do I use a self-signed certificate?',
+                  a: 'HTTPS endpoints support a `k` pin. Import an existing certificate to derive the pin, or generate a self-signed certificate and key for the endpoint hosts; the key is saved with 0600 permissions. Install the generated files in your own server, then the browser pins that exact key. The browser does not terminate TLS for the service.'
+                },
+                {
                   q: 'Where is the source?',
                   a: `The canonical repository is on GitHub. It is also mirrored as a Nostr git repository: the NIP-34 announcement is on relay.ngit.dev and the browser is at gitworkshop.dev. NostrHub is a second web index for the same repository.`
                 },

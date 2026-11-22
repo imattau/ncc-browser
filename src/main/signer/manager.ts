@@ -2,14 +2,14 @@
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { generateSecretKey } from 'nostr-tools'
+import { generateSecretKey, nip19 } from 'nostr-tools'
 import type { IdentityList, IdentityProfile, IdentityStatus, RelayEntry } from '@shared/types'
 import type { LocatorSigner } from '../ncc/resolver'
 import type { BunkerRelay } from './bunker-relay'
 import { hexPubkeyOf, parseSecretKey, secretKeyToHex } from './crypto'
 import type { IdentityStore } from './identity'
 import { parseBunker, RemoteIdentityProvider, type BunkerTarget } from './nip46'
-import { LocalIdentityProvider, type IdentityProvider } from './provider'
+import { EphemeralIdentityProvider, LocalIdentityProvider, type IdentityProvider } from './provider'
 import type { Nip46Session, Nip46SessionStore } from './session'
 
 export type RemoteFactory = (args: {
@@ -55,6 +55,8 @@ export class IdentityManager {
   private readonly profiles = new Map<string, ManagedIdentity>()
   private activeId: string | null = null
   private defaultId: string | null = null
+  /** A session-only identity created for a single service; never persisted. */
+  private ephemeral: EphemeralIdentityProvider | null = null
 
   constructor(private readonly deps: IdentityManagerDeps) {
     this.timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS
@@ -143,13 +145,63 @@ export class IdentityManager {
     return item
   }
 
-  relayEntries(): RelayEntry[] { return this.active()?.remote?.relayEntries() ?? [] }
+  relayEntries(): RelayEntry[] {
+    return this.ephemeral ? [] : (this.active()?.remote?.relayEntries() ?? [])
+  }
   provider(): IdentityProvider | null {
+    if (this.ephemeral) return this.ephemeral
     const item = this.active()
     if (!item) return null
     return item.remote ?? (item.local ? new LocalIdentityProvider(item.local) : null)
   }
   status(): IdentityStatus { return this.provider()?.status() ?? this.deps.local.status() }
+
+  /** Create a session-only identity for one service; returns its nsec once. */
+  generateEphemeral(): { status: IdentityStatus; nsec: string } {
+    this.ephemeral?.clear()
+    const provider = new EphemeralIdentityProvider()
+    this.ephemeral = provider
+    return {
+      status: provider.status(),
+      nsec: nip19.nsecEncode(provider.getSecret())
+    }
+  }
+
+  /** Promote the session-only identity into the saved identity list. */
+  async saveEphemeral(): Promise<IdentityStatus> {
+    if (!this.ephemeral) throw new Error('No one-off identity is active')
+    const secret = this.ephemeral.getSecret()
+    const id = hexPubkeyOf(secret)
+    let store = this.profiles.get(id)?.local
+    if (!store) store = await this.deps.localFactory?.(id)
+    if (!store) {
+      if (this.deps.local.status().configured) {
+        throw new Error('Multiple local identities are not available')
+      }
+      store = this.deps.local
+    }
+    await store.import(secretKeyToHex(secret))
+    this.profiles.set(id, { id, mode: 'local', local: store })
+    this.activeId = id
+    if (!this.defaultId) this.defaultId = id
+    this.ephemeral.clear()
+    this.ephemeral = null
+    this.persistProfiles()
+    this.deps.onRelayEntriesChanged?.(this.relayEntries())
+    return this.status()
+  }
+
+  /** Reveal the session-only nsec again, for the one-off warning panel. */
+  ephemeralNsec(): string | null {
+    return this.ephemeral ? nip19.nsecEncode(this.ephemeral.getSecret()) : null
+  }
+
+  /** Drop the session-only identity and return to the saved active one. */
+  clearEphemeral(): IdentityStatus {
+    this.ephemeral?.clear()
+    this.ephemeral = null
+    return this.status()
+  }
   activeLocalSecret(): Uint8Array | null { return this.active()?.local?.getSecret() ?? null }
 
   list(): IdentityList {
@@ -164,6 +216,8 @@ export class IdentityManager {
 
   async select(id: string): Promise<IdentityStatus> {
     this.require(id)
+    this.ephemeral?.clear()
+    this.ephemeral = null
     this.activeId = id
     this.persistProfiles()
     this.deps.onRelayEntriesChanged?.(this.relayEntries())
@@ -180,6 +234,8 @@ export class IdentityManager {
   }
 
   async connectRemote(bunkerUrl: string): Promise<IdentityStatus> {
+    this.ephemeral?.clear()
+    this.ephemeral = null
     const target = parseBunker(bunkerUrl)
     if (target.locators?.length) {
       if (!this.deps.resolveRelayLocator) throw new Error('NCC relay resolution is not available')
@@ -234,6 +290,8 @@ export class IdentityManager {
   }
 
   async importLocal(secret: string): Promise<IdentityStatus> {
+    this.ephemeral?.clear()
+    this.ephemeral = null
     const parsed = secret.trim()
     const key = parseSecretKey(parsed), id = hexPubkeyOf(key)
     let store = this.profiles.get(id)?.local
@@ -249,6 +307,8 @@ export class IdentityManager {
     return this.status()
   }
   async generateLocal(): Promise<IdentityStatus> {
+    this.ephemeral?.clear()
+    this.ephemeral = null
     const key = generateSecretKey(), id = hexPubkeyOf(key)
     const store = await this.deps.localFactory?.(id) ?? (!this.deps.local.status().configured ? this.deps.local : undefined)
     if (!store) throw new Error('Multiple local identities are not available')

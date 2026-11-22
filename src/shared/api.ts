@@ -23,6 +23,8 @@ import type {
   NsiteVerifyResult
 } from './nsite-publish'
 import type {
+  CertificateInfo,
+  GeneratedCertificate,
   HostingDraft,
   HostingOnionResult,
   HostingPublishResult,
@@ -181,7 +183,7 @@ export interface NccApi {
   hostingForgetReceived(id: string): Promise<HostingState>
   hostingDiscoverEndpoints(
     seedUrl: string,
-    options?: { external?: boolean }
+    options?: { external?: boolean; port?: number; secure?: boolean }
   ): Promise<ReachabilityReport>
   hostingMapPort(input: {
     localPort: number
@@ -206,6 +208,12 @@ export interface NccApi {
   onPortStatus(listener: (event: PortStatusEvent) => void): () => void
   hostingPublishOnion(serviceId: string): Promise<HostingOnionResult>
   hostingRemoveOnion(serviceId: string): Promise<HostingState>
+  hostingImportCertificate(): Promise<CertificateInfo | null>
+  hostingGenerateCertificate(input: {
+    commonName: string
+    altNames?: string[]
+    days?: number
+  }): Promise<GeneratedCertificate | null>
   onHostingChanged(listener: (state: HostingState) => void): () => void
   nsiteState(): Promise<NsitePublishState>
   nsitePickFolder(): Promise<NsiteFolderScan | null>
@@ -307,6 +315,10 @@ export interface NccApi {
   shareNostr(comment: string): Promise<{ accepted: number; relays: number; error?: string }>
   importIdentity(secret: string): Promise<IdentityStatus>
   generateIdentity(): Promise<IdentityStatus>
+  generateEphemeralIdentity(): Promise<{ status: IdentityStatus; nsec: string }>
+  ephemeralIdentitySecret(): Promise<string | null>
+  saveEphemeralIdentity(): Promise<IdentityStatus>
+  clearEphemeralIdentity(): Promise<IdentityStatus>
   removeIdentity(): Promise<IdentityStatus>
   identityConnectBunker(url: string): Promise<IdentityStatus>
   identityDisconnect(): Promise<IdentityStatus>
