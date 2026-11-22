@@ -49,7 +49,8 @@ function fakeHost() {
     selectTab: (id) => void calls.push(`select ${id}`),
     navigate: async () => undefined,
     history: async () => undefined,
-    contents: (id) => (id === 't1' ? contents : null)
+    contents: (id) => (id === 't1' ? contents : null),
+    tagAgentTab: (tabId, agentId) => void calls.push(`tag ${tabId} ${agentId}`)
   }
   return { host, calls, setDialog: (dialog: PendingDialogInfo | null) => (dialogState = dialog) }
 }
@@ -496,6 +497,84 @@ describe('ApprovalGate', () => {
     const result = reply?.result as { isError?: boolean; content: Array<{ text: string }> }
     expect(result.isError).toBe(true)
     expect(result.content[0]?.text).toContain('did not allow')
+  })
+
+  it('tracks sign-in grants independently of browsing grants', async () => {
+    const requests: Array<{ kind?: string; identity: string | null }> = []
+    const instance = new ApprovalGate(
+      {
+        request: async (request) => {
+          requests.push({ kind: request.kind, identity: request.identity })
+          return { allow: true, remember: true }
+        }
+      },
+      { agentId: 'a1', npub: 'npub1agent' }
+    )
+    expect(instance.agentId).toBe('a1')
+
+    expect(await instance.authorizeSign('https://a.test', 'getPublicKey')).toBe(true)
+    expect(instance.signGrants()).toEqual(['https://a.test'])
+    // Signing in to a site grants nothing about browsing it, and vice versa.
+    expect(instance.grants()).toEqual([])
+    await instance.authorize('https://a.test', 'click')
+    expect(instance.grants()).toEqual(['https://a.test'])
+
+    expect(requests[0]?.kind).toBe('automation-signer')
+    expect(requests[0]?.identity).toBe('npub1agent')
+    expect(requests[1]?.kind).toBe('automation')
+    expect(requests[1]?.identity).toBeNull()
+
+    instance.revokeSign('https://a.test')
+    expect(instance.signGrants()).toEqual([])
+    expect(instance.grants()).toEqual(['https://a.test'])
+  })
+})
+
+describe('tab_new', () => {
+  it("tags the new tab with the calling agent's id, when it has one", async () => {
+    const { host, calls } = fakeHost()
+    const agentGate: AutomationGate = { agentId: 'a1', authorize: async () => true }
+    const handler = new McpHandler(host, agentGate, { name: 't', version: '0' })
+    await handler.handle(rpc('tools/call', { name: 'tab_new', arguments: {} }))
+    expect(calls).toContain('tag t2 a1')
+  })
+
+  it('tags nothing for a gate with no owning agent', async () => {
+    const { host, calls } = fakeHost()
+    const handler = new McpHandler(host, allowAll, { name: 't', version: '0' })
+    await handler.handle(rpc('tools/call', { name: 'tab_new', arguments: {} }))
+    expect(calls.some((entry) => entry.startsWith('tag '))).toBe(false)
+  })
+})
+
+describe('createAgentSigner', () => {
+  it('signs and encrypts as the decoded identity', async () => {
+    const { createAgentSigner } = await import('../src/main/automation/agent-signer')
+    const { generateSecretKey, getPublicKey, nip19, verifyEvent } = await import('nostr-tools')
+    const secret = generateSecretKey()
+    const signer = createAgentSigner(nip19.nsecEncode(secret))
+
+    expect(signer.getPublicKey()).toBe(getPublicKey(secret))
+
+    const event = signer.signEvent({ kind: 1, created_at: 1700000000, tags: [], content: 'hi' })
+    expect(verifyEvent(event)).toBe(true)
+    expect(event.pubkey).toBe(getPublicKey(secret))
+
+    const peer = getPublicKey(generateSecretKey())
+    const ciphertext = signer.nip44Encrypt(peer, 'secret message')
+    expect(ciphertext).not.toContain('secret message')
+  })
+})
+
+describe('agent-tabs', () => {
+  it('tags a tab and looks the tag back up by the same object', async () => {
+    const { tagTab, agentIdForContents } = await import('../src/main/automation/agent-tabs')
+    const fakeContents = {} as import('electron').WebContents
+    const otherContents = {} as import('electron').WebContents
+    expect(agentIdForContents(fakeContents)).toBeNull()
+    tagTab(fakeContents, 'a1')
+    expect(agentIdForContents(fakeContents)).toBe('a1')
+    expect(agentIdForContents(otherContents)).toBeNull()
   })
 })
 

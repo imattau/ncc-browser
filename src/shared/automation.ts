@@ -8,6 +8,8 @@ export interface AgentSummary {
   passwordEntryId: string | null
   /** Sites this agent may currently act on without asking. */
   grants: string[]
+  /** Sites this agent may sign in to via NIP-07, as its own identity, without asking. */
+  signGrants: string[]
   /** The connect command with the nsec masked; null while the server isn't running. */
   maskedCommand: string | null
 }

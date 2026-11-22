@@ -164,6 +164,7 @@ export function AgentSettings() {
                   }
                   onRemove={() => void remove(agent.id)}
                   onRevoke={(site) => void run(() => window.ncc.automationRevoke(agent.id, site))}
+                  onRevokeSign={(site) => void run(() => window.ncc.automationRevokeSign(agent.id, site))}
                 />
               ))}
 
@@ -214,6 +215,7 @@ function AgentCard(props: {
   onRegenerate: () => void
   onRemove: () => void
   onRevoke: (site: string | null) => void
+  onRevokeSign: (site: string | null) => void
 }) {
   const { agent } = props
 
@@ -278,48 +280,72 @@ function AgentCard(props: {
         still needs your approval for each site.
       </p>
 
-      <div className="mt-3 border-t border-[color:var(--color-line)] pt-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-ui-11 font-semibold text-[color:var(--color-text-strong)]">
-            Sites this agent can use
-          </p>
-          <button
-            type="button"
-            disabled={props.busy || agent.grants.length === 0}
-            onClick={() => props.onRevoke(null)}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-[color:var(--color-line)] px-2.5 py-1.5 text-ui-11 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)] hover:text-[color:var(--color-text-strong)] disabled:opacity-40"
-          >
-            <ShieldOff className="h-3.5 w-3.5" />
-            Stop agent
-          </button>
-        </div>
-        {agent.grants.length === 0 ? (
-          <p className="mt-2 text-ui-105 text-[color:var(--color-muted)]">
-            None. Grants last until the browser quits.
-          </p>
-        ) : (
-          <ul className="mt-2 space-y-1.5">
-            {agent.grants.map((site) => (
-              <li
-                key={site}
-                className="flex items-center justify-between gap-2 rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-field)] px-2.5 py-1.5"
-              >
-                <span className="min-w-0 truncate font-mono text-ui-11 text-[color:var(--color-text-soft)]">
-                  {site}
-                </span>
-                <button
-                  type="button"
-                  disabled={props.busy}
-                  onClick={() => props.onRevoke(site)}
-                  className="shrink-0 text-ui-11 text-[color:var(--color-muted)] hover:text-[color:var(--color-text-strong)]"
-                >
-                  Revoke
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
+      <GrantsSection
+        title="Sites this agent can use"
+        emptyText="None. Grants last until the browser quits."
+        stopLabel="Stop agent"
+        sites={agent.grants}
+        busy={props.busy}
+        onRevoke={props.onRevoke}
+      />
+      <GrantsSection
+        title="Sites this agent can sign in to"
+        emptyText="None. The agent must ask before signing in anywhere, using its own Nostr identity."
+        stopLabel="Stop signing"
+        sites={agent.signGrants}
+        busy={props.busy}
+        onRevoke={props.onRevokeSign}
+      />
+    </div>
+  )
+}
+
+function GrantsSection(props: {
+  title: string
+  emptyText: string
+  stopLabel: string
+  sites: string[]
+  busy: boolean
+  onRevoke: (site: string | null) => void
+}) {
+  return (
+    <div className="mt-3 border-t border-[color:var(--color-line)] pt-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-ui-11 font-semibold text-[color:var(--color-text-strong)]">{props.title}</p>
+        <button
+          type="button"
+          disabled={props.busy || props.sites.length === 0}
+          onClick={() => props.onRevoke(null)}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-[color:var(--color-line)] px-2.5 py-1.5 text-ui-11 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)] hover:text-[color:var(--color-text-strong)] disabled:opacity-40"
+        >
+          <ShieldOff className="h-3.5 w-3.5" />
+          {props.stopLabel}
+        </button>
       </div>
+      {props.sites.length === 0 ? (
+        <p className="mt-2 text-ui-105 text-[color:var(--color-muted)]">{props.emptyText}</p>
+      ) : (
+        <ul className="mt-2 space-y-1.5">
+          {props.sites.map((site) => (
+            <li
+              key={site}
+              className="flex items-center justify-between gap-2 rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-field)] px-2.5 py-1.5"
+            >
+              <span className="min-w-0 truncate font-mono text-ui-11 text-[color:var(--color-text-soft)]">
+                {site}
+              </span>
+              <button
+                type="button"
+                disabled={props.busy}
+                onClick={() => props.onRevoke(site)}
+                className="shrink-0 text-ui-11 text-[color:var(--color-muted)] hover:text-[color:var(--color-text-strong)]"
+              >
+                Revoke
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }

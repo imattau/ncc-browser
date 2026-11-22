@@ -43,6 +43,7 @@ export function SignerPrompt({ request, onRespond, waiting = 0 }: SignerPromptPr
 
   const remote = request.mode === 'nip46'
   const agent = request.kind === 'automation'
+  const agentSignIn = request.kind === 'automation-signer'
   const paymentCardAuth = request.kind === 'payment-card-auth'
   const browserDevelopment = agent && request.service === 'browser://development'
 
@@ -51,7 +52,15 @@ export function SignerPrompt({ request, onRespond, waiting = 0 }: SignerPromptPr
       data-signer-prompt
       role="dialog"
       aria-modal="true"
-      aria-label={paymentCardAuth ? 'Confirm card fill' : agent ? 'Agent control request' : 'Signer request'}
+      aria-label={
+        paymentCardAuth
+          ? 'Confirm card fill'
+          : agent
+            ? 'Agent control request'
+            : agentSignIn
+              ? 'Agent sign-in request'
+              : 'Signer request'
+      }
       className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto bg-[color:var(--color-scrim-strong)] px-4 py-[9vh] backdrop-blur-sm"
     >
       <div
@@ -64,7 +73,15 @@ export function SignerPrompt({ request, onRespond, waiting = 0 }: SignerPromptPr
               {remote ? <Smartphone className="h-4 w-4" /> : <KeyRound className="h-4 w-4" />}
             </span>
             <div className="min-w-0">
-              <h2 className="text-ui-13 font-semibold text-[color:var(--color-text-strong)]">{paymentCardAuth ? 'Confirm card fill' : agent ? 'Agent control request' : 'Signer request'}</h2>
+              <h2 className="text-ui-13 font-semibold text-[color:var(--color-text-strong)]">
+                {paymentCardAuth
+                  ? 'Confirm card fill'
+                  : agent
+                    ? 'Agent control request'
+                    : agentSignIn
+                      ? 'Agent sign-in request'
+                      : 'Signer request'}
+              </h2>
               {waiting > 0 ? (
                 <p className="mt-0.5 text-ui-10 text-[color:var(--color-muted)]">
                   {waiting} more waiting
@@ -97,6 +114,8 @@ export function SignerPrompt({ request, onRespond, waiting = 0 }: SignerPromptPr
               ? browserDevelopment
                 ? 'An AI agent wants to inspect and operate browser settings and prompts.'
                 : `An AI agent wants to ${request.action}.`
+              : agentSignIn
+              ? `An agent wants to ${request.action}, using its own Nostr identity.`
               : `This service wants to ${request.action}.`}
           </h3>
 
@@ -121,7 +140,7 @@ export function SignerPrompt({ request, onRespond, waiting = 0 }: SignerPromptPr
                   : 'border-[color:var(--color-line)] text-[color:var(--color-muted)]'
               )}
             >
-              {MODE_LABEL[request.mode]}
+              {agentSignIn ? 'Agent identity' : MODE_LABEL[request.mode]}
             </span>
           </div>
           )}
@@ -145,6 +164,12 @@ export function SignerPrompt({ request, onRespond, waiting = 0 }: SignerPromptPr
                 submit forms. Allow it only for a task you started.
               </span>
               )
+            ) : agentSignIn ? (
+              <span>
+                The site will see the agent&apos;s own public key, not yours. It can sign
+                events and encrypt or decrypt messages as this identity on this site; it
+                cannot act as you.
+              </span>
             ) : (
             <span>
               Approve only if you trust this service. On `ncc://` addresses the npub is the
@@ -153,7 +178,7 @@ export function SignerPrompt({ request, onRespond, waiting = 0 }: SignerPromptPr
             </span>
             )}
           </p>
-          {request.ephemeral && !agent ? (
+          {request.ephemeral && !agent && !agentSignIn ? (
             <p className="mt-2 text-ui-105 leading-relaxed text-[color:var(--color-muted)]">
               This private/Tor tab forgets remembered permissions when it closes.
             </p>

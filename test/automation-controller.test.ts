@@ -186,6 +186,35 @@ describe('AutomationController', () => {
     expect(controller.state().agents.find((agent) => agent.id === b!.id)?.grants).toEqual([])
   })
 
+  it('tracks sign-in grants independently of browsing grants and other agents', async () => {
+    const { controller } = make()
+    await controller.setEnabled(true)
+    await controller.addAgent('A')
+    await controller.addAgent('B')
+    const [a, b] = controller.state().agents
+
+    const pubkey = await controller.authorizeAndSign(a!.id, 'https://example.com', 'see its public key', (signer) =>
+      signer.getPublicKey()
+    )
+    expect(pubkey).toMatch(/^[0-9a-f]{64}$/)
+    expect(controller.state().agents.find((agent) => agent.id === a!.id)?.signGrants).toEqual([
+      'https://example.com'
+    ])
+    expect(controller.state().agents.find((agent) => agent.id === a!.id)?.grants).toEqual([])
+    expect(controller.state().agents.find((agent) => agent.id === b!.id)?.signGrants).toEqual([])
+
+    controller.revokeSign(a!.id, 'https://example.com')
+    expect(controller.state().agents.find((agent) => agent.id === a!.id)?.signGrants).toEqual([])
+  })
+
+  it('refuses to sign for an agent that no longer exists', async () => {
+    const { controller } = make()
+    await controller.setEnabled(true)
+    await expect(
+      controller.authorizeAndSign('nope', 'https://example.com', 'x', (signer) => signer.getPublicKey())
+    ).rejects.toThrow('no longer exists')
+  })
+
   it('runs when forced even though the preference is off', async () => {
     const { controller } = make({ forced: true })
     await controller.sync()

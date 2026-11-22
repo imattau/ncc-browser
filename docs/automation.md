@@ -79,6 +79,21 @@ it and then repeat the call. Repeat calls reuse the same prompt.
 `NCC_AUTOMATION_AUTO_APPROVE=1` skips the prompt, for scripted tests only. **Stop agent**
 in Settings revokes every session grant at once; each site can also be revoked on its own.
 
+## Signing in as the agent
+
+A tab opened by `tab_new` belongs to the agent that opened it — not whatever the human
+has focused. If that site offers "Login with Nostr" (NIP-07), the page sees the agent's
+*own* identity, not the human's: `window.nostr.getPublicKey()` and friends there are
+answered using the agent's keypair, and the signed-in session is attributable to that
+agent specifically. Navigating or clicking on a tab the agent didn't open never does
+this — only `tab_new` decides which identity a tab's `window.nostr` resolves to.
+
+This is a second, independent approval track from site access: an agent allowed to
+*browse* a site is not automatically allowed to *sign in* there, and vice versa.
+Settings → Agent control shows a separate "Sites this agent can sign in to" list per
+agent, with its own **Stop signing** and per-site revoke, next to the existing browsing
+grants.
+
 ## Safety
 
 - Loopback only, bearer token required, requests carrying an `Origin` header (any web

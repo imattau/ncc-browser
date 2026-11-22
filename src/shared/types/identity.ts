@@ -83,7 +83,7 @@ export interface SignerRequest {
   /** Label for the remember control, e.g. "Always allow" or "Remember for this session". */
   rememberLabel?: string
   /** Additional browser-owned approval flows shown in the same trusted prompt. */
-  kind?: 'automation' | 'payment-card-auth'
+  kind?: 'automation' | 'automation-signer' | 'payment-card-auth'
 }
 
 export interface SignerDecision {

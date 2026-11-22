@@ -23,6 +23,9 @@ export function registerAutomationIpc(
   handle('ncc:automation-revoke', (agentId, site) =>
     controller.revoke(String(agentId), typeof site === 'string' ? site : null)
   )
+  handle('ncc:automation-revoke-sign', (agentId, site) =>
+    controller.revokeSign(String(agentId), typeof site === 'string' ? site : null)
+  )
   handle('ncc:automation-reveal-command', (agentId) => controller.revealCommand(String(agentId)))
   handle('ncc:automation-copy-command', (command) => {
     if (typeof command !== 'string' || !command) return false

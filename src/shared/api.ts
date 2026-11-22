@@ -316,6 +316,7 @@ export interface NccApi {
     id: string
   ): Promise<{ state: AutomationState; command: string | null; error: string | null }>
   automationRevoke(agentId: string, site: string | null): Promise<AutomationState>
+  automationRevokeSign(agentId: string, site: string | null): Promise<AutomationState>
   automationRevealCommand(agentId: string): Promise<string | null>
   automationCopyCommand(command: string): Promise<boolean>
   onAutomation(listener: (state: AutomationState) => void): () => void
