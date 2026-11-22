@@ -35,6 +35,7 @@ import {
   type ServiceShare
 } from '@shared/hosting'
 import { contactLabel, type ContactList, type ContactProfile } from '@shared/contacts'
+import { normalizeEndpointSeed } from '@shared/reachability'
 import type {
   EndpointCandidate,
   EndpointConfidence,
@@ -60,6 +61,8 @@ interface DraftState {
   title: string
   service: string
   endpoints: string
+  /** TLS pins from an existing service, keyed by endpoint URL. */
+  pins: Record<string, string>
   ttlDays: string
   visibility: HostingVisibility
   anchor: boolean
@@ -70,6 +73,7 @@ const EMPTY_DRAFT: DraftState = {
   title: '',
   service: '',
   endpoints: '',
+  pins: {},
   ttlDays: String(DEFAULT_HOSTED_TTL_SECONDS / 86_400),
   visibility: 'private',
   anchor: true,
@@ -257,7 +261,11 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
   const discover = useCallback(async (seed: string, external = false): Promise<void> => {
     const target = seed.trim()
     if (!target) {
-      setDiscoveryError('Open an http(s) page before discovering endpoints')
+      setDiscoveryError('Enter an endpoint (IP:port or URL) before discovering')
+      return
+    }
+    if (!normalizeEndpointSeed(target)) {
+      setDiscoveryError('Enter an endpoint as IP:port or http(s)://…')
       return
     }
     setDiscoveryBusy(true)
@@ -381,6 +389,11 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
       endpoints: initialDraft.endpoints
         .map((endpoint) => (typeof endpoint === 'string' ? endpoint : endpoint.url))
         .join('\n'),
+      pins: Object.fromEntries(
+        initialDraft.endpoints.flatMap((endpoint) =>
+          typeof endpoint !== 'string' && endpoint.k ? [[endpoint.url, endpoint.k]] : []
+        )
+      ),
       ttlDays: String(
         Math.max(1, Math.round((initialDraft.ttlSeconds ?? DEFAULT_HOSTED_TTL_SECONDS) / 86_400))
       ),
@@ -391,7 +404,7 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
     const seed = initialDraft.endpoints
       .map((endpoint) => (typeof endpoint === 'string' ? endpoint : endpoint.url))
       .find(Boolean)
-    if (seed && /^https?:\/\//i.test(seed)) void discover(seed)
+    if (seed && normalizeEndpointSeed(seed)) void discover(seed)
     onDraftUsed?.()
   }, [initialDraft, onDraftUsed, discover])
 
@@ -435,6 +448,9 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
       title: service.title,
       service: service.service,
       endpoints: service.endpoints.map((endpoint) => endpoint.url).join('\n'),
+      pins: Object.fromEntries(
+        service.endpoints.flatMap((endpoint) => (endpoint.k ? [[endpoint.url, endpoint.k]] : []))
+      ),
       ttlDays: String(Math.max(1, Math.round(service.ttlSeconds / 86_400))),
       visibility: service.visibility,
       anchor: service.anchor,
@@ -453,6 +469,10 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
       .split('\n')
       .map((line) => line.trim())
       .filter(Boolean)
+      .map((line) => {
+        const pin = draft.pins[line]
+        return pin ? { url: line, k: pin, priority: 1000 } : line
+      })
     if (!draft.title.trim()) return setError('Give the service a name')
     if (endpoints.length === 0) return setError('Add at least one endpoint')
     setBusy(true)
@@ -467,11 +487,25 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
         anchor: strictAnchors ? true : draft.anchor,
         notes: draft.notes
       }
+      const creating = !draft.id
       const next = draft.id
         ? await window.ncc.hostingUpdate(draft.id, payload)
         : await window.ncc.hostingCreate(payload)
       apply(next)
       setDraft(null)
+      if (creating && payload.visibility === 'private') {
+        // A new private service has no Share panel yet. Open it immediately so the
+        // contact list is visible without a second trip to the card.
+        const created = next.services.find(
+          (service) => !services.some((existing) => existing.id === service.id)
+        )
+        if (created) {
+          setSharing(created.id)
+          setShareRecipients([])
+          setShareResults([])
+          setShareFailures([])
+        }
+      }
     } catch (submitError) {
       setError(errorMessage(submitError))
     } finally {
@@ -735,8 +769,8 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
         <p className="mt-1 text-ui-115 leading-relaxed text-[color:var(--color-muted)]">
           Give a service you run an identity address. Publish it as{' '}
           <span className="font-mono text-[color:var(--color-text)]">ncc://&lt;your npub&gt;/&lt;service&gt;</span>{' '}
-          and share it with one person&apos;s npub. Private locators are encrypted, so relays carry the
-          hint but not the endpoint.
+          and share it with contacts from your Nostr follow list. Each recipient gets their own
+          encrypted link, so relays carry the share tag but not the endpoint.
         </p>
       </div>
 
@@ -1064,6 +1098,13 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
               />
             </label>
 
+            {draft.visibility === 'private' && !draft.id ? (
+              <p className="text-ui-10 leading-relaxed text-[color:var(--color-faint)]">
+                Adding a private service opens Share so you can pick contacts. Each recipient gets
+                their own encrypted link; a loopback-only service must be reachable first.
+              </p>
+            ) : null}
+
             <div className="flex items-center gap-2">
               <button
                 type="submit"
@@ -1097,6 +1138,7 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
           const serviceShares = shares.filter((share) => share.serviceId === service.id)
           const onion = (state.onions ?? []).find((entry) => entry.serviceId === service.id)
           const canOnion = service.endpoints.some((endpoint) => isLoopbackEndpoint(endpoint))
+          const canShare = service.endpoints.some((endpoint) => !isLoopbackEndpoint(endpoint))
           const expired = Boolean(
             service.lastPublishedAt && service.lastPublishedAt + service.ttlSeconds <= Math.floor(Date.now() / 1000)
           )
@@ -1276,6 +1318,12 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
                     Only this identity can decrypt the endpoint. The recipient can still reach it until
                     the share expires; rotate the endpoint to cut access.
                   </p>
+                  {!canShare ? (
+                    <p className="rounded border border-[color:var(--color-warn)]/30 bg-[color:var(--color-warn)]/10 px-2 py-1 text-ui-10 text-[color:var(--color-muted)]">
+                      This service only has a loopback endpoint. Add a LAN, public or .onion endpoint
+                      with Edit before creating links.
+                    </p>
+                  ) : null}
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-ui-10 font-medium text-[color:var(--color-text)]">Recipients from your contact list</p>
                     <button
@@ -1406,7 +1454,7 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
                     <button
                       type="button"
                       onClick={() => void createShare(service)}
-                      disabled={busy || shareRecipients.length === 0}
+                      disabled={busy || !canShare || shareRecipients.length === 0}
                       className="rounded-lg bg-[color:var(--color-accent)] px-3 py-1.5 text-ui-11 font-semibold text-[color:var(--color-on-accent)] disabled:opacity-50"
                     >
                       {shareRecipients.length > 1

@@ -34,6 +34,37 @@ export interface EndpointCandidate {
 
 export type WanClass = 'public' | 'private' | 'cgnat' | 'loopback' | 'link-local' | 'unknown'
 
+/**
+ * Accept the forms a publisher actually types: `https://host:port`, `host:port`,
+ * a bare IPv4 or a bare IPv6 address. A bare address has no TLS pin, so it defaults
+ * to http. An explicit https URL keeps https (which is what a `k`-pinned endpoint is).
+ */
+export function normalizeEndpointSeed(
+  input: string,
+  fallbackScheme: 'http' | 'https' = 'http'
+): string | null {
+  const value = input.trim()
+  if (!value) return null
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) {
+    try {
+      const url = new URL(value)
+      return url.protocol === 'http:' || url.protocol === 'https:' ? url.toString() : null
+    } catch {
+      return null
+    }
+  }
+  let candidate = value
+  if (!candidate.startsWith('[') && (candidate.match(/:/g)?.length ?? 0) > 1) {
+    candidate = `[${candidate}]`
+  }
+  try {
+    const url = new URL(`${fallbackScheme}://${candidate}`)
+    return url.hostname ? url.toString() : null
+  } catch {
+    return null
+  }
+}
+
 export interface GatewayReport {
   wanAddress?: string
   wanClass: WanClass

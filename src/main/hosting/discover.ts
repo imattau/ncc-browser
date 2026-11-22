@@ -11,6 +11,7 @@ import { execFileSync } from 'node:child_process'
 import { createSocket } from 'node:dgram'
 import { readFileSync } from 'node:fs'
 import { networkInterfaces, type NetworkInterfaceInfo } from 'node:os'
+import { normalizeEndpointSeed } from '@shared/reachability'
 import type {
   EndpointCandidate,
   EndpointKind,
@@ -131,9 +132,10 @@ function endpoint(
 }
 
 function parseSeed(seedUrl: string): URL | null {
+  const normalized = normalizeEndpointSeed(seedUrl)
+  if (!normalized) return null
   try {
-    const url = new URL(seedUrl)
-    return url.protocol === 'http:' || url.protocol === 'https:' ? url : null
+    return new URL(normalized)
   } catch {
     return null
   }

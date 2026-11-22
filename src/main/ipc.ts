@@ -28,6 +28,7 @@ import type { PublicAddressService } from './hosting/public-address'
 import type { PortMappingService } from './hosting/port-mapping'
 import type { NetworkWatch } from './hosting/network-watch'
 import { isLoopbackEndpoint, type HostingDraft } from '@shared/hosting'
+import { normalizeEndpointSeed } from '@shared/reachability'
 import { discoverReachability } from './hosting/discover'
 
 export interface IpcDeps {
@@ -307,7 +308,11 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle('ncc:hosting-discover-endpoints', async (event, seedUrl: unknown, options: unknown) => {
     if (!fromChrome(event)) throw new Error('Services are only available to the browser chrome')
     if (typeof seedUrl !== 'string' || !seedUrl.trim()) {
-      throw new Error('Open an http(s) page to discover its endpoint')
+      throw new Error('Enter an endpoint as IP:port or http(s)://…')
+    }
+    const seed = normalizeEndpointSeed(seedUrl)
+    if (!seed) {
+      throw new Error('Enter an endpoint as IP:port or http(s)://…')
     }
     const config = deps.config.get()
     const mode = config.externalAddressChecks ?? 'ask'
@@ -318,7 +323,7 @@ export function registerIpc(deps: IpcDeps): void {
     const torPreferred = config.preferTor === true
     const runExternal = !torPreferred && (explicit || mode === 'always')
     const report = await discoverReachability({
-      seedUrl: seedUrl.trim(),
+      seedUrl: seed,
       external: runExternal,
       ...(runExternal
         ? { lookupPublicAddress: () => deps.publicAddress.lookup(explicit) }

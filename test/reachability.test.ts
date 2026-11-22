@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { NetworkInterfaceInfo } from 'node:os'
+import { normalizeEndpointSeed } from '../src/shared/reachability'
 import {
   classifyWanAddress,
   discoverReachability,
@@ -27,6 +28,31 @@ function info(
   }
   return (family === 'IPv6' ? { ...base, scopeid: 0 } : base) as NetworkInterfaceInfo
 }
+
+describe('endpoint seed normalization', () => {
+  it('accepts bare IPs and host:port, defaulting to http', () => {
+    expect(normalizeEndpointSeed('192.168.1.20:8080')).toBe('http://192.168.1.20:8080/')
+    expect(normalizeEndpointSeed('192.168.1.20:8443', 'https')).toBe('https://192.168.1.20:8443/')
+    expect(normalizeEndpointSeed('localhost:5173')).toBe('http://localhost:5173/')
+    expect(normalizeEndpointSeed('[2001:db8::1]:8080')).toBe('http://[2001:db8::1]:8080/')
+    expect(normalizeEndpointSeed('2001:db8::1')).toBe('http://[2001:db8::1]/')
+  })
+
+  it('keeps an explicit scheme, including a pinned https endpoint', () => {
+    expect(normalizeEndpointSeed('https://192.168.1.20:8443')).toBe(
+      'https://192.168.1.20:8443/'
+    )
+    expect(normalizeEndpointSeed('http://192.168.1.20:8080')).toBe(
+      'http://192.168.1.20:8080/'
+    )
+  })
+
+  it('rejects other schemes and empty input', () => {
+    expect(normalizeEndpointSeed('ncc://npub1abc/photos')).toBeNull()
+    expect(normalizeEndpointSeed('javascript:alert(1)')).toBeNull()
+    expect(normalizeEndpointSeed('')).toBeNull()
+  })
+})
 
 describe('address classification', () => {
   it('separates private, CGNAT and public IPv4', () => {
@@ -98,6 +124,14 @@ describe('interface candidates', () => {
       'firewall-dependent'
     )
     expect(candidates.find((candidate) => candidate.url.includes('2001:db8'))?.family).toBe('ipv6')
+  })
+
+  it('derives candidates from a bare IP endpoint', () => {
+    const { candidates } = interfaceCandidates('192.168.1.20:8080', interfaces)
+    expect(candidates.find((candidate) => candidate.kind === 'lan')?.url).toBe(
+      'http://192.168.1.20:8080/'
+    )
+    expect(candidates.some((candidate) => candidate.kind === 'loopback')).toBe(true)
   })
 
   it('keeps the page scheme and path', () => {

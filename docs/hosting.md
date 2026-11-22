@@ -33,7 +33,7 @@ Settings → **Services** → **Add service**.
 | --- | --- |
 | Name | Human label shown in the browser. |
 | Service id | The `d` tag, e.g. `photos`. Lowercase letters, digits and hyphens. Immutable after creation. |
-| Endpoints | One or more `http://`, `https://` or `.onion` URLs. The first is the preferred endpoint; the resolver falls back in order. **Find endpoints** proposes candidates from the current page and this machine. |
+| Endpoints | One or more `http://`, `https://` or `.onion` URLs. A bare `IP:port` or `[IPv6]:port` is accepted and defaults to `http://`; an explicit `https://` keeps TLS (use it for a `k`-pinned endpoint). The first is preferred; the resolver falls back in order. **Find endpoints** proposes candidates from the typed endpoint, the current page and this machine. |
 | Visibility | **Private** encrypts the locator to you. **Public** publishes plaintext, so anyone with the address can resolve it. |
 | Locator lifetime | How long the signed hint is valid. Default 7 days, maximum 30. |
 | Anchor | Optional NCC-02 service record. A public service includes the endpoint; a private service omits `u` and anchors only the identity, expiry and optional `k`. |
@@ -89,13 +89,17 @@ reuses one share instead of piling up records. `share-` is reserved; service ids
 start with it. The resolver treats a `share-` service as exact-only: a missing or
 expired share never falls back to the owner's generic `addr` record.
 
+Adding a private service opens **Share** automatically so the contact list is right
+there. You can also open it later from the service card.
+
 To share:
 
 1. Open **Services**, choose a private service, and click **Share**.
 2. Choose one or more people from your Nostr follow list (kind 3), search by name,
    NIP-05 or npub, or paste an npub manually.
 3. Pick an expiry and click **Create links**. Each recipient gets their own
-   `ncc://…/share-…` link and their own no-`u` NCC-02 anchor.
+   `ncc://…/share-…` link and their own no-`u` NCC-02 anchor. A loopback-only
+   service must first gain a LAN, public or `.onion` endpoint.
 
 Choosing several people creates several locator records: NIP-44 has one conversation
 key per recipient, so a single ciphertext cannot address a group. The action is a batch
@@ -138,7 +142,10 @@ A share with no non-loopback endpoint is refused.
 
 Opening a page and choosing **Publish this page** (or clicking **Find endpoints** in
 the service form) fills the endpoint list from information that is already local. The
-service form shows each candidate with its source and a confidence label:
+seed can be a normal `http(s)://` page, a bare `IP:port`, an IPv4 address or a bracketed
+IPv6 address; a bare address defaults to `http://`, while an explicit `https://` keeps
+TLS (the form for a `k`-pinned endpoint). The service form shows each candidate with its
+source and a confidence label:
 
 | Candidate | Example | Confidence |
 | --- | --- | --- |
