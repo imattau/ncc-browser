@@ -1,5 +1,17 @@
 # Release notes
 
+## 0.39.1 — rediscover published sites
+
+### Fixed
+
+- **A previously published site no longer disappears from Sites.** The page only read
+  the local `nsite-sites.json` index. Opening Sites now queries the configured and
+  NIP-65 relays for the active identity's latest kind 15128/35128 manifests and rebuilds
+  missing entries. A **Find published** button runs the same lookup on demand.
+- **Removed sites stay removed.** Deleting a site records it in the index's hidden list,
+  so relay discovery does not bring it back. Republishing the same address clears the
+  hidden entry, and the page shows how many removed sites are hidden.
+
 ## 0.39.0 — service identities, TLS certificates and standalone discovery
 
 ### Added
