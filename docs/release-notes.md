@@ -1,5 +1,30 @@
 # Release notes
 
+## 0.40.0 — password health and per-tab transport
+
+### Added
+
+- **Password strength and vault health.** The add/edit login form now scores each
+  password locally, and Settings → Passwords can scan the unlocked vault for weak,
+  reused and stale entries against a configurable rotation window. Scoring never
+  leaves the machine or touches a relay.
+
+### Fixed
+
+- **Transport is tracked per tab.** A Tor tab showing an onion document no longer
+  marks a normal tab for the same service as “over Tor” — which also stopped that
+  tab's subresources from being fetched through Tor.
+- **Quitting keeps the open tabs.** The empty window written during shutdown no
+  longer replaces the real session, so the next launch does not restore a blank
+  window.
+
+### Changed
+
+- **Smaller, independently testable main-process modules.** The browser shell,
+  bootstrap, settings, wallet, hosting discovery and password vault were split
+  into focused modules, with import-boundary lint and 720 unit tests. Selectors,
+  visible text and shortcuts are unchanged.
+
 ## 0.39.3 — deletion requests for nsites
 
 ### Added
