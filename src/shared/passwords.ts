@@ -7,6 +7,7 @@
 
 import { parseNccAddress } from './ncc-url'
 import { parseNsiteAddress } from './nsite-url'
+import { scorePassword } from './password-strength'
 import type { PageMode, TabKind } from './types/base'
 import type { IdentityMode } from './types/identity'
 import type { SecurityInfo } from './types/ncc'
@@ -95,6 +96,8 @@ export interface PasswordConfig {
   allowNostrPaymentCardAuth: boolean
   /** Make Nostr signer confirmation the default when card autofill is requested. */
   defaultNostrPaymentCardAuth: boolean
+  /** Entries older than this flag as due for rotation in the health report. 0 disables the check. */
+  rotationDays: number
 }
 
 export const DEFAULT_PASSWORD_CONFIG: PasswordConfig = {
@@ -107,7 +110,8 @@ export const DEFAULT_PASSWORD_CONFIG: PasswordConfig = {
   fillPaymentCards: true,
   savePaymentCardSecurityCodes: false,
   allowNostrPaymentCardAuth: false,
-  defaultNostrPaymentCardAuth: false
+  defaultNostrPaymentCardAuth: false,
+  rotationDays: 365
 }
 
 export function normalizePasswordConfig(input: unknown): PasswordConfig {
@@ -133,7 +137,11 @@ export function normalizePasswordConfig(input: unknown): PasswordConfig {
     fillPaymentCards: typeof value.fillPaymentCards === 'boolean' ? value.fillPaymentCards : true,
     savePaymentCardSecurityCodes: typeof value.savePaymentCardSecurityCodes === 'boolean' ? value.savePaymentCardSecurityCodes : false,
     allowNostrPaymentCardAuth: value.allowNostrPaymentCardAuth === true,
-    defaultNostrPaymentCardAuth: value.allowNostrPaymentCardAuth === true && value.defaultNostrPaymentCardAuth === true
+    defaultNostrPaymentCardAuth: value.allowNostrPaymentCardAuth === true && value.defaultNostrPaymentCardAuth === true,
+    rotationDays:
+      typeof value.rotationDays === 'number' && Number.isFinite(value.rotationDays)
+        ? Math.max(0, Math.min(3650, Math.round(value.rotationDays)))
+        : DEFAULT_PASSWORD_CONFIG.rotationDays
   }
 }
 
@@ -157,6 +165,26 @@ export interface PasswordVaultStatus {
   useNip65: boolean
   vaultRelay: string
   neverSave: string[]
+  rotationDays: number
+}
+
+/** One vault entry flagged by the local health scan. An entry may carry more than one flag. */
+export interface PasswordHealthEntry {
+  id: string
+  title: string
+  origin: string
+  username: string
+  weak: boolean
+  reused: boolean
+  old: boolean
+}
+
+export interface PasswordHealthReport {
+  scannedAt: number
+  weakCount: number
+  reusedCount: number
+  oldCount: number
+  entries: PasswordHealthEntry[]
 }
 
 export interface PasswordContext {
@@ -533,6 +561,53 @@ export function passwordVaultFilter(pubkey: string): {
     '#d': [PASSWORD_VAULT_D],
     limit: 10
   }
+}
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000
+
+/**
+ * Local-only scan for weak, reused, and stale passwords. No network access and no
+ * dictionary beyond the small list in password-strength; nothing here leaves the vault.
+ */
+export function scanVaultHealth(
+  vault: PasswordVault,
+  now: number,
+  rotationDays: number
+): PasswordHealthReport {
+  const candidates = activeEntries(vault).filter((entry) => !entry.passkey && entry.password.length > 0)
+
+  const countsByPassword = new Map<string, number>()
+  for (const entry of candidates) {
+    countsByPassword.set(entry.password, (countsByPassword.get(entry.password) ?? 0) + 1)
+  }
+
+  const entries: PasswordHealthEntry[] = []
+  let weakCount = 0
+  let reusedCount = 0
+  let oldCount = 0
+
+  for (const entry of candidates) {
+    const weak = scorePassword(entry.password).score <= 1
+    const reused = (countsByPassword.get(entry.password) ?? 0) > 1
+    const old = rotationDays > 0 && now - entry.updatedAt > rotationDays * MS_PER_DAY
+    if (!weak && !reused && !old) continue
+
+    if (weak) weakCount += 1
+    if (reused) reusedCount += 1
+    if (old) oldCount += 1
+    entries.push({
+      id: entry.id,
+      title: entry.title,
+      origin: entry.origin,
+      username: entry.username,
+      weak,
+      reused,
+      old
+    })
+  }
+
+  entries.sort((a, b) => Number(b.weak) - Number(a.weak) || Number(b.reused) - Number(a.reused))
+  return { scannedAt: now, weakCount, reusedCount, oldCount, entries }
 }
 
 /** Validate an import/export origin string and normalize it. */

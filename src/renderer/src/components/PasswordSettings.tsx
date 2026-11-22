@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  AlertTriangle,
   Copy,
   Download,
   Eye,
@@ -9,6 +10,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  Repeat,
   Search,
   ShieldAlert,
   ShieldCheck,
@@ -23,11 +25,14 @@ import type { IdentityStatus } from '@shared/types'
 import type {
   PasswordDraft,
   PasswordEntry,
+  PasswordHealthEntry,
+  PasswordHealthReport,
   PasswordImportPreview,
   PasswordSummary,
   PasswordTotpCode,
   PasswordVaultStatus
 } from '@shared/passwords'
+import { scorePassword } from '@shared/password-strength'
 import { cn } from '../lib/cn'
 import { messageOf } from '../lib/format'
 import { PaymentCardsSettings } from './PaymentCardsSettings'
@@ -47,6 +52,14 @@ const AUTO_LOCK_OPTIONS = [
   { value: 60, label: '1 hour' }
 ]
 
+const ROTATION_OPTIONS = [
+  { value: 0, label: 'Never' },
+  { value: 90, label: '90 days' },
+  { value: 180, label: '6 months' },
+  { value: 365, label: '1 year' },
+  { value: 730, label: '2 years' }
+]
+
 export function PasswordSettings({
   identity,
   draftOrigin,
@@ -55,6 +68,7 @@ export function PasswordSettings({
 }: PasswordSettingsProps) {
   const [status, setStatus] = useState<PasswordVaultStatus | null>(null)
   const [entries, setEntries] = useState<PasswordSummary[]>([])
+  const [health, setHealth] = useState<PasswordHealthReport | null>(null)
   const [search, setSearch] = useState('')
   const [busy, setBusy] = useState(false)
   const [syncing, setSyncing] = useState(false)
@@ -80,8 +94,10 @@ export function PasswordSettings({
     setStatus(next)
     if (next.unlocked) {
       setEntries(await window.ncc.passwordsList())
+      setHealth(await window.ncc.passwordsHealth())
     } else {
       setEntries([])
+      setHealth(null)
     }
     setRelayDraft((current) => current || next.vaultRelay)
   }, [])
@@ -90,15 +106,19 @@ export function PasswordSettings({
     void refresh().catch((loadError) => setError(messageOf(loadError)))
     return window.ncc.onPasswordStatus((next) => {
       setStatus(next)
-      if (!next.unlocked) setEntries([])
+      if (!next.unlocked) {
+        setEntries([])
+        setHealth(null)
+      }
     })
   }, [refresh])
 
   useEffect(() => {
     if (status?.unlocked) {
       void window.ncc.passwordsList().then(setEntries).catch(() => undefined)
+      void window.ncc.passwordsHealth().then(setHealth).catch(() => undefined)
     }
-  }, [status?.unlocked, status?.lastSyncedAt])
+  }, [status?.unlocked, status?.lastSyncedAt, status?.rotationDays])
 
   useEffect(() => {
     if (!draftOrigin) return
@@ -135,6 +155,7 @@ export function PasswordSettings({
   const lock = async (): Promise<void> => {
     setStatus(await window.ncc.passwordsLock())
     setEntries([])
+    setHealth(null)
     setRevealed(null)
     setShowForm(false)
     setEditing(null)
@@ -198,6 +219,7 @@ export function PasswordSettings({
       setNotice(result.pending ? 'Saved locally; relay sync will retry.' : 'Login saved.')
       if (result.status) setStatus(result.status)
       setEntries(await window.ncc.passwordsList())
+      setHealth(await window.ncc.passwordsHealth())
     } finally {
       setBusy(false)
     }
@@ -218,6 +240,7 @@ export function PasswordSettings({
         return
       }
       setEntries(await window.ncc.passwordsList())
+      setHealth(await window.ncc.passwordsHealth())
       setRevealed((current) => (current?.id === id ? null : current))
       setNotice('Login deleted.')
     } finally {
@@ -309,6 +332,7 @@ export function PasswordSettings({
       setNotice('Passwords imported.')
       if (result.status) setStatus(result.status)
       setEntries(await window.ncc.passwordsList())
+      setHealth(await window.ncc.passwordsHealth())
     } finally {
       setBusy(false)
     }
@@ -459,6 +483,8 @@ export function PasswordSettings({
 
       {status?.unlocked ? (
         <>
+          <PasswordHealthPanel health={health} onEdit={(id) => void startEdit(id)} />
+
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative min-w-[180px] flex-1">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[color:var(--color-faint)]" />
@@ -584,6 +610,22 @@ export function PasswordSettings({
                   className="rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-field)] px-2.5 py-1.5 text-ui-11 text-[color:var(--color-text)]"
                 >
                   {AUTO_LOCK_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex flex-col gap-1 text-ui-11 text-[color:var(--color-muted)]">
+                Flag passwords as stale after
+                <select
+                  value={status?.rotationDays ?? 365}
+                  onChange={(event) =>
+                    void updateConfig({ rotationDays: Number(event.target.value) })
+                  }
+                  className="rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-field)] px-2.5 py-1.5 text-ui-11 text-[color:var(--color-text)]"
+                >
+                  {ROTATION_OPTIONS.map((option) => (
                     <option key={option.value} value={option.value}>
                       {option.label}
                     </option>
@@ -765,6 +807,92 @@ function Heading() {
   )
 }
 
+function PasswordHealthPanel({
+  health,
+  onEdit
+}: {
+  health: PasswordHealthReport | null
+  onEdit: (id: string) => void
+}) {
+  const [expanded, setExpanded] = useState(false)
+  if (!health || health.entries.length === 0) return null
+
+  return (
+    <div className="rounded-xl border border-[color:var(--color-warn)]/30 bg-[color:var(--color-warn)]/5 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="flex items-start gap-2">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[color:var(--color-warn)]" />
+          <div>
+            <p className="text-ui-12 font-semibold text-[color:var(--color-text-strong)]">
+              Password health
+            </p>
+            <p className="mt-0.5 text-ui-105 text-[color:var(--color-muted)]">
+              {[
+                health.weakCount > 0 ? `${health.weakCount} weak` : null,
+                health.reusedCount > 0 ? `${health.reusedCount} reused` : null,
+                health.oldCount > 0 ? `${health.oldCount} due for rotation` : null
+              ]
+                .filter(Boolean)
+                .join(' · ')}
+            </p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => setExpanded((current) => !current)}
+          className="text-ui-105 text-[color:var(--color-accent)] hover:underline"
+        >
+          {expanded ? 'Hide' : 'Review'}
+        </button>
+      </div>
+
+      {expanded ? (
+        <ul className="mt-3 space-y-1.5">
+          {health.entries.map((entry) => (
+            <li
+              key={entry.id}
+              className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] px-2.5 py-1.5"
+            >
+              <div className="min-w-0">
+                <p className="truncate text-ui-105 font-medium text-[color:var(--color-text-strong)]">
+                  {entry.title || entry.origin}
+                </p>
+                <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-ui-9 text-[color:var(--color-muted)]">
+                  {healthFlags(entry)}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => onEdit(entry.id)}
+                className="shrink-0 rounded-lg border border-[color:var(--color-line)] px-2 py-1 text-ui-9 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)] hover:text-[color:var(--color-text-strong)]"
+              >
+                Edit
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  )
+}
+
+function healthFlags(entry: PasswordHealthEntry): React.ReactNode {
+  const flags: Array<{ key: string; label: string; icon: React.ReactNode }> = []
+  if (entry.weak) flags.push({ key: 'weak', label: 'Weak', icon: <AlertTriangle className="h-3 w-3" /> })
+  if (entry.reused) flags.push({ key: 'reused', label: 'Reused', icon: <Repeat className="h-3 w-3" /> })
+  if (entry.old) flags.push({ key: 'old', label: 'Due for rotation', icon: <RefreshCw className="h-3 w-3" /> })
+  return (
+    <>
+      {flags.map((flag) => (
+        <span key={flag.key} className="inline-flex items-center gap-1">
+          {flag.icon}
+          {flag.label}
+        </span>
+      ))}
+    </>
+  )
+}
+
 function PasswordForm({
   draft,
   editing,
@@ -852,6 +980,7 @@ function PasswordForm({
               <Wand2 className="h-3.5 w-3.5" />
             </button>
           </div>
+          <PasswordStrengthMeter password={draft.password} />
         </Field>
         <Field label="2FA secret or otpauth:// URI">
           <input
@@ -901,6 +1030,39 @@ function PasswordForm({
 
 const inputClass =
   'w-full rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-field)] px-2.5 py-1.5 text-ui-11 text-[color:var(--color-text)] outline-none placeholder:text-[color:var(--color-faint)] focus:border-[color:var(--color-accent)]/60'
+
+const STRENGTH_BAR_COLOR = [
+  'bg-[color:var(--color-danger)]',
+  'bg-[color:var(--color-danger)]',
+  'bg-[color:var(--color-warn)]',
+  'bg-[color:var(--color-ok)]',
+  'bg-[color:var(--color-ok)]'
+]
+
+function PasswordStrengthMeter({ password }: { password: string }) {
+  if (!password) return null
+  const strength = scorePassword(password)
+  const filledBars = Math.min(strength.score + 1, 4)
+  return (
+    <div className="mt-1.5" data-password-strength={strength.score}>
+      <div className="flex gap-1">
+        {[0, 1, 2, 3].map((segment) => (
+          <span
+            key={segment}
+            className={cn(
+              'h-1 flex-1 rounded-full bg-[color:var(--color-line)]',
+              segment < filledBars && STRENGTH_BAR_COLOR[strength.score]
+            )}
+          />
+        ))}
+      </div>
+      <p className="mt-1 text-ui-9 text-[color:var(--color-muted)]">
+        {strength.label}
+        {strength.warning ? ` · ${strength.warning}` : ''}
+      </p>
+    </div>
+  )
+}
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (

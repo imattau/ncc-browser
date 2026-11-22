@@ -72,6 +72,7 @@ import type {
   PasswordExportResult,
   PasswordFillResult,
   PasswordGeneratorOptions,
+  PasswordHealthReport,
   PasswordImportPreview,
   PasswordSaveRequest,
   PasswordSaveResult,
@@ -244,6 +245,7 @@ export interface NccApi {
   passwordsUnlock(): Promise<PasswordVaultStatus>
   passwordsLock(): Promise<PasswordVaultStatus>
   passwordsList(): Promise<PasswordSummary[]>
+  passwordsHealth(): Promise<PasswordHealthReport>
   passwordsEntry(id: string): Promise<PasswordEntry | null>
   passwordsReveal(id: string): Promise<string>
   passwordsTotp(id: string): Promise<PasswordTotpCode>
