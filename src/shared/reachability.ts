@@ -70,14 +70,26 @@ export interface PublicAddressResult {
   checkedAt: number
 }
 
+export interface NetworkChange {
+  at: number
+  interface: string
+  family: 'ipv4' | 'ipv6'
+  from: string
+  to: string
+}
+
 /** A router port mapping created for a local service endpoint. */
 export interface PortMapping {
   localPort: number
   externalPort: number
   protocol: 'TCP'
+  /** Which local router protocol created it. */
+  method: 'upnp' | 'natpmp'
   internalClient: string
   externalAddress: string
   url: string
   description?: string
   createdAt: number
+  /** Unix seconds when an external check proved the port reachable. */
+  verifiedAt?: number
 }

@@ -14,9 +14,14 @@ import type { PortMapping } from '@shared/reachability'
 import {
   addUpnpPortMapping,
   classifyWanAddress,
+  defaultGateway,
   deleteUpnpPortMapping,
   findUpnpGateway,
+  natPmpDeletePort,
+  natPmpExternalAddress,
+  natPmpMapPort,
   upnpExternalAddressOn,
+  type NatPmpMapRequest,
   type UpnpGateway
 } from './discover'
 
@@ -32,6 +37,10 @@ export interface PortMappingOptions {
   externalAddress?: (gateway: UpnpGateway) => Promise<string | null>
   addMapping?: typeof addUpnpPortMapping
   deleteMapping?: typeof deleteUpnpPortMapping
+  defaultGateway?: () => string | null
+  natPmpExternal?: (gateway: string, timeoutMs: number) => Promise<string | null>
+  natPmpMap?: (gateway: string, request: NatPmpMapRequest, timeoutMs?: number) => Promise<number>
+  natPmpDelete?: (gateway: string, externalPort: number, timeoutMs?: number) => Promise<number>
   interfaces?: () => NodeJS.Dict<NetworkInterfaceInfo[]>
   log?: (line: string) => void
 }
@@ -85,6 +94,10 @@ export class PortMappingService {
   private readonly externalAddress: (gateway: UpnpGateway) => Promise<string | null>
   private readonly addMapping: typeof addUpnpPortMapping
   private readonly deleteMapping: typeof deleteUpnpPortMapping
+  private readonly defaultGateway: () => string | null
+  private readonly natPmpExternal: (gateway: string, timeoutMs: number) => Promise<string | null>
+  private readonly natPmpMap: (gateway: string, request: NatPmpMapRequest, timeoutMs?: number) => Promise<number>
+  private readonly natPmpDelete: (gateway: string, externalPort: number, timeoutMs?: number) => Promise<number>
   private readonly interfaces: () => NodeJS.Dict<NetworkInterfaceInfo[]>
 
   constructor(private readonly options: PortMappingOptions) {
@@ -93,6 +106,10 @@ export class PortMappingService {
     this.externalAddress = options.externalAddress ?? ((gateway) => upnpExternalAddressOn(gateway))
     this.addMapping = options.addMapping ?? addUpnpPortMapping
     this.deleteMapping = options.deleteMapping ?? deleteUpnpPortMapping
+    this.defaultGateway = options.defaultGateway ?? defaultGateway
+    this.natPmpExternal = options.natPmpExternal ?? natPmpExternalAddress
+    this.natPmpMap = options.natPmpMap ?? natPmpMapPort
+    this.natPmpDelete = options.natPmpDelete ?? natPmpDeletePort
     this.interfaces = options.interfaces ?? networkInterfaces
     this.mappings = load(options.filePath)
   }
@@ -115,51 +132,94 @@ export class PortMappingService {
     if (!internalClient) {
       throw new PortMappingError('No private IPv4 interface is available to forward to')
     }
-    const gateway = await this.findGateway(4000)
-    if (!gateway) {
-      throw new PortMappingError(
-        'No UPnP router answered. Forward the port manually, or use a Tor onion endpoint.'
-      )
-    }
-    const externalAddress = gateway.externalAddress ?? (await this.externalAddress(gateway))
-    if (!externalAddress) {
-      throw new PortMappingError('The router did not report a public WAN address')
-    }
-    if (classifyWanAddress(externalAddress) !== 'public') {
-      throw new PortMappingError(
-        `The router WAN address ${externalAddress} is not public; a port mapping cannot make it reachable.`
-      )
-    }
-
     const externalPort = validatePort(input.externalPort ?? localPort)
-    try {
-      await this.addMapping(gateway, {
-        externalPort,
-        internalPort: localPort,
-        internalClient,
-        protocol: 'TCP',
-        description: input.description?.slice(0, 64) ?? 'Nostr Navigator',
-        leaseSeconds: 7200
-      })
-    } catch (error) {
-      throw new PortMappingError(
-        `The router refused the port mapping: ${error instanceof Error ? error.message : String(error)}`
-      )
+    let method: PortMapping['method']
+    let externalAddress: string
+    let grantedPort = externalPort
+
+    const upnp = await this.findGateway(4000)
+    if (upnp) {
+      const address = upnp.externalAddress ?? (await this.externalAddress(upnp))
+      if (!address) {
+        throw new PortMappingError('The router did not report a public WAN address')
+      }
+      if (classifyWanAddress(address) !== 'public') {
+        throw new PortMappingError(
+          `The router WAN address ${address} is not public; a port mapping cannot make it reachable.`
+        )
+      }
+      try {
+        await this.addMapping(upnp, {
+          externalPort,
+          internalPort: localPort,
+          internalClient,
+          protocol: 'TCP',
+          description: input.description?.slice(0, 64) ?? 'Nostr Navigator',
+          leaseSeconds: 7200
+        })
+      } catch (error) {
+        throw new PortMappingError(
+          `The router refused the port mapping: ${error instanceof Error ? error.message : String(error)}`
+        )
+      }
+      method = 'upnp'
+      externalAddress = address
+    } else {
+      const gateway = this.defaultGateway()
+      if (!gateway) {
+        throw new PortMappingError(
+          'No UPnP or NAT-PMP router answered. Forward the port manually, or use a Tor onion endpoint.'
+        )
+      }
+      const address = await this.natPmpExternal(gateway, 1500)
+      if (!address) {
+        throw new PortMappingError('NAT-PMP did not report a public WAN address')
+      }
+      if (classifyWanAddress(address) !== 'public') {
+        throw new PortMappingError(
+          `The router WAN address ${address} is not public; a port mapping cannot make it reachable.`
+        )
+      }
+      try {
+        grantedPort = await this.natPmpMap(gateway, {
+          internalPort: localPort,
+          externalPort,
+          protocol: 'TCP',
+          lifetimeSeconds: 7200
+        })
+      } catch (error) {
+        throw new PortMappingError(
+          `The router refused the NAT-PMP mapping: ${error instanceof Error ? error.message : String(error)}`
+        )
+      }
+      method = 'natpmp'
+      externalAddress = address
     }
 
     const mapping: PortMapping = {
       localPort,
-      externalPort,
+      externalPort: grantedPort,
       protocol: 'TCP',
+      method,
       internalClient,
       externalAddress,
-      url: `${input.secure ? 'https' : 'http'}://${formatHost(externalAddress)}:${externalPort}/`,
+      url: `${input.secure ? 'https' : 'http'}://${formatHost(externalAddress)}:${grantedPort}/`,
       ...(input.description ? { description: input.description.slice(0, 64) } : {}),
       createdAt: this.now()
     }
     this.mappings = [...this.mappings.filter((entry) => entry.localPort !== localPort), mapping]
     this.flush()
-    this.options.log?.(`mapped TCP ${externalPort} -> ${internalClient}:${localPort}`)
+    this.options.log?.(`${method} mapped TCP ${grantedPort} -> ${internalClient}:${localPort}`)
+    return clone(mapping)
+  }
+
+  /** Record the result of an external reachability check. */
+  markVerified(localPort: number, at: number | null): PortMapping | null {
+    const mapping = this.mappings.find((entry) => entry.localPort === localPort)
+    if (!mapping) return null
+    if (at === null) delete mapping.verifiedAt
+    else mapping.verifiedAt = at
+    this.flush()
     return clone(mapping)
   }
 
@@ -167,9 +227,12 @@ export class PortMappingService {
     const mapping = this.mappings.find((entry) => entry.localPort === localPort)
     if (!mapping) return
     try {
-      const gateway = await this.findGateway(4000)
-      if (gateway) {
-        await this.deleteMapping(gateway, mapping.externalPort, 'TCP')
+      if (mapping.method === 'natpmp') {
+        const gateway = this.defaultGateway()
+        if (gateway) await this.natPmpDelete(gateway, mapping.externalPort)
+      } else {
+        const gateway = await this.findGateway(4000)
+        if (gateway) await this.deleteMapping(gateway, mapping.externalPort, 'TCP')
       }
     } catch {
       // The lease expires even if the router is unreachable now.

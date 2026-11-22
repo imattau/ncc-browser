@@ -20,6 +20,7 @@ import {
   type SignerRequest
 } from '@shared/types'
 import type { HostingState } from '@shared/hosting'
+import type { NetworkChange } from '@shared/reachability'
 import type { ContactsState } from '@shared/contacts'
 import type { NsiteProgress, NsitePublishState } from '@shared/nsite-publish'
 
@@ -102,6 +103,18 @@ const api: NccApi = {
     ipcRenderer.invoke('ncc:hosting-discover-endpoints', seedUrl, options),
   hostingMapPort: (input) => ipcRenderer.invoke('ncc:hosting-map-port', input),
   hostingUnmapPort: (localPort) => ipcRenderer.invoke('ncc:hosting-unmap-port', localPort),
+  hostingVerifyPort: (localPort) => ipcRenderer.invoke('ncc:hosting-verify-port', localPort),
+  hostingNetworkChanges: () => ipcRenderer.invoke('ncc:hosting-network-changes'),
+  hostingReplaceAddress: (from, to) =>
+    ipcRenderer.invoke('ncc:hosting-replace-address', { from, to }),
+  onNetworkChanged: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, change: NetworkChange): void =>
+      listener(change)
+    ipcRenderer.on('ncc:network-changed', handler)
+    return () => {
+      ipcRenderer.removeListener('ncc:network-changed', handler)
+    }
+  },
   hostingPortMappings: () => ipcRenderer.invoke('ncc:hosting-port-mappings'),
   hostingPublishOnion: (serviceId) => ipcRenderer.invoke('ncc:hosting-publish-onion', serviceId),
   hostingRemoveOnion: (serviceId) => ipcRenderer.invoke('ncc:hosting-remove-onion', serviceId),

@@ -498,6 +498,18 @@ describe('HostingService renewal and received shares', () => {
     ])
   })
 
+  it('rewrites endpoints when a local address changes', () => {
+    const { hosting } = setup()
+    const service = hosting.create({
+      title: 'Photos',
+      endpoints: ['http://192.168.1.20:8080/app?x=1', 'https://blog.example']
+    })
+    expect(hosting.replaceAddress('192.168.1.20', '192.168.1.99')).toEqual({ updated: 1 })
+    expect(hosting.find(service.id)?.endpoints[0].url).toBe('http://192.168.1.99:8080/app?x=1')
+    expect(hosting.find(service.id)?.endpoints[1].url).toBe('https://blog.example/')
+    expect(hosting.replaceAddress('192.168.1.99', '192.168.1.99')).toEqual({ updated: 0 })
+  })
+
   it('exposes onion status through state() and can find a service', () => {
     const { hosting } = setup()
     const service = hosting.create({ title: 'Photos', endpoints: ['http://127.0.0.1:8080'] })

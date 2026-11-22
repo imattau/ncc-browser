@@ -326,11 +326,13 @@ function parseTarget(target: OnionTarget): {
 }
 
 /**
- * Connect to an onion through the same SOCKS proxy the browser uses. A successful
- * CONNECT means Tor built a circuit and the hidden service accepted the stream.
+ * Connect to a TCP target through the same SOCKS proxy the browser uses. A successful
+ * CONNECT means Tor built a circuit and the target accepted the stream. Used for onion
+ * verification and for checking a mapped public port from the internet.
  */
-export function verifyOnionThroughSocks(
-  url: string,
+export function verifyTcpThroughSocks(
+  targetHost: string,
+  targetPort: number,
   proxy: string | null,
   timeoutMs = 20_000
 ): Promise<boolean> {
@@ -338,17 +340,16 @@ export function verifyOnionThroughSocks(
     if (!proxy) return resolve(false)
     let host: string
     let port: number
-    let target: URL
     try {
       const parsed = new URL(proxy.includes('://') ? proxy : `socks5://${proxy}`)
       host = parsed.hostname
       port = Number(parsed.port || 9050)
-      target = new URL(url)
     } catch {
       return resolve(false)
     }
-    const targetHost = target.hostname
-    const targetPort = Number(target.port || (target.protocol === 'https:' ? 443 : 80))
+    if (!targetHost || !Number.isInteger(targetPort) || targetPort <= 0) {
+      return resolve(false)
+    }
     const socket = createConnection({ host, port })
     let settled = false
     let stage: 'greeting' | 'connect' = 'greeting'
@@ -378,7 +379,7 @@ export function verifyOnionThroughSocks(
       request.writeUInt16BE(targetPort, 5 + name.length)
       socket.write(request)
     }
-    socket.on('data', (chunk) => {
+    socket.on('data', (chunk: Buffer) => {
       buffer = Buffer.concat([buffer, chunk])
       if (stage === 'greeting') {
         if (buffer.length < 2) return
@@ -402,6 +403,25 @@ export function verifyOnionThroughSocks(
       finish(true)
     })
   })
+}
+
+export function verifyOnionThroughSocks(
+  url: string,
+  proxy: string | null,
+  timeoutMs = 20_000
+): Promise<boolean> {
+  let target: URL
+  try {
+    target = new URL(url)
+  } catch {
+    return Promise.resolve(false)
+  }
+  return verifyTcpThroughSocks(
+    target.hostname,
+    Number(target.port || (target.protocol === 'https:' ? 443 : 80)),
+    proxy,
+    timeoutMs
+  )
 }
 
 function unavailableControl(): TorControlLike {

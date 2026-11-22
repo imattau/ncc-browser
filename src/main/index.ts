@@ -87,6 +87,7 @@ import { TorControl } from './tor/control'
 import { OnionManager, verifyOnionThroughSocks } from './tor/onion'
 import { PublicAddressService } from './hosting/public-address'
 import { PortMappingService } from './hosting/port-mapping'
+import { NetworkWatch } from './hosting/network-watch'
 import { TorRelayPool } from './tor/relay'
 import { TorSessionProxy } from './tor/session'
 import { createBunkerRelay } from './signer/bunker-relay'
@@ -281,6 +282,13 @@ app.whenReady().then(async () => {
   portMappings = new PortMappingService({
     filePath: join(app.getPath('userData'), 'port-mappings.json')
   })
+  const networkWatch = new NetworkWatch({
+    onChange: (change) => {
+      if (shell && !shell.window.isDestroyed()) shell.sendToChrome('ncc:network-changed', change)
+    }
+  })
+  networkWatch.start()
+  app.on('before-quit', () => networkWatch.stop())
 
   const contacts = new ContactsService({
     store: new ContactsStore(join(app.getPath('userData'), 'contacts.json')),
@@ -781,7 +789,8 @@ app.whenReady().then(async () => {
     hosting,
     onion: onionManager,
     publicAddress,
-    portMappings
+    portMappings,
+    network: networkWatch
   })
 
   registerNsitePublishIpc(nsitePublish, shell)

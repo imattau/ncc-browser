@@ -10,6 +10,7 @@ import type {
   HostingState,
   OnionStatus,
   ReceivedShare,
+  ServiceEndpoint,
   ServiceShare
 } from '@shared/hosting'
 import {
@@ -88,6 +89,25 @@ export interface HostingServiceOptions {
 
 const ANCHOR_DAYS = 14
 
+function stripHost(value: string): string {
+  return value.trim().replace(/^\[|\]$/g, '').toLowerCase()
+}
+
+function replaceEndpointHost(
+  endpoint: ServiceEndpoint,
+  from: string,
+  to: string
+): ServiceEndpoint {
+  try {
+    const url = new URL(endpoint.url)
+    if (stripHost(url.hostname) !== from) return endpoint
+    url.hostname = to.includes(':') ? `[${to}]` : to
+    return { ...endpoint, url: url.toString() }
+  } catch {
+    return endpoint
+  }
+}
+
 function isOnionEndpointUrl(url: string): boolean {
   try {
     return new URL(url).hostname.toLowerCase().endsWith('.onion')
@@ -124,6 +144,35 @@ export class HostingService {
 
   find(id: string): HostedService | null {
     return this.options.store.find(id)
+  }
+
+  /** Rewrite endpoints that point at a changed local address. Does not publish. */
+  replaceAddress(from: string, to: string): { updated: number } {
+    const source = stripHost(from)
+    const target = stripHost(to)
+    if (!source || !target || source === target) return { updated: 0 }
+    let updated = 0
+    for (const service of this.options.store.state().services) {
+      let changed = false
+      const endpoints = service.endpoints.map((endpoint) => {
+        const next = replaceEndpointHost(endpoint, source, target)
+        if (next !== endpoint) changed = true
+        return next
+      })
+      if (!changed) continue
+      this.options.store.update(service.id, {
+        title: service.title,
+        service: service.service,
+        endpoints,
+        ttlSeconds: service.ttlSeconds,
+        visibility: service.visibility,
+        anchor: service.anchor,
+        notes: service.notes
+      })
+      updated += 1
+    }
+    if (updated) this.changed()
+    return { updated }
   }
 
   /** Add or replace the service's onion endpoint. */

@@ -23,9 +23,10 @@ import { signerOriginFromUrl } from './signer/origin'
 import { browserShellFor, browserShells, type BrowserShell } from './shell'
 import type { ProtectionService } from './protection'
 import type { HostingService } from './hosting/service'
-import type { OnionManager } from './tor/onion'
+import { verifyTcpThroughSocks, type OnionManager } from './tor/onion'
 import type { PublicAddressService } from './hosting/public-address'
 import type { PortMappingService } from './hosting/port-mapping'
+import type { NetworkWatch } from './hosting/network-watch'
 import { isLoopbackEndpoint, type HostingDraft } from '@shared/hosting'
 import { discoverReachability } from './hosting/discover'
 
@@ -51,6 +52,7 @@ export interface IpcDeps {
   onion: OnionManager
   publicAddress: PublicAddressService
   portMappings: PortMappingService
+  network: NetworkWatch
 }
 
 export function registerIpc(deps: IpcDeps): void {
@@ -341,6 +343,45 @@ export function registerIpc(deps: IpcDeps): void {
     if (!fromChrome(event)) throw new Error('Services are only available to the browser chrome')
     if (typeof localPort !== 'number') throw new Error('A local port is required')
     await deps.portMappings.remove(localPort)
+  })
+  ipcMain.handle('ncc:hosting-verify-port', async (event, localPort: unknown) => {
+    if (!fromChrome(event)) throw new Error('Services are only available to the browser chrome')
+    if (typeof localPort !== 'number') throw new Error('A local port is required')
+    const mapping = deps.portMappings.find(localPort)
+    if (!mapping) throw new Error('No port mapping exists for that local port')
+    let proxy: string
+    try {
+      proxy = (await deps.tor.ensureReady()).proxy
+    } catch (error) {
+      throw new Error(
+        `Tor is needed for the reachability check: ${error instanceof Error ? error.message : String(error)}`
+      )
+    }
+    const verified = await verifyTcpThroughSocks(
+      mapping.externalAddress,
+      mapping.externalPort,
+      proxy
+    )
+    return deps.portMappings.markVerified(
+      localPort,
+      verified ? Math.floor(Date.now() / 1000) : null
+    )
+  })
+  ipcMain.handle('ncc:hosting-network-changes', (event) => {
+    if (!fromChrome(event)) throw new Error('Services are only available to the browser chrome')
+    return deps.network.list()
+  })
+  ipcMain.handle('ncc:hosting-replace-address', (event, payload: unknown) => {
+    if (!fromChrome(event)) throw new Error('Services are only available to the browser chrome')
+    const { from, to } = (payload ?? {}) as { from?: unknown; to?: unknown }
+    if (typeof from !== 'string' || typeof to !== 'string') {
+      throw new Error('The old and new address are required')
+    }
+    if (!/^[0-9a-f:.]+$/i.test(from) || !/^[0-9a-f:.]+$/i.test(to)) {
+      throw new Error('Only IP address changes can be applied automatically')
+    }
+    const result = deps.hosting.replaceAddress(from, to)
+    return { ...result, state: deps.hosting.state() }
   })
   ipcMain.handle('ncc:hosting-port-mappings', (event) => {
     if (!fromChrome(event)) throw new Error('Services are only available to the browser chrome')

@@ -3,11 +3,13 @@ import type { NetworkInterfaceInfo } from 'node:os'
 import {
   classifyWanAddress,
   discoverReachability,
+  encodeNatPmpMap,
   gatewayWarnings,
   interfaceCandidates,
   isCgnatIPv4,
   isGlobalIPv6,
-  isPrivateIPv4
+  isPrivateIPv4,
+  parseNatPmpMapResponse
 } from '../src/main/hosting/discover'
 
 function info(
@@ -144,6 +146,40 @@ describe('interface candidates', () => {
     })
     expect(candidates.some((candidate) => candidate.url.includes('169.254'))).toBe(false)
     expect(warnings.join(' ')).toMatch(/link-local/i)
+  })
+})
+
+describe('NAT-PMP', () => {
+  it('encodes a TCP mapping request', () => {
+    const { packet, opcode } = encodeNatPmpMap({
+      internalPort: 8080,
+      externalPort: 18080,
+      protocol: 'TCP',
+      lifetimeSeconds: 7200
+    })
+    expect(opcode).toBe(2)
+    expect(packet).toHaveLength(12)
+    expect(packet[0]).toBe(0)
+    expect(packet[1]).toBe(2)
+    expect(packet.readUInt16BE(4)).toBe(8080)
+    expect(packet.readUInt16BE(6)).toBe(18080)
+    expect(packet.readUInt32BE(8)).toBe(7200)
+  })
+
+  it('parses a successful response and rejects failures', () => {
+    const response = Buffer.alloc(16)
+    response[1] = 130
+    response.writeUInt16BE(0, 2)
+    response.writeUInt16BE(8080, 8)
+    response.writeUInt16BE(18080, 10)
+    response.writeUInt32BE(7200, 12)
+    expect(parseNatPmpMapResponse(response, 2)).toBe(18080)
+    expect(parseNatPmpMapResponse(response, 1)).toBeNull()
+
+    const failure = Buffer.from(response)
+    failure.writeUInt16BE(2, 2)
+    expect(parseNatPmpMapResponse(failure, 2)).toBeNull()
+    expect(parseNatPmpMapResponse(Buffer.alloc(4), 2)).toBeNull()
   })
 })
 

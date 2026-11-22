@@ -218,20 +218,37 @@ silent request:
 Discovery is still only discovery. A confirmed address does not prove that a port is
 open.
 
-### Router port mapping (UPnP)
+### Router port mapping (UPnP / NAT-PMP)
 
-When the router answers UPnP and a loopback candidate exists, the form offers **Map a
-TCP port on the router (UPnP)**. It is an explicit action, never automatic:
+When the router answers and a loopback candidate exists, the form offers **Map a TCP
+port on the router**. It is an explicit action, never automatic:
 
+- UPnP IGD is tried first; if it does not answer, NAT-PMP is used through the default
+  gateway (port 5351).
 - The mapping forwards one TCP port to the first private IPv4 interface, is described
   as `Nostr Navigator`, and has a two-hour lease.
-- The mapped URL is added to the endpoint list as **unverified**; it still needs a
-  reachability check.
+- The mapped URL is added to the endpoint list as **unverified**.
+- **Check reachability** opens a TCP connection to the mapped public address and port
+  through a Tor exit node — an external vantage point that needs no extra third-party
+  service. Success marks the mapping reachable from the internet; the port itself is
+  still yours to secure.
 - **Remove mapping** deletes it, and quitting the browser removes all mappings it
   created. A crash cannot leave a permanent hole because of the lease.
 - A non-public WAN address (CGNAT, private, link-local) is refused: mapping cannot fix
   it. Use a Tor onion endpoint instead.
-- The public address can change; re-map and republish when it does.
+- The public address can change; the address watcher reports it, and re-mapping plus
+  republishing is a deliberate step.
+
+## Address changes
+
+The browser checks interface addresses once a minute. When an IPv4 address or an IPv6
+prefix changes, **Services** shows a banner with the old and new address. **Update
+endpoints** rewrites matching endpoints across all services (host/port/path preserved)
+and leaves publishing to you, because a new locator needs a signature and may prompt a
+remote signer. Dismiss removes the notice without changing anything.
+
+Removing an interface or roaming is reported the same way. Loopback, link-local and
+unique-local IPv6 addresses are ignored because publishing them is never useful.
 
 ## Relays and discovery
 

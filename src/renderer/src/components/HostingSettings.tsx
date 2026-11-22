@@ -39,6 +39,7 @@ import type {
   EndpointCandidate,
   EndpointConfidence,
   EndpointKind,
+  NetworkChange,
   PortMapping,
   ReachabilityReport
 } from '@shared/reachability'
@@ -143,6 +144,8 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
   const [externalChecks, setExternalChecks] = useState<'ask' | 'always' | 'never'>('ask')
   const [mapping, setMapping] = useState<PortMapping | null>(null)
   const [mappingBusy, setMappingBusy] = useState(false)
+  const [verifyBusy, setVerifyBusy] = useState(false)
+  const [networkChanges, setNetworkChanges] = useState<NetworkChange[]>([])
 
   const apply = useCallback((next: HostingState) => setState(next), [])
 
@@ -166,13 +169,46 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
       setContactsError(state.error ?? null)
     })
     void window.ncc.hostingState().then((next) => alive && apply(next))
+    void window.ncc
+      .hostingNetworkChanges()
+      .then((changes) => alive && setNetworkChanges(changes))
+      .catch(() => undefined)
     const off = window.ncc.onHostingChanged((next) => alive && apply(next))
+    const offNetwork = window.ncc.onNetworkChanged((change) => {
+      if (!alive) return
+      setNetworkChanges((current) =>
+        current.some(
+          (entry) =>
+            entry.interface === change.interface && entry.from === change.from && entry.to === change.to
+        )
+          ? current
+          : [...current, change].slice(-20)
+      )
+    })
     return () => {
       alive = false
       off()
       offContacts()
+      offNetwork()
     }
   }, [apply])
+
+  const acceptNetworkChange = async (change: NetworkChange): Promise<void> => {
+    setBusy(true)
+    setError(null)
+    try {
+      const result = await window.ncc.hostingReplaceAddress(change.from, change.to)
+      apply(result.state)
+      setNetworkChanges((current) => current.filter((entry) => entry !== change))
+      if (result.updated === 0) {
+        setError('No service endpoint used that address.')
+      }
+    } catch (replaceError) {
+      setError(errorMessage(replaceError))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const discover = useCallback(async (seed: string, external = false): Promise<void> => {
     const target = seed.trim()
@@ -258,6 +294,25 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
       setError(errorMessage(mappingError))
     } finally {
       setMappingBusy(false)
+    }
+  }
+
+  const verifyMapping = async (): Promise<void> => {
+    if (!mapping) return
+    setVerifyBusy(true)
+    setError(null)
+    try {
+      const updated = await window.ncc.hostingVerifyPort(mapping.localPort)
+      if (updated) setMapping(updated)
+      if (!updated?.verifiedAt) {
+        setError(
+          'The mapped port did not answer through Tor. Check the router forward and that the service is running.'
+        )
+      }
+    } catch (verifyError) {
+      setError(errorMessage(verifyError))
+    } finally {
+      setVerifyBusy(false)
     }
   }
 
@@ -541,6 +596,45 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
 
   return (
     <div className="space-y-5" data-hosting-settings>
+      {networkChanges.map((change) => (
+        <div
+          key={`${change.interface}:${change.from}:${change.to}`}
+          data-network-change
+          className="rounded-xl border border-[color:var(--color-warn)]/30 bg-[color:var(--color-warn)]/10 p-3 text-ui-11"
+        >
+          <p className="font-medium text-[color:var(--color-text-strong)]">
+            This machine&apos;s {change.family === 'ipv4' ? 'IPv4' : 'IPv6'} address changed on{' '}
+            {change.interface}
+          </p>
+          <p className="mt-0.5 break-all font-mono text-ui-105 text-[color:var(--color-muted)]">
+            {change.from} → {change.to}
+          </p>
+          <p className="mt-0.5 text-ui-105 text-[color:var(--color-muted)]">
+            Services that published the old address stop resolving. Update endpoints here, then
+            press Publish on each changed service.
+          </p>
+          <div className="mt-1.5 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void acceptNetworkChange(change)}
+              className="rounded-lg bg-[color:var(--color-accent)] px-2.5 py-1 text-ui-105 font-semibold text-[color:var(--color-on-accent)] disabled:opacity-50"
+            >
+              Update endpoints
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                setNetworkChanges((current) => current.filter((entry) => entry !== change))
+              }
+              className="rounded-lg border border-[color:var(--color-line)] px-2.5 py-1 text-ui-105 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)]"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      ))}
+
       <div>
         <h2 className="text-ui-15 font-semibold text-[color:var(--color-text-strong)]">Hosted services</h2>
         <p className="mt-1 text-ui-115 leading-relaxed text-[color:var(--color-muted)]">
@@ -780,8 +874,29 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
                           </button>
                         </div>
                         <p className="break-all font-mono text-ui-95 text-[color:var(--color-faint)]">
-                          {mapping.url} · unverified, removed on quit
+                          {mapping.url} · removed on quit
                         </p>
+                        <div className="mt-0.5 flex flex-wrap items-center gap-2">
+                          <span
+                            className={cn(
+                              'rounded-full px-1.5 py-0.5 text-ui-95',
+                              mapping.verifiedAt
+                                ? 'bg-[color:var(--color-ok)]/10 text-[color:var(--color-ok)]'
+                                : 'bg-[color:var(--color-hover)] text-[color:var(--color-muted)]'
+                            )}
+                          >
+                            {mapping.verifiedAt ? 'reachable from the internet (via Tor)' : 'unverified'}
+                          </span>
+                          <button
+                            type="button"
+                            data-verify-port
+                            disabled={verifyBusy}
+                            onClick={() => void verifyMapping()}
+                            className="rounded border border-[color:var(--color-line)] px-1.5 py-0.5 text-ui-95 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)] disabled:opacity-50"
+                          >
+                            {verifyBusy ? 'Checking through Tor…' : 'Check reachability'}
+                          </button>
+                        </div>
                       </div>
                     ) : localEndpoint ? (
                       <button

@@ -599,6 +599,14 @@ export function App() {
                   a: 'Only if you allow it. Settings → General has Ask, Always or Never for public address confirmation. The provider (api64.ipify.org) is named in the form, sees your IP but not your identity or services, and the result is cached for ten minutes. It never runs while Tor is preferred. Without it, the router WAN address and a Tor onion endpoint are enough for most cases.'
                 },
                 {
+                  q: 'What happens when my IP address changes?',
+                  a: 'Services watches this machine’s interfaces once a minute. When an IPv4 address or IPv6 prefix changes, a banner shows the old and new values. “Update endpoints” rewrites matching service endpoints and leaves publishing to you, because a new locator needs a signature. Loopback and link-local addresses are ignored.'
+                },
+                {
+                  q: 'How do I know a forwarded port really works?',
+                  a: 'On a mapped port, “Check reachability” opens a TCP connection to the public address through a Tor exit node — an outside vantage point that needs no extra service. Success marks it reachable from the internet. The mapping itself uses UPnP first and falls back to NAT-PMP, has a two-hour lease, and is removed when the browser quits.'
+                },
+                {
                   q: 'Where is the source?',
                   a: `The canonical repository is on GitHub. It is also mirrored as a Nostr git repository: the NIP-34 announcement is on relay.ngit.dev and the browser is at gitworkshop.dev. NostrHub is a second web index for the same repository.`
                 },

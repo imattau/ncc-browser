@@ -179,7 +179,9 @@ is called out instead of advertising an endpoint that cannot work. Only local
 information is used by default. Confirming the public address with an external service
 is a per-user choice (`Ask` / `Always` / `Never`), disclosed by provider, cached and
 skipped while Tor is preferred. A confirmed address can also be forwarded with an
-explicit UPnP TCP mapping; it is removed on quit and stays **unverified** until checked.
+explicit UPnP or NAT-PMP TCP mapping; it is removed on quit and can be verified from a
+Tor exit. Address changes are reported in Services, with a one-click endpoint rewrite
+before you republish.
 
 The same panel shares a private service with one or more people: choose contacts from
 your Nostr follow list (or paste an npub), and each recipient gets their own NIP-44

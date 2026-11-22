@@ -28,10 +28,20 @@ function info(address: string, family: NetworkInterfaceInfo['family'], internal 
   return (family === 'IPv6' ? { ...base, scopeid: 0 } : base) as NetworkInterfaceInfo
 }
 
-function setup(options: { gateway?: UpnpGateway | null; external?: string } = {}) {
+function setup(
+  options: {
+    gateway?: UpnpGateway | null
+    external?: string
+    natPmpExternal?: string
+    natPmpGranted?: number
+    defaultGateway?: string | null
+  } = {}
+) {
   const file = join(mkdtempSync(join(tmpdir(), 'ncc-port-map-')), 'port-mappings.json')
   const addMapping = vi.fn(async () => undefined)
   const deleteMapping = vi.fn(async () => undefined)
+  const natPmpMap = vi.fn(async () => options.natPmpGranted ?? 8080)
+  const natPmpDelete = vi.fn(async () => 1)
   const service = new PortMappingService({
     filePath: file,
     now: () => 1_800_000_000,
@@ -39,12 +49,16 @@ function setup(options: { gateway?: UpnpGateway | null; external?: string } = {}
     externalAddress: async () => options.external ?? GATEWAY.externalAddress ?? null,
     addMapping,
     deleteMapping,
+    defaultGateway: () => (options.defaultGateway === undefined ? '192.168.1.1' : options.defaultGateway),
+    natPmpExternal: async () => options.natPmpExternal ?? '198.51.100.7',
+    natPmpMap,
+    natPmpDelete,
     interfaces: () => ({
       lo: [info('127.0.0.1', 'IPv4', true)],
       eth0: [info('192.168.1.20', 'IPv4')]
     })
   })
-  return { service, addMapping, deleteMapping, file }
+  return { service, addMapping, deleteMapping, natPmpMap, natPmpDelete, file }
 }
 
 describe('LAN address selection', () => {
@@ -76,6 +90,7 @@ describe('PortMappingService', () => {
     expect(mapping).toMatchObject({
       localPort: 8080,
       externalPort: 8080,
+      method: 'upnp',
       externalAddress: '203.0.113.42',
       internalClient: '192.168.1.20',
       url: 'http://203.0.113.42:8080/',
@@ -107,9 +122,42 @@ describe('PortMappingService', () => {
     await expect(service.map({ localPort: 8080 })).rejects.toThrow(/not public/i)
   })
 
-  it('refuses without a UPnP gateway', async () => {
-    const { service } = setup({ gateway: null })
-    await expect(service.map({ localPort: 8080 })).rejects.toThrow(/No UPnP router/)
+  it('refuses when neither UPnP nor NAT-PMP answers', async () => {
+    const { service } = setup({ gateway: null, defaultGateway: null })
+    await expect(service.map({ localPort: 8080 })).rejects.toThrow(/No UPnP or NAT-PMP/)
+  })
+
+  it('falls back to NAT-PMP when UPnP does not answer', async () => {
+    const { service, natPmpMap, natPmpDelete, addMapping } = setup({
+      gateway: null,
+      natPmpGranted: 18080,
+      natPmpExternal: '198.51.100.7'
+    })
+    const mapping = await service.map({ localPort: 8080, secure: true })
+    expect(addMapping).not.toHaveBeenCalled()
+    expect(natPmpMap).toHaveBeenCalledWith('192.168.1.1', {
+      internalPort: 8080,
+      externalPort: 8080,
+      protocol: 'TCP',
+      lifetimeSeconds: 7200
+    })
+    expect(mapping).toMatchObject({
+      method: 'natpmp',
+      externalPort: 18080,
+      externalAddress: '198.51.100.7',
+      url: 'https://198.51.100.7:18080/'
+    })
+
+    await service.remove(8080)
+    expect(natPmpDelete).toHaveBeenCalledWith('192.168.1.1', 18080)
+  })
+
+  it('marks and clears an external verification', async () => {
+    const { service } = setup()
+    await service.map({ localPort: 8080 })
+    expect(service.markVerified(8080, 1_800_000_100)?.verifiedAt).toBe(1_800_000_100)
+    expect(service.markVerified(8080, null)?.verifiedAt).toBeUndefined()
+    expect(service.markVerified(9999, 1)).toBeNull()
   })
 
   it('validates ports and reports router failures', async () => {
