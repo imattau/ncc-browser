@@ -30,7 +30,7 @@ import type {
   HostingShareResult,
   HostingState
 } from './hosting'
-import type { ReachabilityReport } from './reachability'
+import type { PortMapping, ReachabilityReport } from './reachability'
 import type {
   AppearanceConfig,
   AppConfig,
@@ -132,6 +132,7 @@ export interface NccApi {
   resolveRelayLocator(input: string): Promise<RelayLocatorOutcome>
   setGossip(value: boolean): Promise<SetRelaysResult>
   setAnchorRequired(value: boolean): Promise<SetRelaysResult>
+  setExternalAddressChecks(value: import('./types').ExternalAddressCheck): Promise<SetRelaysResult>
   setPreferTor(value: boolean): Promise<SetRelaysResult>
   setEphemeralSigner(value: boolean): Promise<SetRelaysResult>
   setTorMode(mode: TorMode): Promise<SetRelaysResult>
@@ -173,7 +174,17 @@ export interface NccApi {
   hostingShareMany(id: string, recipients: string[], days: number, label?: string): Promise<HostingShareBatchResult>
   hostingRevokeShare(shareId: string): Promise<HostingShareResult>
   hostingForgetReceived(id: string): Promise<HostingState>
-  hostingDiscoverEndpoints(seedUrl: string): Promise<ReachabilityReport>
+  hostingDiscoverEndpoints(
+    seedUrl: string,
+    options?: { external?: boolean }
+  ): Promise<ReachabilityReport>
+  hostingMapPort(input: {
+    localPort: number
+    secure?: boolean
+    externalPort?: number
+  }): Promise<PortMapping>
+  hostingUnmapPort(localPort: number): Promise<void>
+  hostingPortMappings(): Promise<PortMapping[]>
   hostingPublishOnion(serviceId: string): Promise<HostingOnionResult>
   hostingRemoveOnion(serviceId: string): Promise<HostingState>
   onHostingChanged(listener: (state: HostingState) => void): () => void

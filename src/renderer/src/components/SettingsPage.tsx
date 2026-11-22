@@ -207,6 +207,7 @@ export function SettingsPage({
   const [relayBusy, setRelayBusy] = useState(false)
   const [gossip, setGossip] = useState(true)
   const [anchorRequired, setAnchorRequired] = useState(false)
+  const [externalAddressChecks, setExternalAddressChecks] = useState<'ask' | 'always' | 'never'>('ask')
   const [preferTor, setPreferTor] = useState(false)
   const [torMode, setTorMode] = useState<TorMode>('auto')
   const [torSocks, setTorSocks] = useState(DEFAULT_TOR_SOCKS)
@@ -271,6 +272,7 @@ export function SettingsPage({
       setRelayEntries(config.relays)
       setGossip(config.gossip)
       setAnchorRequired(config.anchorRequired)
+      setExternalAddressChecks(config.externalAddressChecks ?? 'ask')
       setPreferTor(config.preferTor)
       setTorMode(config.torMode)
       setTorSocks(config.torSocks)
@@ -420,6 +422,13 @@ export function SettingsPage({
       return
     }
 
+    const externalResult = await window.ncc.setExternalAddressChecks(externalAddressChecks)
+    if (!externalResult.ok) {
+      setLoading(false)
+      setError(externalResult.error ?? 'Could not save public address setting')
+      return
+    }
+
     const torResult = await window.ncc.setTorConfig({
       preferTor,
       mode: torMode,
@@ -454,6 +463,7 @@ export function SettingsPage({
       searchResult.config ??
       securityResult.config ??
       torResult.config ??
+      externalResult.config ??
       anchorResult.config ??
       gossipResult.config ??
       relayResult.config
@@ -461,6 +471,7 @@ export function SettingsPage({
       setRelayEntries(config.relays)
       setGossip(config.gossip)
       setAnchorRequired(config.anchorRequired)
+      setExternalAddressChecks(config.externalAddressChecks ?? 'ask')
       setPreferTor(config.preferTor)
       setTorMode(config.torMode)
       setTorSocks(config.torSocks)
@@ -832,6 +843,37 @@ export function SettingsPage({
                     </span>
                   </span>
                 </label>
+
+                <div className="mt-4 rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-field)] p-3.5">
+                  <label
+                    htmlFor="external-address-checks"
+                    className="block text-ui-12 font-medium text-[color:var(--color-text-strong)]"
+                  >
+                    Check public address when publishing
+                  </label>
+                  <p className="mt-0.5 text-ui-115 leading-relaxed text-[color:var(--color-muted)]">
+                    Endpoint discovery can confirm what the internet sees by contacting{' '}
+                    <span className="font-mono">api64.ipify.org</span>. That service sees your IP
+                    address, not your identity or services. It never runs while Tor is preferred.
+                  </p>
+                  <select
+                    id="external-address-checks"
+                    value={externalAddressChecks}
+                    onChange={(event) => {
+                      setExternalAddressChecks(
+                        event.target.value === 'always' || event.target.value === 'never'
+                          ? event.target.value
+                          : 'ask'
+                      )
+                      setSaved(false)
+                    }}
+                    className="mt-2 w-full rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-ink)] px-2.5 py-1.5 text-ui-12 text-[color:var(--color-text)] outline-none focus:border-[color:var(--color-accent)]"
+                  >
+                    <option value="ask">Ask before checking (recommended)</option>
+                    <option value="always">Check automatically</option>
+                    <option value="never">Never contact an external service</option>
+                  </select>
+                </div>
 
                 <div className="mt-4 border-t border-[color:var(--color-line)] pt-4">
                   <div className="flex items-center gap-2">

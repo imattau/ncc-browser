@@ -28,3 +28,7 @@ site-publisher/dist-nsite/
 mobile/public/nccsearch/
 !resources/tor/README.md
 !resources/tor/TOR-LICENSE.txt
+
+# Local capture artifacts
+.shots/
+.codex-attachments/

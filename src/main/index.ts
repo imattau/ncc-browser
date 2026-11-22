@@ -85,6 +85,8 @@ import { TorGuard } from './tor/guard'
 import { TorManager } from './tor/manager'
 import { TorControl } from './tor/control'
 import { OnionManager, verifyOnionThroughSocks } from './tor/onion'
+import { PublicAddressService } from './hosting/public-address'
+import { PortMappingService } from './hosting/port-mapping'
 import { TorRelayPool } from './tor/relay'
 import { TorSessionProxy } from './tor/session'
 import { createBunkerRelay } from './signer/bunker-relay'
@@ -112,6 +114,7 @@ let createFallbackShell: (() => BrowserShell) | null = null
 let contentSessions: ContentSessions | null = null
 let torManager: TorManager | null = null
 let onionManager: OnionManager | null = null
+let portMappings: PortMappingService | null = null
 let torRelays: TorRelayPool | null = null
 let relaySync: RelaySync | null = null
 let passwords: PasswordService | null = null
@@ -272,6 +275,11 @@ app.whenReady().then(async () => {
     onChange: (state) => {
       if (shell && !shell.window.isDestroyed()) shell.sendToChrome('ncc:hosting-changed', state)
     }
+  })
+
+  const publicAddress = new PublicAddressService()
+  portMappings = new PortMappingService({
+    filePath: join(app.getPath('userData'), 'port-mappings.json')
   })
 
   const contacts = new ContactsService({
@@ -771,7 +779,9 @@ app.whenReady().then(async () => {
     downloads,
     passwords: passwordService,
     hosting,
-    onion: onionManager
+    onion: onionManager,
+    publicAddress,
+    portMappings
   })
 
   registerNsitePublishIpc(nsitePublish, shell)
@@ -851,6 +861,7 @@ app.on('before-quit', () => {
   nwcService?.dispose()
   extensions?.dispose()
   void onionManager?.shutdown()
+  void portMappings?.removeAll()
   relaySync?.stop()
   closeSharedPool()
   void torManager?.stop()

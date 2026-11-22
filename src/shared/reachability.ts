@@ -44,7 +44,13 @@ export interface GatewayReport {
   error?: string
 }
 
-export type ExternalCheckState = 'not-run' | 'declined' | 'matched' | 'mismatch' | 'error'
+export type ExternalCheckState =
+  | 'not-run'
+  | 'declined'
+  | 'confirmed'
+  | 'matched'
+  | 'mismatch'
+  | 'error'
 
 export interface ReachabilityReport {
   seed: string
@@ -52,6 +58,8 @@ export interface ReachabilityReport {
   gateway: GatewayReport
   externalCheck: ExternalCheckState
   externalAddress?: string
+  /** Disclosed provider used for the public address check. */
+  externalProvider?: string
   warnings: string[]
 }
 
@@ -60,4 +68,16 @@ export interface PublicAddressResult {
   family: 'ipv4' | 'ipv6'
   provider: string
   checkedAt: number
+}
+
+/** A router port mapping created for a local service endpoint. */
+export interface PortMapping {
+  localPort: number
+  externalPort: number
+  protocol: 'TCP'
+  internalClient: string
+  externalAddress: string
+  url: string
+  description?: string
+  createdAt: number
 }

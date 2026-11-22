@@ -24,6 +24,8 @@ import { browserShellFor, browserShells, type BrowserShell } from './shell'
 import type { ProtectionService } from './protection'
 import type { HostingService } from './hosting/service'
 import type { OnionManager } from './tor/onion'
+import type { PublicAddressService } from './hosting/public-address'
+import type { PortMappingService } from './hosting/port-mapping'
 import { isLoopbackEndpoint, type HostingDraft } from '@shared/hosting'
 import { discoverReachability } from './hosting/discover'
 
@@ -47,6 +49,8 @@ export interface IpcDeps {
   protection: ProtectionService
   hosting: HostingService
   onion: OnionManager
+  publicAddress: PublicAddressService
+  portMappings: PortMappingService
 }
 
 export function registerIpc(deps: IpcDeps): void {
@@ -298,12 +302,49 @@ export function registerIpc(deps: IpcDeps): void {
     deps.hosting.forgetReceived(id)
     return deps.hosting.state()
   })
-  ipcMain.handle('ncc:hosting-discover-endpoints', (event, seedUrl: unknown) => {
+  ipcMain.handle('ncc:hosting-discover-endpoints', async (event, seedUrl: unknown, options: unknown) => {
     if (!fromChrome(event)) throw new Error('Services are only available to the browser chrome')
     if (typeof seedUrl !== 'string' || !seedUrl.trim()) {
       throw new Error('Open an http(s) page to discover its endpoint')
     }
-    return discoverReachability({ seedUrl: seedUrl.trim() })
+    const config = deps.config.get()
+    const mode = config.externalAddressChecks ?? 'ask'
+    const explicit = Boolean((options as { external?: unknown } | null)?.external)
+    if (explicit && mode === 'never') {
+      throw new Error('Public address checks are off in Settings → General')
+    }
+    const torPreferred = config.preferTor === true
+    const runExternal = !torPreferred && (explicit || mode === 'always')
+    const report = await discoverReachability({
+      seedUrl: seedUrl.trim(),
+      external: runExternal,
+      ...(runExternal
+        ? { lookupPublicAddress: () => deps.publicAddress.lookup(explicit) }
+        : {})
+    })
+    if (explicit && torPreferred) {
+      report.externalCheck = 'declined'
+      report.warnings.push('Public address checks are skipped while Tor is preferred.')
+    }
+    return report
+  })
+  ipcMain.handle('ncc:hosting-map-port', async (event, input: unknown) => {
+    if (!fromChrome(event)) throw new Error('Services are only available to the browser chrome')
+    const payload = (input ?? {}) as { localPort?: unknown; secure?: unknown }
+    if (typeof payload.localPort !== 'number') throw new Error('A local port is required')
+    return deps.portMappings.map({
+      localPort: payload.localPort,
+      secure: payload.secure === true
+    })
+  })
+  ipcMain.handle('ncc:hosting-unmap-port', async (event, localPort: unknown) => {
+    if (!fromChrome(event)) throw new Error('Services are only available to the browser chrome')
+    if (typeof localPort !== 'number') throw new Error('A local port is required')
+    await deps.portMappings.remove(localPort)
+  })
+  ipcMain.handle('ncc:hosting-port-mappings', (event) => {
+    if (!fromChrome(event)) throw new Error('Services are only available to the browser chrome')
+    return deps.portMappings.list()
   })
   ipcMain.handle('ncc:hosting-publish-onion', async (event, id: unknown) => {
     if (!fromChrome(event)) throw new Error('Services are only available to the browser chrome')
@@ -367,6 +408,14 @@ export function registerIpc(deps: IpcDeps): void {
       // but keep public locator cache entries: unanchored ones are rechecked on use.
       for (const resolver of deps.resolvers) resolver.clearCache()
       return { ok: true, config }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
+  ipcMain.handle('ncc:set-external-address-checks', (event, value: unknown) => {
+    try {
+      return { ok: true, config: deps.config.setExternalAddressChecks(value) }
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }

@@ -200,9 +200,38 @@ Details:
 
 Confirming the real internet egress needs an external service, because the router
 only reports what it believes its uplink to be. That check is a user choice, not a
-silent request: the publisher names the provider, sends no identity or service
-metadata, caches the result and never runs it while Tor is preferred. Declining keeps
-the router's classification and leaves direct IPv4 marked unverified.
+silent request:
+
+- **Settings → General → Check public address when publishing** is `Ask` (default),
+  `Always` or `Never`.
+- With `Ask`, the service form shows **Check public address** and names the provider
+  (`api64.ipify.org`). The provider sees the user's IP address; it is not sent the npub,
+  service name or endpoints.
+- With `Always`, discovery runs the lookup automatically. With `Never`, no external
+  request is made and direct IPv4 stays unverified.
+- The result is cached for ten minutes. It never runs while **Prefer Tor** is on,
+  because the lookup would discover the Tor exit rather than the user.
+- A lookup that matches the router WAN is reported as confirmed; a mismatch is flagged
+  as carrier-grade NAT or another NAT layer. A confirmed IPv6 egress is informational
+  only: inbound IPv6 uses the host's global address, not the egress address.
+
+Discovery is still only discovery. A confirmed address does not prove that a port is
+open.
+
+### Router port mapping (UPnP)
+
+When the router answers UPnP and a loopback candidate exists, the form offers **Map a
+TCP port on the router (UPnP)**. It is an explicit action, never automatic:
+
+- The mapping forwards one TCP port to the first private IPv4 interface, is described
+  as `Nostr Navigator`, and has a two-hour lease.
+- The mapped URL is added to the endpoint list as **unverified**; it still needs a
+  reachability check.
+- **Remove mapping** deletes it, and quitting the browser removes all mappings it
+  created. A crash cannot leave a permanent hole because of the lease.
+- A non-public WAN address (CGNAT, private, link-local) is refused: mapping cannot fix
+  it. Use a Tor onion endpoint instead.
+- The public address can change; re-map and republish when it does.
 
 ## Relays and discovery
 

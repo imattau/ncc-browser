@@ -148,6 +148,64 @@ describe('interface candidates', () => {
 })
 
 describe('discoverReachability', () => {
+  it('adds a confirmed public candidate from an opt-in lookup', async () => {
+    const report = await discoverReachability({
+      seedUrl: 'http://127.0.0.1:8080',
+      gateway: false,
+      interfaces: { eth0: [info('192.168.1.20', 'IPv4')] },
+      external: true,
+      lookupPublicAddress: async () => ({
+        address: '203.0.113.42',
+        family: 'ipv4',
+        provider: 'https://api64.ipify.org?format=json',
+        checkedAt: 1
+      })
+    })
+    expect(report.externalCheck).toBe('confirmed')
+    expect(report.externalAddress).toBe('203.0.113.42')
+    expect(report.externalProvider).toContain('api64.ipify.org')
+    expect(report.candidates).toContainEqual(
+      expect.objectContaining({
+        kind: 'public-v4',
+        url: 'http://203.0.113.42:8080/',
+        source: 'external',
+        confidence: 'unverified'
+      })
+    )
+    expect(report.warnings.join(' ')).toMatch(/port still needs forwarding/i)
+  })
+
+  it('reports a failed external lookup without failing discovery', async () => {
+    const report = await discoverReachability({
+      seedUrl: 'http://127.0.0.1:8080',
+      gateway: false,
+      external: true,
+      lookupPublicAddress: async () => {
+        throw new Error('provider down')
+      }
+    })
+    expect(report.externalCheck).toBe('error')
+    expect(report.warnings.join(' ')).toMatch(/provider down/)
+    expect(report.candidates.some((candidate) => candidate.kind === 'loopback')).toBe(true)
+  })
+
+  it('does not invent an inbound candidate from an IPv6 egress', async () => {
+    const report = await discoverReachability({
+      seedUrl: 'http://127.0.0.1:8080',
+      gateway: false,
+      external: true,
+      lookupPublicAddress: async () => ({
+        address: '2001:db8::99',
+        family: 'ipv6',
+        provider: 'p',
+        checkedAt: 1
+      })
+    })
+    expect(report.externalCheck).toBe('confirmed')
+    expect(report.candidates.some((candidate) => candidate.url.includes('2001:db8::99'))).toBe(false)
+    expect(report.warnings.join(' ')).toMatch(/Inbound IPv6 uses the host/i)
+  })
+
   it('skips the gateway when asked and reports no external check', async () => {
     const report = await discoverReachability({
       seedUrl: 'http://127.0.0.1:8080',

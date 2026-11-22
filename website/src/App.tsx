@@ -591,6 +591,14 @@ export function App() {
                   a: 'Use the Onion action on the service card. The bundled Tor creates a hidden service for the loopback endpoint, verifies it through the browser’s own SOCKS proxy, and adds the onion address to the locator. The key is stored locally and reused, so the address stays stable, and nothing is opened on your router. The onion only runs while Tor and the browser run. Direct IPv4 needs a port forward, which CGNAT does not allow.'
                 },
                 {
+                  q: 'Does it forward a port automatically?',
+                  a: 'No. If the router answers UPnP and you opened a local page, the publish form offers an explicit “Map a TCP port” action. It forwards one TCP port to this machine, is described as Nostr Navigator, expires after two hours and is removed when the browser quits. The mapped URL is added as unverified. A CGNAT or private WAN address is refused, because forwarding cannot fix it — use the Tor onion endpoint instead.'
+                },
+                {
+                  q: 'Does it contact an external service?',
+                  a: 'Only if you allow it. Settings → General has Ask, Always or Never for public address confirmation. The provider (api64.ipify.org) is named in the form, sees your IP but not your identity or services, and the result is cached for ten minutes. It never runs while Tor is preferred. Without it, the router WAN address and a Tor onion endpoint are enough for most cases.'
+                },
+                {
                   q: 'Where is the source?',
                   a: `The canonical repository is on GitHub. It is also mirrored as a Nostr git repository: the NIP-34 announcement is on relay.ngit.dev and the browser is at gitworkshop.dev. NostrHub is a second web index for the same repository.`
                 },

@@ -35,7 +35,13 @@ import {
   type ServiceShare
 } from '@shared/hosting'
 import { contactLabel, type ContactList, type ContactProfile } from '@shared/contacts'
-import type { EndpointCandidate, EndpointConfidence, EndpointKind, ReachabilityReport } from '@shared/reachability'
+import type {
+  EndpointCandidate,
+  EndpointConfidence,
+  EndpointKind,
+  PortMapping,
+  ReachabilityReport
+} from '@shared/reachability'
 import type { IdentityStatus } from '@shared/types'
 import { cn } from '../lib/cn'
 
@@ -134,13 +140,18 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
   const [discovery, setDiscovery] = useState<ReachabilityReport | null>(null)
   const [discoveryBusy, setDiscoveryBusy] = useState(false)
   const [discoveryError, setDiscoveryError] = useState<string | null>(null)
+  const [externalChecks, setExternalChecks] = useState<'ask' | 'always' | 'never'>('ask')
+  const [mapping, setMapping] = useState<PortMapping | null>(null)
+  const [mappingBusy, setMappingBusy] = useState(false)
 
   const apply = useCallback((next: HostingState) => setState(next), [])
 
   useEffect(() => {
     let alive = true
     void window.ncc.getConfig().then((config) => {
-      if (alive) setStrictAnchors(config.anchorRequired)
+      if (!alive) return
+      setStrictAnchors(config.anchorRequired)
+      setExternalChecks(config.externalAddressChecks ?? 'ask')
     })
     void window.ncc.contactsState().then((state) => {
       if (!alive) return
@@ -163,7 +174,7 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
     }
   }, [apply])
 
-  const discover = useCallback(async (seed: string): Promise<void> => {
+  const discover = useCallback(async (seed: string, external = false): Promise<void> => {
     const target = seed.trim()
     if (!target) {
       setDiscoveryError('Open an http(s) page before discovering endpoints')
@@ -172,13 +183,83 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
     setDiscoveryBusy(true)
     setDiscoveryError(null)
     try {
-      setDiscovery(await window.ncc.hostingDiscoverEndpoints(target))
+      setDiscovery(
+        await window.ncc.hostingDiscoverEndpoints(target, external ? { external: true } : undefined)
+      )
     } catch (discoverFailure) {
       setDiscoveryError(errorMessage(discoverFailure))
     } finally {
       setDiscoveryBusy(false)
     }
   }, [])
+
+  const localEndpoint = useMemo(() => {
+    return discovery?.candidates.find((candidate) => candidate.kind === 'loopback') ?? null
+  }, [discovery])
+
+  const mapPort = async (): Promise<void> => {
+    if (!localEndpoint) return
+    let url: URL
+    try {
+      url = new URL(localEndpoint.url)
+    } catch {
+      return
+    }
+    const localPort = Number(url.port || (url.protocol === 'https:' ? 443 : 80))
+    if (
+      !window.confirm(
+        `Ask the router to forward TCP port ${localPort} to this machine over UPnP?\n\n` +
+          'The mapping is limited to this port, described as Nostr Navigator, expires after two hours and is removed when the browser quits.'
+      )
+    ) {
+      return
+    }
+    setMappingBusy(true)
+    setError(null)
+    try {
+      const result = await window.ncc.hostingMapPort({
+        localPort,
+        secure: url.protocol === 'https:'
+      })
+      setMapping(result)
+      setDraft((current) => {
+        if (!current) return current
+        const lines = current.endpoints.split('\n').map((line) => line.trim()).filter(Boolean)
+        return lines.includes(result.url)
+          ? current
+          : { ...current, endpoints: [...lines, result.url].join('\n') }
+      })
+    } catch (mappingError) {
+      setError(errorMessage(mappingError))
+    } finally {
+      setMappingBusy(false)
+    }
+  }
+
+  const unmapPort = async (): Promise<void> => {
+    if (!mapping) return
+    setMappingBusy(true)
+    try {
+      await window.ncc.hostingUnmapPort(mapping.localPort)
+      setDraft((current) =>
+        current
+          ? {
+              ...current,
+              endpoints: current.endpoints
+                .split('\n')
+                .map((line) => line.trim())
+                .filter((line) => line && line !== mapping.url)
+                .join('\n')
+            }
+          : current
+      )
+      setMapping(null)
+    } catch (mappingError) {
+      setError(errorMessage(mappingError))
+    } finally {
+      setMappingBusy(false)
+    }
+  }
 
   const toggleEndpoint = (url: string): void => {
     setDraft((current) => {
@@ -623,6 +704,97 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
                       ))}
                     </ul>
                   ) : null}
+
+                  <div data-external-check className="space-y-1.5 border-t border-[color:var(--color-line)] pt-1.5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-ui-10 font-semibold text-[color:var(--color-text-strong)]">
+                        Internet reachability
+                      </span>
+                      <span
+                        className={cn(
+                          'rounded-full px-1.5 py-0.5 text-ui-95',
+                          discovery.externalCheck === 'matched' || discovery.externalCheck === 'confirmed'
+                            ? 'bg-[color:var(--color-ok)]/10 text-[color:var(--color-ok)]'
+                            : discovery.externalCheck === 'mismatch' || discovery.externalCheck === 'error'
+                              ? 'bg-[color:var(--color-danger)]/10 text-[color:var(--color-danger)]'
+                              : 'bg-[color:var(--color-hover)] text-[color:var(--color-muted)]'
+                        )}
+                      >
+                        {discovery.externalCheck === 'matched'
+                          ? 'router confirmed'
+                          : discovery.externalCheck === 'confirmed'
+                            ? 'address confirmed'
+                            : discovery.externalCheck === 'mismatch'
+                              ? 'NAT mismatch'
+                              : discovery.externalCheck === 'error'
+                                ? 'check failed'
+                                : discovery.externalCheck === 'declined'
+                                  ? 'skipped'
+                                  : 'not checked'}
+                      </span>
+                    </div>
+                    {discovery.externalAddress ? (
+                      <p className="font-mono text-ui-95 text-[color:var(--color-muted)]">
+                        Internet sees {discovery.externalAddress}
+                        {discovery.externalProvider ? ` · ${discovery.externalProvider}` : ''}
+                      </p>
+                    ) : null}
+                    {discovery.externalCheck === 'not-run' && externalChecks === 'ask' ? (
+                      <div className="rounded-md border border-[color:var(--color-line)] bg-[color:var(--color-field)] px-2 py-1.5">
+                        <p className="text-ui-95 leading-relaxed text-[color:var(--color-muted)]">
+                          Confirm your public address? Nostr Navigator can contact{' '}
+                          <span className="font-mono">api64.ipify.org</span>. That service sees your IP
+                          address, but is not sent your npub, service name or endpoints. Recommended if
+                          you want to publish a direct internet endpoint.
+                        </p>
+                        <button
+                          type="button"
+                          data-check-public-address
+                          disabled={discoveryBusy}
+                          onClick={() => void discover(draft.endpoints.split('\n')[0] ?? '', true)}
+                          className="mt-1 rounded border border-[color:var(--color-line)] px-2 py-0.5 text-ui-95 text-[color:var(--color-text)] hover:bg-[color:var(--color-hover)] disabled:opacity-50"
+                        >
+                          Check public address
+                        </button>
+                      </div>
+                    ) : null}
+                    {discovery.externalCheck === 'not-run' && externalChecks === 'never' ? (
+                      <p className="text-ui-95 text-[color:var(--color-faint)]">
+                        Public address checks are off in Settings → General.
+                      </p>
+                    ) : null}
+                    {mapping ? (
+                      <div data-port-mapping className="rounded-md border border-[color:var(--color-line)] bg-[color:var(--color-field)] px-2 py-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-ui-95 text-[color:var(--color-muted)]">
+                            Router forwards TCP {mapping.externalPort} to {mapping.internalClient}:
+                            {mapping.localPort}
+                          </span>
+                          <button
+                            type="button"
+                            disabled={mappingBusy}
+                            onClick={() => void unmapPort()}
+                            className="ml-auto rounded border border-[color:var(--color-line)] px-1.5 py-0.5 text-ui-95 text-[color:var(--color-muted)] hover:bg-[color:var(--color-danger)]/10 hover:text-[color:var(--color-danger)] disabled:opacity-50"
+                          >
+                            Remove mapping
+                          </button>
+                        </div>
+                        <p className="break-all font-mono text-ui-95 text-[color:var(--color-faint)]">
+                          {mapping.url} · unverified, removed on quit
+                        </p>
+                      </div>
+                    ) : localEndpoint ? (
+                      <button
+                        type="button"
+                        data-map-port
+                        disabled={mappingBusy}
+                        onClick={() => void mapPort()}
+                        className="rounded border border-[color:var(--color-line)] px-2 py-0.5 text-ui-95 text-[color:var(--color-text)] hover:bg-[color:var(--color-hover)] disabled:opacity-50"
+                      >
+                        {mappingBusy ? 'Mapping…' : 'Map a TCP port on the router (UPnP)'}
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
               ) : null}
             </div>

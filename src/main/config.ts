@@ -98,6 +98,14 @@ export class ConfigStore {
     return this.get()
   }
 
+  setExternalAddressChecks(value: unknown): AppConfig {
+    const externalAddressChecks =
+      value === 'always' || value === 'never' ? value : ('ask' as const)
+    this.config = { ...this.get(), externalAddressChecks }
+    this.write()
+    return this.get()
+  }
+
   setPreferTor(value: unknown): AppConfig {
     this.config = { ...this.get(), preferTor: value === true }
     this.write()
@@ -233,6 +241,10 @@ export class ConfigStore {
           relays: normalizeRelayEntries(parsed.relays ?? defaultRelays()),
           gossip: parsed.gossip !== false,
           anchorRequired: parsed.anchorRequired === true,
+          externalAddressChecks:
+            parsed.externalAddressChecks === 'always' || parsed.externalAddressChecks === 'never'
+              ? parsed.externalAddressChecks
+              : 'ask',
           preferTor: parsed.preferTor === true,
           ephemeralSigner: parsed.ephemeralSigner === true,
           torMode: parsed.torMode === 'local' ? 'local' : 'auto',
@@ -271,6 +283,7 @@ export class ConfigStore {
       relays: defaultRelays().map((url) => ({ url })),
       gossip: true,
       anchorRequired: false,
+      externalAddressChecks: 'ask',
       preferTor: false,
       ephemeralSigner: false,
       torMode: 'auto',

@@ -13,15 +13,20 @@ import { networkInterfaces, type NetworkInterfaceInfo } from 'node:os'
 import type {
   EndpointCandidate,
   EndpointKind,
+  ExternalCheckState,
   GatewayReport,
   ReachabilityReport,
   WanClass
 } from '@shared/reachability'
+import type { PublicAddress } from './public-address'
 
 export interface DiscoverOptions {
   seedUrl: string
   /** Skip the local gateway query (tests, and when the publisher says no). */
   gateway?: boolean
+  /** Run the opt-in public address lookup. */
+  external?: boolean
+  lookupPublicAddress?: () => Promise<PublicAddress>
   timeoutMs?: number
   interfaces?: NodeJS.Dict<NetworkInterfaceInfo[]>
 }
@@ -325,8 +330,14 @@ function emptyGateway(error?: string, upnp = false): GatewayReport {
   }
 }
 
-/** Read a device description and run `GetExternalIPAddress` against its WAN service. */
-export async function upnpExternalAddress(timeoutMs: number): Promise<{ address: string; mapping: boolean } | null> {
+export interface UpnpGateway {
+  serviceType: string
+  controlUrl: string
+  externalAddress?: string
+}
+
+/** Find the router's WAN control service from its device description. */
+export async function findUpnpGateway(timeoutMs: number): Promise<UpnpGateway | null> {
   const location = await ssdpLocation(timeoutMs)
   if (!location) return null
   try {
@@ -344,25 +355,113 @@ export async function upnpExternalAddress(timeoutMs: number): Promise<{ address:
       if (controlUrl) break
     }
     if (!controlUrl || !serviceType) return null
-    const actionUrl = new URL(controlUrl, base).toString()
-    const body = `<?xml version="1.0"?>
-<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
-<s:Body><u:GetExternalIPAddress xmlns:u="${serviceType}"></u:GetExternalIPAddress></s:Body></s:Envelope>`
-    const response = await fetchText(actionUrl, timeoutMs, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'text/xml; charset="utf-8"',
-        SOAPAction: `"${serviceType}#GetExternalIPAddress"`,
-        Connection: 'close'
-      },
-      body
-    })
-    const address = /<NewExternalIPAddress>\s*([^<]+?)\s*<\/NewExternalIPAddress>/i.exec(response)?.[1]
-    if (!address) return null
-    return { address, mapping: true }
+    return { serviceType, controlUrl: new URL(controlUrl, base).toString() }
   } catch {
     return null
   }
+}
+
+function xml(value: string | number): string {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+async function soapAction(
+  gateway: UpnpGateway,
+  action: string,
+  args: Array<[string, string | number]>,
+  timeoutMs: number
+): Promise<string> {
+  const values = args.map(([name, value]) => `<${name}>${xml(value)}</${name}>`).join('')
+  const body = `<?xml version="1.0"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+<s:Body><u:${action} xmlns:u="${gateway.serviceType}">${values}</u:${action}></s:Body></s:Envelope>`
+  return fetchText(gateway.controlUrl, timeoutMs, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'text/xml; charset="utf-8"',
+      SOAPAction: `"${gateway.serviceType}#${action}"`,
+      Connection: 'close'
+    },
+    body
+  })
+}
+
+export interface PortMappingRequest {
+  externalPort: number
+  internalPort: number
+  internalClient: string
+  protocol?: 'TCP' | 'UDP'
+  description?: string
+  leaseSeconds?: number
+}
+
+/** Ask the router to forward a TCP/UDP port to a LAN client. */
+export async function addUpnpPortMapping(
+  gateway: UpnpGateway,
+  request: PortMappingRequest,
+  timeoutMs = 4000
+): Promise<void> {
+  await soapAction(
+    gateway,
+    'AddPortMapping',
+    [
+      ['NewRemoteHost', ''],
+      ['NewExternalPort', request.externalPort],
+      ['NewProtocol', request.protocol ?? 'TCP'],
+      ['NewInternalPort', request.internalPort],
+      ['NewInternalClient', request.internalClient],
+      ['NewEnabled', 1],
+      ['NewPortMappingDescription', request.description ?? 'Nostr Navigator'],
+      ['NewLeaseDuration', request.leaseSeconds ?? 7200]
+    ],
+    timeoutMs
+  )
+}
+
+export async function deleteUpnpPortMapping(
+  gateway: UpnpGateway,
+  externalPort: number,
+  protocol: 'TCP' | 'UDP' = 'TCP',
+  timeoutMs = 4000
+): Promise<void> {
+  await soapAction(
+    gateway,
+    'DeletePortMapping',
+    [
+      ['NewRemoteHost', ''],
+      ['NewExternalPort', externalPort],
+      ['NewProtocol', protocol]
+    ],
+    timeoutMs
+  )
+}
+
+export async function upnpExternalAddressOn(
+  gateway: UpnpGateway,
+  timeoutMs = 4000
+): Promise<string | null> {
+  try {
+    const response = await soapAction(gateway, 'GetExternalIPAddress', [], timeoutMs)
+    return /<NewExternalIPAddress>\s*([^<]+?)\s*<\/NewExternalIPAddress>/i.exec(response)?.[1] ?? null
+  } catch {
+    return null
+  }
+}
+
+/** Read a device description and run `GetExternalIPAddress` against its WAN service. */
+export async function upnpExternalAddress(
+  timeoutMs: number
+): Promise<{ address: string; mapping: boolean; gateway: UpnpGateway } | null> {
+  const gateway = await findUpnpGateway(timeoutMs)
+  if (!gateway) return null
+  const address = await upnpExternalAddressOn(gateway, timeoutMs)
+  if (!address) return null
+  gateway.externalAddress = address
+  return { address, mapping: true, gateway }
 }
 
 async function fetchText(url: string, timeoutMs: number, init?: RequestInit): Promise<string> {
@@ -520,11 +619,62 @@ export async function discoverReachability(options: DiscoverOptions): Promise<Re
     gatewayCache = { at: Date.now(), report: gateway }
   }
 
+  let externalCheck: ExternalCheckState = 'not-run'
+  let externalAddress: string | undefined
+  let externalProvider: string | undefined
+  if (options.external && options.lookupPublicAddress) {
+    try {
+      const found = await options.lookupPublicAddress()
+      externalAddress = found.address
+      externalProvider = found.provider
+      if (found.family === 'ipv6') {
+        externalCheck = 'confirmed'
+        warnings.push(
+          `The public lookup returned ${found.address} (IPv6). Inbound IPv6 uses the host's global address, not NAT; check the firewall.`
+        )
+      } else {
+        if (gateway.wanAddress) {
+          externalCheck = gateway.wanAddress === found.address ? 'matched' : 'mismatch'
+          warnings.push(
+            externalCheck === 'matched'
+              ? `The internet sees ${found.address}, matching the router WAN. A port still needs forwarding.`
+              : `The router reports ${gateway.wanAddress} but the internet sees ${found.address}: carrier-grade NAT or another NAT layer.`
+          )
+        } else {
+          externalCheck = 'confirmed'
+          warnings.push(`The internet sees ${found.address}. A port still needs forwarding.`)
+        }
+        const seed = parseSeed(options.seedUrl)
+        if (seed) {
+          const scheme: 'http' | 'https' = seed.protocol === 'https:' ? 'https' : 'http'
+          const url = buildUrl(scheme, found.address, seedPort(seed), seed)
+          if (!candidates.some((candidate) => candidate.url === url)) {
+            candidates.push({
+              kind: 'public-v4',
+              url,
+              family: 'ipv4',
+              confidence: 'unverified',
+              source: 'external',
+              note: 'External address confirmed; requires a port forward'
+            })
+          }
+        }
+      }
+    } catch (error) {
+      externalCheck = 'error'
+      warnings.push(
+        `Public address check failed: ${error instanceof Error ? error.message : String(error)}`
+      )
+    }
+  }
+
   return {
     seed: options.seedUrl,
     candidates,
     gateway,
-    externalCheck: 'not-run',
+    externalCheck,
+    ...(externalAddress ? { externalAddress } : {}),
+    ...(externalProvider ? { externalProvider } : {}),
     warnings: [...warnings, ...gatewayWarnings(gateway)]
   }
 }

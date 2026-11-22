@@ -67,6 +67,7 @@ const api: NccApi = {
   resolveRelayLocator: (input) => ipcRenderer.invoke('ncc:resolve-relay-locator', input),
   setGossip: (value) => ipcRenderer.invoke('ncc:set-gossip', value),
   setAnchorRequired: (value) => ipcRenderer.invoke('ncc:set-anchor-required', value),
+  setExternalAddressChecks: (value) => ipcRenderer.invoke('ncc:set-external-address-checks', value),
   setPreferTor: (value) => ipcRenderer.invoke('ncc:set-prefer-tor', value),
   setEphemeralSigner: (value) => ipcRenderer.invoke('ncc:set-ephemeral-signer', value),
   setTorMode: (mode) => ipcRenderer.invoke('ncc:set-tor-mode', mode),
@@ -97,7 +98,11 @@ const api: NccApi = {
     ipcRenderer.invoke('ncc:hosting-share-many', { id, recipients, days, label }),
   hostingRevokeShare: (shareId) => ipcRenderer.invoke('ncc:hosting-revoke-share', shareId),
   hostingForgetReceived: (id) => ipcRenderer.invoke('ncc:hosting-forget-received', id),
-  hostingDiscoverEndpoints: (seedUrl) => ipcRenderer.invoke('ncc:hosting-discover-endpoints', seedUrl),
+  hostingDiscoverEndpoints: (seedUrl, options) =>
+    ipcRenderer.invoke('ncc:hosting-discover-endpoints', seedUrl, options),
+  hostingMapPort: (input) => ipcRenderer.invoke('ncc:hosting-map-port', input),
+  hostingUnmapPort: (localPort) => ipcRenderer.invoke('ncc:hosting-unmap-port', localPort),
+  hostingPortMappings: () => ipcRenderer.invoke('ncc:hosting-port-mappings'),
   hostingPublishOnion: (serviceId) => ipcRenderer.invoke('ncc:hosting-publish-onion', serviceId),
   hostingRemoveOnion: (serviceId) => ipcRenderer.invoke('ncc:hosting-remove-onion', serviceId),
   onHostingChanged: (listener) => {

@@ -176,7 +176,10 @@ Tor creates it, the key is reused so the address is stable, and it is verified t
 the browser's own SOCKS proxy. That is the path that works behind CGNAT without a
 port forward. It also reads the router's WAN address over UPnP/NAT-PMP so CGNAT or double NAT
 is called out instead of advertising an endpoint that cannot work. Only local
-information is used; external address confirmation is opt-in.
+information is used by default. Confirming the public address with an external service
+is a per-user choice (`Ask` / `Always` / `Never`), disclosed by provider, cached and
+skipped while Tor is preferred. A confirmed address can also be forwarded with an
+explicit UPnP TCP mapping; it is removed on quit and stays **unverified** until checked.
 
 The same panel shares a private service with one or more people: choose contacts from
 your Nostr follow list (or paste an npub), and each recipient gets their own NIP-44

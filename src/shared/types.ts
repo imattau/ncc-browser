@@ -754,6 +754,8 @@ export interface NavState {
   windowMaximized: boolean
 }
 
+export type ExternalAddressCheck = 'ask' | 'always' | 'never'
+
 export interface AppConfig {
   /** Resolution relays; an entry may be identity-resolved rather than a fixed URL. */
   relays: RelayEntry[]
@@ -761,6 +763,11 @@ export interface AppConfig {
   gossip: boolean
   /** Refuse services that have no fresh NCC-02 service record (kind 30059). */
   anchorRequired: boolean
+  /**
+   * When endpoint discovery may contact a public address service to confirm the
+   * internet egress. `ask` shows a button; `always` runs it automatically.
+   */
+  externalAddressChecks?: ExternalAddressCheck
   /** Automatically use an onion endpoint when the locator publishes one. */
   preferTor: boolean
   /** Use per-session generated NIP-07 keys in private and Tor tabs. */

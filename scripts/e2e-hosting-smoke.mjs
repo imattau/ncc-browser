@@ -294,7 +294,13 @@ try {
   if (!selected.includes(picked)) {
     throw new Error(`selecting ${picked} did not fill the endpoints field: ${selected}`)
   }
-  log('endpoints discovered', discovered.length)
+  const externalPrompt = await cdp.evaluate(
+    "Boolean(document.querySelector('[data-check-public-address]'))"
+  )
+  if (!externalPrompt) throw new Error('the opt-in public address prompt was not shown')
+  const mapAction = await cdp.evaluate("Boolean(document.querySelector('[data-map-port]'))")
+  if (!mapAction) throw new Error('the UPnP mapping action was not offered for a loopback endpoint')
+  log('endpoints discovered', discovered.length, '(external prompt + mapping action present)')
 
   await cdp.evaluate(`(() => {
     const form = document.querySelector('[data-hosting-settings] form')
