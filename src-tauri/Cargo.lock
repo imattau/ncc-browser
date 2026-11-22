@@ -3720,7 +3720,7 @@ dependencies = [
 
 [[package]]
 name = "ncc-navigator"
-version = "0.40.0"
+version = "0.40.1"
 dependencies = [
  "base64 0.23.1",
  "futures-util",

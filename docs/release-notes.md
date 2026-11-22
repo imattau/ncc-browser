@@ -1,5 +1,16 @@
 # Release notes
 
+## 0.40.1 — per-agent Nostr identities for Agent control
+
+### Added
+
+- **Each automation agent gets its own Nostr identity.** Settings → Agent control now
+  lists named agents instead of one shared token; adding an agent generates a Nostr
+  keypair whose nsec is its MCP connection credential, saves that nsec in the password
+  manager, and gives the agent its own independent site-approval grants. The connect
+  command is shown in full once, then stays masked behind a “Reveal” button that
+  requires the password manager to be unlocked.
+
 ## 0.40.0 — password health and per-tab transport
 
 ### Added

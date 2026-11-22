@@ -1,5 +1,10 @@
 # Nostr Navigator for Android
 
+## New in 0.40.1
+
+- Version 0.40.1 (versionCode 40001). Maintenance release with no Android-specific
+  behaviour changes; the desktop and Android builds stay on the same version.
+
 ## New in 0.40.0
 
 - Version 0.40.0 (versionCode 40000). Maintenance release with no Android-specific
