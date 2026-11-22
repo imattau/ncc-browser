@@ -27,8 +27,8 @@ For Android work, use the repository-local toolchain described in
 - If a change affects setup, behavior, or user-facing flows, update the relevant
   documentation when practical.
 - Before submitting, run the checks that make sense for your change. Common options
-  include `npm run typecheck` and `npm test`; it is fine to say which checks you did
-  not run and why.
+  include `npm run typecheck`, `npm run lint` and `npm test`; it is fine to say which
+  checks you did not run and why.
 
 You are welcome to open a draft pull request early, ask questions in it, or submit
 work that is still in progress. Review is a conversation, and maintainers can help
