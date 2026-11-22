@@ -921,7 +921,11 @@ src/main
   session-store.ts   saved tabs + window geometry for session restore
   downloads.ts       download manager: sanitised names, progress, cancel, reveal
   favicon.ts         fetch page icons, convert to bounded data URLs
-  ipc.ts             navigate / tabs / history / bookmarks / downloads / window / commands
+  ipc/index.ts       composition: browser, settings, downloads, hosting, signer, Tor
+  ipc/browser.ts     navigate / tabs / history / bookmarks / window / commands
+  ipc/settings.ts    relays, search, appearance, HTTPS, protection, app info
+  ipc/downloads.ts   download list, cancel, reveal, clear
+  ipc-guard.ts       requireChrome: which handlers only the trusted chrome may call
   error-page.ts      self-contained failure screens
   shortcuts.ts       pure: key event → command
   context-menu-model.ts  pure: context menu contents

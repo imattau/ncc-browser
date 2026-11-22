@@ -1,12 +1,13 @@
 import { ipcMain, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
-import { browserShellFor, type BrowserShell } from '../shell'
+import { isChromeSender, requireChrome } from '../ipc-guard'
+import type { BrowserShell } from '../shell'
 import type { PaymentCardService } from './service'
 
 export function registerPaymentCardIpc(service: PaymentCardService, shell: BrowserShell): void {
-  const fromChrome = (event: IpcMainInvokeEvent): boolean => browserShellFor(event.sender) !== null
+  const fromChrome = (event: IpcMainInvokeEvent): boolean => isChromeSender(event)
   const handle = (channel: string, action: (...args: unknown[]) => unknown | Promise<unknown>): void => {
     ipcMain.handle(channel, async (event, ...args) => {
-      if (!fromChrome(event)) throw new Error('Payment cards are only available to browser chrome')
+      requireChrome(event, 'Payment cards')
       return action(...args)
     })
   }
