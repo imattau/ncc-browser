@@ -1,5 +1,22 @@
 # Release notes
 
+## 0.39.2 — address before endpoints and opt-in public reachability
+
+### Added
+
+- **The service address can exist before its endpoints.** `ncc://<npub>/<service>` is
+  derived from the identity and service id; the Add service form shows and copies it,
+  and you can save the service without endpoints. **Publish** and **Share** still need
+  a reachable endpoint and say so.
+- **The discovered public address is explicitly opt-in.** It has its own
+  “Include … in the locator” checkbox under Internet reachability instead of sharing the
+  general candidate list.
+- **Local network only** hides public and current-page candidates and removes any
+  selected discovered public URLs (and their pins), leaving loopback/LAN/IPv6
+  candidates untouched.
+- **Duplicate site records** for the same owner and site id are replaced instead of
+  multiplied; an old index with duplicates now keeps the newest record.
+
 ## 0.39.1 — rediscover published sites
 
 ### Fixed

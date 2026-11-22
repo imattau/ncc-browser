@@ -5,7 +5,11 @@ import { describe, expect, it } from 'vitest'
 import { finalizeEvent, generateSecretKey, getPublicKey, verifyEvent, type Event } from 'nostr-tools'
 import { NsitePublishService, type NsiteNetwork } from '../src/main/nsite-publish/service'
 import { NsiteStore } from '../src/main/nsite-publish/store'
-import { NSITE_NAMED_KIND, type NsiteSiteFile } from '../src/shared/nsite-publish'
+import {
+  NSITE_NAMED_KIND,
+  type NsiteSiteFile,
+  type PublishedNsite
+} from '../src/shared/nsite-publish'
 
 const NOW = 1_800_000_000
 
@@ -108,6 +112,52 @@ describe('NsitePublishService.scanFolder', () => {
     writeFileSync(join(root, 'app.js'), 'x')
     const scan = await service.scanFolder(root)
     expect(scan.problems.join(' ')).toMatch(/no \/index\.html/)
+  })
+})
+
+describe('NsiteStore address identity', () => {
+  it('replaces a record by owner/siteId when the local id differs', () => {
+    const store = new NsiteStore(join(mkdtempSync(join(tmpdir(), 'ncc-nsite-dup-')), 'sites.json'))
+    const base: PublishedNsite = {
+      id: 'one',
+      owner: 'a'.repeat(64),
+      siteId: 'blog',
+      servers: ['https://blossom.test'],
+      files: [{ path: '/index.html', hash: 'b'.repeat(64), size: 0 }],
+      manifestEventId: 'c'.repeat(64),
+      createdAt: 1,
+      updatedAt: 1
+    }
+    store.upsert(base)
+    store.upsert({ ...base, id: 'two', title: 'Newest', updatedAt: 2 })
+    const sites = store.state().sites
+    expect(sites).toHaveLength(1)
+    expect(sites[0]).toMatchObject({ id: 'one', title: 'Newest', updatedAt: 2 })
+  })
+
+  it('keeps the newest duplicate when reading an old index', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'ncc-nsite-dup-read-'))
+    const file = join(directory, 'sites.json')
+    const base: PublishedNsite = {
+      id: 'old',
+      owner: 'a'.repeat(64),
+      siteId: 'blog',
+      servers: ['https://blossom.test'],
+      files: [{ path: '/index.html', hash: 'b'.repeat(64), size: 0 }],
+      manifestEventId: 'c'.repeat(64),
+      createdAt: 1,
+      updatedAt: 1
+    }
+    writeFileSync(
+      file,
+      JSON.stringify({
+        version: 1,
+        sites: [base, { ...base, id: 'new', title: 'Newest', updatedAt: 5 }]
+      })
+    )
+    const store = new NsiteStore(file)
+    expect(store.state().sites).toHaveLength(1)
+    expect(store.state().sites[0]).toMatchObject({ id: 'new', title: 'Newest' })
   })
 })
 

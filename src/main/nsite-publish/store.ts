@@ -60,9 +60,18 @@ export class NsiteStore {
     const state = this.ensure()
     const key = nsiteSiteKey(site.owner, site.siteId)
     state.hidden = (state.hidden ?? []).filter((entry) => entry !== key)
-    const index = state.sites.findIndex((entry) => entry.id === site.id)
-    if (index === -1) state.sites.push(site)
-    else state.sites[index] = site
+    const byId = state.sites.findIndex((entry) => entry.id === site.id)
+    if (byId !== -1) {
+      state.sites[byId] = site
+    } else {
+      // An address has one canonical entry. Discovery or a publish with a fresh local
+      // id must replace the existing record, not add a duplicate.
+      const byAddress = state.sites.findIndex(
+        (entry) => nsiteSiteKey(entry.owner, entry.siteId) === key
+      )
+      if (byAddress !== -1) state.sites[byAddress] = { ...site, id: state.sites[byAddress].id }
+      else state.sites.push(site)
+    }
     this.flush()
     return clone(site)
   }
@@ -128,8 +137,7 @@ export class NsiteStore {
 }
 
 function normalizeState(parsed: Partial<NsitePublishState>, now: number): NsitePublishState {
-  const sites: PublishedNsite[] = []
-  const seen = new Set<string>()
+  const byAddress = new Map<string, PublishedNsite>()
   for (const raw of Array.isArray(parsed.sites) ? parsed.sites : []) {
     if (!raw || typeof raw !== 'object') continue
     const candidate = raw as Partial<PublishedNsite>
@@ -145,8 +153,7 @@ function normalizeState(parsed: Partial<NsitePublishState>, now: number): NsiteP
       continue
     }
     const siteId = candidate.siteId ? candidate.siteId : null
-    const key = `${candidate.owner.toLowerCase()}:${siteId ?? ''}`
-    if (seen.has(key)) continue
+    const key = nsiteSiteKey(candidate.owner, siteId)
     const files: NsiteSiteFile[] = candidate.files
       .filter((file): file is NsiteSiteFile =>
         Boolean(
@@ -164,7 +171,7 @@ function normalizeState(parsed: Partial<NsitePublishState>, now: number): NsiteP
       .filter((server): server is string => typeof server === 'string' && /^https?:\/\//i.test(server))
       .slice(0, 8)
     const createdAt = Number.isFinite(candidate.createdAt) ? Number(candidate.createdAt) : now
-    sites.push({
+    const site: PublishedNsite = {
       id: candidate.id,
       owner: candidate.owner.toLowerCase(),
       siteId,
@@ -184,11 +191,12 @@ function normalizeState(parsed: Partial<NsitePublishState>, now: number): NsiteP
       ...(typeof candidate.lastPublishError === 'string'
         ? { lastPublishError: candidate.lastPublishError.slice(0, 500) }
         : {})
-    })
-    seen.add(key)
+    }
+    const previous = byAddress.get(key)
+    if (!previous || site.updatedAt >= previous.updatedAt) byAddress.set(key, site)
   }
   const hidden = (Array.isArray(parsed.hidden) ? parsed.hidden : [])
     .filter((key): key is string => typeof key === 'string' && key.includes(':'))
     .slice(0, 500)
-  return { version: 1, sites, hidden }
+  return { version: 1, sites: [...byAddress.values()], hidden }
 }
