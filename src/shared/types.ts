@@ -174,6 +174,8 @@ export interface PasswordConfig {
   allowNostrPaymentCardAuth: boolean
   /** Make Nostr signer confirmation the default when card autofill is requested. */
   defaultNostrPaymentCardAuth: boolean
+  /** Entries older than this flag as due for rotation in the health report. 0 disables the check. */
+  rotationDays: number
 }
 
 export const DEFAULT_PASSWORD_CONFIG: PasswordConfig = {
@@ -186,7 +188,8 @@ export const DEFAULT_PASSWORD_CONFIG: PasswordConfig = {
   fillPaymentCards: true,
   savePaymentCardSecurityCodes: false,
   allowNostrPaymentCardAuth: false,
-  defaultNostrPaymentCardAuth: false
+  defaultNostrPaymentCardAuth: false,
+  rotationDays: 365
 }
 
 /* ------------------------------------------------------------------ */
@@ -279,7 +282,11 @@ export function normalizePasswordConfig(input: unknown): PasswordConfig {
     fillPaymentCards: typeof value.fillPaymentCards === 'boolean' ? value.fillPaymentCards : true,
     savePaymentCardSecurityCodes: typeof value.savePaymentCardSecurityCodes === 'boolean' ? value.savePaymentCardSecurityCodes : false,
     allowNostrPaymentCardAuth: value.allowNostrPaymentCardAuth === true,
-    defaultNostrPaymentCardAuth: value.allowNostrPaymentCardAuth === true && value.defaultNostrPaymentCardAuth === true
+    defaultNostrPaymentCardAuth: value.allowNostrPaymentCardAuth === true && value.defaultNostrPaymentCardAuth === true,
+    rotationDays:
+      typeof value.rotationDays === 'number' && Number.isFinite(value.rotationDays)
+        ? Math.max(0, Math.min(3650, Math.round(value.rotationDays)))
+        : DEFAULT_PASSWORD_CONFIG.rotationDays
   }
 }
 
@@ -303,6 +310,26 @@ export interface PasswordVaultStatus {
   useNip65: boolean
   vaultRelay: string
   neverSave: string[]
+  rotationDays: number
+}
+
+/** One vault entry flagged by the local health scan. An entry may carry more than one flag. */
+export interface PasswordHealthEntry {
+  id: string
+  title: string
+  origin: string
+  username: string
+  weak: boolean
+  reused: boolean
+  old: boolean
+}
+
+export interface PasswordHealthReport {
+  scannedAt: number
+  weakCount: number
+  reusedCount: number
+  oldCount: number
+  entries: PasswordHealthEntry[]
 }
 
 export interface PasswordContext {

@@ -23,6 +23,7 @@ import {
   normalizeVault,
   pageOriginFromUrl,
   passwordVaultFilter,
+  scanVaultHealth,
   summarizeVault,
   vaultByteLength,
   type PasswordVault
@@ -38,6 +39,7 @@ import type {
   PasswordExportResult,
   PasswordFillResult,
   PasswordGeneratorOptions,
+  PasswordHealthReport,
   PasswordImportPreview,
   PasswordPage,
   PasswordRelaySource,
@@ -199,8 +201,19 @@ export class PasswordService {
       offerSave: config.offerSave,
       useNip65: config.useNip65,
       vaultRelay: config.vaultRelay,
-      neverSave: config.neverSave
+      neverSave: config.neverSave,
+      rotationDays: config.rotationDays
     }
+  }
+
+  /** Local-only scan of the unlocked vault for weak, reused, and stale passwords. */
+  health(): PasswordHealthReport {
+    if (!this.unlocked || !this.vault) {
+      return { scannedAt: this.now(), weakCount: 0, reusedCount: 0, oldCount: 0, entries: [] }
+    }
+    this.touch()
+    const rotationDays = this.deps.config.get().passwords.rotationDays
+    return scanVaultHealth(this.vault, this.now(), rotationDays)
   }
 
   context(): PasswordContext {

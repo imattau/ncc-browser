@@ -112,6 +112,7 @@ export function registerPasswordIpc(service: PasswordService, deps: PasswordIpcD
   })
   handle('ncc:password-lock', () => service.lock())
   handle('ncc:password-list', () => service.list())
+  handle('ncc:password-health', () => service.health())
   handle('ncc:password-entry', (id) => (typeof id === 'string' ? service.entry(id) : null))
   handle('ncc:password-reveal', (id) =>
     typeof id === 'string' ? service.reveal(id) : ''

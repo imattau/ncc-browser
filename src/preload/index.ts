@@ -186,6 +186,7 @@ const api: NccApi = {
   passwordsUnlock: () => ipcRenderer.invoke('ncc:password-unlock'),
   passwordsLock: () => ipcRenderer.invoke('ncc:password-lock'),
   passwordsList: () => ipcRenderer.invoke('ncc:password-list'),
+  passwordsHealth: () => ipcRenderer.invoke('ncc:password-health'),
   passwordsEntry: (id) => ipcRenderer.invoke('ncc:password-entry', id),
   passwordsReveal: (id) => ipcRenderer.invoke('ncc:password-reveal', id),
   passwordsTotp: (id) => ipcRenderer.invoke('ncc:password-totp', id),

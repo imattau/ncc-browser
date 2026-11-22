@@ -7,7 +7,15 @@
 
 import { parseNccAddress } from './ncc-url'
 import { parseNsiteAddress } from './nsite-url'
-import type { PasskeyCredential, PasswordEntry, PasswordPage, PasswordSummary } from './types'
+import { scorePassword } from './password-strength'
+import type {
+  PasskeyCredential,
+  PasswordEntry,
+  PasswordHealthEntry,
+  PasswordHealthReport,
+  PasswordPage,
+  PasswordSummary
+} from './types'
 
 export const PASSWORD_VAULT_KIND = 30078
 export const PASSWORD_VAULT_VERSION = 1
@@ -282,6 +290,53 @@ export function passwordVaultFilter(pubkey: string): {
     '#d': [PASSWORD_VAULT_D],
     limit: 10
   }
+}
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000
+
+/**
+ * Local-only scan for weak, reused, and stale passwords. No network access and no
+ * dictionary beyond the small list in password-strength; nothing here leaves the vault.
+ */
+export function scanVaultHealth(
+  vault: PasswordVault,
+  now: number,
+  rotationDays: number
+): PasswordHealthReport {
+  const candidates = activeEntries(vault).filter((entry) => !entry.passkey && entry.password.length > 0)
+
+  const countsByPassword = new Map<string, number>()
+  for (const entry of candidates) {
+    countsByPassword.set(entry.password, (countsByPassword.get(entry.password) ?? 0) + 1)
+  }
+
+  const entries: PasswordHealthEntry[] = []
+  let weakCount = 0
+  let reusedCount = 0
+  let oldCount = 0
+
+  for (const entry of candidates) {
+    const weak = scorePassword(entry.password).score <= 1
+    const reused = (countsByPassword.get(entry.password) ?? 0) > 1
+    const old = rotationDays > 0 && now - entry.updatedAt > rotationDays * MS_PER_DAY
+    if (!weak && !reused && !old) continue
+
+    if (weak) weakCount += 1
+    if (reused) reusedCount += 1
+    if (old) oldCount += 1
+    entries.push({
+      id: entry.id,
+      title: entry.title,
+      origin: entry.origin,
+      username: entry.username,
+      weak,
+      reused,
+      old
+    })
+  }
+
+  entries.sort((a, b) => Number(b.weak) - Number(a.weak) || Number(b.reused) - Number(a.reused))
+  return { scannedAt: now, weakCount, reusedCount, oldCount, entries }
 }
 
 /** Validate an import/export origin string and normalize it. */
