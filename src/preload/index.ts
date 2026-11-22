@@ -10,15 +10,16 @@ import {
   type Bookmark,
   type DownloadNotice,
   type NavState,
-  type PasswordContext,
-  type PasskeyConfirmationRequest,
-  type PasswordSaveRequest,
-  type PasswordToast,
-  type PasswordVaultStatus,
-  type PaymentCardDraft,
-  type PaymentCardSaveRequest,
   type SignerRequest
 } from '@shared/types'
+import type {
+  PasswordContext,
+  PasskeyConfirmationRequest,
+  PasswordSaveRequest,
+  PasswordToast,
+  PasswordVaultStatus
+} from '@shared/passwords'
+import type { PaymentCardDraft, PaymentCardSaveRequest } from '@shared/payment-cards'
 import type { HostingState } from '@shared/hosting'
 import type { NetworkChange, PortStatusEvent } from '@shared/reachability'
 import type { ContactsState } from '@shared/contacts'

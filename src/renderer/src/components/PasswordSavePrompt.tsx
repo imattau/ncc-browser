@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { KeyRound, LockKeyhole, ShieldAlert } from 'lucide-react'
-import type { PasswordSaveRequest } from '@shared/types'
+import type { PasswordSaveRequest } from '@shared/passwords'
 import { useFocusTrap } from '../lib/useFocusTrap'
 
 interface PasswordSavePromptProps {

@@ -52,6 +52,17 @@ import type {
   OmniboxSuggestion,
   OverlayReason,
   HttpsMode,
+  TabKind,
+  RelayEntry,
+  RelayLocatorOutcome,
+  SignerPermission,
+  SignerOriginState,
+  SignerRequest,
+  TabHistory,
+  TorMode,
+  TorStatus
+} from './types'
+import type {
   PasswordConfig,
   PasswordContext,
   PasskeyConfirmationRequest,
@@ -67,21 +78,14 @@ import type {
   PasswordSummary,
   PasswordToast,
   PasswordTotpCode,
-  PasswordVaultStatus,
+  PasswordVaultStatus
+} from './passwords'
+import type {
   PaymentCardDraft,
   PaymentCardSaveRequest,
   PaymentCardSettingsStatus,
-  PaymentCardSummary,
-  TabKind,
-  RelayEntry,
-  RelayLocatorOutcome,
-  SignerPermission,
-  SignerOriginState,
-  SignerRequest,
-  TabHistory,
-  TorMode,
-  TorStatus
-} from './types'
+  PaymentCardSummary
+} from './payment-cards'
 import type { BitcoinSendPreview, MoneroWalletRecord, NwcInvoiceLookup, NwcSnapshot, WalletSnapshot, WalletStatus } from './wallet'
 
 export interface SetRelaysResult {

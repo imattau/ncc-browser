@@ -1,4 +1,69 @@
-import type { PaymentCard, PaymentCardDraft, PaymentCardSummary } from './types'
+/* ------------------------------------------------------------------ */
+/*  Data model                                                        */
+/* ------------------------------------------------------------------ */
+
+export interface PaymentCard {
+  id: string
+  name: string
+  number: string
+  /** Optional security code; only populated when the user opts in. */
+  cvc?: string
+  expMonth: string
+  expYear: string
+  nickname: string
+  createdAt: number
+  updatedAt: number
+  deleted?: boolean
+}
+
+export interface PaymentCardDraft {
+  id?: string
+  name: string
+  number: string
+  cvc?: string
+  expMonth: string
+  expYear: string
+  nickname: string
+}
+
+export interface PaymentCardSummary {
+  id: string
+  name: string
+  last4: string
+  network: string
+  expMonth: string
+  expYear: string
+  nickname: string
+}
+
+export interface PaymentCardSettingsStatus {
+  unlocked: boolean
+  authAvailable: boolean
+  nostrAuthAvailable: boolean
+  allowNostrAuth: boolean
+  defaultNostrAuth: boolean
+  enabled: boolean
+  offerSave: boolean
+  saveSecurityCodes: boolean
+  cards: PaymentCardSummary[]
+}
+
+export interface PaymentCardSaveRequest {
+  id: string
+  mode: 'create' | 'update'
+  name: string
+  last4: string
+  network: string
+  expMonth: string
+  expYear: string
+  includesSecurityCode?: boolean
+}
+
+export interface PaymentCardSaveResult {
+  ok: boolean
+  error?: string
+  pending?: boolean
+}
 
 export const PAYMENT_CARDS_D = 'ncc-browser/payment-cards/v1'
 export const PAYMENT_CARDS_TAG = 'ncc-browser/payment-cards'

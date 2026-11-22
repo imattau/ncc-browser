@@ -1,7 +1,7 @@
 import { createHash, generateKeyPairSync, sign as signBytes, createPrivateKey, randomBytes, type JsonWebKey } from 'node:crypto'
 import { isIP } from 'node:net'
 import { getDomain } from 'tldts'
-import type { PasskeyCredential } from '@shared/types'
+import type { PasskeyCredential } from '@shared/passwords'
 import { encodeCbor } from './cbor'
 
 export interface PasskeyCreationOptions {

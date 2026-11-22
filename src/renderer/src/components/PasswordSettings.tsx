@@ -19,15 +19,15 @@ import {
   Wand2,
   X
 } from 'lucide-react'
+import type { IdentityStatus } from '@shared/types'
 import type {
-  IdentityStatus,
   PasswordDraft,
   PasswordEntry,
   PasswordImportPreview,
   PasswordSummary,
   PasswordTotpCode,
   PasswordVaultStatus
-} from '@shared/types'
+} from '@shared/passwords'
 import { cn } from '../lib/cn'
 import { messageOf } from '../lib/format'
 import { PaymentCardsSettings } from './PaymentCardsSettings'

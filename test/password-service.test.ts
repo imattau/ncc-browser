@@ -13,13 +13,10 @@ import {
 } from 'nostr-tools'
 import { PasswordCache } from '../src/main/passwords/cache'
 import { PasswordService } from '../src/main/passwords/service'
-import type { AppConfig, PasswordPage } from '../src/shared/types'
-import {
-  DEFAULT_APPEARANCE,
-  DEFAULT_HTTPS_MODE,
-  DEFAULT_PASSWORD_CONFIG,
-  DEFAULT_TOR_SOCKS
-} from '../src/shared/types'
+import type { AppConfig } from '../src/shared/types'
+import type { PasswordPage } from '../src/shared/passwords'
+import { DEFAULT_APPEARANCE, DEFAULT_HTTPS_MODE, DEFAULT_TOR_SOCKS } from '../src/shared/types'
+import { DEFAULT_PASSWORD_CONFIG } from '../src/shared/passwords'
 
 const sk = generateSecretKey()
 const pk = getPublicKey(sk)
