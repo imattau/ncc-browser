@@ -1,509 +1,106 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import type { HostingDraft } from '@shared/hosting'
+import { useCallback, useEffect, useState } from 'react'
 import type { CommandId } from '@shared/commands'
-import type { ExtensionActionInfo, ExtensionsState } from '@shared/extensions'
-import { sortDownloads } from '@shared/downloads'
-import type {
-  Bookmark,
-  AppConfig,
-  DownloadNotice,
-  IdentityProfile,
-  IdentityStatus,
-  NavState,
-  OverlayReason,
-  SignerRequest,
-  TabHistory
-} from '@shared/types'
-import type {
-  PasskeyConfirmationRequest,
-  PasswordContext,
-  PasswordSaveRequest,
-  PasswordToast,
-  PasswordVaultStatus
-} from '@shared/passwords'
-import type { PaymentCardSaveRequest } from '@shared/payment-cards'
-import type { SyncDevice } from '@shared/sync-status'
-import { type PopoverAnchor } from './components/Popover'
 import { InsecureWarning, SecurityBanner } from './components/SecurityNotice'
-import { SettingsPage, type SettingsSection } from './components/SettingsPage'
+import { SettingsPage } from './components/SettingsPage'
 import { WalletPanel } from './components/WalletPanel'
 import { TabStrip } from './components/TabStrip'
 import { AppPrompts } from './components/overlays/AppPrompts'
 import { OverlayPanels } from './components/overlays/OverlayPanels'
 import { Toolbar } from './components/Toolbar'
 import { Welcome } from './components/Welcome'
-import { applyAppearance } from './lib/appearance'
-import { cn } from './lib/cn'
-import { messageOf } from './lib/format'
-
-const EMPTY_STATE: NavState = {
-  mode: 'blank',
-  displayUrl: '',
-  url: '',
-  title: '',
-  loading: false,
-  canGoBack: false,
-  canGoForward: false,
-  security: null,
-  failure: null,
-  tor: { preferTor: false, onionAvailable: false, active: false, tabTor: false },
-  tabKind: 'normal',
-  banner: null,
-  insecurePrompt: null,
-  tabs: [],
-  activeTabId: null,
-  windowMaximized: false
-}
+import { useBrowserData } from './hooks/useBrowserData'
+import { useOverlayController } from './hooks/useOverlayController'
+import { usePasswordPrompts } from './hooks/usePasswordPrompts'
+import { useSignerPrompts } from './hooks/useSignerPrompts'
 
 export function App() {
-  const [state, setState] = useState<NavState>(EMPTY_STATE)
-  const [config, setConfig] = useState<AppConfig | null>(null)
-  const [overlay, setOverlay] = useState<OverlayReason | null>(null)
-  const overlayRef = useRef<OverlayReason | null>(null)
+  const data = useBrowserData()
+  const {
+    state,
+    config,
+    identity,
+    setIdentity,
+    downloads,
+    setDownloads,
+    bookmarks,
+    setBookmarks,
+    syncDevices,
+    history,
+    refreshHistory,
+    extensions
+  } = data
+
   const [hint, setHint] = useState<string | null>(null)
-  const [downloads, setDownloads] = useState<DownloadNotice[]>([])
-  const [bookmarks, setBookmarks] = useState<Bookmark[]>([])
-  const [syncDevices, setSyncDevices] = useState<SyncDevice[]>([])
-  const [identity, setIdentity] = useState<IdentityStatus | null>(null)
-  const [identityChooserProfiles, setIdentityChooserProfiles] = useState<IdentityProfile[]>([])
-  const [identityChooserAnchor, setIdentityChooserAnchor] = useState<PopoverAnchor | null>(null)
-  const [identityChooserBusy, setIdentityChooserBusy] = useState(false)
-  const [identityChooserError, setIdentityChooserError] = useState<string | null>(null)
-  const [signerRequests, setSignerRequests] = useState<SignerRequest[]>([])
-  const signerRequest = signerRequests[0] ?? null
-  const [history, setHistory] = useState<TabHistory | null>(null)
-  const [settingsSection, setSettingsSection] = useState<SettingsSection>('general')
-  const [hostingDraft, setHostingDraft] = useState<HostingDraft | null>(null)
-  const [siteInfoAnchor, setSiteInfoAnchor] = useState<PopoverAnchor | null>(null)
-  const [passwordStatus, setPasswordStatus] = useState<PasswordVaultStatus | null>(null)
-  const [passwordContext, setPasswordContext] = useState<PasswordContext | null>(null)
-  const [passwordAnchor, setPasswordAnchor] = useState<PopoverAnchor | null>(null)
-  const [passwordBusy, setPasswordBusy] = useState(false)
-  const [passwordError, setPasswordError] = useState<string | null>(null)
-  const [passwordSave, setPasswordSave] = useState<PasswordSaveRequest | null>(null)
-  const [passwordSaveBusy, setPasswordSaveBusy] = useState(false)
-  const [passwordSaveError, setPasswordSaveError] = useState<string | null>(null)
-  const [paymentCardSave, setPaymentCardSave] = useState<PaymentCardSaveRequest | null>(null)
-  const [paymentCardSaveBusy, setPaymentCardSaveBusy] = useState(false)
-  const [paymentCardSaveError, setPaymentCardSaveError] = useState<string | null>(null)
-  const [passkeyConfirmations, setPasskeyConfirmations] = useState<PasskeyConfirmationRequest[]>([])
-  const passkeyConfirmation = passkeyConfirmations[0] ?? null
-  const [passwordDraftOrigin, setPasswordDraftOrigin] = useState<string | null>(null)
-  const [passwordToast, setPasswordToast] = useState<PasswordToast | null>(null)
-  const [extensions, setExtensions] = useState<ExtensionsState | null>(null)
 
-  /**
-   * One overlay at a time. The shell hides every content view while an overlay is
-   * open, so popovers can cover the page area instead of being clipped to the chrome.
-   */
-  const showOverlay = useCallback((next: OverlayReason | null) => {
-    const current = overlayRef.current
-    if (current === next) return
-    if (current) void window.ncc.setOverlay(current, false)
-    overlayRef.current = next
-    setOverlay(next)
-    if (next) void window.ncc.setOverlay(next, true)
-  }, [])
+  const overlayController = useOverlayController({ refreshHistory, setIdentity })
+  const {
+    overlay,
+    showOverlay,
+    closeOverlay,
+    settingsSection,
+    openSettings,
+    hostingDraft,
+    setHostingDraft,
+    siteInfoAnchor,
+    setSiteInfoAnchor,
+    identityChooserProfiles,
+    identityChooserAnchor,
+    identityChooserBusy,
+    identityChooserError,
+    openIdentityChooser,
+    selectIdentity: selectToolbarIdentity
+  } = overlayController
 
-  const closeOverlay = useCallback(() => showOverlay(null), [showOverlay])
+  const passwords = usePasswordPrompts({
+    showOverlay,
+    closeOverlay,
+    overlayRef: overlayController.overlayRef,
+    url: state.url,
+    activeTabId: state.activeTabId,
+    openSettings
+  })
+  const {
+    passwordStatus,
+    passwordContext,
+    passwordAnchor,
+    passwordBusy,
+    passwordError,
+    passwordSave,
+    passwordSaveBusy,
+    passwordSaveError,
+    paymentCardSave,
+    paymentCardSaveBusy,
+    paymentCardSaveError,
+    passwordDraftOrigin,
+    passwordToast,
+    clearPasswordDraftOrigin,
+    openPasswords,
+    unlockPasswords,
+    lockPasswords,
+    fillPassword,
+    copyPassword,
+    openPasswordSettings,
+    respondToPasswordSave,
+    respondToPaymentCardSave
+  } = passwords
 
-  const openSettings = useCallback(
-    (section: SettingsSection = 'general') => {
-      setSettingsSection(section)
-      showOverlay('settings')
-    },
-    [showOverlay]
-  )
-
-  const openIdentityChooser = useCallback(
-    async (anchor: PopoverAnchor): Promise<void> => {
-      try {
-        const list = await window.ncc.identityList()
-        if (list.identities.length > 1) {
-          setIdentityChooserProfiles(list.identities)
-          setIdentityChooserAnchor(anchor)
-          setIdentityChooserError(null)
-          showOverlay('identity-chooser')
-        } else {
-          openSettings('identity')
-        }
-      } catch {
-        openSettings('identity')
-      }
-    },
-    [openSettings, showOverlay]
-  )
-
-  const selectToolbarIdentity = useCallback(
-    async (id: string): Promise<void> => {
-      setIdentityChooserBusy(true)
-      setIdentityChooserError(null)
-      try {
-        setIdentity(await window.ncc.identitySelect(id))
-        closeOverlay()
-      } catch (error) {
-        setIdentityChooserError(error instanceof Error ? error.message : String(error))
-      } finally {
-        setIdentityChooserBusy(false)
-      }
-    },
-    [closeOverlay]
-  )
-
-  useEffect(() => {
-    let alive = true
-    void window.ncc.getState().then((next) => {
-      if (alive) setState(next)
-    })
-    const unsubscribe = window.ncc.onState((next) => setState(next))
-    return () => {
-      alive = false
-      unsubscribe()
-    }
-  }, [])
-
-  useEffect(() => {
-    let alive = true
-    void window.ncc.identity().then((status) => {
-      if (alive) setIdentity(status)
-    })
-    return () => {
-      alive = false
-    }
-  }, [])
-
-  // Appearance can change from Settings or from a main-process push; both arrive
-  // as a config update.
-  useEffect(
-    () =>
-      window.ncc.onConfig((config) => {
-        setConfig(config)
-        applyAppearance(config.appearance)
-      }),
-    []
-  )
-
-  useEffect(() => {
-    let alive = true
-    void window.ncc.getConfig().then((next) => { if (alive) setConfig(next) })
-    return () => { alive = false }
-  }, [])
-
-  useEffect(() => {
-    void window.ncc.extensionsState().then(setExtensions).catch(() => undefined)
-    return window.ncc.onExtensions(setExtensions)
-  }, [])
-
-  useEffect(() => {
-    let alive = true
-    void window.ncc.passwordsStatus().then((next) => {
-      if (alive) setPasswordStatus(next)
-    })
-    void window.ncc.passwordsContext().then((next) => {
-      if (alive) setPasswordContext(next)
-    })
-    const offStatus = window.ncc.onPasswordStatus(setPasswordStatus)
-    const offContext = window.ncc.onPasswordContext(setPasswordContext)
-    const offSave = window.ncc.onPasswordSaveRequest((request) => {
-      setPasswordToast(null)
-      setPasswordSave(request)
-      setPasswordSaveError(null)
-      setPasswordDraftOrigin(null)
-      showOverlay('password-save')
-    })
-    const offCardSave = window.ncc.onPaymentCardSaveRequest((request) => {
-      setPaymentCardSave(request)
-      setPaymentCardSaveError(null)
-      showOverlay('payment-card-save')
-    })
-    const offToast = window.ncc.onPasswordToast((toast) => setPasswordToast(toast))
-    return () => {
-      alive = false
-      offStatus()
-      offContext()
-      offSave()
-      offCardSave()
-      offToast()
-    }
-  }, [showOverlay])
-
-  useEffect(() => {
-    const offRequest = window.ncc.onPasskeyConfirmation((request) => {
-      setPasskeyConfirmations((current) =>
-        current.some((item) => item.id === request.id) ? current : [...current, request]
-      )
-    })
-    const offResolved = window.ncc.onPasskeyConfirmationResolved((id) => {
-      setPasskeyConfirmations((current) => current.filter((item) => item.id !== id))
-    })
-    return () => {
-      offRequest()
-      offResolved()
-    }
-  }, [])
-
-  useEffect(() => {
-    if (passkeyConfirmation) showOverlay('passkey-confirmation')
-    else if (overlayRef.current === 'passkey-confirmation') closeOverlay()
-  }, [passkeyConfirmation, showOverlay, closeOverlay])
-
-  const respondToPaymentCardSave = async (action: 'save' | 'dismiss'): Promise<void> => {
-    if (!paymentCardSave) return
-    setPaymentCardSaveBusy(true)
-    setPaymentCardSaveError(null)
-    try {
-      const result = await window.ncc.paymentCardsRespond(paymentCardSave.id, action)
-      if (!result.ok) { setPaymentCardSaveError(result.error ?? 'Could not save card'); return }
-      setPaymentCardSave(null)
-      showOverlay(null)
-      if (result.pending) setPasswordToast({ tone: 'warn', message: 'Card saved locally; relay sync will retry.' })
-    } catch (error) {
-      setPaymentCardSaveError(messageOf(error))
-    } finally { setPaymentCardSaveBusy(false) }
-  }
-
-  useEffect(() => {
-    let alive = true
-    void window.ncc.passwordsContext().then((next) => {
-      if (alive) setPasswordContext(next)
-    })
-    return () => {
-      alive = false
-    }
-  }, [state.url, state.activeTabId])
-
-  useEffect(() => {
-    if (overlayRef.current === 'passwords') showOverlay(null)
-  }, [state.url, state.activeTabId, showOverlay])
-
-  useEffect(() => {
-    let alive = true
-    void window.ncc.passwordsContext().then((next) => {
-      if (alive) setPasswordContext(next)
-    })
-    return () => {
-      alive = false
-    }
-  }, [passwordStatus?.unlocked, passwordStatus?.lastSyncedAt])
-
-  useEffect(() => {
-    if (!passwordToast) return
-    const timer = window.setTimeout(() => setPasswordToast(null), 4_500)
-    return () => window.clearTimeout(timer)
-  }, [passwordToast])
-
-  const refreshPasswords = useCallback(async (): Promise<void> => {
-    const [status, context] = await Promise.all([
-      window.ncc.passwordsStatus(),
-      window.ncc.passwordsContext()
-    ])
-    setPasswordStatus(status)
-    setPasswordContext(context)
-  }, [])
-
-  const openPasswords = useCallback(
-    (anchor: PopoverAnchor) => {
-      setPasswordAnchor(anchor)
-      setPasswordError(null)
-      void refreshPasswords()
-      showOverlay('passwords')
-    },
-    [refreshPasswords, showOverlay]
-  )
-
-  const unlockPasswords = useCallback(async (): Promise<void> => {
-    setPasswordBusy(true)
-    setPasswordError(null)
-    try {
-      const status = await window.ncc.passwordsUnlock()
-      setPasswordStatus(status)
-      await refreshPasswords()
-      if (status.error) setPasswordError(status.error)
-    } catch (unlockError) {
-      setPasswordError(messageOf(unlockError))
-    } finally {
-      setPasswordBusy(false)
-    }
-  }, [refreshPasswords])
-
-  const lockPasswords = useCallback(async (): Promise<void> => {
-    setPasswordStatus(await window.ncc.passwordsLock())
-    await refreshPasswords()
-  }, [refreshPasswords])
-
-  const fillPassword = useCallback(
-    async (id: string): Promise<void> => {
-      closeOverlay()
-      const result = await window.ncc.passwordsFill(id)
-      if (!result.ok) setPasswordToast({ tone: 'error', message: result.error ?? 'Could not fill' })
-      else setPasswordToast({ tone: 'ok', message: 'Login filled.' })
-      await refreshPasswords()
-    },
-    [closeOverlay, refreshPasswords]
-  )
-
-  const copyPassword = useCallback(
-    async (id: string, field: 'username' | 'password' | 'totp'): Promise<void> => {
-      const result = await window.ncc.passwordsCopy(id, field)
-      if (!result.ok) {
-        setPasswordToast({ tone: 'error', message: result.error ?? 'Could not copy' })
-        return
-      }
-      setPasswordToast({
-        tone: 'ok',
-        message: result.clearsAt
-          ? 'Copied. The clipboard clears in 30 seconds.'
-          : 'Username copied.'
-      })
-    },
-    []
-  )
-
-  const openPasswordSettings = useCallback(
-    (origin?: string | null) => {
-      setPasswordAnchor(null)
-      setPasswordDraftOrigin(origin ?? null)
-      openSettings('passwords')
-    },
-    [openSettings]
-  )
-
-  const respondToPasswordSave = useCallback(
-    async (action: 'save' | 'never' | 'dismiss'): Promise<void> => {
-      const request = passwordSave
-      if (!request) return
-      setPasswordSaveBusy(true)
-      setPasswordSaveError(null)
-      try {
-        const result = await window.ncc.passwordsRespond(request.id, action)
-        if (!result.ok) {
-          setPasswordSaveError(result.error ?? 'Could not save the login')
-          return
-        }
-        setPasswordSave(null)
-        closeOverlay()
-        await refreshPasswords()
-      } finally {
-        setPasswordSaveBusy(false)
-      }
-    },
-    [closeOverlay, passwordSave, refreshPasswords]
-  )
-
-  useEffect(() => {
-    let alive = true
-    void window.ncc.bookmarks().then((next) => {
-      if (alive) setBookmarks(next)
-    })
-    const offBookmarks = window.ncc.onBookmarks(setBookmarks)
-    void window.ncc.syncStatus().then((next) => {
-      if (alive) setSyncDevices(next.devices)
-    })
-    const offSync = window.ncc.onSyncStatus((next) => setSyncDevices(next.devices))
-    return () => {
-      alive = false
-      offBookmarks()
-      offSync()
-    }
-  }, [])
-
-  useEffect(() => {
-    let alive = true
-    void window.ncc.downloads().then((next) => {
-      if (alive) setDownloads(next)
-    })
-    const unsubscribe = window.ncc.onDownload((notice) => {
-      setDownloads((current) =>
-        sortDownloads([...current.filter((item) => item.id !== notice.id), notice])
-      )
-    })
-    return () => {
-      alive = false
-      unsubscribe()
-    }
-  }, [])
-
-  useEffect(() => {
-    const remember = (request: SignerRequest): void => {
-      showOverlay(null)
-      setSignerRequests((current) =>
-        current.some((entry) => entry.id === request.id) ? current : [...current, request]
-      )
-    }
-
-    const unsubscribe = window.ncc.onSignerRequest(remember)
-    const offResolved = window.ncc.onSignerResolved((id) =>
-      setSignerRequests((current) => current.filter((entry) => entry.id !== id))
-    )
-
-    // A request raised before this renderer mounted was sent to nobody; the broker
-    // keeps it pending, so replay whatever it still has.
-    void window.ncc
-      .pendingSignerRequests()
-      .then((pending) => pending.forEach(remember))
-      .catch(() => undefined)
-
-    return () => {
-      unsubscribe()
-      offResolved()
-    }
-  }, [showOverlay])
-
-  useEffect(() => {
-    const offOpen = window.ncc.onOpenSettings((payload) =>
-      openSettings(
-        payload.section === 'identity' ||
-          payload.section === 'appearance' ||
-          payload.section === 'passwords' ||
-          payload.section === 'services' ||
-          payload.section === 'sites' ||
-          payload.section === 'security' ||
-          payload.section === 'trusted' ||
-          payload.section === 'about'
-          ? payload.section
-          : 'general'
-      )
-    )
-    const offClose = window.ncc.onCloseMenu(() => {
-      // Window blur closes menus and popovers, but not a page the user is editing.
-      if (overlayRef.current && overlayRef.current !== 'settings') showOverlay(null)
-    })
-    return () => {
-      offOpen()
-      offClose()
-    }
-  }, [openSettings, showOverlay])
-
-  const refreshHistory = useCallback(async () => {
-    const next = await window.ncc.tabHistory()
-    setHistory(next)
-    return next
-  }, [])
-
-  const openHistory = useCallback(() => {
-    void refreshHistory()
-    showOverlay('history')
-  }, [refreshHistory, showOverlay])
-
-  useEffect(() => {
-    const offHistory = window.ncc.onOpenHistory(openHistory)
-    const offDownloads = window.ncc.onOpenDownloads(() => showOverlay('downloads'))
-    return () => {
-      offHistory()
-      offDownloads()
-    }
-  }, [openHistory, showOverlay])
+  const signer = useSignerPrompts({
+    showOverlay,
+    closeOverlay,
+    overlayRef: overlayController.overlayRef
+  })
+  const {
+    signerRequest,
+    signerWaiting,
+    passkeyConfirmation,
+    respondToSigner,
+    respondToPasskeyConfirmation
+  } = signer
 
   useEffect(() => {
     if (overlay !== 'history') return
-    let alive = true
-    void window.ncc.tabHistory().then((next) => {
-      if (alive) setHistory(next)
-    })
-    return () => {
-      alive = false
-    }
-  }, [overlay, state.url, state.activeTabId])
+    void refreshHistory()
+  }, [overlay, state.url, state.activeTabId, refreshHistory])
 
   useEffect(() => {
     setHint(state.failure?.code === 'invalid-address' ? state.failure.message : null)
@@ -565,11 +162,14 @@ export function App() {
 
   const toggleBookmark = useCallback(() => {
     void window.ncc.toggleBookmark().then(setBookmarks)
-  }, [])
+  }, [setBookmarks])
 
-  const removeBookmark = useCallback((url: string) => {
-    void window.ncc.removeBookmark(url).then(setBookmarks)
-  }, [])
+  const removeBookmark = useCallback(
+    (url: string) => {
+      void window.ncc.removeBookmark(url).then(setBookmarks)
+    },
+    [setBookmarks]
+  )
 
   const openBookmark = useCallback(
     (url: string) => {
@@ -591,9 +191,12 @@ export function App() {
     void window.ncc.clearHistory().then(refreshHistory)
   }, [refreshHistory])
 
-  const cancelDownload = useCallback((id: string) => {
-    void window.ncc.cancelDownload(id).then(setDownloads)
-  }, [])
+  const cancelDownload = useCallback(
+    (id: string) => {
+      void window.ncc.cancelDownload(id).then(setDownloads)
+    },
+    [setDownloads]
+  )
 
   const revealDownload = useCallback((id: string) => {
     void window.ncc.revealDownload(id)
@@ -601,7 +204,7 @@ export function App() {
 
   const clearDownloads = useCallback(() => {
     void window.ncc.clearDownloads().then(setDownloads)
-  }, [])
+  }, [setDownloads])
 
   const runCommand = useCallback(
     (command: CommandId) => {
@@ -610,22 +213,6 @@ export function App() {
     },
     [closeOverlay]
   )
-
-  const respondToSigner = useCallback(
-    (allow: boolean, remember: boolean) => {
-      if (!signerRequest) return
-      setSignerRequests((current) => current.filter((entry) => entry.id !== signerRequest.id))
-      void window.ncc.respondToSigner(signerRequest.id, allow, remember)
-    },
-    [signerRequest]
-  )
-
-  const respondToPasskeyConfirmation = useCallback((choice: number | null) => {
-    if (!passkeyConfirmation) return
-    const id = passkeyConfirmation.id
-    setPasskeyConfirmations((current) => current.filter((item) => item.id !== id))
-    void window.ncc.respondToPasskeyConfirmation(id, choice)
-  }, [passkeyConfirmation])
 
   useEffect(() => {
     // Escape stops a loading page from the chrome side; main handles it while the
@@ -640,6 +227,11 @@ export function App() {
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [state.loading, stop])
+
+  const openHistory = useCallback(() => {
+    void refreshHistory()
+    showOverlay('history')
+  }, [refreshHistory, showOverlay])
 
   const bookmarked = state.displayUrl !== '' && bookmarks.some((item) => item.url === state.displayUrl)
 
@@ -718,7 +310,7 @@ export function App() {
             onClose={closeOverlay}
             onIdentityChange={setIdentity}
             passwordDraftOrigin={passwordDraftOrigin}
-            onPasswordDraftUsed={() => setPasswordDraftOrigin(null)}
+            onPasswordDraftUsed={() => clearPasswordDraftOrigin()}
           />
         ) : overlay === 'wallet' ? (
           <WalletPanel onClose={closeOverlay} onOpenIdentitySettings={() => openSettings('identity')} />
@@ -796,7 +388,7 @@ export function App() {
 
       <AppPrompts
         signerRequest={signerRequest}
-        signerWaiting={signerRequests.length - 1}
+        signerWaiting={signerWaiting}
         onRespondToSigner={respondToSigner}
         passwordSave={passwordSave}
         passwordSaveBusy={passwordSaveBusy}
