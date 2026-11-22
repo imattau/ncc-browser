@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import type { ExtensionInfo, ExtensionsState } from '@shared/extensions'
 import { cn } from '../lib/cn'
+import { messageOf } from '../lib/format'
 
 export function ExtensionSettings() {
   const [state, setState] = useState<ExtensionsState | null>(null)
@@ -398,10 +399,4 @@ function Heading() {
       </p>
     </div>
   )
-}
-
-function messageOf(error: unknown): string {
-  const raw = error instanceof Error ? error.message : String(error)
-  const marker = raw.lastIndexOf('Error: ')
-  return marker === -1 ? raw : raw.slice(marker + 7)
 }

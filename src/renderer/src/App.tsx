@@ -42,6 +42,7 @@ import { Toolbar } from './components/Toolbar'
 import { Welcome } from './components/Welcome'
 import { applyAppearance } from './lib/appearance'
 import { cn } from './lib/cn'
+import { messageOf } from './lib/format'
 
 const EMPTY_STATE: NavState = {
   mode: 'blank',
@@ -901,10 +902,4 @@ export function App() {
       ) : null}
     </div>
   )
-}
-
-function messageOf(error: unknown): string {
-  const raw = error instanceof Error ? error.message : String(error)
-  const marker = raw.lastIndexOf('Error: ')
-  return marker === -1 ? raw : raw.slice(marker + 7)
 }

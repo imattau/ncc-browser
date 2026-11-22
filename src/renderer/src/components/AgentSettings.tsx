@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Bot, Check, ClipboardCopy, RefreshCw, ShieldAlert, ShieldOff } from 'lucide-react'
 import type { AutomationState } from '@shared/automation'
+import { messageOf } from '../lib/format'
 
 export function AgentSettings() {
   const [state, setState] = useState<AutomationState | null>(null)
@@ -177,10 +178,4 @@ export function AgentSettings() {
       )}
     </>
   )
-}
-
-function messageOf(error: unknown): string {
-  const raw = error instanceof Error ? error.message : String(error)
-  const marker = raw.lastIndexOf('Error: ')
-  return marker === -1 ? raw : raw.slice(marker + 7)
 }

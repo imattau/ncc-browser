@@ -4,11 +4,11 @@ import jsQR from 'jsqr'
 import { ArrowUpFromLine, Camera, Copy, RefreshCw, ScanLine, X, Zap } from 'lucide-react'
 import type { BitcoinSendPreview, NwcSnapshot, WalletSnapshot } from '@shared/wallet'
 import { MoneroWalletPanel } from './MoneroWalletPanel'
+import { messageOf } from '../lib/format'
 
 type Props = { onClose: () => void; onOpenIdentitySettings: () => void }
 type Settings = { esploraUrl: string; privacyNotice: string }
 
-function errorText(error: unknown): string { return error instanceof Error ? error.message : String(error) }
 function shortId(id: string): string { return `${id.slice(0, 12)}…${id.slice(-8)}` }
 
 export function WalletPanel({ onClose, onOpenIdentitySettings }: Props) {
@@ -49,7 +49,7 @@ export function WalletPanel({ onClose, onOpenIdentitySettings }: Props) {
       setEndpoint(prefs.esploraUrl)
       const nwcStatus = await window.ncc.nwcStatus()
       setNwc(nwcStatus.connected ? await window.ncc.nwcRefresh() : nwcStatus)
-    } catch (error) { setMessage(errorText(error)) }
+    } catch (error) { setMessage(messageOf(error)) }
     finally { setBusy(false) }
   }
 
@@ -57,12 +57,12 @@ export function WalletPanel({ onClose, onOpenIdentitySettings }: Props) {
   useEffect(() => {
     if (!receiveAddress) { setQr(''); return }
     void QRCode.toDataURL(`bitcoin:${receiveAddress}`, { width: 300, margin: 1, color: { dark: '#101418', light: '#ffffff' } })
-      .then(setQr).catch((error: unknown) => setMessage(errorText(error)))
+      .then(setQr).catch((error: unknown) => setMessage(messageOf(error)))
   }, [receiveAddress])
   useEffect(() => {
     if (!receiveInvoice) { setLightningQr(''); return }
     void QRCode.toDataURL(`lightning:${receiveInvoice}`, { width: 300, margin: 1, color: { dark: '#101418', light: '#ffffff' } })
-      .then(setLightningQr).catch((error: unknown) => setMessage(errorText(error)))
+      .then(setLightningQr).catch((error: unknown) => setMessage(messageOf(error)))
   }, [receiveInvoice])
 
   useEffect(() => {
@@ -123,7 +123,7 @@ export function WalletPanel({ onClose, onOpenIdentitySettings }: Props) {
   async function prepare() {
     setBusy(true); setMessage('')
     try { setPreview(await window.ncc.walletPrepareBitcoinSend(sendAddress, sendAmount)) }
-    catch (error) { setMessage(errorText(error)) }
+    catch (error) { setMessage(messageOf(error)) }
     finally { setBusy(false) }
   }
 
@@ -135,21 +135,21 @@ export function WalletPanel({ onClose, onOpenIdentitySettings }: Props) {
       setPreview(null); setSendOpen(false); setSendAddress(''); setSendAmount('')
       setMessage(`Broadcast. Transaction ${shortId(result.txid)}`)
       await refresh()
-    } catch (error) { setMessage(errorText(error)) }
+    } catch (error) { setMessage(messageOf(error)) }
     finally { setBusy(false) }
   }
 
   async function saveSettings() {
     setBusy(true)
     try { setSettings(await window.ncc.walletSetSettings({ esploraUrl: endpoint })); setPrefsOpen(false); await refresh() }
-    catch (error) { setMessage(errorText(error)) }
+    catch (error) { setMessage(messageOf(error)) }
     finally { setBusy(false) }
   }
 
   async function connectNwc() {
     setBusy(true); setMessage('')
     try { setNwc(await window.ncc.nwcConnect(nwcUri)); setNwcUri(''); setMessage('Lightning wallet connected.') }
-    catch (error) { setMessage(errorText(error)) }
+    catch (error) { setMessage(messageOf(error)) }
     finally { setBusy(false) }
   }
 
@@ -157,7 +157,7 @@ export function WalletPanel({ onClose, onOpenIdentitySettings }: Props) {
     if (!lightningInvoice.trim()) return
     setBusy(true); setMessage('')
     try { await window.ncc.nwcPay(lightningInvoice.trim()); setLightningInvoice(''); setLightningPayReview(false); setLightningSendOpen(false); setMessage('Lightning payment sent.') }
-    catch (error) { setMessage(errorText(error)) }
+    catch (error) { setMessage(messageOf(error)) }
     finally { setBusy(false) }
   }
 
@@ -166,7 +166,7 @@ export function WalletPanel({ onClose, onOpenIdentitySettings }: Props) {
     if (!Number.isSafeInteger(sats) || sats <= 0 || sats > Number.MAX_SAFE_INTEGER / 1000) { setMessage('Enter a valid amount in sats.'); return }
     setBusy(true); setMessage('')
     try { const result = await window.ncc.nwcMakeInvoice({ amount: sats * 1000 }); setReceiveInvoice(result.invoice); setLightningReceiveOpen(false); setMessage('Lightning invoice created.') }
-    catch (error) { setMessage(errorText(error)) }
+    catch (error) { setMessage(messageOf(error)) }
     finally { setBusy(false) }
   }
 
