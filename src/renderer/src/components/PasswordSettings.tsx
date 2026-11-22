@@ -29,6 +29,7 @@ import type {
   PasswordVaultStatus
 } from '@shared/types'
 import { cn } from '../lib/cn'
+import { messageOf } from '../lib/format'
 import { PaymentCardsSettings } from './PaymentCardsSettings'
 
 interface PasswordSettingsProps {
@@ -996,10 +997,4 @@ function timeAgo(at: number): string {
   if (seconds < 60) return `${seconds}s ago`
   if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`
   return `${Math.round(seconds / 3600)}h ago`
-}
-
-function messageOf(error: unknown): string {
-  const raw = error instanceof Error ? error.message : String(error)
-  const marker = raw.lastIndexOf('Error: ')
-  return marker === -1 ? raw : raw.slice(marker + 7)
 }

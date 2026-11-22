@@ -50,6 +50,7 @@ import type {
 } from '@shared/reachability'
 import type { IdentityList, IdentityStatus } from '@shared/types'
 import { cn } from '../lib/cn'
+import { messageOf, relativeSeconds, shortIdentity, untilSeconds } from '../lib/format'
 
 interface HostingSettingsProps {
   identity: IdentityStatus | null
@@ -82,33 +83,6 @@ const EMPTY_DRAFT: DraftState = {
   visibility: 'private',
   anchor: true,
   notes: ''
-}
-
-function errorMessage(error: unknown): string {
-  const raw = error instanceof Error ? error.message : String(error)
-  const marker = raw.lastIndexOf('Error: ')
-  return marker === -1 ? raw : raw.slice(marker + 7)
-}
-
-function relative(seconds: number | undefined): string {
-  if (!seconds) return 'not published'
-  const delta = Math.max(0, Math.floor(Date.now() / 1000) - seconds)
-  if (delta < 60) return 'just now'
-  if (delta < 3600) return `${Math.floor(delta / 60)} min ago`
-  if (delta < 86_400) return `${Math.floor(delta / 3600)} h ago`
-  return `${Math.floor(delta / 86_400)} d ago`
-}
-
-function until(expiresAt: number): string {
-  const seconds = expiresAt - Math.floor(Date.now() / 1000)
-  if (seconds <= 0) return 'expired'
-  if (seconds < 3600) return `${Math.max(1, Math.round(seconds / 60))} min left`
-  if (seconds < 86_400) return `${Math.round(seconds / 3600)} h left`
-  return `${Math.round(seconds / 86_400)} d left`
-}
-
-function shortIdentity(value: string): string {
-  return value.length > 24 ? `${value.slice(0, 12)}…${value.slice(-6)}` : value
 }
 
 const ENDPOINT_KIND_LABEL: Record<EndpointKind, string> = {
@@ -258,7 +232,7 @@ export function HostingSettings({
         )
       }
     } catch (replaceError) {
-      setError(errorMessage(replaceError))
+      setError(messageOf(replaceError))
     } finally {
       setBusy(false)
     }
@@ -278,7 +252,7 @@ export function HostingSettings({
         setError('The port still does not answer through Tor.')
       }
     } catch (verifyError) {
-      setError(errorMessage(verifyError))
+      setError(messageOf(verifyError))
     } finally {
       setVerifyBusy(false)
     }
@@ -305,7 +279,7 @@ export function HostingSettings({
           })
         )
       } catch (discoverFailure) {
-        setDiscoveryError(errorMessage(discoverFailure))
+        setDiscoveryError(messageOf(discoverFailure))
       } finally {
         setDiscoveryBusy(false)
       }
@@ -383,7 +357,7 @@ export function HostingSettings({
           : { ...current, endpoints: [...lines, result.url].join('\n') }
       })
     } catch (mappingError) {
-      setError(errorMessage(mappingError))
+      setError(messageOf(mappingError))
     } finally {
       setMappingBusy(false)
     }
@@ -408,7 +382,7 @@ export function HostingSettings({
       )
       setMapping(null)
     } catch (mappingError) {
-      setError(errorMessage(mappingError))
+      setError(messageOf(mappingError))
     } finally {
       setMappingBusy(false)
     }
@@ -438,7 +412,7 @@ export function HostingSettings({
       onIdentityChange?.(status)
       await refreshIdentities()
     } catch (identityError) {
-      setError(errorMessage(identityError))
+      setError(messageOf(identityError))
     } finally {
       setIdentityBusy(false)
     }
@@ -465,7 +439,7 @@ export function HostingSettings({
       }
       await refreshIdentities()
     } catch (identityError) {
-      setError(errorMessage(identityError))
+      setError(messageOf(identityError))
     } finally {
       setIdentityBusy(false)
     }
@@ -480,7 +454,7 @@ export function HostingSettings({
       onIdentityChange?.(status)
       await refreshIdentities()
     } catch (identityError) {
-      setError(errorMessage(identityError))
+      setError(messageOf(identityError))
     } finally {
       setIdentityBusy(false)
     }
@@ -491,7 +465,7 @@ export function HostingSettings({
       const nsec = await window.ncc.ephemeralIdentitySecret()
       if (nsec) setEphemeralNsec(nsec)
     } catch (identityError) {
-      setError(errorMessage(identityError))
+      setError(messageOf(identityError))
     }
   }
 
@@ -503,7 +477,7 @@ export function HostingSettings({
       onIdentityChange?.(status)
       await refreshIdentities()
     } catch (identityError) {
-      setError(errorMessage(identityError))
+      setError(messageOf(identityError))
     } finally {
       setIdentityBusy(false)
     }
@@ -558,7 +532,7 @@ export function HostingSettings({
       const info = await window.ncc.hostingImportCertificate()
       if (info) applyCertificate(info)
     } catch (certificateError) {
-      setError(errorMessage(certificateError))
+      setError(messageOf(certificateError))
     } finally {
       setCertificateBusy(false)
     }
@@ -596,7 +570,7 @@ export function HostingSettings({
         setCertificatePaths({ certPath: generated.certPath, keyPath: generated.keyPath })
       }
     } catch (certificateError) {
-      setError(errorMessage(certificateError))
+      setError(messageOf(certificateError))
     } finally {
       setCertificateBusy(false)
     }
@@ -621,7 +595,7 @@ export function HostingSettings({
         )
       }
     } catch (verifyError) {
-      setError(errorMessage(verifyError))
+      setError(messageOf(verifyError))
     } finally {
       setVerifyBusy(false)
     }
@@ -783,7 +757,7 @@ export function HostingSettings({
         }
       }
     } catch (submitError) {
-      setError(errorMessage(submitError))
+      setError(messageOf(submitError))
     } finally {
       setBusy(false)
     }
@@ -797,7 +771,7 @@ export function HostingSettings({
       if (!result.ok) setError(`Published to ${result.accepted} of ${result.relays} relays`)
       apply(await window.ncc.hostingState())
     } catch (publishError) {
-      setError(errorMessage(publishError))
+      setError(messageOf(publishError))
     } finally {
       setBusy(false)
     }
@@ -810,7 +784,7 @@ export function HostingSettings({
       apply(await window.ncc.hostingRemove(service.id))
       if (draft?.id === service.id) setDraft(null)
     } catch (removeError) {
-      setError(errorMessage(removeError))
+      setError(messageOf(removeError))
     } finally {
       setBusy(false)
     }
@@ -823,7 +797,7 @@ export function HostingSettings({
       setContacts(state.list)
       setContactsError(state.error ?? null)
     } catch (error) {
-      setContactsError(errorMessage(error))
+      setContactsError(messageOf(error))
     } finally {
       setContactsLoading(false)
     }
@@ -880,7 +854,7 @@ export function HostingSettings({
       }
       apply(await window.ncc.hostingState())
     } catch (shareError) {
-      setError(errorMessage(shareError))
+      setError(messageOf(shareError))
     } finally {
       setBusy(false)
     }
@@ -893,7 +867,7 @@ export function HostingSettings({
       const result = await window.ncc.hostingPublishOnion(service.id)
       apply(result.state)
     } catch (onionError) {
-      setError(errorMessage(onionError))
+      setError(messageOf(onionError))
     } finally {
       setBusy(false)
     }
@@ -907,7 +881,7 @@ export function HostingSettings({
     try {
       apply(await window.ncc.hostingRemoveOnion(service.id))
     } catch (onionError) {
-      setError(errorMessage(onionError))
+      setError(messageOf(onionError))
     } finally {
       setBusy(false)
     }
@@ -920,7 +894,7 @@ export function HostingSettings({
       await window.ncc.hostingRevokeShare(share.id)
       apply(await window.ncc.hostingState())
     } catch (revokeError) {
-      setError(errorMessage(revokeError))
+      setError(messageOf(revokeError))
     } finally {
       setBusy(false)
     }
@@ -940,7 +914,7 @@ export function HostingSettings({
       setShareFailures([])
       apply(await window.ncc.hostingState())
     } catch (renewError) {
-      setError(errorMessage(renewError))
+      setError(messageOf(renewError))
     } finally {
       setBusy(false)
     }
@@ -1739,7 +1713,7 @@ export function HostingSettings({
                         : expired
                           ? 'expired'
                           : service.lastPublishedAt
-                            ? `published ${relative(service.lastPublishedAt)}`
+                            ? `published ${relativeSeconds(service.lastPublishedAt)}`
                             : 'not published'}
                     </span>
                     <span className="inline-flex items-center gap-1 text-ui-95 text-[color:var(--color-faint)]">
@@ -2079,7 +2053,7 @@ export function HostingSettings({
                         <span className="min-w-0 flex-1 truncate text-[color:var(--color-muted)]">
                           {share.label || shortIdentity(share.recipientNpub || share.recipient)}
                           <span className="ml-2 text-[color:var(--color-faint)]">
-                            {status === 'active' ? until(share.expiresAt) : status}
+                            {status === 'active' ? untilSeconds(share.expiresAt) : status}
                           </span>
                         </span>
                         {status === 'active' ? (
@@ -2151,7 +2125,7 @@ export function HostingSettings({
                       {share.title || `Shared service ${share.dTag.slice(0, 18)}`}
                     </div>
                     <div className="truncate text-ui-95 text-[color:var(--color-faint)]">
-                      from {shortIdentity(share.ownerNpub || share.owner)} · {until(share.expiresAt)}
+                      from {shortIdentity(share.ownerNpub || share.owner)} · {untilSeconds(share.expiresAt)}
                     </div>
                   </div>
                   <button

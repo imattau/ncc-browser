@@ -23,6 +23,7 @@ import {
 } from '@shared/nsite-publish'
 import type { IdentityStatus } from '@shared/types'
 import { cn } from '../lib/cn'
+import { messageOf, relativeSeconds, shortIdentity } from '../lib/format'
 
 interface SitePublishingSettingsProps {
   identity: IdentityStatus | null
@@ -60,29 +61,10 @@ function lines(text: string): string[] {
   return [...new Set(text.split(/[\s,]+/).map((value) => value.trim()).filter(Boolean))]
 }
 
-function errorMessage(error: unknown): string {
-  const raw = error instanceof Error ? error.message : String(error)
-  const marker = raw.lastIndexOf('Error: ')
-  return marker === -1 ? raw : raw.slice(marker + 7)
-}
-
-function relative(seconds: number | undefined): string {
-  if (!seconds) return 'not published'
-  const delta = Math.max(0, Math.floor(Date.now() / 1000) - seconds)
-  if (delta < 60) return 'just now'
-  if (delta < 3600) return `${Math.floor(delta / 60)} min ago`
-  if (delta < 86_400) return `${Math.floor(delta / 3600)} h ago`
-  return `${Math.floor(delta / 86_400)} d ago`
-}
-
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
-
-function shortIdentity(value: string): string {
-  return value.length > 24 ? `${value.slice(0, 12)}…${value.slice(-6)}` : value
 }
 
 export function SitePublishingSettings({
@@ -116,7 +98,7 @@ export function SitePublishingSettings({
           `Found ${result.found} published site${result.found === 1 ? '' : 's'} on ${result.relays} relay${result.relays === 1 ? '' : 's'}.`
       )
     } catch (discoveryError) {
-      setDiscoveryNote(errorMessage(discoveryError))
+      setDiscoveryNote(messageOf(discoveryError))
     } finally {
       setDiscovering(false)
     }
@@ -190,7 +172,7 @@ export function SitePublishingSettings({
         }))
       }
     } catch (pickError) {
-      setError(errorMessage(pickError))
+      setError(messageOf(pickError))
     } finally {
       setBusy(false)
     }
@@ -228,7 +210,7 @@ export function SitePublishingSettings({
       apply(await window.ncc.nsiteState())
       setScan(null)
     } catch (publishError) {
-      setError(errorMessage(publishError))
+      setError(messageOf(publishError))
       apply(await window.ncc.nsiteState())
     } finally {
       setBusy(false)
@@ -250,7 +232,7 @@ export function SitePublishingSettings({
       }
       setVerification(next)
     } catch (verifyError) {
-      setError(errorMessage(verifyError))
+      setError(messageOf(verifyError))
     } finally {
       setBusy(false)
       setProgress(null)
@@ -286,7 +268,7 @@ export function SitePublishingSettings({
       if (result?.site.id === site.id) setResult(null)
       if (verification?.id === site.id) setVerification(null)
     } catch (removeError) {
-      setError(errorMessage(removeError))
+      setError(messageOf(removeError))
     } finally {
       setBusy(false)
     }
@@ -640,7 +622,7 @@ export function SitePublishingSettings({
                             : 'bg-[color:var(--color-ok)]/10 text-[color:var(--color-ok)]'
                         )}
                       >
-                        {site.lastPublishError ? 'failed' : `published ${relative(site.lastPublishedAt)}`}
+                        {site.lastPublishError ? 'failed' : `published ${relativeSeconds(site.lastPublishedAt)}`}
                       </span>
                       <span className="text-ui-95 text-[color:var(--color-faint)]">
                         {site.files.length} files · {site.servers.length} server(s)
