@@ -37,7 +37,7 @@ const NPACK = 'https://github.com/imattau/npack'
 const PUBLISHER_NPUB = 'npub1g3vdg46zq7xpkmtdnta7l8u9684zd2p4e9wrp3xd7wv4xk7vq03svh653x'
 const SITE_NPUB = 'npub1khf5amw8mrupe649a5mhkk3d2d8wjj06urz6kwawpftk4f68tjlstdmd3q'
 const PUBLISHER_HEX = '4458d45742078c1b6d6d9afbef9f85d1ea26a835c95c30c4cdf399535bcc03e3'
-const FALLBACK_VERSION = '0.39.3'
+const FALLBACK_VERSION = '0.40.0'
 const NPACK_COMMAND = `npack install ${PUBLISHER_NPUB}/ncc-browser`
 
 interface Release {
