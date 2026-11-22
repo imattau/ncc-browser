@@ -8,6 +8,7 @@ import type {
   HostingShareBatchResult,
   HostingShareResult,
   HostingState,
+  OnionStatus,
   ReceivedShare,
   ServiceShare
 } from '@shared/hosting'
@@ -79,11 +80,21 @@ export interface HostingServiceOptions {
   publisher: HostingPublisher
   /** Settings → General → Require NCC-02 service records. */
   anchorRequired?: () => boolean
+  /** Onion endpoints currently attached by the Tor manager. */
+  onions?: () => OnionStatus[]
   now?: () => number
   onChange?: (state: HostingState) => void
 }
 
 const ANCHOR_DAYS = 14
+
+function isOnionEndpointUrl(url: string): boolean {
+  try {
+    return new URL(url).hostname.toLowerCase().endsWith('.onion')
+  } catch {
+    return false
+  }
+}
 
 /**
  * Publishing and sharing for hosted services.
@@ -107,7 +118,50 @@ export class HostingService {
       ...share,
       status: shareStatus(share, now)
     }))
+    state.onions = this.options.onions?.() ?? []
     return state
+  }
+
+  find(id: string): HostedService | null {
+    return this.options.store.find(id)
+  }
+
+  /** Add or replace the service's onion endpoint. */
+  attachOnion(id: string, url: string): HostedService {
+    const service = this.options.store.find(id)
+    if (!service) throw new HostingError('not-found', 'That service no longer exists')
+    const others = service.endpoints.filter((endpoint) => !isOnionEndpointUrl(endpoint.url))
+    if (others.some((endpoint) => endpoint.url === url)) return service
+    const priority = others.reduce((max, endpoint) => Math.max(max, endpoint.priority), 0) + 1
+    const updated = this.options.store.update(id, {
+      title: service.title,
+      service: service.service,
+      endpoints: [...others.map((endpoint) => ({ ...endpoint })), { url, priority }],
+      ttlSeconds: service.ttlSeconds,
+      visibility: service.visibility,
+      anchor: service.anchor,
+      notes: service.notes
+    })
+    this.changed()
+    return updated
+  }
+
+  detachOnion(id: string): HostedService {
+    const service = this.options.store.find(id)
+    if (!service) throw new HostingError('not-found', 'That service no longer exists')
+    const endpoints = service.endpoints.filter((endpoint) => !isOnionEndpointUrl(endpoint.url))
+    if (endpoints.length === service.endpoints.length) return service
+    const updated = this.options.store.update(id, {
+      title: service.title,
+      service: service.service,
+      endpoints,
+      ttlSeconds: service.ttlSeconds,
+      visibility: service.visibility,
+      anchor: service.anchor,
+      notes: service.notes
+    })
+    this.changed()
+    return updated
   }
 
   create(draft: HostingDraft): HostedService {

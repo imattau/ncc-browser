@@ -26,6 +26,7 @@ import {
   serviceAddress,
   recipientNpub,
   parseRecipient,
+  isLoopbackEndpoint,
   shareStatus,
   type HostedService,
   type HostingDraft,
@@ -395,6 +396,33 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
     }
   }
 
+  const publishOnion = async (service: HostedService): Promise<void> => {
+    setBusy(true)
+    setError(null)
+    try {
+      const result = await window.ncc.hostingPublishOnion(service.id)
+      apply(result.state)
+    } catch (onionError) {
+      setError(errorMessage(onionError))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const removeOnion = async (service: HostedService): Promise<void> => {
+    if (!window.confirm('Remove the onion endpoint? The onion address stops working and its key is deleted.')) {
+      return
+    }
+    setBusy(true)
+    try {
+      apply(await window.ncc.hostingRemoveOnion(service.id))
+    } catch (onionError) {
+      setError(errorMessage(onionError))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const revoke = async (share: ServiceShare): Promise<void> => {
     if (!window.confirm('Revoke this share? The recipient may still have the endpoint until it rotates.')) return
     setBusy(true)
@@ -685,6 +713,8 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
           const serviceNpub = service.owner ? recipientNpub(service.owner) : npub
           const address = serviceNpub ? serviceAddress(serviceNpub, service.service) : ''
           const serviceShares = shares.filter((share) => share.serviceId === service.id)
+          const onion = (state.onions ?? []).find((entry) => entry.serviceId === service.id)
+          const canOnion = service.endpoints.some((endpoint) => isLoopbackEndpoint(endpoint))
           const expired = Boolean(
             service.lastPublishedAt && service.lastPublishedAt + service.ttlSeconds <= Math.floor(Date.now() / 1000)
           )
@@ -750,6 +780,47 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
                       </div>
                     ))}
                   </div>
+                  {onion ? (
+                    <div data-service-onion className="mt-1.5 rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-ink)]/40 px-2 py-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-ui-95 font-semibold text-[color:var(--color-text)]">Tor onion</span>
+                        <span
+                          className={cn(
+                            'rounded-full px-1.5 py-0.5 text-ui-95',
+                            onion.error
+                              ? 'bg-[color:var(--color-danger)]/10 text-[color:var(--color-danger)]'
+                              : onion.verifiedAt
+                                ? 'bg-[color:var(--color-ok)]/10 text-[color:var(--color-ok)]'
+                                : 'bg-[color:var(--color-hover)] text-[color:var(--color-muted)]'
+                          )}
+                        >
+                          {onion.error ? 'not running' : onion.verifiedAt ? 'reachable over Tor' : 'not verified yet'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => void copy(`onion:${service.id}`, onion.url)}
+                          className="min-w-0 truncate font-mono text-ui-95 text-[color:var(--color-muted)] hover:text-[color:var(--color-text)]"
+                        >
+                          {copied === `onion:${service.id}` ? 'copied' : onion.url}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void removeOnion(service)}
+                          className="ml-auto rounded border border-[color:var(--color-line)] px-1.5 py-0.5 text-ui-95 text-[color:var(--color-muted)] hover:bg-[color:var(--color-danger)]/10 hover:text-[color:var(--color-danger)]"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                      {onion.error ? (
+                        <p className="mt-0.5 text-ui-95 text-[color:var(--color-danger)]">{onion.error}</p>
+                      ) : (
+                        <p className="mt-0.5 text-ui-95 text-[color:var(--color-faint)]">
+                          Forwards to {onion.target} through the bundled Tor; the address stays the same across
+                          restarts.
+                        </p>
+                      )}
+                    </div>
+                  ) : null}
                   {service.lastPublishError ? (
                     <p className="mt-1 text-ui-10 text-[color:var(--color-danger)]">{service.lastPublishError}</p>
                   ) : null}
@@ -774,6 +845,18 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
                   >
                     <RefreshCw className="h-3 w-3" /> Publish
                   </button>
+                  {canOnion && !onion ? (
+                    <button
+                      type="button"
+                      data-publish-onion
+                      onClick={() => void publishOnion(service)}
+                      disabled={busy}
+                      title="Create a Tor onion endpoint that works behind NAT"
+                      className="inline-flex items-center gap-1 rounded-lg border border-[color:var(--color-line)] px-2 py-1 text-ui-10 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)] disabled:opacity-40"
+                    >
+                      <Radar className="h-3 w-3" /> Onion
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     onClick={() => startEdit(service)}

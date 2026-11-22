@@ -124,9 +124,9 @@ A locator is a pointer, not a tunnel. The address stays
 
 - **Direct** — a LAN address works on the same network; a public address needs the
   usual routing and firewall work.
-- **CGNAT / no port-forward** — publish a `.onion` endpoint. The bundled Tor reaches
-  it from anywhere, and the service never needs a public IP. The locator carries the
-  onion URL like any other endpoint.
+- **CGNAT / no port-forward** — add a `.onion` endpoint from the service card. The
+  bundled Tor creates and verifies it, so the service works from anywhere without a
+  public IP or port forward. The locator carries the onion URL like any other endpoint.
 - **Relay/tunnel** — a third-party tunnel (Cloudflare, Nabu Casa, a VPS) can front the
   service, but that reintroduces the middleman the identity address avoids.
 
@@ -167,6 +167,34 @@ simplest direct path; the remaining question is the host or router firewall.
 
 Discovering an address is not a promise that a port is open. A public IPv4 candidate
 stays **unverified** until a port mapping and a reachability check confirm it.
+
+### Automatic onion endpoints
+
+A service with a loopback endpoint (for example `http://127.0.0.1:8080`) gets an
+**Onion** action. It asks the bundled Tor to create a hidden service:
+
+```
+ADD_ONION NEW:ED25519-V3 Port=80,127.0.0.1:8080
+```
+
+The onion address is added to the locator and verified by connecting through the same
+SOCKS proxy the browser uses. An HTTPS endpoint maps to virtual port 443 so TLS passes
+through unchanged; the certificate will not match the onion name, so pin it with `k`.
+
+Details:
+
+- The private key is stored in `userData/tor-services.json` (`0600`, atomic) and reused,
+  so the address survives restarts. Remove deletes the key and the running service.
+- Tor re-attaches stored onions whenever it becomes ready. If a stored onion exists at
+  launch, Tor starts in the background and re-attaches it, so the published endpoint is
+  live again; publishing a service with an onion endpoint also re-attaches first. The
+  onion only exists while Tor and this browser run.
+- Removing the hosted service removes its onion too.
+- The bundled Tor exposes a loopback control port with cookie authentication. An
+  external Tor needs `NCC_TOR_CONTROL` (and `NCC_TOR_COOKIE` or
+  `NCC_TOR_CONTROL_PASSWORD`); without one the action reports that onion services are
+  unavailable instead of guessing a port.
+- NAT-PMP/UPnP port mapping is not used: nothing is opened on the router.
 
 ### External address confirmation
 

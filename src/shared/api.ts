@@ -24,6 +24,7 @@ import type {
 } from './nsite-publish'
 import type {
   HostingDraft,
+  HostingOnionResult,
   HostingPublishResult,
   HostingShareBatchResult,
   HostingShareResult,
@@ -173,6 +174,8 @@ export interface NccApi {
   hostingRevokeShare(shareId: string): Promise<HostingShareResult>
   hostingForgetReceived(id: string): Promise<HostingState>
   hostingDiscoverEndpoints(seedUrl: string): Promise<ReachabilityReport>
+  hostingPublishOnion(serviceId: string): Promise<HostingOnionResult>
+  hostingRemoveOnion(serviceId: string): Promise<HostingState>
   onHostingChanged(listener: (state: HostingState) => void): () => void
   nsiteState(): Promise<NsitePublishState>
   nsitePickFolder(): Promise<NsiteFolderScan | null>

@@ -105,13 +105,21 @@ describe('TorManager', () => {
     expect(runtime.proxy).toMatch(/^socks5:\/\/127\.0\.0\.1:\d+$/)
     expect(spawnProcess).toHaveBeenCalledOnce()
     const [, args] = spawnProcess.mock.calls[0]
-    expect(args).toContain('--ClientOnly')
     expect(args).toContain('--SocksPort')
+    expect(args).toContain('--ControlPort')
+    expect(args).toContain('--CookieAuthentication')
+    expect(args).toContain('--CookieAuthFile')
+    expect(args).not.toContain('--ClientOnly')
     expect(args).toContain('--__OwningControllerProcess')
     expect(args).toContain(String(process.pid))
     expect(onProxyChange).toHaveBeenLastCalledWith(runtime.proxy)
+    expect(tor.controlEndpoint()).toMatchObject({
+      host: '127.0.0.1',
+      cookiePath: expect.stringContaining('control_auth_cookie')
+    })
 
     await tor.stop()
+    expect(tor.controlEndpoint()).toBeNull()
   })
 
   it('falls back to a local proxy when the bundled Tor exits early', async () => {

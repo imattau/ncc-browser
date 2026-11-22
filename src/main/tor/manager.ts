@@ -10,6 +10,7 @@ import { createServer } from 'node:net'
 import { join } from 'node:path'
 import type { TorMode, TorRuntimeKind, TorStatus } from '@shared/types'
 import { normalizeTorProxy, probeSocks5 } from './proxy'
+import type { TorControlEndpoint } from './control'
 
 export interface TorRuntime {
   proxy: string
@@ -52,6 +53,9 @@ export class TorManager {
   private child: ChildProcess | null = null
   private lastError: string | null = null
   private lastProbeAt = 0
+  private control: TorControlEndpoint | null = null
+  private readonly externalControl: TorControlEndpoint | null
+  private readyHook: (() => void) | null = null
   private readonly logs: string[] = []
   private readonly probe: (proxy: string, timeoutMs?: number) => Promise<boolean>
   private readonly spawnProcess: typeof spawn
@@ -59,6 +63,23 @@ export class TorManager {
   constructor(private readonly options: TorManagerOptions) {
     this.probe = options.probe ?? probeSocks5
     this.spawnProcess = options.spawnProcess ?? spawn
+    this.externalControl = parseControlEnv()
+  }
+
+  /** Called after Tor becomes ready, for services that must be re-attached. */
+  setReadyHook(hook: () => void): void {
+    this.readyHook = hook
+  }
+
+  /**
+   * The control endpoint for onion services. Bundled Tor exposes a loopback control
+   * port with cookie authentication; an external Tor needs `NCC_TOR_CONTROL`, and
+   * either `NCC_TOR_COOKIE` or `NCC_TOR_CONTROL_PASSWORD`.
+   */
+  controlEndpoint(): TorControlEndpoint | null {
+    if (this.runtime?.kind === 'bundled' && this.control) return this.control
+    if (this.runtime && this.externalControl) return this.externalControl
+    return null
   }
 
   async ensureReady(): Promise<TorRuntime> {
@@ -191,8 +212,10 @@ export class TorManager {
   private async startBundled(binary: string): Promise<TorRuntime> {
     await this.stopChild()
     const port = await freePort()
+    const controlPort = await freePort()
     const proxy = `socks5://127.0.0.1:${port}`
     const dataDir = this.options.dataDir
+    const cookiePath = join(dataDir, 'control_auth_cookie')
     mkdirSync(dataDir, { recursive: true, mode: 0o700 })
     try {
       chmodSync(dataDir, 0o700)
@@ -201,10 +224,14 @@ export class TorManager {
     }
 
     const args = [
-      '--ClientOnly',
-      '1',
       '--SocksPort',
       `127.0.0.1:${port}`,
+      '--ControlPort',
+      `127.0.0.1:${controlPort}`,
+      '--CookieAuthentication',
+      '1',
+      '--CookieAuthFile',
+      cookiePath,
       '--DataDirectory',
       dataDir,
       '--Log',
@@ -242,6 +269,7 @@ export class TorManager {
       if (!(await this.probe(proxy, 1500))) {
         throw new TorUnavailableError('Tor started but the SOCKS port did not answer')
       }
+      this.control = { host: '127.0.0.1', port: controlPort, cookiePath }
       this.addLog('bundled Tor is ready')
       return this.setRuntime({ proxy, kind: 'bundled' })
     } catch (error) {
@@ -304,10 +332,16 @@ export class TorManager {
     this.lastError = null
     this.addLog(`${runtime.kind} Tor ready on ${runtime.proxy}`)
     await this.options.onProxyChange?.(runtime.proxy)
+    try {
+      this.readyHook?.()
+    } catch (error) {
+      this.addLog(`Tor ready hook failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
     return runtime
   }
 
   private async stopChild(): Promise<void> {
+    this.control = null
     const child = this.child
     this.child = null
     if (!child || child.exitCode !== null || child.killed) return
@@ -332,6 +366,22 @@ export class TorManager {
 
   private logTail(): string | undefined {
     return this.logs.length ? this.logs.slice(-10).join('\n') : undefined
+  }
+}
+
+function parseControlEnv(): TorControlEndpoint | null {
+  const raw = process.env.NCC_TOR_CONTROL?.trim()
+  if (!raw) return null
+  const [host, portText] = raw.includes(':') ? raw.split(':') : ['127.0.0.1', raw]
+  const port = Number(portText)
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) return null
+  const cookiePath = process.env.NCC_TOR_COOKIE?.trim()
+  const password = process.env.NCC_TOR_CONTROL_PASSWORD
+  return {
+    host: host || '127.0.0.1',
+    port,
+    ...(cookiePath ? { cookiePath } : {}),
+    ...(password ? { password } : {})
   }
 }
 

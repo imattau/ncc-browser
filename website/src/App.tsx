@@ -587,6 +587,10 @@ export function App() {
                   a: 'Publish this page scans the page address, this machine’s interfaces and the local router. It offers loopback (owner only), LAN, global IPv6, the current HTTPS URL and any onion address as endpoint candidates, each with a confidence label. The router WAN address is read over UPnP or NAT-PMP; a 100.64/10 address means carrier-grade NAT, where direct IPv4 needs a tunnel and Tor is the realistic path. A public address is still unverified until a port is mapped and checked. Confirming the real internet egress with an external service is off by default and only runs when you ask.'
                 },
                 {
+                  q: 'How do I make a local service reachable behind CGNAT?',
+                  a: 'Use the Onion action on the service card. The bundled Tor creates a hidden service for the loopback endpoint, verifies it through the browser’s own SOCKS proxy, and adds the onion address to the locator. The key is stored locally and reused, so the address stays stable, and nothing is opened on your router. The onion only runs while Tor and the browser run. Direct IPv4 needs a port forward, which CGNAT does not allow.'
+                },
+                {
                   q: 'Where is the source?',
                   a: `The canonical repository is on GitHub. It is also mirrored as a Nostr git repository: the NIP-34 announcement is on relay.ngit.dev and the browser is at gitworkshop.dev. NostrHub is a second web index for the same repository.`
                 },

@@ -98,6 +98,8 @@ const api: NccApi = {
   hostingRevokeShare: (shareId) => ipcRenderer.invoke('ncc:hosting-revoke-share', shareId),
   hostingForgetReceived: (id) => ipcRenderer.invoke('ncc:hosting-forget-received', id),
   hostingDiscoverEndpoints: (seedUrl) => ipcRenderer.invoke('ncc:hosting-discover-endpoints', seedUrl),
+  hostingPublishOnion: (serviceId) => ipcRenderer.invoke('ncc:hosting-publish-onion', serviceId),
+  hostingRemoveOnion: (serviceId) => ipcRenderer.invoke('ncc:hosting-remove-onion', serviceId),
   onHostingChanged: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, state: HostingState): void => listener(state)
     ipcRenderer.on('ncc:hosting-changed', handler)

@@ -473,6 +473,38 @@ describe('HostingService renewal and received shares', () => {
     expect(hosting.state().received).toHaveLength(0)
   })
 
+  it('adds and removes an onion endpoint without dropping others', () => {
+    const { hosting } = setup()
+    const service = hosting.create({
+      title: 'Photos',
+      endpoints: ['http://127.0.0.1:8080', 'https://photos.example']
+    })
+    const withOnion = hosting.attachOnion(service.id, 'http://abcdefghijklmnop.onion/')
+    expect(withOnion.endpoints.map((endpoint) => endpoint.url)).toEqual([
+      'http://127.0.0.1:8080/',
+      'https://photos.example/',
+      'http://abcdefghijklmnop.onion/'
+    ])
+    expect(withOnion.endpoints[2].priority).toBeGreaterThan(withOnion.endpoints[1].priority)
+
+    // Re-attaching replaces the old onion rather than adding a second one.
+    const replaced = hosting.attachOnion(service.id, 'http://zyxwvutsrqponmlk.onion/')
+    expect(replaced.endpoints.filter((endpoint) => endpoint.url.endsWith('.onion/'))).toHaveLength(1)
+
+    const detached = hosting.detachOnion(service.id)
+    expect(detached.endpoints.map((endpoint) => endpoint.url)).toEqual([
+      'http://127.0.0.1:8080/',
+      'https://photos.example/'
+    ])
+  })
+
+  it('exposes onion status through state() and can find a service', () => {
+    const { hosting } = setup()
+    const service = hosting.create({ title: 'Photos', endpoints: ['http://127.0.0.1:8080'] })
+    expect(hosting.find(service.id)?.title).toBe('Photos')
+    expect(hosting.find('missing')).toBeNull()
+  })
+
   it('ignores a plaintext locator', () => {
     const { hosting } = setup()
     expect(

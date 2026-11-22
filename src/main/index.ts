@@ -83,6 +83,8 @@ import {
 } from './site-permissions'
 import { TorGuard } from './tor/guard'
 import { TorManager } from './tor/manager'
+import { TorControl } from './tor/control'
+import { OnionManager, verifyOnionThroughSocks } from './tor/onion'
 import { TorRelayPool } from './tor/relay'
 import { TorSessionProxy } from './tor/session'
 import { createBunkerRelay } from './signer/bunker-relay'
@@ -109,6 +111,7 @@ let shell: BrowserShell | null = null
 let createFallbackShell: (() => BrowserShell) | null = null
 let contentSessions: ContentSessions | null = null
 let torManager: TorManager | null = null
+let onionManager: OnionManager | null = null
 let torRelays: TorRelayPool | null = null
 let relaySync: RelaySync | null = null
 let passwords: PasswordService | null = null
@@ -265,6 +268,7 @@ app.whenReady().then(async () => {
     },
     publisher: new RelayHostingPublisher(relayPool, config),
     anchorRequired: () => config.get().anchorRequired,
+    onions: () => onionManager?.statuses() ?? [],
     onChange: (state) => {
       if (shell && !shell.window.isDestroyed()) shell.sendToChrome('ncc:hosting-changed', state)
     }
@@ -347,6 +351,38 @@ app.whenReady().then(async () => {
       : {})
   })
   const tor = torManager
+  onionManager = new OnionManager({
+    filePath: join(app.getPath('userData'), 'tor-services.json'),
+    tor: {
+      ensureReady: () => tor.ensureReady(),
+      controlEndpoint: () => tor.controlEndpoint(),
+      proxy: () => tor.status().proxy
+    },
+    createControl: (endpoint) => new TorControl(endpoint),
+    verify: verifyOnionThroughSocks,
+    onChange: () => {
+      if (shell && !shell.window.isDestroyed()) {
+        shell.sendToChrome('ncc:hosting-changed', hosting.state())
+      }
+    },
+    ...(process.env.NCC_TOR_DEBUG === '1'
+      ? { log: (line: string) => console.log('[onion]', line) }
+      : {})
+  })
+  tor.setReadyHook(() => {
+    void onionManager?.restoreAll().catch((error) => {
+      console.warn('[onion] could not restore services:', error)
+    })
+  })
+  // A published onion must exist for the locator to work; start Tor for it in the
+  // background rather than waiting for an unrelated Tor use.
+  if (onionManager.statuses().length > 0) {
+    setTimeout(() => {
+      void onionManager?.restoreAll().catch((error) => {
+        console.warn('[onion] could not restore services:', error)
+      })
+    }, 5_000)
+  }
 
   const httpPolicies: Record<TabKind, HttpPolicy> = {
     normal: new HttpPolicy('normal', config),
@@ -734,7 +770,8 @@ app.whenReady().then(async () => {
     approvals,
     downloads,
     passwords: passwordService,
-    hosting
+    hosting,
+    onion: onionManager
   })
 
   registerNsitePublishIpc(nsitePublish, shell)
@@ -813,6 +850,7 @@ app.on('before-quit', () => {
   walletService?.dispose()
   nwcService?.dispose()
   extensions?.dispose()
+  void onionManager?.shutdown()
   relaySync?.stop()
   closeSharedPool()
   void torManager?.stop()

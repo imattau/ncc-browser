@@ -23,7 +23,8 @@ import { signerOriginFromUrl } from './signer/origin'
 import { browserShellFor, browserShells, type BrowserShell } from './shell'
 import type { ProtectionService } from './protection'
 import type { HostingService } from './hosting/service'
-import type { HostingDraft } from '@shared/hosting'
+import type { OnionManager } from './tor/onion'
+import { isLoopbackEndpoint, type HostingDraft } from '@shared/hosting'
 import { discoverReachability } from './hosting/discover'
 
 export interface IpcDeps {
@@ -45,6 +46,7 @@ export interface IpcDeps {
   passwords: PasswordService
   protection: ProtectionService
   hosting: HostingService
+  onion: OnionManager
 }
 
 export function registerIpc(deps: IpcDeps): void {
@@ -230,15 +232,21 @@ export function registerIpc(deps: IpcDeps): void {
     deps.hosting.update(id, draft as HostingDraft)
     return deps.hosting.state()
   })
-  ipcMain.handle('ncc:hosting-remove', (event, id: unknown) => {
+  ipcMain.handle('ncc:hosting-remove', async (event, id: unknown) => {
     if (!fromChrome(event)) throw new Error('Services are only available to the browser chrome')
     if (typeof id !== 'string') throw new Error('A service id is required')
+    await deps.onion.remove(id)
     deps.hosting.remove(id)
     return deps.hosting.state()
   })
-  ipcMain.handle('ncc:hosting-publish', (event, id: unknown) => {
+  ipcMain.handle('ncc:hosting-publish', async (event, id: unknown) => {
     if (!fromChrome(event)) throw new Error('Services are only available to the browser chrome')
     if (typeof id !== 'string') throw new Error('A service id is required')
+    const service = deps.hosting.find(id)
+    if (service?.endpoints.some((endpoint) => endpoint.url.includes('.onion'))) {
+      // An onion endpoint is only real while Tor runs; re-attach before publishing it.
+      await deps.onion.restoreAll().catch(() => undefined)
+    }
     return deps.hosting.publish(id)
   })
   ipcMain.handle('ncc:hosting-share', (event, payload: unknown) => {
@@ -296,6 +304,28 @@ export function registerIpc(deps: IpcDeps): void {
       throw new Error('Open an http(s) page to discover its endpoint')
     }
     return discoverReachability({ seedUrl: seedUrl.trim() })
+  })
+  ipcMain.handle('ncc:hosting-publish-onion', async (event, id: unknown) => {
+    if (!fromChrome(event)) throw new Error('Services are only available to the browser chrome')
+    if (typeof id !== 'string') throw new Error('A service id is required')
+    const service = deps.hosting.find(id)
+    if (!service) throw new Error('That service no longer exists')
+    const local = service.endpoints.find((endpoint) => isLoopbackEndpoint(endpoint))
+    if (!local) {
+      throw new Error(
+        'Tor forwarding needs a loopback endpoint such as http://127.0.0.1:8080. Add one to this service first.'
+      )
+    }
+    const onion = await deps.onion.publish(id, { url: local.url })
+    deps.hosting.attachOnion(id, onion.url)
+    return { state: deps.hosting.state(), onion }
+  })
+  ipcMain.handle('ncc:hosting-remove-onion', async (event, id: unknown) => {
+    if (!fromChrome(event)) throw new Error('Services are only available to the browser chrome')
+    if (typeof id !== 'string') throw new Error('A service id is required')
+    await deps.onion.remove(id)
+    deps.hosting.detachOnion(id)
+    return deps.hosting.state()
   })
 
   ipcMain.handle('ncc:set-relays', (event, relays: unknown) => {

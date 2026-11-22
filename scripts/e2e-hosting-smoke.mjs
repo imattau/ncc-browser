@@ -304,7 +304,7 @@ try {
       element.dispatchEvent(new Event('input', { bubbles: true }))
     }
     set(form.querySelector('input[placeholder="Photos"]'), 'Photos')
-    set(form.querySelector('textarea'), 'https://photos.example')
+    set(form.querySelector('textarea'), 'https://photos.example\\nhttp://127.0.0.1:${BLOSSOM_PORT}')
     return true
   })()`)
   await sleep(100)
@@ -315,6 +315,10 @@ try {
     return Boolean(button)
   })()`)
   await waitFor(cdp, "Boolean(document.querySelector('[data-hosting-service=\"photos\"]'))", 'service card')
+  const onionReady = await cdp.evaluate(
+    "Boolean(document.querySelector('[data-hosting-service=\"photos\"] [data-publish-onion]'))"
+  )
+  if (!onionReady) throw new Error('the onion action was not offered for a loopback endpoint')
   log('service created')
 
   await cdp.evaluate(`(() => {

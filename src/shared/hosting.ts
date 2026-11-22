@@ -76,6 +76,27 @@ export interface HostingState {
   services: HostedService[]
   shares: ServiceShare[]
   received: ReceivedShare[]
+  /** Runtime onion endpoints; not persisted with the locator state. */
+  onions?: OnionStatus[]
+}
+
+export interface OnionStatus {
+  /** Hosted service id. */
+  serviceId: string
+  /** `<id>.onion`, without a scheme. */
+  host: string
+  url: string
+  /** Loopback target Tor forwards to, e.g. `127.0.0.1:8080`. */
+  target: string
+  /** Unix seconds when the last through-Tor check succeeded. */
+  verifiedAt?: number
+  createdAt: number
+  error?: string
+}
+
+export interface HostingOnionResult {
+  state: HostingState
+  onion: OnionStatus
 }
 
 export interface HostingDraft {
