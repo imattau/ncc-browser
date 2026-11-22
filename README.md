@@ -10,7 +10,7 @@ Built with Electron 45, React 19, and Vite. The resolver is a spec-correct
 implementation on top of `nostr-tools`, not a wrapper around `ncc-05-js` (see
 [Why not `ncc-05-js`](#why-not-ncc-05-js)).
 
-**Status:** M0–M16 are implemented. Source: [GitHub](https://github.com/imattau/ncc-browser); Nostr git mirror: [gitworkshop.dev/npub1khf5…/relay.ngit.dev/nostr-navigator](https://gitworkshop.dev/npub1khf5amw8mrupe649a5mhkk3d2d8wjj06urz6kwawpftk4f68tjlstdmd3q/relay.ngit.dev/nostr-navigator). The project site is itself an nsite: [`nsite://npub1khf5…/navigator/`](https://github.com/imattau/ncc-browser) — open it in Nostr Navigator. That includes the resolver, proxy and pinning, the
+**Status:** M0–M16 are implemented. Source: [GitHub](https://github.com/imattau/ncc-browser); Nostr git mirror: [gitworkshop.dev/npub1khf5…/relay.ngit.dev/nostr-navigator](https://gitworkshop.dev/npub1khf5amw8mrupe649a5mhkk3d2d8wjj06urz6kwawpftk4f68tjlstdmd3q/relay.ngit.dev/nostr-navigator), kept in sync by the [mirror workflow](./docs/nostr-mirror.md). The project site is itself an nsite: [`nsite://npub1khf5…/navigator/`](https://github.com/imattau/ncc-browser) — open it in Nostr Navigator. That includes the resolver, proxy and pinning, the
 browser chrome and signer, NCC-02 anchoring with a trust panel, the separate publisher
 app in [`publisher/`](./publisher/) (a NIP-07 flow for NCC-05 locators and NCC-02 service
 records), bundled Tor with the onion preference/toggle and full Tor tabs, private tabs,
