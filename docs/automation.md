@@ -7,21 +7,30 @@ involved.
 ## Enable
 
 **Settings → Agent control → Allow agent control.** The server listens on
-`127.0.0.1:47821` (a free port if that is taken) and the page shows a ready-made
-command. Click **Copy command**, then run it once in a terminal:
+`127.0.0.1:47821` (a free port if that is taken). Each agent you add gets its own Nostr
+identity and its own ready-made connect command. Click **Add agent**, name it, and (once
+the password manager is unlocked) copy the command it shows and run it once in a
+terminal:
 
 ```bash
 claude mcp add --transport http ncc-browser http://127.0.0.1:47821/mcp \
-  --header "Authorization: Bearer <token>"
+  --header "Authorization: Bearer <agent's nsec>"
 ```
 
-The token is created once, stored in `automation-settings.json` in the profile (mode
-0600) and survives restarts, so the connection is made only once. **Regenerate token**
-disconnects every existing client. Turning the setting off stops the server.
+An agent's nsec *is* its bearer credential — there is no separate token. It is created
+once, stored in `automation-settings.json` in the profile (mode 0600) and survives
+restarts, so the connection is made only once. It is also saved as an entry in the
+password manager (titled `Agent: <name>`), so it can be found and copied again later via
+**Reveal** on that agent's card — the vault must be unlocked to reveal it. Each agent has
+its own site grants, independent of every other agent. **Regenerate identity** replaces
+one agent's keypair and disconnects any client still using its old nsec; **Remove**
+deletes the agent entirely. Turning the top-level setting off stops the server for every
+agent at once.
 
 Developers: `NCC_AUTOMATION=1` forces the server on, `NCC_AUTOMATION_PORT` pins the
-port, and the current `{ url, token }` is written to `automation.json` while it runs.
-To try it without touching your real profile use a scratch config home:
+port, and the current `{ url, agents }` (each agent's id and nsec) is written to
+`automation.json` while it runs. To try it without touching your real profile use a
+scratch config home:
 
 ```bash
 XDG_CONFIG_HOME=/tmp/ncc-scratch NCC_AUTOMATION=1 npm run dev

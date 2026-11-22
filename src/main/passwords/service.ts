@@ -536,6 +536,40 @@ export class PasswordService {
     }
   }
 
+  /**
+   * Stores an agent's Nostr identity in the vault, under a synthetic `agent:` origin that
+   * never matches a real page (so it is invisible to autofill/form-save). Used by Agent
+   * control to give the user one durable, revealable copy of each agent's nsec. The vault
+   * entry's id is the agent's own id, so calling this again for the same agent (after
+   * regenerating its identity) replaces the entry in place.
+   */
+  async saveAgentSecret(id: string, name: string, identityKey: string, credential: string): Promise<PasswordSaveResult> {
+    if (!this.unlocked || !this.vault || !this.pubkey) return { ok: false, error: LOCKED }
+    try {
+      const provider = this.requireProvider()
+      const now = this.now()
+      const entry: PasswordEntry = {
+        id,
+        origin: `agent:${id}`,
+        title: `Agent: ${name}`,
+        notes: 'Nostr Navigator agent credential',
+        totp: '',
+        createdAt: findEntry(this.vault, id)?.createdAt ?? now,
+        updatedAt: now,
+        username: identityKey,
+        password: credential
+      }
+      await this.ensureLatest(provider, this.pubkey)
+      const current = this.vault ?? emptyVault()
+      const next = applyEntry(current, entry)
+      return await this.commit(provider, this.pubkey, next)
+    } catch (error) {
+      this.error = messageOf(error)
+      this.sendStatus()
+      return { ok: false, error: this.error, status: this.status() }
+    }
+  }
+
   async removeEntry(id: string): Promise<PasswordSaveResult> {
     if (!this.unlocked || !this.vault || !this.pubkey) return { ok: false, error: LOCKED }
     try {

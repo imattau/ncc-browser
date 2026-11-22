@@ -308,9 +308,16 @@ export interface NccApi {
   onExtensions(listener: (state: ExtensionsState) => void): () => void
   automationState(): Promise<AutomationState>
   automationSetEnabled(value: boolean): Promise<AutomationState>
-  automationRegenerate(): Promise<AutomationState>
-  automationRevoke(site: string | null): Promise<AutomationState>
-  automationCopyCommand(): Promise<boolean>
+  automationAddAgent(
+    name: string
+  ): Promise<{ state: AutomationState; command: string | null; error: string | null }>
+  automationRemoveAgent(id: string): Promise<AutomationState>
+  automationRegenerateIdentity(
+    id: string
+  ): Promise<{ state: AutomationState; command: string | null; error: string | null }>
+  automationRevoke(agentId: string, site: string | null): Promise<AutomationState>
+  automationRevealCommand(agentId: string): Promise<string | null>
+  automationCopyCommand(command: string): Promise<boolean>
   onAutomation(listener: (state: AutomationState) => void): () => void
   torStatus(): Promise<TorStatus>
   appInfo(): Promise<AppInfo>

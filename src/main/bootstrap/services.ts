@@ -323,6 +323,7 @@ export function createServices(
     settings: new AutomationSettings(join(userData, 'automation-settings.json')),
     host: createElectronHost(shell),
     approvals,
+    passwords: passwordService,
     version: app.getVersion(),
     infoFile: join(userData, 'automation.json'),
     forced: process.env.NCC_AUTOMATION === '1',

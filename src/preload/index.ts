@@ -232,9 +232,12 @@ const api: NccApi = {
   nwcLookupInvoice: (params) => ipcRenderer.invoke('ncc:nwc-lookup-invoice', params),
   automationState: () => ipcRenderer.invoke('ncc:automation-state'),
   automationSetEnabled: (value) => ipcRenderer.invoke('ncc:automation-set-enabled', value),
-  automationRegenerate: () => ipcRenderer.invoke('ncc:automation-regenerate'),
-  automationRevoke: (site) => ipcRenderer.invoke('ncc:automation-revoke', site),
-  automationCopyCommand: () => ipcRenderer.invoke('ncc:automation-copy-command'),
+  automationAddAgent: (name) => ipcRenderer.invoke('ncc:automation-add-agent', name),
+  automationRemoveAgent: (id) => ipcRenderer.invoke('ncc:automation-remove-agent', id),
+  automationRegenerateIdentity: (id) => ipcRenderer.invoke('ncc:automation-regenerate-identity', id),
+  automationRevoke: (agentId, site) => ipcRenderer.invoke('ncc:automation-revoke', agentId, site),
+  automationRevealCommand: (agentId) => ipcRenderer.invoke('ncc:automation-reveal-command', agentId),
+  automationCopyCommand: (command) => ipcRenderer.invoke('ncc:automation-copy-command', command),
   onAutomation: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, state: AutomationState): void =>
       listener(state)

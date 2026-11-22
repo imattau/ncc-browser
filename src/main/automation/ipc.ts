@@ -17,13 +17,15 @@ export function registerAutomationIpc(
 
   handle('ncc:automation-state', () => controller.state())
   handle('ncc:automation-set-enabled', (value) => controller.setEnabled(value === true))
-  handle('ncc:automation-regenerate', () => controller.regenerateToken())
-  handle('ncc:automation-revoke', (site) =>
-    controller.revoke(typeof site === 'string' ? site : null)
+  handle('ncc:automation-add-agent', (name) => controller.addAgent(typeof name === 'string' ? name : 'Agent'))
+  handle('ncc:automation-remove-agent', (id) => controller.removeAgent(String(id)))
+  handle('ncc:automation-regenerate-identity', (id) => controller.regenerateIdentity(String(id)))
+  handle('ncc:automation-revoke', (agentId, site) =>
+    controller.revoke(String(agentId), typeof site === 'string' ? site : null)
   )
-  handle('ncc:automation-copy-command', () => {
-    const command = controller.connectCommand()
-    if (!command) return false
+  handle('ncc:automation-reveal-command', (agentId) => controller.revealCommand(String(agentId)))
+  handle('ncc:automation-copy-command', (command) => {
+    if (typeof command !== 'string' || !command) return false
     clipboard.writeText(command)
     return true
   })

@@ -1,9 +1,9 @@
-import { mkdtempSync, readFileSync } from 'node:fs'
+import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { McpHandler } from '../src/main/automation/mcp'
-import { AutomationServer } from '../src/main/automation/server'
+import { AutomationServer, type ServerAgent } from '../src/main/automation/server'
 import { ApprovalGate, ApprovalPendingError } from '../src/main/automation/gate'
 import { siteOf } from '../src/main/automation/site'
 import { TOOLS } from '../src/main/automation/tools'
@@ -309,12 +309,16 @@ describe('AutomationServer', () => {
   let server: AutomationServer | null = null
   afterEach(() => server?.stop())
 
-  async function boot() {
+  async function boot(agentCount = 1) {
     const infoFile = join(mkdtempSync(join(tmpdir(), 'ncc-auto-')), 'automation.json')
-    server = new AutomationServer({ host: fakeHost().host, gate: allowAll, version: '0', infoFile })
+    const agents: ServerAgent[] = Array.from({ length: agentCount }, (_, index) => ({
+      id: `a${index}`,
+      nsec: `nsec${index}`,
+      gate: allowAll
+    }))
+    server = new AutomationServer({ host: fakeHost().host, version: '0', infoFile, agents: () => agents })
     const url = await server.start()
-    const { token } = JSON.parse(readFileSync(infoFile, 'utf8')) as { token: string }
-    return { url, token }
+    return { url, agents }
   }
 
   const post = (url: string, headers: Record<string, string>) =>
@@ -324,18 +328,52 @@ describe('AutomationServer', () => {
       body: JSON.stringify(rpc('tools/list'))
     })
 
-  it('requires the bearer token', async () => {
-    const { url, token } = await boot()
+  it('requires a matching bearer token, looked up across agents', async () => {
+    const { url, agents } = await boot(2)
     expect((await post(url, {})).status).toBe(401)
     expect((await post(url, { authorization: 'Bearer wrong' })).status).toBe(401)
-    const ok = await post(url, { authorization: `Bearer ${token}` })
-    expect(ok.status).toBe(200)
+    const first = await post(url, { authorization: `Bearer ${agents[0]!.nsec}` })
+    expect(first.status).toBe(200)
+    const second = await post(url, { authorization: `Bearer ${agents[1]!.nsec}` })
+    expect(second.status).toBe(200)
   })
 
   it('rejects browser-originated requests', async () => {
-    const { url, token } = await boot()
-    const res = await post(url, { authorization: `Bearer ${token}`, origin: 'https://evil.example' })
+    const { url, agents } = await boot()
+    const res = await post(url, {
+      authorization: `Bearer ${agents[0]!.nsec}`,
+      origin: 'https://evil.example'
+    })
     expect(res.status).toBe(403)
+  })
+
+  it('scopes tool calls to the authenticated agent\'s own gate', async () => {
+    const seen: string[] = []
+    const gateFor = (label: string): AutomationGate => ({
+      authorize: async (site) => {
+        seen.push(`${label}:${site}`)
+        return true
+      }
+    })
+    const infoFile = join(mkdtempSync(join(tmpdir(), 'ncc-auto-')), 'automation.json')
+    server = new AutomationServer({
+      host: fakeHost().host,
+      version: '0',
+      infoFile,
+      agents: () => [
+        { id: 'a', nsec: 'nsec-a', gate: gateFor('a') },
+        { id: 'b', nsec: 'nsec-b', gate: gateFor('b') }
+      ]
+    })
+    const url = await server.start()
+    await post(url, { authorization: 'Bearer nsec-a' })
+    // tools/list does not call the gate; use a tool that does.
+    await fetch(url, {
+      method: 'POST',
+      headers: { authorization: 'Bearer nsec-b', 'content-type': 'application/json' },
+      body: JSON.stringify(rpc('tools/call', { name: 'click', arguments: { x: 1, y: 1 } }))
+    })
+    expect(seen).toEqual(['b:https://example.com'])
   })
 })
 
