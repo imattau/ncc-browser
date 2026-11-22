@@ -1,5 +1,18 @@
 # Release notes
 
+## 0.38.1 — main-process TLS crash fix
+
+### Fixed
+
+- **The main process no longer crashes while loading.** Node's global `fetch` could
+  abort with `AssertionError: assert(this.paused)` in `Parser.finish` when a TLS server
+  closed a response mid-stream. The startup filter-list download used it, so the app
+  could show “A JavaScript error occurred in the main process” on launch. Protection
+  lists, UPnP discovery and the public address lookup now use a `node:http`/`node:https`
+  helper with a hard timeout, a response size cap and explicit redirects.
+- **NCC conventions link.** The site now points at
+  `github.com/imattau/nostr-community-conventions` instead of a 404 path.
+
 ## 0.38.0 — reachable services, onion endpoints and address changes
 
 ### Added
