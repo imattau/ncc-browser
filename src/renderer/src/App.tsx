@@ -22,24 +22,14 @@ import type {
   PasswordVaultStatus
 } from '@shared/passwords'
 import type { PaymentCardSaveRequest } from '@shared/payment-cards'
-import { ChromeMenu } from './components/ChromeMenu'
 import type { SyncDevice } from '@shared/sync-status'
-import { DownloadsPanel } from './components/DownloadsPanel'
-import { HistoryPanel } from './components/HistoryPanel'
-import { IdentityChooser } from './components/IdentityChooser'
-import { PasswordsPanel } from './components/PasswordsPanel'
-import { PasswordSavePrompt } from './components/PasswordSavePrompt'
-import { PasskeyConfirmationPrompt } from './components/PasskeyConfirmationPrompt'
-import { PaymentCardSavePrompt } from './components/PaymentCardSavePrompt'
 import { type PopoverAnchor } from './components/Popover'
 import { InsecureWarning, SecurityBanner } from './components/SecurityNotice'
 import { SettingsPage, type SettingsSection } from './components/SettingsPage'
 import { WalletPanel } from './components/WalletPanel'
-import { SignerPrompt } from './components/SignerPrompt'
-import { ShareNostrPanel } from './components/ShareNostrPanel'
-import { SiteInfoPanel } from './components/SiteInfoPanel'
-import { TabOverflowMenu } from './components/TabOverflowMenu'
 import { TabStrip } from './components/TabStrip'
+import { AppPrompts } from './components/overlays/AppPrompts'
+import { OverlayPanels } from './components/overlays/OverlayPanels'
 import { Toolbar } from './components/Toolbar'
 import { Welcome } from './components/Welcome'
 import { applyAppearance } from './lib/appearance'
@@ -743,165 +733,83 @@ export function App() {
         ) : null}
       </main>
 
-      {overlay === 'menu' ? (
-        <ChromeMenu
-          state={state}
-          identity={identity}
-          bookmarks={bookmarks}
-          onCommand={runCommand}
-          onOpenWallet={() => showOverlay('wallet')}
-          onPublishService={(url) => {
-            setHostingDraft({
-              title: state.title && state.title !== 'New tab' ? state.title : 'My service',
-              endpoints: [url]
-            })
-            openSettings('services')
-          }}
-          onOpenBookmark={openBookmark}
-          onRemoveBookmark={removeBookmark}
-          devices={syncDevices}
-          onOpenDeviceTab={(url) => {
-            closeOverlay()
-            void window.ncc.syncOpenTab(url)
-          }}
-          onClose={closeOverlay}
-        />
-      ) : null}
+      <OverlayPanels
+        overlay={overlay}
+        state={state}
+        identity={identity}
+        bookmarks={bookmarks}
+        syncDevices={syncDevices}
+        downloads={downloads}
+        history={history}
+        passwordContext={passwordContext}
+        passwordAnchor={passwordAnchor}
+        passwordBusy={passwordBusy}
+        passwordError={passwordError}
+        siteInfoAnchor={siteInfoAnchor}
+        identityChooserProfiles={identityChooserProfiles}
+        identityChooserAnchor={identityChooserAnchor}
+        identityChooserBusy={identityChooserBusy}
+        identityChooserError={identityChooserError}
+        onClose={closeOverlay}
+        onOpenWallet={() => showOverlay('wallet')}
+        onOpenSettings={() => openSettings('general')}
+        onCommand={runCommand}
+        onPublishService={(url) => {
+          setHostingDraft({
+            title: state.title && state.title !== 'New tab' ? state.title : 'My service',
+            endpoints: [url]
+          })
+          openSettings('services')
+        }}
+        onOpenBookmark={openBookmark}
+        onRemoveBookmark={removeBookmark}
+        onOpenDeviceTab={(url) => {
+          closeOverlay()
+          void window.ncc.syncOpenTab(url)
+        }}
+        onCancelDownload={cancelDownload}
+        onRevealDownload={revealDownload}
+        onClearDownloads={clearDownloads}
+        onSelectIdentity={(id) => void selectToolbarIdentity(id)}
+        onSelectHistory={selectHistory}
+        onClearHistory={clearHistory}
+        onUnlockPasswords={() => void unlockPasswords()}
+        onLockPasswords={() => void lockPasswords()}
+        onFillPassword={(id) => void fillPassword(id)}
+        onCopyPassword={(id, field) => void copyPassword(id, field)}
+        onAddPassword={() => openPasswordSettings(passwordContext?.origin ?? null)}
+        onManagePasswords={() => openPasswordSettings()}
+        onReload={() => {
+          closeOverlay()
+          reload()
+        }}
+        onSelectTab={(id) => {
+          closeOverlay()
+          selectTab(id)
+        }}
+        onCloseTab={closeTab}
+        onNewTab={() => {
+          closeOverlay()
+          newTab()
+        }}
+      />
 
-      {overlay === 'downloads' ? (
-        <DownloadsPanel
-          downloads={downloads}
-          onClose={closeOverlay}
-          onCancel={cancelDownload}
-          onReveal={revealDownload}
-          onClear={clearDownloads}
-        />
-      ) : null}
-
-      {overlay === 'identity-chooser' ? (
-        <IdentityChooser
-          identities={identityChooserProfiles}
-          anchor={identityChooserAnchor}
-          busy={identityChooserBusy}
-          error={identityChooserError}
-          onClose={closeOverlay}
-          onSelect={(id) => void selectToolbarIdentity(id)}
-        />
-      ) : null}
-
-      {overlay === 'share-nostr' ? (
-        <ShareNostrPanel
-          title={state.title}
-          url={state.displayUrl}
-          npub={identity?.npub ?? ''}
-          onClose={closeOverlay}
-          onPost={(comment) => window.ncc.shareNostr(comment)}
-        />
-      ) : null}
-
-      {overlay === 'history' ? (
-        <HistoryPanel
-          history={history}
-          onClose={closeOverlay}
-          onSelect={selectHistory}
-          onClear={clearHistory}
-        />
-      ) : null}
-
-      {overlay === 'passwords' ? (
-        <PasswordsPanel
-          context={passwordContext}
-          anchor={passwordAnchor}
-          busy={passwordBusy}
-          error={passwordError}
-          onClose={closeOverlay}
-          onUnlock={() => void unlockPasswords()}
-          onLock={() => void lockPasswords()}
-          onFill={(id) => void fillPassword(id)}
-          onCopy={(id, field) => void copyPassword(id, field)}
-          onAdd={() => openPasswordSettings(passwordContext?.origin ?? null)}
-          onManage={() => openPasswordSettings()}
-        />
-      ) : null}
-
-      {overlay === 'site-info' ? (
-        <SiteInfoPanel
-          state={state}
-          anchorRect={siteInfoAnchor}
-          onClose={closeOverlay}
-          onOpenSettings={() => openSettings('general')}
-          onReload={() => {
-            closeOverlay()
-            reload()
-          }}
-        />
-      ) : null}
-
-      {overlay === 'tabs' ? (
-        <TabOverflowMenu
-          tabs={state.tabs}
-          activeTabId={state.activeTabId}
-          onSelect={(id) => {
-            closeOverlay()
-            selectTab(id)
-          }}
-          onCloseTab={closeTab}
-          onNewTab={() => {
-            closeOverlay()
-            newTab()
-          }}
-          onClose={closeOverlay}
-        />
-      ) : null}
-
-      {signerRequest ? (
-        <SignerPrompt
-          request={signerRequest}
-          onRespond={respondToSigner}
-          waiting={signerRequests.length - 1}
-        />
-      ) : null}
-
-      {passwordSave ? (
-        <PasswordSavePrompt
-          request={passwordSave}
-          busy={passwordSaveBusy}
-          error={passwordSaveError}
-          onRespond={(action) => void respondToPasswordSave(action)}
-        />
-      ) : null}
-
-      {paymentCardSave ? (
-        <PaymentCardSavePrompt
-          request={paymentCardSave}
-          busy={paymentCardSaveBusy}
-          error={paymentCardSaveError}
-          onRespond={(action) => void respondToPaymentCardSave(action)}
-        />
-      ) : null}
-
-      {passkeyConfirmation ? (
-        <PasskeyConfirmationPrompt
-          request={passkeyConfirmation}
-          onRespond={respondToPasskeyConfirmation}
-        />
-      ) : null}
-
-      {passwordToast ? (
-        <div
-          className={cn(
-            'fixed bottom-3 right-3 z-[110] max-w-sm rounded-xl border px-3 py-2 text-ui-11 shadow-lg',
-            passwordToast.tone === 'error'
-              ? 'border-[color:var(--color-danger)]/35 bg-[color:var(--color-danger)]/10 text-[color:var(--color-danger)]'
-              : passwordToast.tone === 'warn'
-                ? 'border-[color:var(--color-warn)]/35 bg-[color:var(--color-warn)]/10 text-[color:var(--color-warn)]'
-                : 'border-[color:var(--color-ok)]/35 bg-[color:var(--color-ok)]/10 text-[color:var(--color-ok)]'
-          )}
-          role="status"
-        >
-          {passwordToast.message}
-        </div>
-      ) : null}
+      <AppPrompts
+        signerRequest={signerRequest}
+        signerWaiting={signerRequests.length - 1}
+        onRespondToSigner={respondToSigner}
+        passwordSave={passwordSave}
+        passwordSaveBusy={passwordSaveBusy}
+        passwordSaveError={passwordSaveError}
+        onRespondToPasswordSave={(action) => void respondToPasswordSave(action)}
+        paymentCardSave={paymentCardSave}
+        paymentCardSaveBusy={paymentCardSaveBusy}
+        paymentCardSaveError={paymentCardSaveError}
+        onRespondToPaymentCardSave={(action) => void respondToPaymentCardSave(action)}
+        passkeyConfirmation={passkeyConfirmation}
+        onRespondToPasskeyConfirmation={respondToPasskeyConfirmation}
+        passwordToast={passwordToast}
+      />
     </div>
   )
 }
