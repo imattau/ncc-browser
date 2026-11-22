@@ -147,11 +147,12 @@ export class HostingService {
   }
 
   /** Rewrite endpoints that point at a changed local address. Does not publish. */
-  replaceAddress(from: string, to: string): { updated: number } {
+  replaceAddress(from: string, to: string): { updated: number; ids: string[] } {
     const source = stripHost(from)
     const target = stripHost(to)
-    if (!source || !target || source === target) return { updated: 0 }
+    if (!source || !target || source === target) return { updated: 0, ids: [] }
     let updated = 0
+    const ids: string[] = []
     for (const service of this.options.store.state().services) {
       let changed = false
       const endpoints = service.endpoints.map((endpoint) => {
@@ -160,6 +161,7 @@ export class HostingService {
         return next
       })
       if (!changed) continue
+      ids.push(service.id)
       this.options.store.update(service.id, {
         title: service.title,
         service: service.service,
@@ -172,7 +174,7 @@ export class HostingService {
       updated += 1
     }
     if (updated) this.changed()
-    return { updated }
+    return { updated, ids }
   }
 
   /** Add or replace the service's onion endpoint. */

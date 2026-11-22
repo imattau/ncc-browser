@@ -30,7 +30,12 @@ import type {
   HostingShareResult,
   HostingState
 } from './hosting'
-import type { NetworkChange, PortMapping, ReachabilityReport } from './reachability'
+import type {
+  NetworkChange,
+  PortMapping,
+  PortStatusEvent,
+  ReachabilityReport
+} from './reachability'
 import type {
   AppearanceConfig,
   AppConfig,
@@ -187,8 +192,18 @@ export interface NccApi {
   hostingVerifyPort(localPort: number): Promise<PortMapping | null>
   hostingPortMappings(): Promise<PortMapping[]>
   hostingNetworkChanges(): Promise<NetworkChange[]>
-  hostingReplaceAddress(from: string, to: string): Promise<{ state: HostingState; updated: number }>
+  hostingReplaceAddress(
+    from: string,
+    to: string,
+    publish?: boolean
+  ): Promise<{
+    state: HostingState
+    updated: number
+    ids: string[]
+    failures: Array<{ id: string; title?: string; error: string }>
+  }>
   onNetworkChanged(listener: (change: NetworkChange) => void): () => void
+  onPortStatus(listener: (event: PortStatusEvent) => void): () => void
   hostingPublishOnion(serviceId: string): Promise<HostingOnionResult>
   hostingRemoveOnion(serviceId: string): Promise<HostingState>
   onHostingChanged(listener: (state: HostingState) => void): () => void

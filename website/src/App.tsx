@@ -600,11 +600,11 @@ export function App() {
                 },
                 {
                   q: 'What happens when my IP address changes?',
-                  a: 'Services watches this machine’s interfaces once a minute. When an IPv4 address or IPv6 prefix changes, a banner shows the old and new values. “Update endpoints” rewrites matching service endpoints and leaves publishing to you, because a new locator needs a signature. Loopback and link-local addresses are ignored.'
+                  a: 'Services watches this machine’s interfaces once a minute and the router WAN address every ten minutes. When an IPv4 address, IPv6 prefix or WAN changes, a banner shows the old and new value. “Update & republish” rewrites matching endpoints and signs new locators; “Update endpoints only” leaves publishing to you. A remote signer may ask for approval. Loopback and link-local addresses are ignored.'
                 },
                 {
                   q: 'How do I know a forwarded port really works?',
-                  a: 'On a mapped port, “Check reachability” opens a TCP connection to the public address through a Tor exit node — an outside vantage point that needs no extra service. Success marks it reachable from the internet. The mapping itself uses UPnP first and falls back to NAT-PMP, has a two-hour lease, and is removed when the browser quits.'
+                  a: 'On a mapped port, “Check reachability” opens a TCP connection to the public address through a Tor exit node — an outside vantage point that needs no extra service. Success marks it reachable from the internet. While Tor runs, mappings are re-checked every ten minutes; two failures raise a Services alert with “Check again”. The mapping uses UPnP first and falls back to NAT-PMP, has a two-hour lease, and is removed when the browser quits.'
                 },
                 {
                   q: 'Where is the source?',

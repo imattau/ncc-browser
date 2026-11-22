@@ -20,7 +20,7 @@ import {
   type SignerRequest
 } from '@shared/types'
 import type { HostingState } from '@shared/hosting'
-import type { NetworkChange } from '@shared/reachability'
+import type { NetworkChange, PortStatusEvent } from '@shared/reachability'
 import type { ContactsState } from '@shared/contacts'
 import type { NsiteProgress, NsitePublishState } from '@shared/nsite-publish'
 
@@ -105,8 +105,16 @@ const api: NccApi = {
   hostingUnmapPort: (localPort) => ipcRenderer.invoke('ncc:hosting-unmap-port', localPort),
   hostingVerifyPort: (localPort) => ipcRenderer.invoke('ncc:hosting-verify-port', localPort),
   hostingNetworkChanges: () => ipcRenderer.invoke('ncc:hosting-network-changes'),
-  hostingReplaceAddress: (from, to) =>
-    ipcRenderer.invoke('ncc:hosting-replace-address', { from, to }),
+  hostingReplaceAddress: (from, to, publish) =>
+    ipcRenderer.invoke('ncc:hosting-replace-address', { from, to, publish }),
+  onPortStatus: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, status: PortStatusEvent): void =>
+      listener(status)
+    ipcRenderer.on('ncc:port-status', handler)
+    return () => {
+      ipcRenderer.removeListener('ncc:port-status', handler)
+    }
+  },
   onNetworkChanged: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, change: NetworkChange): void =>
       listener(change)

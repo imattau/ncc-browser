@@ -92,4 +92,14 @@ export interface PortMapping {
   createdAt: number
   /** Unix seconds when an external check proved the port reachable. */
   verifiedAt?: number
+  /** Unix seconds of the most recent check, successful or not. */
+  lastCheckedAt?: number
+  lastOkAt?: number
+  /** Consecutive failed checks since the last success. */
+  failures?: number
+}
+
+export interface PortStatusEvent {
+  mapping: PortMapping
+  state: 'ok' | 'failing'
 }

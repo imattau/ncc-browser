@@ -504,10 +504,15 @@ describe('HostingService renewal and received shares', () => {
       title: 'Photos',
       endpoints: ['http://192.168.1.20:8080/app?x=1', 'https://blog.example']
     })
-    expect(hosting.replaceAddress('192.168.1.20', '192.168.1.99')).toEqual({ updated: 1 })
+    const replaced = hosting.replaceAddress('192.168.1.20', '192.168.1.99')
+    expect(replaced.updated).toBe(1)
+    expect(replaced.ids).toEqual([service.id])
     expect(hosting.find(service.id)?.endpoints[0].url).toBe('http://192.168.1.99:8080/app?x=1')
     expect(hosting.find(service.id)?.endpoints[1].url).toBe('https://blog.example/')
-    expect(hosting.replaceAddress('192.168.1.99', '192.168.1.99')).toEqual({ updated: 0 })
+    expect(hosting.replaceAddress('192.168.1.99', '192.168.1.99')).toEqual({
+      updated: 0,
+      ids: []
+    })
   })
 
   it('exposes onion status through state() and can find a service', () => {

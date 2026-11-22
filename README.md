@@ -180,8 +180,9 @@ information is used by default. Confirming the public address with an external s
 is a per-user choice (`Ask` / `Always` / `Never`), disclosed by provider, cached and
 skipped while Tor is preferred. A confirmed address can also be forwarded with an
 explicit UPnP or NAT-PMP TCP mapping; it is removed on quit and can be verified from a
-Tor exit. Address changes are reported in Services, with a one-click endpoint rewrite
-before you republish.
+Tor exit. Address changes (interfaces and WAN) are reported in Services, with one action that
+updates endpoints and republishes. Mapped ports are re-checked through Tor while it runs,
+and two failures raise a Services alert.
 
 The same panel shares a private service with one or more people: choose contacts from
 your Nostr follow list (or paste an npub), and each recipient gets their own NIP-44

@@ -152,12 +152,21 @@ describe('PortMappingService', () => {
     expect(natPmpDelete).toHaveBeenCalledWith('192.168.1.1', 18080)
   })
 
-  it('marks and clears an external verification', async () => {
+  it('records successful and failed external checks', async () => {
     const { service } = setup()
     await service.map({ localPort: 8080 })
-    expect(service.markVerified(8080, 1_800_000_100)?.verifiedAt).toBe(1_800_000_100)
-    expect(service.markVerified(8080, null)?.verifiedAt).toBeUndefined()
-    expect(service.markVerified(9999, 1)).toBeNull()
+    expect(service.reportCheck(8080, true, 1_800_000_100)).toMatchObject({
+      verifiedAt: 1_800_000_100,
+      lastCheckedAt: 1_800_000_100,
+      failures: 0
+    })
+    expect(service.reportCheck(8080, false, 1_800_000_200)).toMatchObject({
+      verifiedAt: 1_800_000_100,
+      lastCheckedAt: 1_800_000_200,
+      failures: 1
+    })
+    expect(service.reportCheck(8080, true, 1_800_000_300)?.failures).toBe(0)
+    expect(service.reportCheck(9999, true, 1)).toBeNull()
   })
 
   it('validates ports and reports router failures', async () => {

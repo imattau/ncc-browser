@@ -60,6 +60,26 @@ describe('NetworkWatch', () => {
     ])
   })
 
+  it('reports a public WAN address change', async () => {
+    let wan = '203.0.113.1'
+    const watch = new NetworkWatch({
+      interfaces: () => ({}),
+      wanProbe: async () => wan,
+      now: () => 300
+    })
+    expect(await watch.checkWan()).toBeNull()
+    wan = '203.0.113.2'
+    expect(await watch.checkWan()).toEqual({
+      at: 300,
+      interface: 'WAN',
+      family: 'ipv4',
+      from: '203.0.113.1',
+      to: '203.0.113.2'
+    })
+    expect(watch.list()).toHaveLength(1)
+    expect(await watch.checkWan()).toBeNull()
+  })
+
   it('does not report an added address as a change', () => {
     let nets = { eth0: [info('192.168.1.20', 'IPv4')] }
     const watch = new NetworkWatch({ interfaces: () => nets })

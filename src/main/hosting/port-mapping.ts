@@ -214,11 +214,17 @@ export class PortMappingService {
   }
 
   /** Record the result of an external reachability check. */
-  markVerified(localPort: number, at: number | null): PortMapping | null {
+  reportCheck(localPort: number, ok: boolean, at: number): PortMapping | null {
     const mapping = this.mappings.find((entry) => entry.localPort === localPort)
     if (!mapping) return null
-    if (at === null) delete mapping.verifiedAt
-    else mapping.verifiedAt = at
+    mapping.lastCheckedAt = at
+    if (ok) {
+      mapping.verifiedAt = at
+      mapping.lastOkAt = at
+      mapping.failures = 0
+    } else {
+      mapping.failures = (mapping.failures ?? 0) + 1
+    }
     this.flush()
     return clone(mapping)
   }

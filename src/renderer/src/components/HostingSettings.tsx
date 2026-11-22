@@ -41,6 +41,7 @@ import type {
   EndpointKind,
   NetworkChange,
   PortMapping,
+  PortStatusEvent,
   ReachabilityReport
 } from '@shared/reachability'
 import type { IdentityStatus } from '@shared/types'
@@ -146,6 +147,7 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
   const [mappingBusy, setMappingBusy] = useState(false)
   const [verifyBusy, setVerifyBusy] = useState(false)
   const [networkChanges, setNetworkChanges] = useState<NetworkChange[]>([])
+  const [portAlerts, setPortAlerts] = useState<PortStatusEvent[]>([])
 
   const apply = useCallback((next: HostingState) => setState(next), [])
 
@@ -174,6 +176,19 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
       .then((changes) => alive && setNetworkChanges(changes))
       .catch(() => undefined)
     const off = window.ncc.onHostingChanged((next) => alive && apply(next))
+    const offPortStatus = window.ncc.onPortStatus((event) => {
+      if (!alive) return
+      setPortAlerts((current) =>
+        event.state === 'failing'
+          ? [
+              ...current.filter(
+                (entry) => entry.mapping.localPort !== event.mapping.localPort
+              ),
+              event
+            ]
+          : current.filter((entry) => entry.mapping.localPort !== event.mapping.localPort)
+      )
+    })
     const offNetwork = window.ncc.onNetworkChanged((change) => {
       if (!alive) return
       setNetworkChanges((current) =>
@@ -190,23 +205,52 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
       off()
       offContacts()
       offNetwork()
+      offPortStatus()
     }
   }, [apply])
 
-  const acceptNetworkChange = async (change: NetworkChange): Promise<void> => {
+  const acceptNetworkChange = async (
+    change: NetworkChange,
+    publish = false
+  ): Promise<void> => {
     setBusy(true)
     setError(null)
     try {
-      const result = await window.ncc.hostingReplaceAddress(change.from, change.to)
+      const result = await window.ncc.hostingReplaceAddress(change.from, change.to, publish)
       apply(result.state)
       setNetworkChanges((current) => current.filter((entry) => entry !== change))
       if (result.updated === 0) {
         setError('No service endpoint used that address.')
+      } else if (result.failures.length > 0) {
+        setError(
+          `Updated ${result.updated} service${result.updated === 1 ? '' : 's'}, but ` +
+            `${result.failures.length} publish failed: ${result.failures[0].error}`
+        )
       }
     } catch (replaceError) {
       setError(errorMessage(replaceError))
     } finally {
       setBusy(false)
+    }
+  }
+
+  const recheckPort = async (localPort: number): Promise<void> => {
+    setVerifyBusy(true)
+    setError(null)
+    try {
+      const updated = await window.ncc.hostingVerifyPort(localPort)
+      if (updated?.verifiedAt) {
+        setPortAlerts((current) =>
+          current.filter((entry) => entry.mapping.localPort !== localPort)
+        )
+        if (mapping?.localPort === localPort) setMapping(updated)
+      } else {
+        setError('The port still does not answer through Tor.')
+      }
+    } catch (verifyError) {
+      setError(errorMessage(verifyError))
+    } finally {
+      setVerifyBusy(false)
     }
   }
 
@@ -596,6 +640,47 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
 
   return (
     <div className="space-y-5" data-hosting-settings>
+      {portAlerts.map((alert) => (
+        <div
+          key={`${alert.mapping.localPort}:${alert.mapping.externalPort}`}
+          data-port-alert
+          className="rounded-xl border border-[color:var(--color-danger)]/30 bg-[color:var(--color-danger)]/10 p-3 text-ui-11"
+        >
+          <p className="font-medium text-[color:var(--color-text-strong)]">
+            Mapped port {alert.mapping.externalPort} stopped answering
+          </p>
+          <p className="mt-0.5 break-all font-mono text-ui-105 text-[color:var(--color-muted)]">
+            {alert.mapping.externalAddress}:{alert.mapping.externalPort} →{' '}
+            {alert.mapping.internalClient}:{alert.mapping.localPort}
+          </p>
+          <p className="mt-0.5 text-ui-105 text-[color:var(--color-muted)]">
+            The router mapping may have expired, or the service behind it stopped. Traffic
+            through Tor did not reach it twice in a row.
+          </p>
+          <div className="mt-1.5 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={verifyBusy}
+              onClick={() => void recheckPort(alert.mapping.localPort)}
+              className="rounded-lg bg-[color:var(--color-accent)] px-2.5 py-1 text-ui-105 font-semibold text-[color:var(--color-on-accent)] disabled:opacity-50"
+            >
+              Check again
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                setPortAlerts((current) =>
+                  current.filter((entry) => entry.mapping.localPort !== alert.mapping.localPort)
+                )
+              }
+              className="rounded-lg border border-[color:var(--color-line)] px-2.5 py-1 text-ui-105 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)]"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      ))}
+
       {networkChanges.map((change) => (
         <div
           key={`${change.interface}:${change.from}:${change.to}`}
@@ -603,24 +688,34 @@ export function HostingSettings({ identity, initialDraft, onDraftUsed, onOpenIde
           className="rounded-xl border border-[color:var(--color-warn)]/30 bg-[color:var(--color-warn)]/10 p-3 text-ui-11"
         >
           <p className="font-medium text-[color:var(--color-text-strong)]">
-            This machine&apos;s {change.family === 'ipv4' ? 'IPv4' : 'IPv6'} address changed on{' '}
-            {change.interface}
+            {change.interface === 'WAN'
+              ? 'The router public WAN address changed'
+              : `This machine's ${change.family === 'ipv4' ? 'IPv4' : 'IPv6'} address changed on ${change.interface}`}
           </p>
           <p className="mt-0.5 break-all font-mono text-ui-105 text-[color:var(--color-muted)]">
             {change.from} → {change.to}
           </p>
           <p className="mt-0.5 text-ui-105 text-[color:var(--color-muted)]">
-            Services that published the old address stop resolving. Update endpoints here, then
-            press Publish on each changed service.
+            Services that published the old address stop resolving. Replacing the address and
+            republishing needs a signature; a remote signer may ask for approval.
           </p>
           <div className="mt-1.5 flex flex-wrap items-center gap-2">
             <button
               type="button"
               disabled={busy}
-              onClick={() => void acceptNetworkChange(change)}
+              onClick={() => void acceptNetworkChange(change, true)}
+              title="Replace the address, sign and publish each changed service. A remote signer may ask for approval."
               className="rounded-lg bg-[color:var(--color-accent)] px-2.5 py-1 text-ui-105 font-semibold text-[color:var(--color-on-accent)] disabled:opacity-50"
             >
-              Update endpoints
+              Update &amp; republish
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void acceptNetworkChange(change)}
+              className="rounded-lg border border-[color:var(--color-line)] px-2.5 py-1 text-ui-105 text-[color:var(--color-text)] hover:bg-[color:var(--color-hover)] disabled:opacity-50"
+            >
+              Update endpoints only
             </button>
             <button
               type="button"

@@ -88,6 +88,8 @@ import { OnionManager, verifyOnionThroughSocks } from './tor/onion'
 import { PublicAddressService } from './hosting/public-address'
 import { PortMappingService } from './hosting/port-mapping'
 import { NetworkWatch } from './hosting/network-watch'
+import { queryGateway } from './hosting/discover'
+import { PortMonitor } from './hosting/port-monitor'
 import { TorRelayPool } from './tor/relay'
 import { TorSessionProxy } from './tor/session'
 import { createBunkerRelay } from './signer/bunker-relay'
@@ -283,12 +285,25 @@ app.whenReady().then(async () => {
     filePath: join(app.getPath('userData'), 'port-mappings.json')
   })
   const networkWatch = new NetworkWatch({
+    wanProbe: async () => {
+      const gateway = await queryGateway({ timeoutMs: 1500 })
+      return gateway.wanAddress ?? null
+    },
     onChange: (change) => {
       if (shell && !shell.window.isDestroyed()) shell.sendToChrome('ncc:network-changed', change)
     }
   })
   networkWatch.start()
   app.on('before-quit', () => networkWatch.stop())
+  const portMonitor = new PortMonitor({
+    mappings: portMappings,
+    tor: { status: () => torManager?.status() ?? { ready: false, proxy: null } },
+    onChange: (event) => {
+      if (shell && !shell.window.isDestroyed()) shell.sendToChrome('ncc:port-status', event)
+    }
+  })
+  portMonitor.start()
+  app.on('before-quit', () => portMonitor.stop())
 
   const contacts = new ContactsService({
     store: new ContactsStore(join(app.getPath('userData'), 'contacts.json')),

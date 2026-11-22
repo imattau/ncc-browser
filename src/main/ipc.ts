@@ -362,18 +362,23 @@ export function registerIpc(deps: IpcDeps): void {
       mapping.externalPort,
       proxy
     )
-    return deps.portMappings.markVerified(
+    return deps.portMappings.reportCheck(
       localPort,
-      verified ? Math.floor(Date.now() / 1000) : null
+      verified,
+      Math.floor(Date.now() / 1000)
     )
   })
   ipcMain.handle('ncc:hosting-network-changes', (event) => {
     if (!fromChrome(event)) throw new Error('Services are only available to the browser chrome')
     return deps.network.list()
   })
-  ipcMain.handle('ncc:hosting-replace-address', (event, payload: unknown) => {
+  ipcMain.handle('ncc:hosting-replace-address', async (event, payload: unknown) => {
     if (!fromChrome(event)) throw new Error('Services are only available to the browser chrome')
-    const { from, to } = (payload ?? {}) as { from?: unknown; to?: unknown }
+    const {
+      from,
+      to,
+      publish
+    } = (payload ?? {}) as { from?: unknown; to?: unknown; publish?: unknown }
     if (typeof from !== 'string' || typeof to !== 'string') {
       throw new Error('The old and new address are required')
     }
@@ -381,7 +386,22 @@ export function registerIpc(deps: IpcDeps): void {
       throw new Error('Only IP address changes can be applied automatically')
     }
     const result = deps.hosting.replaceAddress(from, to)
-    return { ...result, state: deps.hosting.state() }
+    const failures: Array<{ id: string; title?: string; error: string }> = []
+    if (publish === true) {
+      for (const id of result.ids) {
+        const service = deps.hosting.find(id)
+        try {
+          await deps.hosting.publish(id)
+        } catch (error) {
+          failures.push({
+            id,
+            ...(service?.title ? { title: service.title } : {}),
+            error: error instanceof Error ? error.message : String(error)
+          })
+        }
+      }
+    }
+    return { ...result, failures, state: deps.hosting.state() }
   })
   ipcMain.handle('ncc:hosting-port-mappings', (event) => {
     if (!fromChrome(event)) throw new Error('Services are only available to the browser chrome')

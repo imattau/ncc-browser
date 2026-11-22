@@ -232,6 +232,10 @@ port on the router**. It is an explicit action, never automatic:
   through a Tor exit node — an external vantage point that needs no extra third-party
   service. Success marks the mapping reachable from the internet; the port itself is
   still yours to secure.
+- While Tor is already running, mappings are re-checked every ten minutes. Two failures
+  in a row raise one **Mapped port stopped answering** alert in Services with **Check
+  again** and **Dismiss**; a later success clears it. The monitor never starts Tor and
+  never opens a mapping.
 - **Remove mapping** deletes it, and quitting the browser removes all mappings it
   created. A crash cannot leave a permanent hole because of the lease.
 - A non-public WAN address (CGNAT, private, link-local) is refused: mapping cannot fix
@@ -241,11 +245,18 @@ port on the router**. It is an explicit action, never automatic:
 
 ## Address changes
 
-The browser checks interface addresses once a minute. When an IPv4 address or an IPv6
-prefix changes, **Services** shows a banner with the old and new address. **Update
-endpoints** rewrites matching endpoints across all services (host/port/path preserved)
-and leaves publishing to you, because a new locator needs a signature and may prompt a
-remote signer. Dismiss removes the notice without changing anything.
+The browser checks interface addresses once a minute and the router's public WAN
+address every ten minutes. When an IPv4 address, an IPv6 prefix or the WAN address
+changes, **Services** shows a banner with the old and new value. Two actions are
+offered:
+
+- **Update & republish** replaces matching endpoints across all services (host, port and
+  path preserved), signs a new locator for each changed service and publishes it. A
+  remote signer may ask for approval.
+- **Update endpoints only** rewrites the local records and leaves publishing to you.
+
+A per-service publish failure is reported and does not stop the others. Dismiss removes
+the notice without changing anything.
 
 Removing an interface or roaming is reported the same way. Loopback, link-local and
 unique-local IPv6 addresses are ignored because publishing them is never useful.
