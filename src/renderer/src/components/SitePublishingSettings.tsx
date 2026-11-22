@@ -100,8 +100,27 @@ export function SitePublishingSettings({
   const [result, setResult] = useState<NsitePublishResult | null>(null)
   const [verification, setVerification] = useState<NsiteVerifyResult | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
+  const [discovering, setDiscovering] = useState(false)
+  const [discoveryNote, setDiscoveryNote] = useState<string | null>(null)
 
   const apply = useCallback((next: NsitePublishState) => setState(next), [])
+
+  const discoverSites = useCallback(async (): Promise<void> => {
+    setDiscovering(true)
+    setDiscoveryNote(null)
+    try {
+      const result = await window.ncc.nsiteDiscover()
+      apply(result.state)
+      setDiscoveryNote(
+        result.error ??
+          `Found ${result.found} published site${result.found === 1 ? '' : 's'} on ${result.relays} relay${result.relays === 1 ? '' : 's'}.`
+      )
+    } catch (discoveryError) {
+      setDiscoveryNote(errorMessage(discoveryError))
+    } finally {
+      setDiscovering(false)
+    }
+  }, [apply])
 
   useEffect(() => {
     let alive = true
@@ -114,6 +133,7 @@ export function SitePublishingSettings({
           : { ...current, relayText: config.relays.map((entry) => entry.url).join('\n') }
       )
     })
+    void discoverSites()
     const offState = window.ncc.onNsiteChanged((next) => alive && apply(next))
     const offProgress = window.ncc.onNsiteProgress((next) => {
       if (!alive) return
@@ -125,7 +145,7 @@ export function SitePublishingSettings({
       offState()
       offProgress()
     }
-  }, [apply])
+  }, [apply, discoverSites])
 
   const sites = state?.sites ?? []
   const siteIdError = useMemo(() => {
@@ -545,16 +565,41 @@ export function SitePublishingSettings({
       ) : null}
 
       <div className="space-y-3 rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-4">
-        <div>
-          <h3 className="text-ui-12 font-semibold text-[color:var(--color-text-strong)]">Published sites</h3>
-          <p className="text-ui-105 text-[color:var(--color-muted)]">
-            Republishing with the same site id replaces the manifest. Unchanged files are skipped by hash.
-          </p>
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <h3 className="text-ui-12 font-semibold text-[color:var(--color-text-strong)]">Published sites</h3>
+            <p className="text-ui-105 text-[color:var(--color-muted)]">
+              Republishing with the same site id replaces the manifest. Unchanged files are skipped by hash.
+            </p>
+            {discoveryNote ? (
+              <p data-nsite-discovery className="mt-1 text-ui-10 text-[color:var(--color-faint)]">
+                {discoveryNote}
+              </p>
+            ) : null}
+            {(state?.hidden?.length ?? 0) > 0 ? (
+              <p className="mt-0.5 text-ui-10 text-[color:var(--color-faint)]">
+                {state?.hidden?.length} removed site{state?.hidden?.length === 1 ? '' : 's'} hidden from
+                relay discovery; republishing the same address restores it.
+              </p>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            data-nsite-discover
+            onClick={() => void discoverSites()}
+            disabled={discovering || busy}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-[color:var(--color-line)] px-2.5 py-1.5 text-ui-11 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)] disabled:opacity-50"
+          >
+            <RefreshCw className={cn('h-3.5 w-3.5', discovering && 'animate-spin')} />
+            {discovering ? 'Looking for sites…' : 'Find published'}
+          </button>
         </div>
 
         {sites.length === 0 ? (
           <p className="rounded-lg border border-dashed border-[color:var(--color-line)] px-4 py-6 text-center text-ui-11 text-[color:var(--color-faint)]">
-            Nothing published from this browser yet.
+            {discovering
+              ? 'Looking for manifests on your relays…'
+              : 'Nothing published from this browser yet. Published sites are discovered from your relays.'}
           </p>
         ) : (
           sites.map((site) => {

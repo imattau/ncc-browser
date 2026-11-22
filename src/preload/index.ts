@@ -137,6 +137,7 @@ const api: NccApi = {
     }
   },
   nsiteState: () => ipcRenderer.invoke('ncc:nsite-state'),
+  nsiteDiscover: () => ipcRenderer.invoke('ncc:nsite-discover'),
   nsitePickFolder: () => ipcRenderer.invoke('ncc:nsite-pick-folder'),
   nsitePublish: (input) => ipcRenderer.invoke('ncc:nsite-publish', input),
   nsiteVerify: (id) => ipcRenderer.invoke('ncc:nsite-verify', id),

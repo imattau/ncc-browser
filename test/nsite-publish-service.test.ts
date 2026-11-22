@@ -23,6 +23,7 @@ function tempFolder(): string {
 class FakeNetwork implements NsiteNetwork {
   uploads: Array<{ server: string; hash: string; path: string }> = []
   events: Event[] = []
+  queryEvents: Event[] = []
   verifyResult = true
 
   async relaysFor(): Promise<string[]> {
@@ -46,6 +47,10 @@ class FakeNetwork implements NsiteNetwork {
   async publish(event: Event, relays: string[]): Promise<Array<{ relay: string; ok: boolean; message: string }>> {
     this.events.push(event)
     return relays.map((relay) => ({ relay, ok: true, message: 'ok' }))
+  }
+
+  async query(): Promise<Event[]> {
+    return this.queryEvents
   }
 }
 
@@ -79,6 +84,7 @@ function setup() {
     service,
     store,
     network,
+    secret,
     pubkey,
     advance: (seconds: number) => {
       now += seconds
@@ -102,6 +108,94 @@ describe('NsitePublishService.scanFolder', () => {
     writeFileSync(join(root, 'app.js'), 'x')
     const scan = await service.scanFolder(root)
     expect(scan.problems.join(' ')).toMatch(/no \/index\.html/)
+  })
+})
+
+describe('NsitePublishService.discover', () => {
+  const HASH = 'a'.repeat(64)
+
+  function manifest(
+    secret: Uint8Array,
+    createdAt: number,
+    title: string,
+    siteId = 'blog'
+  ): Event {
+    return finalizeEvent(
+      {
+        kind: NSITE_NAMED_KIND,
+        created_at: createdAt,
+        tags: [
+          ['d', siteId],
+          ['title', title],
+          ['path', '/index.html', HASH],
+          ['server', 'https://blossom.test']
+        ],
+        content: ''
+      },
+      secret
+    )
+  }
+
+  it('rebuilds sites from the newest manifest and keeps local ids', async () => {
+    const { service, network, store, secret, pubkey } = setup()
+    network.queryEvents = [
+      manifest(secret, NOW, 'Old'),
+      manifest(secret, NOW + 10, 'New')
+    ]
+    const result = await service.discover()
+    expect(result.found).toBe(1)
+    expect(result.error).toBeUndefined()
+    const state = store.state()
+    expect(state.sites).toHaveLength(1)
+    expect(state.sites[0]).toMatchObject({
+      owner: pubkey,
+      siteId: 'blog',
+      title: 'New',
+      servers: ['https://blossom.test'],
+      manifestEventId: network.queryEvents[1].id,
+      lastPublishedAt: NOW + 10
+    })
+    expect(state.sites[0].files).toEqual([{ path: '/index.html', hash: HASH, size: 0 }])
+
+    const localId = state.sites[0].id
+    network.queryEvents = [manifest(secret, NOW + 20, 'Renamed')]
+    await service.discover()
+    expect(store.state().sites[0].id).toBe(localId)
+    expect(store.state().sites[0].title).toBe('Renamed')
+  })
+
+  it('does not resurrect a removed site until it is republished', async () => {
+    const { service, network, store, secret } = setup()
+    network.queryEvents = [manifest(secret, NOW, 'Blog')]
+    await service.discover()
+    const site = store.state().sites[0]
+    store.remove(site.id)
+    expect(store.isHidden(site.owner, site.siteId)).toBe(true)
+
+    const again = await service.discover()
+    expect(again.found).toBe(0)
+    expect(store.state().sites).toEqual([])
+
+    store.upsert({ ...site, title: 'Republished' })
+    expect(store.isHidden(site.owner, site.siteId)).toBe(false)
+    expect(store.state().sites[0].title).toBe('Republished')
+  })
+
+  it('reports when no identity is configured', async () => {
+    const secret = generateSecretKey()
+    const network = new FakeNetwork()
+    const service = new NsitePublishService({
+      store: new NsiteStore(join(mkdtempSync(join(tmpdir(), 'ncc-nsite-noid-')), 'sites.json')),
+      identity: {
+        provider: () => null,
+        status: () => ({ configured: false, mode: 'none', source: 'none', persisted: false, encryptionAvailable: false })
+      },
+      network
+    })
+    const result = await service.discover()
+    expect(result.error).toMatch(/Connect a Nostr identity/)
+    expect(result.found).toBe(0)
+    void secret
   })
 })
 

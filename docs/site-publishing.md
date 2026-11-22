@@ -46,6 +46,13 @@ change keep their hash and are not uploaded again; only new or changed assets ar
 uploaded. The browser stores the manifest index in `userData/nsite-sites.json` (mode
 `0600`), not the site files.
 
+Opening **Sites** also queries the configured and NIP-65 relays for the active
+identity's latest kind 15128/35128 manifests and rebuilds missing entries. This is how a
+site published from another profile or device reappears. Removing a site adds it to a
+hidden list in the index, so discovery does not resurrect it; republishing the same
+address clears the hidden entry. Two files are enough to distinguish a discovery from a
+local publish: the manifest's `created_at` and its event id.
+
 **Cancel** aborts the in-flight upload or relay publish between files and tears down the
 current request. Blobs that were already accepted stay on Blossom (their address is
 their hash); no site record or manifest is written for a cancelled publish. Verify can
@@ -76,7 +83,9 @@ also be cancelled.
   needs the source folder again.
 - A NIP-46 remote signer will prompt on the device for the upload authorisations and
   the manifest. A local identity signs without a prompt.
-- The Sites list is local to this profile; it is not synced over Nostr.
+- The Sites index is local, but entries are discovered again from the active identity's
+  manifests on the relays. A site published under a different identity requires
+  switching to that identity first.
 
 ## Standalone page
 

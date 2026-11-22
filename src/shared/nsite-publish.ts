@@ -149,6 +149,19 @@ export interface PublishedNsite {
 export interface NsitePublishState {
   version: 1
   sites: PublishedNsite[]
+  /** `owner:siteId` keys the user removed; relay discovery must not resurrect them. */
+  hidden?: string[]
+}
+
+export function nsiteSiteKey(owner: string, siteId: string | null): string {
+  return `${owner.toLowerCase()}:${siteId ?? ''}`
+}
+
+export interface NsiteDiscoverResult {
+  state: NsitePublishState
+  found: number
+  relays: number
+  error?: string
 }
 
 export interface NsiteFolderScan {

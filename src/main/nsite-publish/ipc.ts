@@ -55,6 +55,11 @@ export function registerNsitePublishIpc(
 
   ipcMain.handle('ncc:nsite-state', () => service.state())
 
+  ipcMain.handle('ncc:nsite-discover', async (event) => {
+    if (!fromChrome(event.sender)) throw new Error('Sites are only available to the browser chrome')
+    return service.discover()
+  })
+
   ipcMain.handle('ncc:nsite-pick-folder', async (event): Promise<NsiteFolderScan | null> => {
     if (!fromChrome(event.sender)) throw new Error('Sites are only available to the browser chrome')
     const testFolder = process.env.NCC_NSITE_FOLDER

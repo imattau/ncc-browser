@@ -5,11 +5,15 @@ import type { Event, EventTemplate } from 'nostr-tools'
 import {
   MAX_NSITE_FILE_BYTES,
   MAX_NSITE_TOTAL_BYTES,
+  NSITE_NAMED_KIND,
+  NSITE_ROOT_KIND,
   normalizeNsiteServers,
   nsiteSiteAddress,
+  nsiteSiteKey,
   signNsiteManifest,
   validateNsiteFiles,
   validateNsiteSiteId,
+  type NsiteDiscoverResult,
   type NsiteProgress,
   type NsitePublishInput,
   type NsitePublishResult,
@@ -50,6 +54,11 @@ export interface NsiteNetwork {
     signer: NsiteSigner,
     signal?: AbortSignal
   ): Promise<NsiteRelayReport[]>
+  query?(
+    relays: string[],
+    filter: { kinds: number[]; authors: string[]; limit?: number },
+    signal?: AbortSignal
+  ): Promise<Event[]>
 }
 
 export class NsitePublishCancelled extends Error {
@@ -91,6 +100,114 @@ export class NsitePublishService {
 
   state(): NsitePublishState {
     return this.deps.store.state()
+  }
+
+  /**
+   * Rebuild the local index from the active identity's latest NIP-5A manifests.
+   * Removed sites are left hidden; republishing the same address unhides them.
+   */
+  async discover(signal?: AbortSignal): Promise<NsiteDiscoverResult> {
+    const provider = this.deps.identity.provider()
+    if (!provider) {
+      return {
+        state: this.state(),
+        found: 0,
+        relays: 0,
+        error: 'Connect a Nostr identity to find published sites.'
+      }
+    }
+    const owner = (await provider.getPublicKey()).toLowerCase()
+    let relays: string[] = []
+    try {
+      relays = await this.resolveRelays(owner, [])
+    } catch {
+      relays = []
+    }
+    if (relays.length === 0) {
+      return {
+        state: this.state(),
+        found: 0,
+        relays: 0,
+        error: 'No relays available to look for published sites.'
+      }
+    }
+
+    if (!this.deps.network.query) {
+      return {
+        state: this.state(),
+        found: 0,
+        relays: relays.length,
+        error: 'Relay discovery is not available in this build.'
+      }
+    }
+    let events: Event[] = []
+    try {
+      events = await this.deps.network.query(
+        relays,
+        { kinds: [NSITE_NAMED_KIND, NSITE_ROOT_KIND], authors: [owner], limit: 500 },
+        signal
+      )
+    } catch (error) {
+      return { state: this.state(), found: 0, relays: relays.length, error: messageOf(error) }
+    }
+
+    const latest = new Map<string, Event>()
+    for (const event of events) {
+      if (event.pubkey.toLowerCase() !== owner) continue
+      const siteId =
+        event.kind === NSITE_ROOT_KIND
+          ? null
+          : event.tags.find((tag) => tag[0] === 'd')?.[1] ?? null
+      if (siteId && validateNsiteSiteId(siteId)) continue
+      const key = nsiteSiteKey(owner, siteId)
+      const previous = latest.get(key)
+      if (
+        !previous ||
+        event.created_at > previous.created_at ||
+        (event.created_at === previous.created_at && event.id > previous.id)
+      ) {
+        latest.set(key, event)
+      }
+    }
+
+    let found = 0
+    const hidden = new Set(this.deps.store.hidden())
+    for (const [key, event] of latest) {
+      if (hidden.has(key)) continue
+      const siteId =
+        event.kind === NSITE_ROOT_KIND
+          ? null
+          : event.tags.find((tag) => tag[0] === 'd')?.[1] ?? null
+      const files: NsiteSiteFile[] = event.tags
+        .filter((tag) => tag[0] === 'path' && typeof tag[1] === 'string' && typeof tag[2] === 'string')
+        .map((tag) => ({ path: tag[1], hash: tag[2].toLowerCase(), size: 0 }))
+      if (files.length === 0 || validateNsiteFiles(files).length > 0) continue
+      const servers = normalizeNsiteServers(
+        event.tags.filter((tag) => tag[0] === 'server' && typeof tag[1] === 'string').map((tag) => tag[1])
+      )
+      if (servers.length === 0) continue
+      const existing = this.deps.store.findByAddress(owner, siteId)
+      const title = event.tags.find((tag) => tag[0] === 'title')?.[1]
+      const description = event.tags.find((tag) => tag[0] === 'description')?.[1]
+      const source = event.tags.find((tag) => tag[0] === 'source')?.[1]
+      this.deps.store.upsert({
+        id: existing?.id ?? randomBytes(8).toString('hex'),
+        owner,
+        siteId,
+        ...(title ? { title: title.slice(0, 120) } : {}),
+        ...(description ? { description: description.slice(0, 400) } : {}),
+        ...(source ? { source: source.slice(0, 500) } : {}),
+        servers,
+        files,
+        manifestEventId: event.id,
+        createdAt: existing?.createdAt ?? event.created_at,
+        updatedAt: event.created_at,
+        lastPublishedAt: event.created_at
+      })
+      found += 1
+    }
+    this.changed()
+    return { state: this.state(), found, relays: relays.length }
   }
 
   async scanFolder(folder: string): Promise<NsiteScan> {
@@ -315,6 +432,18 @@ export class RelayNsiteNetwork implements NsiteNetwork {
 
   verify(server: string, hash: string, signal?: AbortSignal): Promise<boolean> {
     return verifyBlob(server, hash, signal)
+  }
+
+  query(
+    relays: string[],
+    filter: { kinds: number[]; authors: string[]; limit?: number },
+    signal?: AbortSignal
+  ): Promise<Event[]> {
+    throwIfCancelled(signal)
+    return withAbort(
+      this.pool.query([...new Set(relays)].slice(0, MAX_RELAYS), filter),
+      signal
+    )
   }
 
   async publish(

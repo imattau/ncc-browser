@@ -1,6 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import {
+  nsiteSiteKey,
   validateNsiteFiles,
   validateNsiteSiteId,
   type NsitePublishState,
@@ -17,7 +18,7 @@ function nowSeconds(): number {
 }
 
 function emptyState(): NsitePublishState {
-  return { version: 1, sites: [] }
+  return { version: 1, sites: [], hidden: [] }
 }
 
 /**
@@ -47,8 +48,18 @@ export class NsiteStore {
     )
   }
 
+  hidden(): string[] {
+    return [...(this.ensure().hidden ?? [])]
+  }
+
+  isHidden(owner: string, siteId: string | null): boolean {
+    return Boolean(this.ensure().hidden?.includes(nsiteSiteKey(owner, siteId)))
+  }
+
   upsert(site: PublishedNsite): PublishedNsite {
     const state = this.ensure()
+    const key = nsiteSiteKey(site.owner, site.siteId)
+    state.hidden = (state.hidden ?? []).filter((entry) => entry !== key)
     const index = state.sites.findIndex((entry) => entry.id === site.id)
     if (index === -1) state.sites.push(site)
     else state.sites[index] = site
@@ -58,7 +69,12 @@ export class NsiteStore {
 
   remove(id: string): void {
     const state = this.ensure()
-    state.sites = state.sites.filter((site) => site.id !== id)
+    const site = state.sites.find((entry) => entry.id === id)
+    if (site) {
+      const key = nsiteSiteKey(site.owner, site.siteId)
+      state.hidden = [...new Set([...(state.hidden ?? []), key])]
+    }
+    state.sites = state.sites.filter((entry) => entry.id !== id)
     this.flush()
   }
 
@@ -171,5 +187,8 @@ function normalizeState(parsed: Partial<NsitePublishState>, now: number): NsiteP
     })
     seen.add(key)
   }
-  return { version: 1, sites }
+  const hidden = (Array.isArray(parsed.hidden) ? parsed.hidden : [])
+    .filter((key): key is string => typeof key === 'string' && key.includes(':'))
+    .slice(0, 500)
+  return { version: 1, sites, hidden }
 }

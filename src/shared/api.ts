@@ -15,6 +15,7 @@ import type { SearchEngineId } from './search'
 import type { ContactsState } from './contacts'
 import type {
   NsiteCancelled,
+  NsiteDiscoverResult,
   NsiteFolderScan,
   NsiteProgress,
   NsitePublishInput,
@@ -216,6 +217,7 @@ export interface NccApi {
   }): Promise<GeneratedCertificate | null>
   onHostingChanged(listener: (state: HostingState) => void): () => void
   nsiteState(): Promise<NsitePublishState>
+  nsiteDiscover(): Promise<NsiteDiscoverResult>
   nsitePickFolder(): Promise<NsiteFolderScan | null>
   nsitePublish(input: NsitePublishInput): Promise<NsitePublishResult | NsiteCancelled>
   nsiteVerify(id: string): Promise<NsiteVerifyResult | NsiteCancelled>
