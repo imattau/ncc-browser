@@ -216,6 +216,73 @@ describe('NccResolver', () => {
     expect(decrypt44).toHaveBeenCalledTimes(1)
   })
 
+  it('decrypts a multi-recipient wrapped locator', async () => {
+    const readerSk = generateSecretKey()
+    const otherSk = generateSecretKey()
+    const readerPk = getPublicKey(readerSk)
+    const otherPk = getPublicKey(otherSk)
+    const sessionKey = generateSecretKey()
+    const sessionHex = Array.from(sessionKey)
+      .map((byte) => byte.toString(16).padStart(2, '0'))
+      .join('')
+    const payload = {
+      ttl: 600,
+      updated_at: NOW,
+      endpoints: [{ type: 'https', uri: '10.0.0.9:8443', priority: 1 }]
+    }
+    const ciphertext = nip44.encrypt(
+      JSON.stringify(payload),
+      nip44.getConversationKey(sessionKey, getPublicKey(sessionKey))
+    )
+    const wraps = {
+      [readerPk]: nip44.encrypt(sessionHex, nip44.getConversationKey(readerSk, AUTHOR_PK)),
+      [otherPk]: nip44.encrypt(sessionHex, nip44.getConversationKey(otherSk, AUTHOR_PK))
+    }
+    const wrapped = locatorEvent({
+      tags: [['private', 'true']],
+      content: JSON.stringify({ ciphertext, wraps })
+    })
+
+    const { resolver } = resolverWith([wrapped], { signer: signerFromSecret(readerSk) })
+    const outcome = await resolver.resolve(NPUB)
+
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+    expect(outcome.record.encrypted).toBe(true)
+    expect(outcome.record.endpoints[0].url).toBe('https://10.0.0.9:8443/')
+  })
+
+  it('reports a wrapped locator as undecryptable for an unknown recipient', async () => {
+    const readerSk = generateSecretKey()
+    const outsiderSk = generateSecretKey()
+    const sessionKey = generateSecretKey()
+    const sessionHex = Array.from(sessionKey)
+      .map((byte) => byte.toString(16).padStart(2, '0'))
+      .join('')
+    const ciphertext = nip44.encrypt(
+      JSON.stringify({ ttl: 600, updated_at: NOW, endpoints: [{ uri: '10.0.0.9:8443' }] }),
+      nip44.getConversationKey(sessionKey, getPublicKey(sessionKey))
+    )
+    const wrapped = locatorEvent({
+      tags: [['private', 'true']],
+      content: JSON.stringify({
+        ciphertext,
+        wraps: {
+          [getPublicKey(readerSk)]: nip44.encrypt(
+            sessionHex,
+            nip44.getConversationKey(readerSk, AUTHOR_PK)
+          )
+        }
+      })
+    })
+
+    const { resolver } = resolverWith([wrapped], { signer: signerFromSecret(outsiderSk) })
+    const outcome = await resolver.resolve(NPUB)
+    expect(outcome.ok).toBe(false)
+    if (outcome.ok) return
+    expect(outcome.code).toBe('undecryptable')
+  })
+
   it('reports undecryptable when no signer is configured', async () => {
     const { resolver } = resolverWith([locatorEvent({ encryptTo: OTHER_PK })])
     const outcome = await resolver.resolve(NPUB)

@@ -32,6 +32,35 @@ export function App() {
 
   const [hint, setHint] = useState<string | null>(null)
 
+  useEffect(() => {
+    let stopped = false
+    const check = async (): Promise<void> => {
+      try {
+        const version = await window.ncc.nccsearchCheckUpdate()
+        if (!version || stopped || localStorage.getItem('nccsearch.dismissed-update') === version) return
+        if (window.confirm(`nccsearch ${version} is available. Install it now?`)) {
+          await window.ncc.nccsearchInstallUpdate(version)
+          window.alert('nccsearch is updated. Restart Nostr Navigator to apply it.')
+        } else {
+          localStorage.setItem('nccsearch.dismissed-update', version)
+        }
+      } catch { /* update checks must not interrupt normal browsing */ }
+    }
+    let timer: number | undefined
+    try {
+      const last = Number(localStorage.getItem('nccsearch.last-update-check') || 0)
+      if (Date.now() - last >= 86_400_000) {
+        localStorage.setItem('nccsearch.last-update-check', String(Date.now()))
+        void check()
+      }
+      timer = window.setInterval(() => {
+        localStorage.setItem('nccsearch.last-update-check', String(Date.now()))
+        void check()
+      }, 86_400_000)
+    } catch { /* storage may be unavailable */ }
+    return () => { stopped = true; if (timer) window.clearInterval(timer) }
+  }, [])
+
   const overlayController = useOverlayController({ refreshHistory, setIdentity })
   const {
     overlay,

@@ -1,4 +1,3 @@
-import { Copy, ShieldCheck } from 'lucide-react'
 import { formatBytes } from '@shared/site-data'
 import type { TorStatus } from '@shared/types'
 
@@ -45,38 +44,6 @@ export function AboutRow({ label, value }: { label: string; value?: string }) {
     <div className="flex items-baseline justify-between gap-2 rounded-lg bg-[color:var(--color-field)] px-2.5 py-1.5">
       <dt className="text-[color:var(--color-muted)]">{label}</dt>
       <dd className="font-mono text-ui-105 text-[color:var(--color-text-soft)]">{value ?? '—'}</dd>
-    </div>
-  )
-}
-
-/** The npub of the active identity, with a copy affordance. */
-export function IdentityKey({
-  npub,
-  copied,
-  onCopy
-}: {
-  npub?: string
-  copied: boolean
-  onCopy: () => void
-}) {
-  return (
-    <div className="mt-2 flex items-start justify-between gap-2 rounded-lg bg-[color:var(--color-field)] px-2.5 py-2">
-      <code className="min-w-0 break-all font-mono text-ui-115 leading-relaxed text-[color:var(--color-text-soft)]">
-        {npub}
-      </code>
-      <button
-        type="button"
-        onClick={onCopy}
-        title="Copy npub"
-        aria-label="Copy npub"
-        className="shrink-0 rounded p-1 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)] hover:text-[color:var(--color-text-strong)]"
-      >
-        {copied ? (
-          <ShieldCheck className="h-3.5 w-3.5 text-[color:var(--color-ok)]" />
-        ) : (
-          <Copy className="h-3.5 w-3.5" />
-        )}
-      </button>
     </div>
   )
 }

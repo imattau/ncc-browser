@@ -1,4 +1,4 @@
-import { app, Menu, nativeTheme, safeStorage } from 'electron'
+import { app, ipcMain, Menu, nativeTheme, safeStorage } from 'electron'
 import { join } from 'node:path'
 import { ApprovalBroker } from '../approval'
 import { AutomationController } from '../automation/controller'
@@ -51,6 +51,12 @@ export function createServices(
   const { config, identity, permissions, sitePermissions, relayPool } = foundation
   const shell = shellStack.shell
   const userData = app.getPath('userData')
+
+  ipcMain.handle('ncc:nccsearch-check-update', () => browser.nccSearchUpdater.check())
+  ipcMain.handle('ncc:nccsearch-install-update', async (_event, version: unknown) => {
+    if (typeof version !== 'string' || !/^[a-f0-9]{7,40}$/.test(version)) throw new Error('Invalid nccsearch version')
+    await browser.nccSearchUpdater.install(version)
+  })
 
   const approvals = new ApprovalBroker({
     send: (channel, payload) => {

@@ -8,6 +8,7 @@ import { installExtensionProtocol } from '../extensions/protocol'
 import { NsiteBlobs } from '../nsite/blob'
 import { installNsiteProtocol } from '../nsite/protocol'
 import { installNccSearchProtocol } from '../nccsearch/protocol'
+import { NccSearchUpdater } from '../nccsearch/update'
 import { installNccProtocol, type ProtocolActivity } from '../protocol'
 import { installCertificatePinning } from '../pins'
 import { installSitePublisherProtocol } from '../site-publisher/protocol'
@@ -37,6 +38,7 @@ export interface BrowserStack {
   nsiteBlobs: Record<TabKind, NsiteBlobs>
   releaseSession: (kind: TabKind) => void
   invalidateSite: (rawUrl: string, kind: TabKind) => void
+  nccSearchUpdater: NccSearchUpdater
 }
 
 const KINDS = ['normal', 'private', 'tor'] as const
@@ -68,9 +70,10 @@ export async function createBrowserStack(
   const nccSearchAssets = app.isPackaged
     ? join(process.resourcesPath, 'nccsearch')
     : join(app.getAppPath(), 'resources', 'nccsearch')
+  const nccSearchUpdater = new NccSearchUpdater(app.getPath('userData'), nccSearchAssets)
   installNccSearchProtocol(
     [content.normal, content.private, content.tor],
-    nccSearchAssets,
+    () => nccSearchUpdater.activeDirectory(),
     () => ({
       relays: config.getRelays(),
       pubkey: identity.list().activeId
@@ -262,6 +265,7 @@ export async function createBrowserStack(
     endpointOwners,
     nsiteBlobs,
     releaseSession,
-    invalidateSite
+    invalidateSite,
+    nccSearchUpdater
   }
 }

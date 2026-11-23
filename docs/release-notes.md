@@ -1,5 +1,29 @@
 # Release notes
 
+## 0.41.0 — agent sign-in, self-publishing nsite client, and profile display
+
+### Added
+
+- **An agent can sign in to sites as itself.** A tab opened by an agent's own `tab_new`
+  call now answers `window.nostr` (NIP-07) with that agent's own identity, not the
+  human's. Signing in is a second, independent approval track from site access, each
+  with its own revoke/"stop" control in Agent control.
+- **`agent-client/`**: a single-file, no-build nsite built for automation agents to
+  drive — sign in, set a profile and avatar, follow and unfollow accounts, post, read a
+  simple feed, and republish the exact same site under whoever is signed in (no
+  re-upload, since nsite files are content-addressed). Verified end-to-end as a live
+  connected agent.
+- **Agent control shows each agent's own profile and nsite.** A best-effort, cached,
+  non-blocking relay lookup surfaces an agent's name, avatar and nsite address next to
+  its npub, with its own refresh control.
+
+### Fixed
+
+- `saveAgentSecret` after an upstream refactor split the password vault's relay-sync
+  engine out of `PasswordService`.
+- The nccsearch/site-publisher prebuild scripts now fall back to a plain `npm` lookup
+  (through a shell) when an inherited `npm_execpath` turns out not to be runnable.
+
 ## 0.40.1 — per-agent Nostr identities for Agent control
 
 ### Added

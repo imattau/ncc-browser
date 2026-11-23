@@ -82,6 +82,13 @@ jobs:
       - name: Build deb, rpm and flatpak
         run: npm run dist:linux
 
+      - name: Package signed nccsearch update assets
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          NCCSEARCH_UPDATE_SIGNING_KEY_PEM: ${{ secrets.NCCSEARCH_UPDATE_SIGNING_KEY_PEM }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: node scripts/package-nccsearch-update.mjs
+
       - name: Verify bundled Tor
         run: |
           TOR_DIR=release/linux-unpacked/resources/tor/tor
@@ -154,6 +161,8 @@ jobs:
             release/*.flatpak
             release/*.npk
             release/*.manifest.json
+            release/nccsearch-file-*
+            release/nccsearch-manifest.json
 
   macos:
     name: macOS (dmg, zip)

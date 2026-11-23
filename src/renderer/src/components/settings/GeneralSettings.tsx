@@ -1,4 +1,5 @@
 import { Globe, RotateCcw, Search, Trash2 } from 'lucide-react'
+import { useState } from 'react'
 import { SEARCH_ENGINES, type SearchEngineId } from '@shared/search'
 import { DEFAULT_RELAYS, DEFAULT_TOR_SOCKS, type RelayEntry } from '@shared/types'
 import { cn } from '../../lib/cn'
@@ -69,6 +70,8 @@ function RelayRow({
  * checks, Tor and search. One Save button persists the whole group.
  */
 export function GeneralSettings({ settings }: { settings: GeneralSettingsApi }) {
+  const [nccSearchUpdate, setNccSearchUpdate] = useState('')
+  const [nccSearchUpdateBusy, setNccSearchUpdateBusy] = useState(false)
   const {
     relayEntries,
     setRelayEntries,
@@ -461,6 +464,30 @@ export function GeneralSettings({ settings }: { settings: GeneralSettingsApi }) 
                 </span>
               </span>
             </label>
+            <div className="mt-3 flex items-center justify-between gap-3 border-t border-[color:var(--color-line)] pt-3">
+              <span className="text-ui-11 text-[color:var(--color-muted)]">Check for nccsearch updates</span>
+              <button
+                type="button"
+                disabled={nccSearchUpdateBusy}
+                onClick={async () => {
+                  setNccSearchUpdateBusy(true)
+                  setNccSearchUpdate('Checking…')
+                  try {
+                    const version = await window.ncc.nccsearchCheckUpdate()
+                    if (!version) setNccSearchUpdate('You have the latest version.')
+                    else if (window.confirm(`nccsearch ${version} is available. Install it now?`)) {
+                      await window.ncc.nccsearchInstallUpdate(version)
+                      setNccSearchUpdate('Updated. Restart Nostr Navigator to apply it.')
+                    } else setNccSearchUpdate(`Update ${version} is available.`)
+                  } catch { setNccSearchUpdate('Could not check for updates.') }
+                  finally { setNccSearchUpdateBusy(false) }
+                }}
+                className="rounded-lg border border-[color:var(--color-line)] px-2.5 py-1.5 text-ui-11 font-medium text-[color:var(--color-text)] disabled:opacity-50"
+              >
+                Check now
+              </button>
+            </div>
+            {nccSearchUpdate ? <p className="mt-2 text-ui-11 text-[color:var(--color-muted)]">{nccSearchUpdate}</p> : null}
           </div>
 
           <p className="mt-3 text-ui-11 leading-relaxed text-[color:var(--color-muted)]">

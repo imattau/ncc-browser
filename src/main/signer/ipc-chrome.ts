@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron'
+import { nip19 } from 'nostr-tools'
 import type { ApprovalBroker } from '../approval'
 import type { ConfigStore } from '../config'
 import { isChromeSender, resetCaches, shellForSender, type CacheResettingDeps } from '../ipc/shared'
@@ -74,9 +75,14 @@ export function registerSignerChromeIpc(deps: SignerChromeIpcDeps): void {
     return status
   })
 
-  ipcMain.handle('ncc:identity-generate', async () => {
+  ipcMain.handle('ncc:identity-generate', async (event) => {
+    if (!fromChrome(event)) throw new Error('Not allowed')
     const status = await deps.identity.generateLocal()
     deps.passwords.onIdentityChanged()
+    const secret = deps.identity.activeLocalSecret()
+    if (!secret || !status.npub) throw new Error('Could not read the generated local key')
+    const saved = await deps.passwords.saveIdentitySecret(nip19.nsecEncode(secret), status.npub)
+    if (!saved.ok) throw new Error(`Identity created, but its nsec could not be saved in the password manager: ${saved.error ?? 'unknown error'}`)
     resetCaches(deps)
     return status
   })
