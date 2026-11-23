@@ -12,6 +12,28 @@ import { isOnionHost } from './tor/guard'
 
 const TOKEN_TTL_MS = 5 * 60_000
 
+/**
+ * Dedicated identity-provider login hosts, not general sites. A `window.open` popup
+ * to one of these keeps its `window.opener` (see `wireTab`'s window-open handler) so
+ * the OAuth popup flow can `postMessage` the result back; every other popup is denied
+ * and reopened as a plain tab, which loses that relationship but keeps the browser
+ * from spawning arbitrary popup windows.
+ */
+const AUTH_POPUP_HOSTS = new Set([
+  'accounts.google.com',
+  'appleid.apple.com',
+  'login.microsoftonline.com',
+  'login.live.com'
+])
+
+export function isAuthPopupUrl(url: string): boolean {
+  try {
+    return AUTH_POPUP_HOSTS.has(new URL(url).hostname.toLowerCase())
+  } catch {
+    return false
+  }
+}
+
 export function isLoopbackHost(hostname: string): boolean {
   const host = hostname.replace(/^\[/, '').replace(/\]$/, '').toLowerCase()
   return (

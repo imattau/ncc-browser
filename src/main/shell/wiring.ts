@@ -3,6 +3,7 @@ import { installContentContextMenu } from '../context-menu'
 import { fetchFavicon } from '../favicon'
 import { isAllowedTorUrl } from '../tor/guard'
 import {
+  isAuthPopupUrl,
   isHttpExemptUrl,
   shouldUpgradeHttp,
   webHttpKey
@@ -10,7 +11,7 @@ import {
 import { formatDisplayUrl, isOnionPageUrl, safeProtocol, tabTitle } from './format'
 import type { ShellInternals } from './internals'
 import { loadWebTarget, navigateInTab } from './navigation'
-import type { Tab } from './types'
+import { CONTENT_WEB_PREFERENCES, type Tab } from './types'
 
 /** Attach the content-view listeners for one tab. */
 export function wireTab(internals: ShellInternals, tab: Tab): void {
@@ -138,6 +139,24 @@ export function wireTab(internals: ShellInternals, tab: Tab): void {
   })
 
   contents.setWindowOpenHandler(({ url }) => {
+    // Most popups (ads, spam) are denied and reopened as an ordinary tab. An OAuth
+    // popup to a known identity-provider host is let through as a real auxiliary
+    // window instead, because the site's own JS needs `window.opener` to
+    // `postMessage` the sign-in result back — losing that relationship is what made
+    // "Sign in with Google" popups fail silently when reopened as a plain tab.
+    if (isAuthPopupUrl(url)) {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          autoHideMenuBar: true,
+          webPreferences: {
+            ...CONTENT_WEB_PREFERENCES,
+            session: contents.session,
+            preload: internals.deps.contentPreloadPath
+          }
+        }
+      }
+    }
     void internals.openInNewTab(url, tab.kind)
     return { action: 'deny' }
   })

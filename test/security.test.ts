@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ResolvedEndpoint } from '../src/shared/types'
 import {
+  isAuthPopupUrl,
   isHttpExemptUrl,
   isLoopbackHost,
   nccEndpointNeedsWarning,
@@ -56,5 +57,19 @@ describe('HTTPS policy', () => {
     const https = endpoint('https://example.com:8443/')
     expect(sortCandidatesForHttps([http, https], 'prefer')).toEqual([https, http])
     expect(sortCandidatesForHttps([http, https], 'off')).toEqual([http, https])
+  })
+})
+
+describe('isAuthPopupUrl', () => {
+  it('recognizes known identity-provider popup hosts', () => {
+    expect(isAuthPopupUrl('https://accounts.google.com/o/oauth2/auth')).toBe(true)
+    expect(isAuthPopupUrl('https://appleid.apple.com/auth/authorize')).toBe(true)
+  })
+
+  it('rejects everything else, including lookalike or subdomain hosts', () => {
+    expect(isAuthPopupUrl('https://example.com')).toBe(false)
+    expect(isAuthPopupUrl('https://accounts.google.com.evil.example/')).toBe(false)
+    expect(isAuthPopupUrl('https://evil.accounts.google.com/')).toBe(false)
+    expect(isAuthPopupUrl('not a url')).toBe(false)
   })
 })
