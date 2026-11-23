@@ -1,5 +1,12 @@
 # Nostr Navigator for Android
 
+## Fixes in 0.42.5
+
+- Nsite links open immediately instead of waiting for a hidden relay manifest lookup,
+  so the browser shows page loading while the site resolves.
+- Blossom downloads try up to three servers concurrently and stop after 20 seconds,
+  avoiding long waits when a manifest lists slow or unavailable servers.
+
 ## Fixes in 0.42.4
 
 - Fixed the nccsearch update check and downloads failing on Android because their HTTPS
