@@ -2245,7 +2245,7 @@ const security = createSecurity({ getProxyPort: () => proxyPort })
 
 const securityInfo = createSecurityInfo({
   byId, icon, displayAddress, security, invoke, content, confirm, renderPill, activeKind,
-  KIND_INFO,
+  KIND_INFO, kindOf,
   getActiveUrl: () => activeUrl,
   getTabs: () => tabs,
   getActiveTabId: () => activeTabId,

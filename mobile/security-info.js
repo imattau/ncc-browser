@@ -1,7 +1,7 @@
 export function createSecurityInfo(deps) {
   const {
     byId, icon, displayAddress, security, invoke, content, confirm, renderPill, activeKind,
-    KIND_INFO, getActiveUrl, getTabs, getActiveTabId, getPrivateSessionDetail, setSecurityState
+    KIND_INFO, kindOf, getActiveUrl, getTabs, getActiveTabId, getPrivateSessionDetail, setSecurityState
   } = deps
   let siteClearWaiter = null
   /** What the proxy knows about the page in front of you. */
