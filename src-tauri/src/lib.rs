@@ -1140,7 +1140,7 @@ fn bitcoin_public_key(state: tauri::State<'_, SignerState>) -> Result<String, St
 /// Name the TLS roots explicitly: reqwest's default builds a platform verifier, which
 /// panics or fails on Android (no JVM context). Falls back to the default if the roots
 /// cannot be built.
-fn with_webpki_roots(builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
+pub(crate) fn with_webpki_roots(builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
     match ncc_proxy::pins::webpki_tls_config() {
         Ok(tls) => builder.use_preconfigured_tls(tls),
         Err(_) => builder,

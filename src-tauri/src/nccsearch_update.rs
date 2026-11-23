@@ -89,7 +89,7 @@ fn valid_version(version: &str) -> bool {
 }
 
 async fn latest() -> Result<(Manifest, String), String> {
-    let client = reqwest::Client::builder()
+    let client = crate::with_webpki_roots(reqwest::Client::builder())
         .user_agent("ncc-browser-nccsearch-updater")
         .build()
         .map_err(|e| e.to_string())?;
@@ -159,7 +159,7 @@ pub async fn install(data_dir: &Path, version: &str) -> Result<(), String> {
     if manifest.version != version {
         return Err("The available update changed. Check again.".into());
     }
-    let client = reqwest::Client::builder()
+    let client = crate::with_webpki_roots(reqwest::Client::builder())
         .user_agent("ncc-browser-nccsearch-updater")
         .build()
         .map_err(|e| e.to_string())?;
