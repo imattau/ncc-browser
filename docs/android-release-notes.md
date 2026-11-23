@@ -1,5 +1,12 @@
 # Nostr Navigator for Android
 
+## Fixes in 0.42.2
+
+- A dialog-styled popup (the pattern most "Continue with Google" and similar sign-in
+  buttons use) no longer loses its connection back to the page that opened it. WebView
+  used to read the popup's destination and reopen it as a separate, unrelated tab,
+  which broke the sign-in handoff back to the original page.
+
 ## Fixes in 0.42.1
 
 - The Password Manager is now tied to the default identity. On unlock, older local

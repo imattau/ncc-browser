@@ -1,5 +1,32 @@
 # Release notes
 
+## 0.42.2 — OAuth sign-in popups, and password vault backfill
+
+### Fixed
+
+- **"Continue with Google" (and similar OAuth popups) now work.** A popup was always
+  denied and reopened as a disconnected tab, losing `window.opener` — which broke the
+  `postMessage` handoff OAuth providers rely on to hand back the signed-in result. A
+  popup sized like a deliberate sign-in/payment dialog, or opened to a known
+  identity-provider host, now opens as a real auxiliary window with `window.opener`
+  intact. Applies to Android too (WebView's `onCreateWindow`, same underlying problem).
+- **Google Sign-In's FedCM path no longer errors out before the popup even opens.**
+  Electron exposes the FedCM JS surface but has no working implementation behind it;
+  FedCM is now disabled at the Chromium level so sites fall back to the popup flow.
+- **The app no longer appears to freeze after a sign-in popup closes.** The auxiliary
+  popup window has no native parent (some Wayland compositors don't support the
+  `xdg_foreign` protocol that would need), which could leave the main window never
+  getting input focus back. Focus is now reclaimed explicitly when the popup closes.
+- **A self-closing popup (e.g. once an OAuth flow finishes) no longer crashes the app
+  or leaves a dangling tab.** A tab whose `WebContentsView` destroys itself out from
+  under it (the page calling `window.close()`) is now cleanly removed.
+- **Every local Nostr identity now gets a recovery copy of its nsec in the password
+  vault**, not just ones freshly generated in-app. A key's nsec was previously only
+  ever saved to the vault at the moment it was generated — never on import, and never
+  retroactively for an identity that already existed. Importing now saves it too, and
+  existing identities are backfilled on the next unlock (a deliberately deleted entry
+  is not recreated).
+
 ## 0.41.0 — agent sign-in, self-publishing nsite client, and profile display
 
 ### Added
