@@ -35,18 +35,22 @@ export function registerSignerChromeIpc(deps: SignerChromeIpcDeps): void {
   ipcMain.handle('ncc:identity-select', async (event, id: unknown) => {
     if (!fromChrome(event)) throw new Error('Not allowed')
     const status = await deps.identity.select(String(id ?? ''))
-    deps.passwords.onIdentityChanged()
     resetCaches(deps)
     return status
   })
   ipcMain.handle('ncc:identity-default', (event, id: unknown) => {
     if (!fromChrome(event)) throw new Error('Not allowed')
-    return deps.identity.setDefault(String(id ?? ''))
+    const previousDefault = deps.identity.list().defaultId
+    const list = deps.identity.setDefault(String(id ?? ''))
+    if (list.defaultId !== previousDefault) deps.passwords.onIdentityChanged()
+    resetCaches(deps)
+    return list
   })
   ipcMain.handle('ncc:identity-remove-profile', async (event, id: unknown) => {
     if (!fromChrome(event)) throw new Error('Not allowed')
+    const previousDefault = deps.identity.list().defaultId
     const status = await deps.identity.remove(String(id ?? ''))
-    deps.passwords.onIdentityChanged()
+    if (deps.identity.list().defaultId !== previousDefault) deps.passwords.onIdentityChanged()
     resetCaches(deps)
     return status
   })
@@ -69,16 +73,18 @@ export function registerSignerChromeIpc(deps: SignerChromeIpcDeps): void {
   })
 
   ipcMain.handle('ncc:identity-import', async (event, secret: unknown) => {
+    const previousDefault = deps.identity.list().defaultId
     const status = await deps.identity.importLocal(String(secret ?? ''))
-    deps.passwords.onIdentityChanged()
+    if (deps.identity.list().defaultId !== previousDefault) deps.passwords.onIdentityChanged()
     resetCaches(deps)
     return status
   })
 
   ipcMain.handle('ncc:identity-generate', async (event) => {
     if (!fromChrome(event)) throw new Error('Not allowed')
+    const previousDefault = deps.identity.list().defaultId
     const status = await deps.identity.generateLocal()
-    deps.passwords.onIdentityChanged()
+    if (deps.identity.list().defaultId !== previousDefault) deps.passwords.onIdentityChanged()
     const secret = deps.identity.activeLocalSecret()
     if (!secret || !status.npub) throw new Error('Could not read the generated local key')
     const saved = await deps.passwords.saveIdentitySecret(nip19.nsecEncode(secret), status.npub)
@@ -93,8 +99,9 @@ export function registerSignerChromeIpc(deps: SignerChromeIpcDeps): void {
   })
   ipcMain.handle('ncc:identity-ephemeral-secret', () => deps.identity.ephemeralNsec())
   ipcMain.handle('ncc:identity-save-ephemeral', async () => {
+    const previousDefault = deps.identity.list().defaultId
     const status = await deps.identity.saveEphemeral()
-    deps.passwords.onIdentityChanged()
+    if (deps.identity.list().defaultId !== previousDefault) deps.passwords.onIdentityChanged()
     resetCaches(deps)
     return status
   })
@@ -105,22 +112,25 @@ export function registerSignerChromeIpc(deps: SignerChromeIpcDeps): void {
   })
 
   ipcMain.handle('ncc:identity-remove', async () => {
+    const previousDefault = deps.identity.list().defaultId
     const status = await deps.identity.removeLocal()
-    deps.passwords.onIdentityChanged()
+    if (deps.identity.list().defaultId !== previousDefault) deps.passwords.onIdentityChanged()
     resetCaches(deps)
     return status
   })
 
   ipcMain.handle('ncc:identity-connect-bunker', async (event, url: unknown) => {
+    const previousDefault = deps.identity.list().defaultId
     const status = await deps.identity.connectRemote(String(url ?? ''))
-    deps.passwords.onIdentityChanged()
+    if (deps.identity.list().defaultId !== previousDefault) deps.passwords.onIdentityChanged()
     resetCaches(deps)
     return status
   })
 
   ipcMain.handle('ncc:identity-disconnect', async () => {
+    const previousDefault = deps.identity.list().defaultId
     const status = await deps.identity.disconnectRemote()
-    deps.passwords.onIdentityChanged()
+    if (deps.identity.list().defaultId !== previousDefault) deps.passwords.onIdentityChanged()
     resetCaches(deps)
     return status
   })

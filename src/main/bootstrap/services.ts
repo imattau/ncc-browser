@@ -80,7 +80,11 @@ export function createServices(
 
   const passwordService = new PasswordService({
     config,
-    identity,
+    identity: {
+      provider: () => identity.defaultProvider(),
+      status: () => identity.defaultStatus()
+    },
+    migrationSources: () => identity.passwordVaultMigrationSources(),
     relays: relayPool,
     cache: new PasswordCache(join(userData, 'passwords.json')),
     host: shell,

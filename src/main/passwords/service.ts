@@ -7,6 +7,7 @@ import {
   findEntry,
   findEntryFor,
   isPlaintextNcc,
+  mergeVaults,
   pageOriginFromUrl,
   scanVaultHealth,
   summarizeVault,
@@ -114,6 +115,7 @@ export interface PasswordFileDialogs {
 export interface PasswordServiceDeps {
   config: PasswordConfigStoreLike
   identity: PasswordIdentityLike
+  migrationSources?: () => Array<{ pubkey: string; provider: ProviderLike }>
   relays: PasswordRelayPoolLike
   cache: PasswordCache
   host: PasswordHost
@@ -141,6 +143,7 @@ export class PasswordService {
   private lockTimer: NodeJS.Timeout | null = null
   private readonly pendingSaves = new Map<string, PendingSave>()
   private readonly saveTimers = new Map<string, NodeJS.Timeout>()
+  private readonly migratingVaults = new Set<string>()
   private readonly syncEngine: PasswordSync
   private readonly transfer: PasswordTransfer
   private readonly fillController: PasswordFill
@@ -363,6 +366,9 @@ export class PasswordService {
     this.touch()
     this.sendStatus()
     this.sendContext()
+    void this.migrateLegacyVaults(provider, pubkey).catch((error) => {
+      console.warn('[passwords] legacy vault migration failed:', messageOf(error))
+    })
     return this.status()
   }
 
@@ -779,6 +785,62 @@ export class PasswordService {
     const provider = this.deps.identity.provider()
     if (!provider) throw new Error('Set up a Nostr identity to use the password manager.')
     return provider
+  }
+
+  private async migrateLegacyVaults(provider: ProviderLike, defaultPubkey: string): Promise<void> {
+    const sources = this.deps.migrationSources?.() ?? []
+    if (!sources.length || !this.unlocked || !this.vault || this.migratingVaults.has(defaultPubkey)) return
+
+    this.migratingVaults.add(defaultPubkey)
+    try {
+      const migrated = new Set(this.deps.cache.migratedSources(defaultPubkey))
+      let incomplete = false
+      for (const source of sources) {
+        if (source.pubkey === defaultPubkey || migrated.has(source.pubkey)) continue
+        const reader = new PasswordSync({
+          isUnlocked: () => true,
+          vault: () => null,
+          setVault: () => undefined,
+          pubkey: () => source.pubkey,
+          setError: () => undefined,
+          now: () => this.now(),
+          config: this.deps.config,
+          relays: this.deps.relays,
+          cache: this.deps.cache,
+          status: () => this.status(),
+          sendStatus: () => undefined,
+          sendContext: () => undefined
+        })
+
+        try {
+          const result = await reader.readVault(source.provider, source.pubkey)
+          if (!this.unlocked || this.pubkey !== defaultPubkey) return
+          if (result.vault?.entries.length) {
+            const merged = mergeVaults(this.vault, result.vault)
+            if (merged.changed) {
+              const committed = await this.syncEngine.commit(provider, defaultPubkey, merged.vault)
+              if (!committed.ok) throw new Error(committed.error ?? 'Could not save the migrated vault')
+            }
+          }
+          if (result.complete) {
+            this.deps.cache.markSourceMigrated(defaultPubkey, source.pubkey)
+            migrated.add(source.pubkey)
+          } else {
+            incomplete = true
+          }
+        } catch (error) {
+          incomplete = true
+          console.warn(`[passwords] legacy vault migration deferred for ${source.pubkey}:`, messageOf(error))
+        }
+      }
+
+      if (incomplete && this.unlocked && this.pubkey === defaultPubkey) {
+        this.error = 'Some older identity vaults could not be checked yet. They will be retried on a later unlock.'
+        this.sendStatus()
+      }
+    } finally {
+      this.migratingVaults.delete(defaultPubkey)
+    }
   }
 
   relaysFor(pubkey: string): Promise<string[]> {

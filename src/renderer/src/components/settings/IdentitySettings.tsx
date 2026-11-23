@@ -65,7 +65,7 @@ export function IdentitySettings({
 
       <div className="rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-4">
         <h3 className="text-ui-12 font-semibold text-[color:var(--color-text-strong)]">Your identities</h3>
-        <p className="mt-1 text-ui-11 text-[color:var(--color-muted)]">The active identity is used for new NIP-07 requests. The default starts first and is restored when no saved selection is available.</p>
+        <p className="mt-1 text-ui-11 text-[color:var(--color-muted)]">The active identity is used for new NIP-07 requests. The default starts first, is restored when no saved selection is available, and owns the shared Password Manager vault.</p>
         {identityList.identities.length ? (
           <ul className="mt-3 space-y-2">
             {identityList.identities.map((profile) => (
@@ -123,7 +123,7 @@ export function IdentitySettings({
 
       <div className="rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-4">
         <h3 className="text-ui-12 font-semibold text-[color:var(--color-text-strong)]">Add a local key</h3>
-        <p className="mt-1 text-ui-11 text-[color:var(--color-muted)]">Generated keys are saved in the password manager as “Nostr identity” entries, where you can reveal or export the nsec later.</p>
+        <p className="mt-1 text-ui-11 text-[color:var(--color-muted)]">Generated keys are saved as “Nostr identity” entries in the vault encrypted to your default identity. Changing the active identity won’t change which vault stores them.</p>
         {identity && !identity.encryptionAvailable ? (
           <p className="mt-2 rounded-lg border border-[color:var(--color-warn)]/25 bg-[color:var(--color-warn)]/10 px-2.5 py-2 text-ui-11 leading-relaxed text-[color:var(--color-warn)]">
             No OS keychain is available, so an imported key will only live in

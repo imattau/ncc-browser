@@ -154,6 +154,25 @@ export class IdentityManager {
     if (!item) return null
     return item.remote ?? (item.local ? new LocalIdentityProvider(item.local) : null)
   }
+  /** The default identity is the owner of shared browser data such as the password vault. */
+  defaultProvider(): IdentityProvider | null {
+    const item = this.defaultId ? this.profiles.get(this.defaultId) : null
+    if (!item) return null
+    return item.remote ?? (item.local ? new LocalIdentityProvider(item.local) : null)
+  }
+  defaultStatus(): IdentityStatus {
+    return this.defaultProvider()?.status() ?? this.deps.local.status()
+  }
+  /** Identities whose old password vaults may need folding into the default vault. */
+  passwordVaultMigrationSources(): Array<{ pubkey: string; provider: IdentityProvider }> {
+    return this.listIds()
+      .filter((id) => id !== this.defaultId)
+      .flatMap((id) => {
+        const item = this.profiles.get(id)
+        const provider = item?.remote ?? (item?.local ? new LocalIdentityProvider(item.local) : null)
+        return provider ? [{ pubkey: id, provider }] : []
+      })
+  }
   status(): IdentityStatus { return this.provider()?.status() ?? this.deps.local.status() }
 
   /** Create a session-only identity for one service; returns its nsec once. */

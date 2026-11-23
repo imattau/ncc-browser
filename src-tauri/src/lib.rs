@@ -277,7 +277,8 @@ fn tor_prepare(state: tauri::State<'_, TorHandle>) {
 }
 
 #[tauri::command]
-fn vault_status(vault: tauri::State<'_, VaultHandle>) -> VaultStatus {
+fn vault_status(state: tauri::State<'_, SignerState>, vault: tauri::State<'_, VaultHandle>) -> VaultStatus {
+    configure_vault_default(&state, &vault.0);
     vault.0.status()
 }
 
@@ -399,12 +400,50 @@ async fn payment_cards_authenticate(
 async fn vault_unlock(
     state: tauri::State<'_, SignerState>,
     vault: tauri::State<'_, VaultHandle>,
+    data_dir: tauri::State<'_, AppDataDir>,
 ) -> Result<VaultStatus, String> {
     let identity = state.identity.status();
     if identity.initialised && !identity.unlocked {
         let _ = state.identity.unlock(envelope(None).as_ref());
     }
-    Ok(vault.0.unlock().await)
+    let default_id = identity_profiles_info(&state).default_id;
+    let Some(local_id) = default_id.as_deref().and_then(|id| id.strip_prefix("local:")) else {
+        vault.0.disable_identity("The Android Password Manager requires a local default identity.");
+        return Ok(vault.0.status());
+    };
+    vault.0.prepare_identity_profile(local_id, envelope(None).as_ref())?;
+    let mut status = vault.0.unlock().await;
+
+    if status.unlocked {
+        let mut migration_pending = false;
+        for profile in state.identity.profiles().into_iter().filter(|profile| profile.id != local_id) {
+            let source = Arc::new(IdentityStore::open(data_dir.0.join("identity.json")));
+            if source.select_profile_for_service(&profile.id).is_err()
+                || source.unlock(envelope(None).as_ref()).is_err()
+            {
+                migration_pending = true;
+                continue;
+            }
+            match vault.0.migrate_from(source.clone()).await {
+                Ok(complete) => migration_pending |= !complete,
+                Err(error) => {
+                    eprintln!("[passwords] Android legacy vault migration deferred for {}: {error}", profile.id);
+                    migration_pending = true;
+                }
+            }
+            source.lock();
+        }
+        vault.0.set_migration_pending(migration_pending);
+        status = vault.0.status();
+    }
+    Ok(status)
+}
+
+fn configure_vault_default(state: &SignerState, vault: &VaultService) {
+    match identity_profiles_info(state).default_id.as_deref().and_then(|id| id.strip_prefix("local:")) {
+        Some(id) => { let _ = vault.use_identity_profile(id); }
+        None => vault.disable_identity("The Android Password Manager requires a local default identity."),
+    }
 }
 
 #[tauri::command]
@@ -958,7 +997,7 @@ fn identity_profiles(state: tauri::State<'_, SignerState>) -> IdentityProfilesIn
 }
 
 #[tauri::command]
-fn identity_create_profile(state: tauri::State<'_, SignerState>, cards: tauri::State<'_, PaymentCardsHandle>) -> Result<Status, String> {
+fn identity_create_profile(state: tauri::State<'_, SignerState>, cards: tauri::State<'_, PaymentCardsHandle>, vault: tauri::State<'_, VaultHandle>) -> Result<Status, String> {
     cards.0.lock();
     let prior_default = state.identity.profiles().into_iter().find(|profile| profile.default)
         .map(|profile| local_profile_id(&profile.id));
@@ -971,11 +1010,12 @@ fn identity_create_profile(state: tauri::State<'_, SignerState>, cards: tauri::S
         prefs.active_id = Some(local_profile_id(&id));
         if prefs.default_id.is_none() { prefs.default_id = prior_default.clone().or_else(|| prefs.active_id.clone()); }
     })?;
+    configure_vault_default(&state, &vault.0);
     Ok(state.identity.status())
 }
 
 #[tauri::command]
-fn identity_import_profile(state: tauri::State<'_, SignerState>, cards: tauri::State<'_, PaymentCardsHandle>, secret: String) -> Result<Status, String> {
+fn identity_import_profile(state: tauri::State<'_, SignerState>, cards: tauri::State<'_, PaymentCardsHandle>, secret: String, vault: tauri::State<'_, VaultHandle>) -> Result<Status, String> {
     cards.0.lock();
     let prior_default = state.identity.profiles().into_iter().find(|profile| profile.default)
         .map(|profile| local_profile_id(&profile.id));
@@ -988,6 +1028,7 @@ fn identity_import_profile(state: tauri::State<'_, SignerState>, cards: tauri::S
         prefs.active_id = Some(local_profile_id(&id));
         if prefs.default_id.is_none() { prefs.default_id = prior_default.clone().or_else(|| prefs.active_id.clone()); }
     })?;
+    configure_vault_default(&state, &vault.0);
     Ok(state.identity.status())
 }
 
@@ -1032,7 +1073,7 @@ async fn activate_identity(state: &SignerState, id: &str) -> Result<(), String> 
 }
 
 #[tauri::command]
-fn identity_set_default(state: tauri::State<'_, SignerState>, id: String) -> Result<IdentityProfilesInfo, String> {
+fn identity_set_default(state: tauri::State<'_, SignerState>, id: String, vault: tauri::State<'_, VaultHandle>) -> Result<IdentityProfilesInfo, String> {
     if let Some(local_id) = id.strip_prefix("local:") {
         state.identity.set_default_profile(local_id).map_err(|error| error.to_string())?;
     } else if !id.starts_with("nip46:") {
@@ -1042,11 +1083,12 @@ fn identity_set_default(state: tauri::State<'_, SignerState>, id: String) -> Res
         return Err("That identity profile is not available".into());
     }
     state.profile_prefs.update(|prefs| { prefs.default_id = Some(id); })?;
+    configure_vault_default(&state, &vault.0);
     Ok(identity_profiles_info(&state))
 }
 
 #[tauri::command]
-async fn identity_remove_profile(state: tauri::State<'_, SignerState>, cards: tauri::State<'_, PaymentCardsHandle>, id: String) -> Result<IdentityProfilesInfo, String> {
+async fn identity_remove_profile(state: tauri::State<'_, SignerState>, cards: tauri::State<'_, PaymentCardsHandle>, id: String, vault: tauri::State<'_, VaultHandle>) -> Result<IdentityProfilesInfo, String> {
     cards.0.lock();
     if let Some(local_id) = id.strip_prefix("local:") {
         state.identity.remove_profile(local_id).map_err(|error| error.to_string())?;
@@ -1073,6 +1115,7 @@ async fn identity_remove_profile(state: tauri::State<'_, SignerState>, cards: ta
     })?;
     if let Some(active) = fallback { activate_identity(&state, &active).await?; }
     else { state.proxy.set_remote(None); }
+    configure_vault_default(&state, &vault.0);
     Ok(identity_profiles_info(&state))
 }
 
@@ -1745,6 +1788,9 @@ pub fn run() {
                 .unwrap_or_else(|_| std::env::temp_dir());
             nccsearch_update::activate_pending(&data_dir);
             let identity = Arc::new(IdentityStore::open(data_dir.join("identity.json")));
+            // The vault has its own in-memory selection so using an extra identity in
+            // the browser never changes which key owns password sync.
+            let vault_identity = Arc::new(IdentityStore::open(data_dir.join("identity.json")));
             let remote_sessions_dir = data_dir.join("nip46-profiles");
             let profile_prefs = ProfilePrefs::open(data_dir.join("identity-profile-preferences.json"));
 
@@ -1878,7 +1924,7 @@ pub fn run() {
             app.manage(ProxyPort(port));
             app.manage(PrivateProxyPort(private_port));
             let vault_service = Arc::new(VaultService::new(
-                identity.clone(),
+                vault_identity,
                 settings.clone(),
                 data_dir.join("vault").join("cache.json"),
             ));

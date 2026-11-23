@@ -369,7 +369,7 @@ export function PasswordSettings({
     }
   }
 
-  if (!identity?.configured) {
+  if (status ? !status.configured : !identity?.configured) {
     return (
       <>
         <Heading />
@@ -379,8 +379,8 @@ export function PasswordSettings({
             An identity is required
           </p>
           <p className="mx-auto mt-1 max-w-md text-ui-11 leading-relaxed text-[color:var(--color-muted)]">
-            The vault is encrypted to your own Nostr identity. Import or generate a key, then
-            return here to unlock it.
+            The vault is encrypted to your default Nostr identity. Other identities can still
+            sign in the browser, and their key entries are stored in this shared vault.
           </p>
           <button
             type="button"
@@ -466,7 +466,7 @@ export function PasswordSettings({
         <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-ui-105 text-[color:var(--color-muted)]">
           <span className="inline-flex items-center gap-1.5">
             <ShieldCheck className="h-3.5 w-3.5 text-[color:var(--color-ok)]" />
-            {identity.mode === 'nip46' ? 'Remote NIP-46 identity' : 'Local identity'}
+            {status?.mode === 'nip46' ? 'Default remote signer' : 'Default local identity'}
           </span>
           <span className="min-w-0 truncate">
             {status?.relaySource === 'dedicated' ? 'Dedicated relay' : `via ${status?.relaySource ?? 'browser'} relays`}:{' '}

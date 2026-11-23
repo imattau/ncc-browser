@@ -216,6 +216,26 @@ export class PasswordSync {
     this.ctx.cache.set(pubkey, this.cached)
   }
 
+  /** Read another identity's prior vault without changing the active sync state. */
+  async readVault(provider: ProviderLike, pubkey: string): Promise<{ vault: PasswordVault | null; complete: boolean }> {
+    const cached = this.ctx.cache.get(pubkey)
+    let local: PasswordVault | null = null
+    if (cached) local = await this.decryptEventFor(provider, pubkey, cached.event)
+
+    const relays = await this.resolveRelays(pubkey, true)
+    if (relays.length === 0) return { vault: local, complete: false }
+    let remote: { event: Event | null; answered: number }
+    try {
+      remote = await this.fetchRemoteReport(provider, pubkey, relays)
+    } catch {
+      return { vault: local, complete: false }
+    }
+    const vault = remote.event
+      ? mergeVaults(local ?? emptyVault(), await this.decryptEventFor(provider, pubkey, remote.event)).vault
+      : local
+    return { vault, complete: remote.answered >= relays.length }
+  }
+
   private async publish(
     provider: ProviderLike,
     pubkey: string,
@@ -281,9 +301,18 @@ export class PasswordSync {
     pubkey: string,
     relays: string[]
   ): Promise<Event | null> {
-    if (relays.length === 0) return null
+    return (await this.fetchRemoteReport(provider, pubkey, relays)).event
+  }
+
+  private async fetchRemoteReport(
+    provider: ProviderLike,
+    pubkey: string,
+    relays: string[]
+  ): Promise<{ event: Event | null; answered: number }> {
+    if (relays.length === 0) return { event: null, answered: 0 }
     const onauth = (template: EventTemplate): Promise<Event> => this.signAuth(provider, template)
     let events: Event[]
+    let answered = relays.length
     if (this.ctx.relays.queryAuthReport) {
       const report = await this.ctx.relays.queryAuthReport(
         relays,
@@ -295,6 +324,7 @@ export class PasswordSync {
         throw new Error(`No relay answered (${relays.length} tried)`)
       }
       events = report.events
+      answered = report.answered
     } else {
       events = await this.ctx.relays.queryAuth(relays, passwordVaultFilter(pubkey), onauth)
     }
@@ -308,12 +338,16 @@ export class PasswordSync {
           verifyEvent(event)
       )
       .sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id))
-    return valid[0] ?? null
+    return { event: valid[0] ?? null, answered }
   }
 
   async decryptEvent(provider: ProviderLike, event: Event): Promise<PasswordVault> {
     const pubkey = this.ctx.pubkey()
     if (!pubkey) throw new Error(VAULT_ERROR)
+    return this.decryptEventFor(provider, pubkey, event)
+  }
+
+  private async decryptEventFor(provider: ProviderLike, pubkey: string, event: Event): Promise<PasswordVault> {
     const plaintext = await provider.nip44Decrypt(pubkey, event.content)
     let parsed: unknown
     try {
