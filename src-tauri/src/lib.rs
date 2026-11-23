@@ -1681,8 +1681,36 @@ fn start_proxy(proxy: Arc<ProxyState>, preferred: Option<u16>) -> Result<u16, St
     Ok(port)
 }
 
+/// `rustls-platform-verifier` (pulled in transitively by reqwest's "rustls" feature, used
+/// to verify certificates against the OS trust store) refuses to do anything on Android
+/// until this runs once: every HTTPS request — including nsite content fetched over
+/// HTTPS, not just ordinary https:// pages — otherwise panics the tokio worker handling
+/// it with "Expect rustls-platform-verifier to be initialized", and the request just
+/// hangs rather than erroring visibly. `#[tauri::mobile_entry_point]` has already called
+/// `ndk_context::initialize_android_context` by the time `run()`'s body executes, so the
+/// JNI context is available here.
+#[cfg(target_os = "android")]
+fn init_platform_verifier() {
+    let ctx = ndk_context::android_context();
+    // SAFETY: ctx.vm() is the process' JavaVM pointer, set up by Tauri's Android entry
+    // point before run() is called.
+    let vm = unsafe { jni_for_verifier::JavaVM::from_raw(ctx.vm().cast()) };
+    let context_ptr = ctx.context();
+    let result = vm.attach_current_thread(|env| -> Result<(), jni_for_verifier::errors::Error> {
+        // SAFETY: context_ptr is the process' Context jobject, from the same source.
+        let context = unsafe { jni_for_verifier::objects::JObject::from_raw(env, context_ptr.cast()) };
+        rustls_platform_verifier::android::init_with_env(env, context)
+    });
+    if let Err(error) = result {
+        eprintln!("[tls] could not initialize rustls-platform-verifier: {error}");
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "android")]
+    init_platform_verifier();
+
     // First of all: relay connections need a process-wide TLS default, and with arti linked
     // beside the proxy rustls cannot choose one itself.
     ncc_proxy::install_crypto_provider();
