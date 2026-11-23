@@ -4,6 +4,7 @@ import { fetchFavicon } from '../favicon'
 import { isAllowedTorUrl } from '../tor/guard'
 import {
   isAuthPopupUrl,
+  isDialogSizedPopupFeatures,
   isHttpExemptUrl,
   shouldUpgradeHttp,
   webHttpKey
@@ -138,13 +139,16 @@ export function wireTab(internals: ShellInternals, tab: Tab): void {
     if (internals.hasTab(tab)) internals.closeTab(tab.id)
   })
 
-  contents.setWindowOpenHandler(({ url }) => {
-    // Most popups (ads, spam) are denied and reopened as an ordinary tab. An OAuth
-    // popup to a known identity-provider host is let through as a real auxiliary
-    // window instead, because the site's own JS needs `window.opener` to
-    // `postMessage` the sign-in result back — losing that relationship is what made
-    // "Sign in with Google" popups fail silently when reopened as a plain tab.
-    if (isAuthPopupUrl(url)) {
+  contents.setWindowOpenHandler(({ url, features }) => {
+    // Most popups (ads, spam) are denied and reopened as an ordinary tab. A popup to a
+    // known identity-provider host, or one sized like a deliberate sign-in/payment
+    // dialog (most OAuth buttons open a same-origin relay URL first, which then
+    // redirects to the provider, so the host is rarely visible at open time), is let
+    // through as a real auxiliary window instead, because the site's own JS needs
+    // `window.opener` to `postMessage` the result back — losing that relationship is
+    // what made "Sign in with Google" popups fail silently when reopened as a plain
+    // tab.
+    if (isAuthPopupUrl(url) || isDialogSizedPopupFeatures(features)) {
       return {
         action: 'allow',
         overrideBrowserWindowOptions: {

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { ResolvedEndpoint } from '../src/shared/types'
 import {
   isAuthPopupUrl,
+  isDialogSizedPopupFeatures,
   isHttpExemptUrl,
   isLoopbackHost,
   nccEndpointNeedsWarning,
@@ -71,5 +72,24 @@ describe('isAuthPopupUrl', () => {
     expect(isAuthPopupUrl('https://accounts.google.com.evil.example/')).toBe(false)
     expect(isAuthPopupUrl('https://evil.accounts.google.com/')).toBe(false)
     expect(isAuthPopupUrl('not a url')).toBe(false)
+  })
+})
+
+describe('isDialogSizedPopupFeatures', () => {
+  it('accepts popups sized like a sign-in or payment dialog', () => {
+    // Figma's "Continue with Google" button: window.open('/start_google_sso', '', features)
+    expect(isDialogSizedPopupFeatures('width=600,height=600')).toBe(true)
+    expect(isDialogSizedPopupFeatures('width=300,height=300')).toBe(true)
+    expect(isDialogSizedPopupFeatures('width=800,height=800')).toBe(true)
+    expect(isDialogSizedPopupFeatures('left=100,top=100,width=500,height=650,resizable=yes')).toBe(true)
+  })
+
+  it('rejects popups missing a dimension or outside the dialog size range', () => {
+    expect(isDialogSizedPopupFeatures('')).toBe(false)
+    expect(isDialogSizedPopupFeatures('width=600')).toBe(false)
+    expect(isDialogSizedPopupFeatures('height=600')).toBe(false)
+    expect(isDialogSizedPopupFeatures('width=200,height=200')).toBe(false)
+    expect(isDialogSizedPopupFeatures('width=1200,height=900')).toBe(false)
+    expect(isDialogSizedPopupFeatures('width=abc,height=600')).toBe(false)
   })
 })
