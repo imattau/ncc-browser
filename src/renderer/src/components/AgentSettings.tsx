@@ -1,5 +1,16 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Bot, Check, ClipboardCopy, Eye, EyeOff, RefreshCw, ShieldAlert, ShieldOff, Trash2 } from 'lucide-react'
+import {
+  Bot,
+  Check,
+  ClipboardCopy,
+  Eye,
+  EyeOff,
+  Globe,
+  RefreshCw,
+  ShieldAlert,
+  ShieldOff,
+  Trash2
+} from 'lucide-react'
 import type { AgentSummary, AutomationState } from '@shared/automation'
 import { messageOf } from '../lib/format'
 
@@ -164,6 +175,7 @@ export function AgentSettings() {
                   }
                   onRemove={() => void remove(agent.id)}
                   onRevoke={(site) => void run(() => window.ncc.automationRevoke(agent.id, site))}
+                  onRevokeSign={(site) => void run(() => window.ncc.automationRevokeSign(agent.id, site))}
                 />
               ))}
 
@@ -214,20 +226,61 @@ function AgentCard(props: {
   onRegenerate: () => void
   onRemove: () => void
   onRevoke: (site: string | null) => void
+  onRevokeSign: (site: string | null) => void
 }) {
   const { agent } = props
+
+  useEffect(() => {
+    if (agent.profileCheckedAt == null && !agent.profileLoading) {
+      void window.ncc.automationRefreshProfile(agent.id)
+    }
+  }, [agent.id, agent.profileCheckedAt, agent.profileLoading])
 
   return (
     <div className="rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-4">
       <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <p className="flex items-center gap-2 text-ui-12 font-semibold text-[color:var(--color-text-strong)]">
-            <Bot className="h-3.5 w-3.5" />
-            {agent.name}
-          </p>
-          <p className="mt-0.5 break-all font-mono text-ui-105 text-[color:var(--color-muted)]">
-            {agent.npub ?? 'No Nostr id yet — regenerate its identity to create one.'}
-          </p>
+        <div className="flex min-w-0 items-start gap-2.5">
+          {agent.profile?.pictureDataUrl ? (
+            <img
+              src={agent.profile.pictureDataUrl}
+              alt=""
+              className="mt-0.5 h-7 w-7 shrink-0 rounded-full object-cover"
+            />
+          ) : (
+            <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[color:var(--color-field)] text-[color:var(--color-muted)]">
+              <Bot className="h-3.5 w-3.5" />
+            </span>
+          )}
+          <div className="min-w-0">
+            <p className="text-ui-12 font-semibold text-[color:var(--color-text-strong)]">
+              {agent.profile?.name ? `${agent.profile.name} — ${agent.name}` : agent.name}
+            </p>
+            <p className="mt-0.5 break-all font-mono text-ui-105 text-[color:var(--color-muted)]">
+              {agent.npub ?? 'No Nostr id yet — regenerate its identity to create one.'}
+            </p>
+            {agent.nsiteAddress ? (
+              <p className="mt-0.5 flex items-center gap-1 break-all font-mono text-ui-105 text-[color:var(--color-accent)]">
+                <Globe className="h-3 w-3 shrink-0" />
+                {agent.nsiteAddress}
+              </p>
+            ) : null}
+            <p className="mt-0.5 flex items-center gap-1.5 text-ui-105 text-[color:var(--color-muted)]">
+              {agent.profileLoading
+                ? 'Checking for a profile/nsite…'
+                : agent.profileCheckedAt
+                  ? `Checked ${relativeTime(agent.profileCheckedAt)}`
+                  : 'Not checked yet'}
+              <button
+                type="button"
+                disabled={agent.profileLoading}
+                onClick={() => void window.ncc.automationRefreshProfile(agent.id)}
+                className="text-[color:var(--color-muted)] hover:text-[color:var(--color-text-strong)] disabled:opacity-40"
+                aria-label="Refresh profile and nsite status"
+              >
+                <RefreshCw className={`h-3 w-3 ${agent.profileLoading ? 'animate-spin' : ''}`} />
+              </button>
+            </p>
+          </div>
         </div>
         <button
           type="button"
@@ -278,48 +331,72 @@ function AgentCard(props: {
         still needs your approval for each site.
       </p>
 
-      <div className="mt-3 border-t border-[color:var(--color-line)] pt-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-ui-11 font-semibold text-[color:var(--color-text-strong)]">
-            Sites this agent can use
-          </p>
-          <button
-            type="button"
-            disabled={props.busy || agent.grants.length === 0}
-            onClick={() => props.onRevoke(null)}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-[color:var(--color-line)] px-2.5 py-1.5 text-ui-11 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)] hover:text-[color:var(--color-text-strong)] disabled:opacity-40"
-          >
-            <ShieldOff className="h-3.5 w-3.5" />
-            Stop agent
-          </button>
-        </div>
-        {agent.grants.length === 0 ? (
-          <p className="mt-2 text-ui-105 text-[color:var(--color-muted)]">
-            None. Grants last until the browser quits.
-          </p>
-        ) : (
-          <ul className="mt-2 space-y-1.5">
-            {agent.grants.map((site) => (
-              <li
-                key={site}
-                className="flex items-center justify-between gap-2 rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-field)] px-2.5 py-1.5"
-              >
-                <span className="min-w-0 truncate font-mono text-ui-11 text-[color:var(--color-text-soft)]">
-                  {site}
-                </span>
-                <button
-                  type="button"
-                  disabled={props.busy}
-                  onClick={() => props.onRevoke(site)}
-                  className="shrink-0 text-ui-11 text-[color:var(--color-muted)] hover:text-[color:var(--color-text-strong)]"
-                >
-                  Revoke
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
+      <GrantsSection
+        title="Sites this agent can use"
+        emptyText="None. Grants last until the browser quits."
+        stopLabel="Stop agent"
+        sites={agent.grants}
+        busy={props.busy}
+        onRevoke={props.onRevoke}
+      />
+      <GrantsSection
+        title="Sites this agent can sign in to"
+        emptyText="None. The agent must ask before signing in anywhere, using its own Nostr identity."
+        stopLabel="Stop signing"
+        sites={agent.signGrants}
+        busy={props.busy}
+        onRevoke={props.onRevokeSign}
+      />
+    </div>
+  )
+}
+
+function GrantsSection(props: {
+  title: string
+  emptyText: string
+  stopLabel: string
+  sites: string[]
+  busy: boolean
+  onRevoke: (site: string | null) => void
+}) {
+  return (
+    <div className="mt-3 border-t border-[color:var(--color-line)] pt-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-ui-11 font-semibold text-[color:var(--color-text-strong)]">{props.title}</p>
+        <button
+          type="button"
+          disabled={props.busy || props.sites.length === 0}
+          onClick={() => props.onRevoke(null)}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-[color:var(--color-line)] px-2.5 py-1.5 text-ui-11 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)] hover:text-[color:var(--color-text-strong)] disabled:opacity-40"
+        >
+          <ShieldOff className="h-3.5 w-3.5" />
+          {props.stopLabel}
+        </button>
       </div>
+      {props.sites.length === 0 ? (
+        <p className="mt-2 text-ui-105 text-[color:var(--color-muted)]">{props.emptyText}</p>
+      ) : (
+        <ul className="mt-2 space-y-1.5">
+          {props.sites.map((site) => (
+            <li
+              key={site}
+              className="flex items-center justify-between gap-2 rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-field)] px-2.5 py-1.5"
+            >
+              <span className="min-w-0 truncate font-mono text-ui-11 text-[color:var(--color-text-soft)]">
+                {site}
+              </span>
+              <button
+                type="button"
+                disabled={props.busy}
+                onClick={() => props.onRevoke(site)}
+                className="shrink-0 text-ui-11 text-[color:var(--color-muted)] hover:text-[color:var(--color-text-strong)]"
+              >
+                Revoke
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }
@@ -327,4 +404,12 @@ function AgentCard(props: {
 function agentIdOf(state: AutomationState): string | undefined {
   // The newest agent is appended last by AutomationSettings.addAgent.
   return state.agents.at(-1)?.id
+}
+
+function relativeTime(at: number): string {
+  const seconds = Math.max(0, Math.round((Date.now() - at) / 1000))
+  if (seconds < 60) return `${seconds}s ago`
+  const minutes = Math.round(seconds / 60)
+  if (minutes < 60) return `${minutes}m ago`
+  return `${Math.round(minutes / 60)}h ago`
 }

@@ -2,7 +2,11 @@ import { existsSync, mkdtempSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { AutomationController, type AutomationPasswordsLike } from '../src/main/automation/controller'
+import {
+  AutomationController,
+  type AutomationControllerDeps,
+  type AutomationPasswordsLike
+} from '../src/main/automation/controller'
 import { AutomationSettings } from '../src/main/automation/settings'
 import type { AutomationHost } from '../src/main/automation/types'
 import type { AutomationState } from '../src/shared/automation'
@@ -81,7 +85,14 @@ describe('AutomationController', () => {
   const running: AutomationController[] = []
   afterEach(() => running.splice(0).forEach((c) => c.shutdown()))
 
-  function make(options: { forced?: boolean; passwords?: AutomationPasswordsLike } = {}) {
+  function make(
+    options: {
+      forced?: boolean
+      passwords?: AutomationPasswordsLike
+      relays?: AutomationControllerDeps['relays']
+      configRelays?: string[]
+    } = {}
+  ) {
     const base = dir()
     const states: AutomationState[] = []
     const settings = new AutomationSettings(join(base, 's.json'))
@@ -90,6 +101,8 @@ describe('AutomationController', () => {
       host,
       approvals: { request: async () => ({ allow: true, remember: true }) },
       passwords: options.passwords ?? fakePasswords(),
+      relays: options.relays ?? (async () => []),
+      configRelays: () => options.configRelays ?? [],
       version: '0',
       infoFile: join(base, 'automation.json'),
       forced: options.forced ?? false,
@@ -184,6 +197,71 @@ describe('AutomationController', () => {
     })
     expect(controller.state().agents.find((agent) => agent.id === a!.id)?.grants).toEqual([])
     expect(controller.state().agents.find((agent) => agent.id === b!.id)?.grants).toEqual([])
+  })
+
+  it('tracks sign-in grants independently of browsing grants and other agents', async () => {
+    const { controller } = make()
+    await controller.setEnabled(true)
+    await controller.addAgent('A')
+    await controller.addAgent('B')
+    const [a, b] = controller.state().agents
+
+    const pubkey = await controller.authorizeAndSign(a!.id, 'https://example.com', 'see its public key', (signer) =>
+      signer.getPublicKey()
+    )
+    expect(pubkey).toMatch(/^[0-9a-f]{64}$/)
+    expect(controller.state().agents.find((agent) => agent.id === a!.id)?.signGrants).toEqual([
+      'https://example.com'
+    ])
+    expect(controller.state().agents.find((agent) => agent.id === a!.id)?.grants).toEqual([])
+    expect(controller.state().agents.find((agent) => agent.id === b!.id)?.signGrants).toEqual([])
+
+    controller.revokeSign(a!.id, 'https://example.com')
+    expect(controller.state().agents.find((agent) => agent.id === a!.id)?.signGrants).toEqual([])
+  })
+
+  it('refuses to sign for an agent that no longer exists', async () => {
+    const { controller } = make()
+    await controller.setEnabled(true)
+    await expect(
+      controller.authorizeAndSign('nope', 'https://example.com', 'x', (signer) => signer.getPublicKey())
+    ).rejects.toThrow('no longer exists')
+  })
+
+  it('caches a profile lookup without blocking state(), and does not double-fetch', async () => {
+    let calls = 0
+    const relays: AutomationControllerDeps['relays'] = async () => {
+      calls++
+      return []
+    }
+    const { controller } = make({ relays, configRelays: ['wss://relay'] })
+    await controller.setEnabled(true)
+    await controller.addAgent('A')
+    const agentId = controller.state().agents[0]!.id
+
+    expect(controller.state().agents[0]).toMatchObject({
+      profile: null,
+      nsiteAddress: null,
+      profileCheckedAt: null,
+      profileLoading: false
+    })
+
+    const [first, second] = await Promise.all([
+      controller.refreshAgentProfile(agentId),
+      controller.refreshAgentProfile(agentId)
+    ])
+    expect(calls).toBe(1)
+    const agent = first.agents[0]!
+    expect(agent.profileCheckedAt).not.toBeNull()
+    expect(agent.profileLoading).toBe(false)
+    expect(second.agents[0]!.profileCheckedAt).toBe(agent.profileCheckedAt)
+  })
+
+  it('refreshing an unknown agent is a no-op', async () => {
+    const { controller } = make()
+    await controller.setEnabled(true)
+    const state = await controller.refreshAgentProfile('nope')
+    expect(state.agents).toEqual([])
   })
 
   it('runs when forced even though the preference is off', async () => {

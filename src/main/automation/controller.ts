@@ -1,4 +1,6 @@
 import type { AgentSummary, AutomationState } from '@shared/automation'
+import { createAgentSigner, type AgentSigner } from './agent-signer'
+import { fetchAgentProfile, type AgentProfileQuery, type AgentProfileResult } from './agent-profile'
 import { ApprovalGate } from './gate'
 import { AutomationServer, type ServerAgent } from './server'
 import type { AgentRecord, AutomationSettings } from './settings'
@@ -19,6 +21,9 @@ export interface AutomationControllerDeps {
   host: AutomationHost
   approvals: Pick<ApprovalBroker, 'request'>
   passwords: AutomationPasswordsLike
+  /** For the best-effort "has this agent set up a profile/nsite?" lookup. */
+  relays: AgentProfileQuery
+  configRelays: () => string[]
   version: string
   infoFile: string
   /** `NCC_AUTOMATION=1`: run regardless of the saved preference. */
@@ -28,10 +33,15 @@ export interface AutomationControllerDeps {
   onChange(state: AutomationState): void
 }
 
+type ProfileCacheEntry = AgentProfileResult & { checkedAt: number }
+
 /** Owns the agent-control server's lifecycle and what Settings shows about it. */
 export class AutomationController {
   private server: AutomationServer | null = null
   private readonly gates = new Map<string, ApprovalGate>()
+  private readonly signers = new Map<string, AgentSigner>()
+  private readonly profiles = new Map<string, ProfileCacheEntry>()
+  private readonly profileFetches = new Map<string, Promise<void>>()
   private error: string | null = null
 
   constructor(private readonly deps: AutomationControllerDeps) {}
@@ -87,6 +97,8 @@ export class AutomationController {
     const agent = this.deps.settings.agent(id)
     this.deps.settings.removeAgent(id)
     this.gates.delete(id)
+    this.signers.delete(id)
+    this.profiles.delete(id)
     if (agent?.passwordEntryId && this.deps.passwords.status().unlocked) {
       void this.deps.passwords.removeEntry(agent.passwordEntryId).catch(() => undefined)
     }
@@ -95,11 +107,16 @@ export class AutomationController {
     return this.state()
   }
 
-  /** Replaces an agent's keypair; its old nsec stops authorizing immediately. */
+  /**
+   * Replaces an agent's keypair; its old nsec stops authorizing immediately, and both
+   * its browsing and sign-in grants are dropped along with the gate that held them.
+   */
   async regenerateIdentity(id: string): Promise<{ state: AutomationState; command: string | null; error: string | null }> {
     const agent = this.deps.settings.regenerateIdentity(id)
     if (!agent) return { state: this.state(), command: null, error: 'That agent no longer exists.' }
-    this.gates.get(id)?.revokeAll()
+    this.gates.delete(id)
+    this.signers.delete(id)
+    this.profiles.delete(id)
     if (agent.passwordEntryId && this.deps.passwords.status().unlocked) {
       await this.deps.passwords.saveAgentSecret(agent.id, agent.name, agent.npub ?? '', agent.nsec)
     }
@@ -122,6 +139,66 @@ export class AutomationController {
     }
     this.publish()
     return this.state()
+  }
+
+  /** Revokes one (or every) site this agent may sign in to without asking again. */
+  revokeSign(agentId: string, site: string | null): AutomationState {
+    const gate = this.gates.get(agentId)
+    if (gate) {
+      if (site) gate.revokeSign(site)
+      else gate.revokeAllSign()
+    }
+    this.publish()
+    return this.state()
+  }
+
+  /**
+   * Answers a NIP-07 call from a tab this agent opened: looks up its own signer, asks
+   * the user to approve signing in to `origin` (independent of its browsing grants),
+   * and runs `operation` against the agent's identity once allowed.
+   */
+  async authorizeAndSign<T>(
+    agentId: string,
+    origin: string,
+    action: string,
+    operation: (signer: AgentSigner) => T
+  ): Promise<T> {
+    const signer = this.signerFor(agentId)
+    if (!signer) throw new Error('That agent no longer exists.')
+    const gate = this.gateFor(agentId)
+    if (!(await gate.authorizeSign(origin, action))) {
+      throw new Error(`The user did not allow this agent to sign in to ${origin}.`)
+    }
+    return operation(signer)
+  }
+
+  /**
+   * Best-effort public lookup: does this agent have a profile and/or a published nsite?
+   * Read-only, cached, and never blocks `state()` — a failure just leaves it unchecked.
+   */
+  async refreshAgentProfile(id: string): Promise<AutomationState> {
+    if (!this.deps.settings.agent(id)) return this.state()
+    const inFlight = this.profileFetches.get(id)
+    if (inFlight) {
+      await inFlight
+      return this.state()
+    }
+    const fetch = this.doRefreshAgentProfile(id).finally(() => this.profileFetches.delete(id))
+    this.profileFetches.set(id, fetch)
+    await fetch
+    return this.state()
+  }
+
+  private async doRefreshAgentProfile(id: string): Promise<void> {
+    const agent = this.deps.settings.agent(id)
+    if (!agent) return
+    const result: AgentProfileResult = agent.pubkey
+      ? await fetchAgentProfile(this.deps.relays, this.deps.configRelays(), agent.pubkey).catch(
+          (): AgentProfileResult => ({ profile: null, nsiteAddress: null })
+        )
+      : { profile: null, nsiteAddress: null }
+    this.profiles.set(id, { ...result, checkedAt: Date.now() })
+    this.publish()
   }
 
   shutdown(): void {
@@ -161,20 +238,42 @@ export class AutomationController {
   private gateFor(id: string): ApprovalGate {
     let gate = this.gates.get(id)
     if (!gate) {
-      gate = new ApprovalGate(this.deps.approvals, { autoApprove: this.deps.autoApprove === true })
+      gate = new ApprovalGate(this.deps.approvals, {
+        autoApprove: this.deps.autoApprove === true,
+        agentId: id,
+        npub: this.deps.settings.agent(id)?.npub ?? undefined
+      })
       this.gates.set(id, gate)
     }
     return gate
   }
 
+  /** The agent's own signer, decoded from its nsec and cached until its identity changes. */
+  private signerFor(id: string): AgentSigner | null {
+    const agent = this.deps.settings.agent(id)
+    if (!agent) return null
+    let signer = this.signers.get(id)
+    if (!signer) {
+      signer = createAgentSigner(agent.nsec)
+      this.signers.set(id, signer)
+    }
+    return signer
+  }
+
   private summarize(agent: AgentRecord): AgentSummary {
+    const cached = this.profiles.get(agent.id)
     return {
       id: agent.id,
       name: agent.name,
       npub: agent.npub,
       passwordEntryId: agent.passwordEntryId,
       grants: this.gateFor(agent.id).grants(),
-      maskedCommand: this.connectCommand(agent.id, true)
+      signGrants: this.gateFor(agent.id).signGrants(),
+      maskedCommand: this.connectCommand(agent.id, true),
+      profile: cached?.profile ?? null,
+      nsiteAddress: cached?.nsiteAddress ?? null,
+      profileCheckedAt: cached?.checkedAt ?? null,
+      profileLoading: this.profileFetches.has(agent.id)
     }
   }
 

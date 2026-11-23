@@ -64,6 +64,8 @@ export interface AutomationHost {
   /** Trusted browser chrome, kept separate from site contents and permission scope. */
   chromeContents?(): AutomationContents | null
   openSettings?(section: 'general' | 'identity' | 'passwords'): void
+  /** Marks a tab as belonging to this agent, so its NIP-07 calls use the agent's own identity. */
+  tagAgentTab?(tabId: string, agentId: string): void
 }
 
 export type ToolContent =
@@ -100,6 +102,8 @@ export interface PendingApproval {
  * way here to answer a prompt: only the user can allow access.
  */
 export interface AutomationGate {
+  /** The agent this gate belongs to, so a tool can tag a tab it just created. */
+  readonly agentId?: string
   authorize(site: string, action: string): Promise<boolean>
   pending?(): PendingApproval[]
   grants?(): string[]

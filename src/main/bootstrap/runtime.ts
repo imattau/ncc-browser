@@ -1,5 +1,6 @@
 import type { BrowserShell } from '../shell'
 import type { ContentSessions } from '../sessions'
+import type { AutomationController } from '../automation/controller'
 import type { ExtensionService } from '../extensions/runtime'
 import type { NwcService } from '../wallet/nwc-service'
 import type { OnionManager } from '../tor/onion'
@@ -33,6 +34,7 @@ export interface Runtime {
   nwcService: NwcService | null
   extensions: ExtensionService | null
   nip07Service: Nip07Service | null
+  automation: AutomationController | null
   pendingExternalUrl: string | null
 }
 
@@ -52,6 +54,7 @@ export function createRuntime(): Runtime {
     nwcService: null,
     extensions: null,
     nip07Service: null,
+    automation: null,
     pendingExternalUrl: null
   }
 }

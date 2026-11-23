@@ -191,11 +191,15 @@ export function createServices(
     useEphemeralSigner: () => config.get().ephemeralSigner
   })
   runtime.nip07Service = nip07Service
-  registerNip07(nip07Service, [
-    { session: browser.content.normal, kind: 'normal' },
-    { session: browser.content.private, kind: 'private' },
-    { session: browser.content.tor, kind: 'tor' }
-  ])
+  registerNip07(
+    nip07Service,
+    [
+      { session: browser.content.normal, kind: 'normal' },
+      { session: browser.content.private, kind: 'private' },
+      { session: browser.content.tor, kind: 'tor' }
+    ],
+    () => runtime.automation
+  )
 
   const extensionService = new ExtensionService({
     registry: foundation.extensionRegistry,
@@ -324,6 +328,8 @@ export function createServices(
     host: createElectronHost(shell),
     approvals,
     passwords: passwordService,
+    relays: relayPool.query,
+    configRelays: () => config.getRelays(),
     version: app.getVersion(),
     infoFile: join(userData, 'automation.json'),
     forced: process.env.NCC_AUTOMATION === '1',
@@ -333,6 +339,7 @@ export function createServices(
       : {}),
     onChange: (state) => runtime.shell?.sendToChrome('ncc:automation-state', state)
   })
+  runtime.automation = automation
   registerAutomationIpc(automation, { shell })
   void automation.sync().catch((error) => console.warn('[automation] could not start:', error))
   app.on('before-quit', () => automation.shutdown())

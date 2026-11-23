@@ -248,6 +248,9 @@ export const TOOLS: ToolDefinition[] = [
       if (url && !(await gate.authorize(siteOf(url), 'navigate'))) return denied(siteOf(url))
       // Create the tab blank first so navigation cannot begin before site approval.
       const tabId = host.newTab()
+      // This tab is now the agent's own: its NIP-07 calls answer as this agent, for as
+      // long as the tab exists — navigating or clicking on it never changes that.
+      if (gate.agentId) host.tagAgentTab?.(tabId, gate.agentId)
       if (url) await host.navigate(tabId, url)
       return json({ tabId })
     }

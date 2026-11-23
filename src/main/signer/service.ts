@@ -45,7 +45,7 @@ const DENY_COOLDOWN_MS = 30_000
 /** Repetitive calls granted for the rest of the session after one approval. */
 type SessionGrant = 'getPublicKey' | 'relay-auth'
 
-const ACTION_BY_KIND: Record<number, string> = {
+export const ACTION_BY_KIND: Record<number, string> = {
   0: 'update your profile',
   1: 'publish a note',
   3: 'update your follow list',
@@ -357,7 +357,7 @@ export class Nip07Service {
   }
 }
 
-function requireText(value: unknown, label: string, max = 1_000_000): string {
+export function requireText(value: unknown, label: string, max = 1_000_000): string {
   if (typeof value !== 'string' || value.length === 0) {
     throw new SignerError(`${label} must be a non-empty string`)
   }
