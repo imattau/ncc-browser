@@ -1,5 +1,11 @@
 # Nostr Navigator for Android
 
+## New in 0.42.0
+
+- Version 0.42.0 (versionCode 42000). The password vault now supports synced favorites,
+  filtering to favorites, and sorting by title or password update time. Favorite changes
+  sync without changing the saved password's age.
+
 ## New in 0.41.0
 
 - Version 0.41.0 (versionCode 41000). Maintenance release with no Android-specific
