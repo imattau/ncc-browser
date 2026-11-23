@@ -1,5 +1,10 @@
 # Nostr Navigator for Android
 
+## Fixes in 0.42.1
+
+- The Password Manager is now tied to the default identity. On unlock, older local
+  identity vaults are merged into it; unavailable relays are retried on a later unlock.
+
 ## New in 0.42.0
 
 - Version 0.42.0 (versionCode 42000). The password vault now supports synced favorites,
