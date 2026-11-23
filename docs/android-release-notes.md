@@ -1,5 +1,11 @@
 # Nostr Navigator for Android
 
+## Fixes in 0.42.4
+
+- Fixed the nccsearch update check and downloads failing on Android because their HTTPS
+  client used reqwest's uninitialized platform verifier instead of the app's explicit
+  TLS root configuration.
+
 ## Fixes in 0.42.3
 
 - **Fixed: every https:// page and nsite got stuck loading forever**, with a blank tab
