@@ -1,5 +1,18 @@
 # Release notes
 
+## 0.42.3 — Android: fix all page/nsite loads hanging forever
+
+### Fixed
+
+- **Android: every https:// page and nsite got stuck loading forever.** Certificate
+  verification (`rustls-platform-verifier`, used to check certificates against the OS
+  trust store) requires an Android-side JNI init call before its first use, which the
+  app never made — so every HTTPS fetch, whether a plain page or nsite content (itself
+  fetched over HTTPS), panicked the worker handling it and the tab just sat there with a
+  stuck progress bar instead of loading or showing an error. Reproduced live against the
+  actual v0.42.1 build before fixing it; confirmed both a normal site and an nsite load
+  correctly afterward.
+
 ## 0.42.2 — OAuth sign-in popups, and password vault backfill
 
 ### Fixed

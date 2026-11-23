@@ -1,5 +1,13 @@
 # Nostr Navigator for Android
 
+## Fixes in 0.42.3
+
+- **Fixed: every https:// page and nsite got stuck loading forever**, with a blank tab
+  and a progress bar that never finished. Certificate verification needs an Android-side
+  init call that nothing in the app ever made, so every HTTPS fetch silently failed in
+  the background instead of loading or showing an error. Affected every page since
+  0.42.1 (likely earlier too) — this release fixes it.
+
 ## Fixes in 0.42.2
 
 - A dialog-styled popup (the pattern most "Continue with Google" and similar sign-in
