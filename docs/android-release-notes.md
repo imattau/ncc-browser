@@ -1,5 +1,46 @@
 # Nostr Navigator for Android
 
+## Fixes in 0.42.3
+
+- **Fixed: every https:// page and nsite got stuck loading forever**, with a blank tab
+  and a progress bar that never finished. Certificate verification needs an Android-side
+  init call that nothing in the app ever made, so every HTTPS fetch silently failed in
+  the background instead of loading or showing an error. Affected every page since
+  0.42.1 (likely earlier too) — this release fixes it.
+
+## Fixes in 0.42.2
+
+- A dialog-styled popup (the pattern most "Continue with Google" and similar sign-in
+  buttons use) no longer loses its connection back to the page that opened it. WebView
+  used to read the popup's destination and reopen it as a separate, unrelated tab,
+  which broke the sign-in handoff back to the original page.
+
+## Fixes in 0.42.1
+
+- The Password Manager is now tied to the default identity. On unlock, older local
+  identity vaults are merged into it; unavailable relays are retried on a later unlock.
+
+## New in 0.42.0
+
+- Version 0.42.0 (versionCode 42000). The password vault now supports synced favorites,
+  filtering to favorites, and sorting by title or password update time. Favorite changes
+  sync without changing the saved password's age.
+
+## New in 0.41.0
+
+- Version 0.41.0 (versionCode 41000). Maintenance release with no Android-specific
+  behaviour changes; the desktop and Android builds stay on the same version.
+
+## New in 0.40.1
+
+- Version 0.40.1 (versionCode 40001). Maintenance release with no Android-specific
+  behaviour changes; the desktop and Android builds stay on the same version.
+
+## New in 0.40.0
+
+- Version 0.40.0 (versionCode 40000). Maintenance release with no Android-specific
+  behaviour changes; the desktop and Android builds stay on the same version.
+
 ## Fixes in 0.36.5
 
 - The Linux npack and deb/rpm/flatpak launchers now declare the HTTP and HTTPS

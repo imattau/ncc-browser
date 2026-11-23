@@ -7,25 +7,41 @@ involved.
 ## Enable
 
 **Settings → Agent control → Allow agent control.** The server listens on
-`127.0.0.1:47821` (a free port if that is taken) and the page shows a ready-made
-command. Click **Copy command**, then run it once in a terminal:
+`127.0.0.1:47821` (a free port if that is taken). Each agent you add gets its own Nostr
+identity and its own ready-made connect command. Click **Add agent**, name it, and (once
+the password manager is unlocked) copy the command it shows and run it once in a
+terminal:
 
 ```bash
 claude mcp add --transport http ncc-browser http://127.0.0.1:47821/mcp \
-  --header "Authorization: Bearer <token>"
+  --header "Authorization: Bearer <agent's nsec>"
 ```
 
-The token is created once, stored in `automation-settings.json` in the profile (mode
-0600) and survives restarts, so the connection is made only once. **Regenerate token**
-disconnects every existing client. Turning the setting off stops the server.
+An agent's nsec *is* its bearer credential — there is no separate token. It is created
+once, stored in `automation-settings.json` in the profile (mode 0600) and survives
+restarts, so the connection is made only once. It is also saved as an entry in the
+password manager (titled `Agent: <name>`), so it can be found and copied again later via
+**Reveal** on that agent's card — the vault must be unlocked to reveal it. Each agent has
+its own site grants, independent of every other agent. **Regenerate identity** replaces
+one agent's keypair and disconnects any client still using its old nsec; **Remove**
+deletes the agent entirely. Turning the top-level setting off stops the server for every
+agent at once.
 
 Developers: `NCC_AUTOMATION=1` forces the server on, `NCC_AUTOMATION_PORT` pins the
-port, and the current `{ url, token }` is written to `automation.json` while it runs.
-To try it without touching your real profile use a scratch config home:
+port, and the current `{ url, agents }` (each agent's id and nsec) is written to
+`automation.json` while it runs. To try it without touching your real profile use a
+scratch config home:
 
 ```bash
 XDG_CONFIG_HOME=/tmp/ncc-scratch NCC_AUTOMATION=1 npm run dev
 ```
+
+An MCP client's `initialize` call gets this back in `instructions`, so any agent — not
+just one already familiar with this app — knows not to try to create a second identity:
+the connection already has one fixed Nostr identity (the keypair generated once in
+Settings → Agent control), `tab_new` ties a tab's `window.nostr` to it, and setting up a
+profile/posting/following is just signing and publishing the matching kind of event
+(or using `window.nclient` on a page that defines one, such as `agent-client/`).
 
 ## Tools
 
@@ -69,6 +85,32 @@ it and then repeat the call. Repeat calls reuse the same prompt.
 
 `NCC_AUTOMATION_AUTO_APPROVE=1` skips the prompt, for scripted tests only. **Stop agent**
 in Settings revokes every session grant at once; each site can also be revoked on its own.
+
+## Signing in as the agent
+
+A tab opened by `tab_new` belongs to the agent that opened it — not whatever the human
+has focused. If that site offers "Login with Nostr" (NIP-07), the page sees the agent's
+*own* identity, not the human's: `window.nostr.getPublicKey()` and friends there are
+answered using the agent's keypair, and the signed-in session is attributable to that
+agent specifically. Navigating or clicking on a tab the agent didn't open never does
+this — only `tab_new` decides which identity a tab's `window.nostr` resolves to.
+
+This is a second, independent approval track from site access: an agent allowed to
+*browse* a site is not automatically allowed to *sign in* there, and vice versa.
+Settings → Agent control shows a separate "Sites this agent can sign in to" list per
+agent, with its own **Stop signing** and per-site revoke, next to the existing browsing
+grants.
+
+[`agent-client/`](../agent-client/README.md) is a minimal nsite built for exactly this —
+a no-build Nostr client that signs in, sets a profile and avatar, follows accounts, posts,
+and republishes itself under whoever is signed in, all through a small `window.nclient`
+API meant to be driven one `evaluate` call at a time.
+
+Each agent's card also shows, best-effort, whatever it has published publicly: its name
+and avatar if it has set a profile, and the address of an nsite if it has published one
+under its own key (a "Checked Xs ago" line and a refresh button next to it). This is a
+read-only relay lookup — it never changes what an agent can do, and an agent that hasn't
+set anything up just shows its npub as before.
 
 ## Safety
 

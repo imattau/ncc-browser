@@ -70,6 +70,8 @@ export function PasswordSettings({
   const [entries, setEntries] = useState<PasswordSummary[]>([])
   const [health, setHealth] = useState<PasswordHealthReport | null>(null)
   const [search, setSearch] = useState('')
+  const [filter, setFilter] = useState<'all' | 'favorites'>('all')
+  const [sort, setSort] = useState<'title' | 'newest' | 'oldest'>('newest')
   const [busy, setBusy] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -131,11 +133,9 @@ export function PasswordSettings({
 
   const filtered = useMemo(() => {
     const needle = search.trim().toLowerCase()
-    if (!needle) return entries
-    return entries.filter((entry) =>
-      `${entry.title} ${entry.origin} ${entry.username}`.toLowerCase().includes(needle)
-    )
-  }, [entries, search])
+    return entries.filter((entry) => (filter === 'all' || entry.favorite) && (!needle || `${entry.title} ${entry.origin} ${entry.username}`.toLowerCase().includes(needle)))
+      .sort((a, b) => sort === 'title' ? (a.title || a.origin).localeCompare(b.title || b.origin) : sort === 'oldest' ? a.updatedAt - b.updatedAt : b.updatedAt - a.updatedAt)
+  }, [entries, search, filter, sort])
 
   const unlock = async (): Promise<void> => {
     setBusy(true)
@@ -262,6 +262,17 @@ export function PasswordSettings({
     )
   }
 
+  const toggleFavorite = async (id: string, favorite: boolean): Promise<void> => {
+    setError(null)
+    try {
+      const result = await window.ncc.passwordsFavorite(id, favorite)
+      if (!result.ok) { setError(result.error ?? 'Could not update favorite'); return }
+      setEntries(await window.ncc.passwordsList())
+    } catch (favoriteError) {
+      setError(messageOf(favoriteError))
+    }
+  }
+
   const reveal = async (id: string): Promise<void> => {
     if (revealed?.id === id) {
       setRevealed(null)
@@ -358,7 +369,7 @@ export function PasswordSettings({
     }
   }
 
-  if (!identity?.configured) {
+  if (status ? !status.configured : !identity?.configured) {
     return (
       <>
         <Heading />
@@ -368,8 +379,8 @@ export function PasswordSettings({
             An identity is required
           </p>
           <p className="mx-auto mt-1 max-w-md text-ui-11 leading-relaxed text-[color:var(--color-muted)]">
-            The vault is encrypted to your own Nostr identity. Import or generate a key, then
-            return here to unlock it.
+            The vault is encrypted to your default Nostr identity. Other identities can still
+            sign in the browser, and their key entries are stored in this shared vault.
           </p>
           <button
             type="button"
@@ -455,7 +466,7 @@ export function PasswordSettings({
         <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-ui-105 text-[color:var(--color-muted)]">
           <span className="inline-flex items-center gap-1.5">
             <ShieldCheck className="h-3.5 w-3.5 text-[color:var(--color-ok)]" />
-            {identity.mode === 'nip46' ? 'Remote NIP-46 identity' : 'Local identity'}
+            {status?.mode === 'nip46' ? 'Default remote signer' : 'Default local identity'}
           </span>
           <span className="min-w-0 truncate">
             {status?.relaySource === 'dedicated' ? 'Dedicated relay' : `via ${status?.relaySource ?? 'browser'} relays`}:{' '}
@@ -483,7 +494,7 @@ export function PasswordSettings({
 
       {status?.unlocked ? (
         <>
-          <PasswordHealthPanel health={health} onEdit={(id) => void startEdit(id)} />
+          <PasswordHealthPanel health={health} onEdit={(id) => void startEdit(id)} onOpen={(origin) => void window.ncc.navigate(origin)} />
 
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative min-w-[180px] flex-1">
@@ -496,6 +507,12 @@ export function PasswordSettings({
                 className="w-full rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-field)] py-1.5 pl-8 pr-3 text-ui-11 text-[color:var(--color-text)] outline-none placeholder:text-[color:var(--color-faint)] focus:border-[color:var(--color-accent)]/60"
               />
             </div>
+            <select aria-label="Filter passwords" value={filter} onChange={(event) => setFilter(event.target.value as 'all' | 'favorites')} className="rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-field)] px-2 py-1.5 text-ui-11 text-[color:var(--color-text)]">
+              <option value="all">All logins</option><option value="favorites">Favorites</option>
+            </select>
+            <select aria-label="Sort passwords" value={sort} onChange={(event) => setSort(event.target.value as 'title' | 'newest' | 'oldest')} className="rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-field)] px-2 py-1.5 text-ui-11 text-[color:var(--color-text)]">
+              <option value="newest">Recently updated</option><option value="oldest">Oldest updated</option><option value="title">Title</option>
+            </select>
             <button
               type="button"
               data-password-add-button
@@ -561,6 +578,7 @@ export function PasswordSettings({
                     </div>
                     <div className="flex flex-wrap items-center gap-1">
                       {entry.hasTotp ? <TotpCell id={entry.id} onCopy={copy} /> : null}
+                      <RowButton label={entry.favorite ? 'Remove favorite' : 'Add favorite'} onClick={() => void toggleFavorite(entry.id, !entry.favorite)}><span aria-hidden="true">{entry.favorite ? '★' : '☆'}</span></RowButton>
                       {!entry.isPasskey ? <>
                         <RowButton label="Copy username" onClick={() => void copy(entry.id, 'username')}><Copy className="h-3.5 w-3.5" /></RowButton>
                         <RowButton label="Copy password" onClick={() => void copy(entry.id, 'password')}><KeyRound className="h-3.5 w-3.5" /></RowButton>
@@ -809,10 +827,12 @@ function Heading() {
 
 function PasswordHealthPanel({
   health,
-  onEdit
+  onEdit,
+  onOpen
 }: {
   health: PasswordHealthReport | null
   onEdit: (id: string) => void
+  onOpen: (origin: string) => void
 }) {
   const [expanded, setExpanded] = useState(false)
   if (!health || health.entries.length === 0) return null
@@ -861,13 +881,7 @@ function PasswordHealthPanel({
                   {healthFlags(entry)}
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => onEdit(entry.id)}
-                className="shrink-0 rounded-lg border border-[color:var(--color-line)] px-2 py-1 text-ui-9 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)] hover:text-[color:var(--color-text-strong)]"
-              >
-                Edit
-              </button>
+              <div className="flex shrink-0 gap-1"><button type="button" onClick={() => onOpen(entry.origin)} className="rounded-lg border border-[color:var(--color-line)] px-2 py-1 text-ui-9 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)]">Open site</button><button type="button" onClick={() => onEdit(entry.id)} className="rounded-lg border border-[color:var(--color-line)] px-2 py-1 text-ui-9 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)]">Edit</button></div>
             </li>
           ))}
         </ul>

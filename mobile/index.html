@@ -493,6 +493,8 @@
           <span><b>Enable local nccsearch</b><small>Crawls your configured relays while open and keeps its index on this device. Search activity is not published.</small></span>
           <input id="nccsearch-enabled" class="switch" type="checkbox" role="switch" />
         </label>
+        <button id="nccsearch-update-check" class="btn block" type="button">Check for nccsearch updates</button>
+        <p id="nccsearch-update-status" class="status" role="status"></p>
         <button id="search-save" class="btn block" type="button">Save</button>
         <p id="search-error" class="status" role="status"></p>
       </div>
@@ -697,6 +699,8 @@
           <span>Search</span>
           <input id="vault-search" type="search" autocomplete="off" placeholder="Title, username or site" />
         </label>
+        <label class="field"><span>Show</span><select id="vault-filter"><option value="all">All logins</option><option value="favorites">Favorites</option></select></label>
+        <label class="field"><span>Sort</span><select id="vault-sort"><option value="newest">Recently updated</option><option value="oldest">Oldest updated</option><option value="title">Title</option></select></label>
         <div id="vault-list" class="card"></div>
         <button id="vault-add" class="btn block" type="button">Add login</button>
 
@@ -723,9 +727,10 @@
         <p class="section-label">Never save</p>
         <div id="vault-never" class="card"></div>
         <p class="hint">
-          The vault is one NIP-78 event, encrypted to your own key on this device and
-          synced through your relays. The desktop build reads the same event, so the
-          same logins appear here when both use the same npub.
+          The vault is one NIP-78 event, encrypted to your default identity and synced
+          through its relays. Other identities can sign in independently; their prior
+          vaults are merged here once they are available. Desktop and Android share the
+          vault when they use the same default identity.
         </p>
       </div>
     </section>
@@ -874,7 +879,7 @@
       </header>
       <div class="body">
         <h3 class="group">Your identities</h3>
-        <p class="hint">Choose which key new NIP-07 requests use. Your default identity stays first in the list.</p>
+        <p class="hint">Choose which key new NIP-07 requests use. Your default identity stays first in the list and owns the Password Manager vault.</p>
         <div id="identity-profiles" class="identity-profile-list" aria-live="polite"></div>
         <p id="identity-state" class="hint">Checking…</p>
         <p id="identity-store" class="hint"></p>

@@ -1,4 +1,4 @@
-import { randomBytes, timingSafeEqual } from 'node:crypto'
+import { timingSafeEqual } from 'node:crypto'
 import { chmodSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { McpHandler } from './mcp'
@@ -6,30 +6,35 @@ import type { AutomationGate, AutomationHost } from './types'
 
 const MAX_BODY = 1_000_000
 
+/** One agent this server currently accepts requests from. */
+export interface ServerAgent {
+  id: string
+  /** The bearer value (the agent's nsec) that authenticates it. */
+  nsec: string
+  gate: AutomationGate
+}
+
 export interface AutomationServerOptions {
   host: AutomationHost
-  gate: AutomationGate
   version: string
-  /** Where to write `{ url, token }` so a client can find the server. */
+  /** Where to write `{ url, agents }` so a dev script can find the server. */
   infoFile: string
   /** Preferred port; if it is taken the server falls back to a free one. */
   port?: number
-  /** Fixed access token. A random one is generated when omitted. */
-  token?: string
+  /** The agents currently allowed to connect, looked up fresh on every request. */
+  agents(): ServerAgent[]
 }
 
 /**
- * Loopback-only MCP endpoint. A bearer token (written to a user-only file) is required,
- * and Host/Origin are checked so a web page cannot reach it through DNS rebinding.
+ * Loopback-only MCP endpoint. Each agent authenticates with its own bearer token (its
+ * nsec), and Host/Origin are checked so a web page cannot reach it through DNS rebinding.
  */
 export class AutomationServer {
   private server: Server | null = null
-  private token: string
   private readonly handler: McpHandler
 
   constructor(private readonly options: AutomationServerOptions) {
-    this.token = options.token ?? randomBytes(32).toString('hex')
-    this.handler = new McpHandler(options.host, options.gate, {
+    this.handler = new McpHandler(options.host, { authorize: async () => false }, {
       name: 'nostr-navigator',
       version: options.version
     })
@@ -62,9 +67,8 @@ export class AutomationServer {
     rmSync(this.options.infoFile, { force: true })
   }
 
-  /** Replace the token; the old one stops working at once. */
-  setToken(token: string): void {
-    this.token = token
+  /** Called whenever the agent list changes, so the dev info file stays current. */
+  refresh(): void {
     if (this.server) this.writeInfo()
   }
 
@@ -76,9 +80,8 @@ export class AutomationServer {
   private writeInfo(): void {
     const url = this.url
     if (!url) return
-    writeFileSync(this.options.infoFile, JSON.stringify({ url, token: this.token }), {
-      mode: 0o600
-    })
+    const agents = this.options.agents().map((agent) => ({ id: agent.id, nsec: agent.nsec }))
+    writeFileSync(this.options.infoFile, JSON.stringify({ url, agents }), { mode: 0o600 })
     try {
       chmodSync(this.options.infoFile, 0o600)
     } catch {
@@ -86,11 +89,16 @@ export class AutomationServer {
     }
   }
 
-  private authorized(req: IncomingMessage): boolean {
+  /** The agent whose nsec matches this request's bearer header, compared in constant time. */
+  private authenticate(req: IncomingMessage): ServerAgent | null {
     const header = req.headers.authorization ?? ''
     const given = Buffer.from(header.replace(/^Bearer\s+/i, ''))
-    const expected = Buffer.from(this.token)
-    return given.length === expected.length && timingSafeEqual(given, expected)
+    let match: ServerAgent | null = null
+    for (const agent of this.options.agents()) {
+      const expected = Buffer.from(agent.nsec)
+      if (given.length === expected.length && timingSafeEqual(given, expected)) match = agent
+    }
+    return match
   }
 
   private async route(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -102,7 +110,8 @@ export class AutomationServer {
     if (!/^(127\.0\.0\.1|localhost)(:\d+)?$/.test(req.headers.host ?? '')) return send(403)
     if (req.headers.origin) return send(403) // Browsers send Origin; MCP clients do not.
     if (req.url?.split('?')[0] !== '/mcp') return send(404)
-    if (!this.authorized(req)) return send(401)
+    const agent = this.authenticate(req)
+    if (!agent) return send(401)
     if (req.method !== 'POST') return send(405)
 
     let raw = ''
@@ -123,12 +132,12 @@ export class AutomationServer {
     }
 
     if (Array.isArray(message)) {
-      const replies = (await Promise.all(message.map((entry) => this.handler.handle(entry)))).filter(
-        (entry) => entry !== null
-      )
+      const replies = (
+        await Promise.all(message.map((entry) => this.handler.handle(entry, agent.gate)))
+      ).filter((entry) => entry !== null)
       return replies.length ? send(200, replies) : send(202)
     }
-    const reply = await this.handler.handle(message)
+    const reply = await this.handler.handle(message, agent.gate)
     return reply ? send(200, reply) : send(202)
   }
 }

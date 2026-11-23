@@ -29,6 +29,9 @@ export interface PasswordEntry {
   totp: string
   createdAt: number
   updatedAt: number
+  /** Favorite metadata syncs independently of password age. */
+  favorite?: boolean
+  favoriteUpdatedAt?: number
   /** Tombstone entries stay in the vault so deletions propagate across devices. */
   deleted?: boolean
   /** A WebAuthn credential. Private key material is protected by the encrypted vault. */
@@ -68,6 +71,7 @@ export interface PasswordSummary {
   isPasskey?: boolean
   createdAt: number
   updatedAt: number
+  favorite: boolean
 }
 
 export interface PasskeyConfirmationRequest {
@@ -428,6 +432,8 @@ export function normalizeEntry(input: unknown): PasswordEntry | null {
     totp: clampText(value.totp, MAX_TOTP, ''),
     createdAt,
     updatedAt,
+    ...(value.favorite === true ? { favorite: true } : {}),
+    ...(typeof value.favoriteUpdatedAt === 'number' && Number.isFinite(value.favoriteUpdatedAt) ? { favoriteUpdatedAt: value.favoriteUpdatedAt } : {}),
     ...(value.deleted === true ? { deleted: true } : {}),
     ...(passkey ? { passkey } : {})
   }
@@ -479,7 +485,8 @@ export function summarize(entry: PasswordEntry): PasswordSummary {
     hasTotp: entry.totp.length > 0,
     ...(entry.passkey ? { isPasskey: true } : {}),
     createdAt: entry.createdAt,
-    updatedAt: entry.updatedAt
+    updatedAt: entry.updatedAt,
+    favorite: entry.favorite === true
   }
 }
 
@@ -505,8 +512,14 @@ export function mergeVaults(
       changed = true
       continue
     }
-    if (entry.updatedAt > existing.updatedAt) {
-      byId.set(entry.id, entry)
+    const winner = entry.updatedAt > existing.updatedAt ? entry : existing
+    const favoriteWinner = (entry.favoriteUpdatedAt ?? 0) > (existing.favoriteUpdatedAt ?? 0)
+      ? entry
+      : (entry.favoriteUpdatedAt ?? 0) < (existing.favoriteUpdatedAt ?? 0) ? existing : winner
+    const favoriteUpdatedAt = Math.max(entry.favoriteUpdatedAt ?? 0, existing.favoriteUpdatedAt ?? 0)
+    const merged = { ...winner, favorite: favoriteWinner.favorite === true, ...(favoriteUpdatedAt ? { favoriteUpdatedAt } : {}) }
+    if (merged.updatedAt !== existing.updatedAt || merged.favorite !== (existing.favorite === true) || favoriteUpdatedAt !== (existing.favoriteUpdatedAt ?? 0)) {
+      byId.set(entry.id, merged)
       changed = true
     }
   }

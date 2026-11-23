@@ -82,6 +82,13 @@ jobs:
       - name: Build deb, rpm and flatpak
         run: npm run dist:linux
 
+      - name: Package signed nccsearch update assets
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          NCCSEARCH_UPDATE_SIGNING_KEY_PEM: ${{ secrets.NCCSEARCH_UPDATE_SIGNING_KEY_PEM }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: node scripts/package-nccsearch-update.mjs
+
       - name: Verify bundled Tor
         run: |
           TOR_DIR=release/linux-unpacked/resources/tor/tor
@@ -154,6 +161,8 @@ jobs:
             release/*.flatpak
             release/*.npk
             release/*.manifest.json
+            release/nccsearch-file-*
+            release/nccsearch-manifest.json
 
   macos:
     name: macOS (dmg, zip)
@@ -343,6 +352,41 @@ jobs:
           prerelease: ${{ contains(github.ref_name, '-') }}
           fail_on_unmatched_files: true
           files: artifacts/*
+
+  zapstore:
+    name: Publish Android build to Zapstore
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: android-packages
+          path: release/android
+
+      - name: Install Zapstore CLI
+        run: |
+          installed=""
+          for attempt in 1 2 3; do
+            if go install github.com/zapstore/zsp/v2/cmd/zsp@v2.0.1; then
+              installed=1
+              break
+            fi
+            echo "go install failed (attempt $attempt), retrying" >&2
+            sleep $((attempt * 10))
+          done
+          [ -n "$installed" ] || { echo "zsp could not be installed after 3 attempts" >&2; exit 1; }
+
+      - name: Validate and publish to Zapstore
+        env:
+          SIGN_WITH: ${{ secrets.ZAPSTORE_NSEC }}
+        run: |
+          set -euo pipefail
+          test -n "$SIGN_WITH" || { echo "::error::set the repository secret ZAPSTORE_NSEC"; exit 1; }
+          "$(go env GOPATH)/bin/zsp" check
+          "$(go env GOPATH)/bin/zsp" publish
 
   npack:
     name: Publish to Nostr (npack)

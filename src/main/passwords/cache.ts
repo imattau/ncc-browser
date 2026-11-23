@@ -12,6 +12,7 @@ export interface CachedVault {
 interface CacheFile {
   version: 1
   vaults: Record<string, CachedVault>
+  migratedFrom?: Record<string, string[]>
 }
 
 /**
@@ -42,13 +43,33 @@ export class PasswordCache {
     this.write(data)
   }
 
+  migratedSources(defaultPubkey: string): string[] {
+    const value = this.load().migratedFrom?.[defaultPubkey]
+    return Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : []
+  }
+
+  markSourceMigrated(defaultPubkey: string, sourcePubkey: string): void {
+    const data = this.load()
+    const sources = data.migratedFrom ?? (data.migratedFrom = {})
+    const migrated = sources[defaultPubkey] ?? (sources[defaultPubkey] = [])
+    if (migrated.includes(sourcePubkey)) return
+    migrated.push(sourcePubkey)
+    this.write(data)
+  }
+
   private load(): CacheFile {
     if (this.data) return this.data
     try {
       if (existsSync(this.filePath)) {
         const parsed = JSON.parse(readFileSync(this.filePath, 'utf8')) as Partial<CacheFile>
         if (parsed && typeof parsed === 'object' && parsed.vaults && typeof parsed.vaults === 'object') {
-          this.data = { version: 1, vaults: parsed.vaults as Record<string, CachedVault> }
+          this.data = {
+            version: 1,
+            vaults: parsed.vaults as Record<string, CachedVault>,
+            ...(parsed.migratedFrom && typeof parsed.migratedFrom === 'object'
+              ? { migratedFrom: parsed.migratedFrom as Record<string, string[]> }
+              : {})
+          }
           return this.data
         }
       }

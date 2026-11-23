@@ -109,6 +109,7 @@ struct Pending {
 
 #[derive(Default)]
 struct State {
+    identity_disabled: bool,
     unlocked: bool,
     pubkey: Option<String>,
     vault: Option<PasswordVault>,
@@ -160,6 +161,102 @@ impl VaultService {
         (self.now)()
     }
 
+    /// Bind this isolated vault signer to the selected default local identity without
+    /// changing the browser's active signing identity.
+    pub fn use_identity_profile(&self, id: &str) -> Result<(), String> {
+        if let Ok(pubkey) = self.identity.public_key() {
+            if pubkey.to_hex() == id {
+                let mut state = self.secure();
+                if state.identity_disabled { state.error = None; }
+                state.identity_disabled = false;
+                return Ok(());
+            }
+        }
+        self.identity.select_profile_for_service(id).map_err(|error| error.to_string())?;
+        let mut state = self.secure();
+        clear_vault(&mut state);
+        state.identity_disabled = false;
+        state.error = None;
+        Ok(())
+    }
+
+    pub fn disable_identity(&self, reason: &str) {
+        let mut state = self.secure();
+        clear_vault(&mut state);
+        state.identity_disabled = true;
+        state.error = Some(reason.to_string());
+    }
+
+    pub fn set_migration_pending(&self, pending: bool) {
+        let mut state = self.secure();
+        if pending {
+            state.error = Some("Some older identity vaults could not be checked yet. They will be retried on a later unlock.".into());
+        } else if state.error.as_deref().is_some_and(|error| error.starts_with("Some older identity vaults")) {
+            state.error = None;
+        }
+    }
+
+    pub fn prepare_identity_profile(&self, id: &str, envelope: &dyn ncc_identity::KeyEnvelope) -> Result<(), String> {
+        self.use_identity_profile(id)?;
+        if !self.identity.is_unlocked() {
+            self.identity.unlock(envelope).map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
+    /// Merge a saved profile's old vault into the currently unlocked default vault.
+    /// Partial relay availability is safe: cached data is imported now and the profile
+    /// is retried on a later unlock until every configured relay has answered.
+    pub async fn migrate_from(&self, source_identity: Arc<IdentityStore>) -> Result<bool, String> {
+        self.expire();
+        let (default_pubkey, target) = {
+            let state = self.secure();
+            if !state.unlocked { return Err(LOCKED.to_string()); }
+            (state.pubkey.clone().ok_or_else(|| NO_IDENTITY.to_string())?, state.vault.clone().unwrap_or_default())
+        };
+        let source_pubkey = source_identity.public_key().map_err(|error| error.to_string())?.to_hex();
+        if source_pubkey == default_pubkey { return Ok(true); }
+        if self.cache().source_migrated(&default_pubkey, &source_pubkey) { return Ok(true); }
+
+        let cached = { self.cache().get(&source_pubkey) };
+        let mut source_vault = match cached.as_ref() {
+            Some(value) => Some(decrypt(&source_identity, &source_pubkey, &value.event)?),
+            None => None,
+        };
+        let relays = self.network_relays(&source_pubkey).await;
+        let mut complete = false;
+        if !relays.is_empty() {
+            match self.fetch_remote_report(source_identity.clone(), &relays, &source_pubkey).await {
+                Ok((remote, answered)) => {
+                    complete = answered == relays.len();
+                    if let Some(event) = remote {
+                        let remote_vault = decrypt(&source_identity, &source_pubkey, &event)?;
+                        source_vault = Some(match source_vault {
+                            Some(local) => merge_vaults(&local, &remote_vault).0,
+                            None => remote_vault,
+                        });
+                    }
+                }
+                Err(_) => complete = false,
+            }
+        }
+
+        if let Some(imported) = source_vault {
+            self.ensure_latest(&default_pubkey).await;
+            let current = self.secure().vault.clone().unwrap_or(target);
+            let (merged, changed) = merge_vaults(&current, &imported);
+            if changed {
+                let (_, error) = self.publish(&default_pubkey, merged).await?;
+                if let Some(error) = error { return Err(error); }
+            }
+        }
+
+        if complete {
+            self.cache().mark_source_migrated(&default_pubkey, &source_pubkey);
+        }
+        Ok(complete)
+    }
+
     fn secure(&self) -> std::sync::MutexGuard<'_, State> {
         self.state
             .lock()
@@ -207,7 +304,7 @@ impl VaultService {
             // `initialised`, not "the key is loaded": an identity sealed by the device
             // envelope is still configured while it is locked, and telling its owner to
             // set one up would be wrong.
-            configured: self.identity.status().initialised,
+            configured: !state.identity_disabled && self.identity.status().initialised,
             unlocked: state.unlocked,
             entry_count: state
                 .vault
@@ -454,6 +551,29 @@ impl VaultService {
 
     pub fn generate(&self, options: &GeneratorOptions) -> String {
         ncc_vault::generate_password(options)
+    }
+
+    pub async fn set_favorite(&self, id: &str, favorite: bool) -> SaveOutcome {
+        self.expire();
+        if !self.secure().unlocked { return SaveOutcome { ok: false, pending: false, error: Some(LOCKED.to_string()), status: self.status() }; }
+        let result = async {
+            let pubkey = self.require_pubkey()?;
+            self.ensure_latest(&pubkey).await;
+            let (vault, mut entry) = {
+                let state = self.secure();
+                let vault = state.vault.clone().ok_or_else(|| VAULT_ERROR.to_string())?;
+                let entry = find_entry(&vault, id).filter(|entry| !entry.deleted).cloned().ok_or_else(|| "That login no longer exists".to_string())?;
+                (vault, entry)
+            };
+            entry.favorite = favorite;
+            entry.favorite_updated_at = self.now().saturating_mul(1000).max(entry.favorite_updated_at.saturating_add(1));
+            let next = apply_entry(&vault, entry);
+            self.publish(&pubkey, next).await
+        }.await;
+        match result {
+            Ok((pending, error)) => SaveOutcome { ok: true, pending, error, status: self.status() },
+            Err(error) => SaveOutcome { ok: false, pending: false, error: Some(error), status: self.status() },
+        }
     }
 
     pub fn entry(&self, id: &str) -> Result<PasswordEntry, String> {
@@ -727,6 +847,8 @@ impl VaultService {
                 .map(|entry| entry.created_at)
                 .unwrap_or(now),
             updated_at: now,
+            favorite: existing.as_ref().map(|entry| entry.favorite).unwrap_or(false),
+            favorite_updated_at: existing.as_ref().map(|entry| entry.favorite_updated_at).unwrap_or_default(),
             deleted: false,
             passkey: draft.passkey.or_else(|| existing.as_ref().and_then(|entry| entry.passkey.clone())),
         };
@@ -942,7 +1064,18 @@ impl VaultService {
         relays: &[String],
         pubkey: &str,
     ) -> Result<Option<nostr::Event>, String> {
-        let signer = self.signer();
+        self.fetch_remote_report(self.identity.clone(), relays, pubkey)
+            .await
+            .map(|(event, _)| event)
+    }
+
+    async fn fetch_remote_report(
+        &self,
+        identity: Arc<IdentityStore>,
+        relays: &[String],
+        pubkey: &str,
+    ) -> Result<(Option<nostr::Event>, usize), String> {
+        let signer = Self::signer_for(identity);
         let filter = vault_filter(pubkey);
         let attempts = relays
             .iter()
@@ -984,11 +1117,14 @@ impl VaultService {
                 .cmp(&a.created_at.as_secs())
                 .then_with(|| a.id.to_hex().cmp(&b.id.to_hex()))
         });
-        Ok(valid.into_iter().next())
+        Ok((valid.into_iter().next(), answered))
     }
 
     fn signer(&self) -> Signer {
-        let identity = self.identity.clone();
+        Self::signer_for(self.identity.clone())
+    }
+
+    fn signer_for(identity: Arc<IdentityStore>) -> Signer {
         Arc::new(move |template: Value| {
             identity
                 .sign_event(&template)

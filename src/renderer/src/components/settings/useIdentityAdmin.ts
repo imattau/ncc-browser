@@ -11,7 +11,6 @@ export interface IdentityAdminApi {
   identityError: string | null
   setIdentityError: (value: string | null) => void
   identityBusy: boolean
-  copied: boolean
   bunker: string
   setBunker: (value: string) => void
   connectBusy: boolean
@@ -22,8 +21,6 @@ export interface IdentityAdminApi {
   /** Actions that return a list (set-default) or a status (select, remove). */
   updateIdentityProfile: (action: () => Promise<IdentityStatus | IdentityList>) => Promise<void>
   connectBunker: () => Promise<void>
-  disconnectRemote: () => Promise<void>
-  copyNpub: () => Promise<void>
   toggleEphemeralSigner: (enabled: boolean) => Promise<void>
 }
 
@@ -37,7 +34,6 @@ export interface IdentityAdminApi {
  */
 export function useIdentityAdmin(options: {
   open: boolean
-  identity: IdentityStatus | null
   /** Publish a new active identity to the page (and on to the app shell). */
   onStatus: (status: IdentityStatus) => void
 }): IdentityAdminApi {
@@ -45,7 +41,6 @@ export function useIdentityAdmin(options: {
   const [secret, setSecret] = useState('')
   const [identityError, setIdentityError] = useState<string | null>(null)
   const [identityBusy, setIdentityBusy] = useState(false)
-  const [copied, setCopied] = useState(false)
   const [bunker, setBunker] = useState('')
   const [connectBusy, setConnectBusy] = useState(false)
   const [remoteError, setRemoteError] = useState<string | null>(null)
@@ -116,32 +111,6 @@ export function useIdentityAdmin(options: {
     }
   }
 
-  const disconnectRemote = async (): Promise<void> => {
-    setIdentityBusy(true)
-    setRemoteError(null)
-    try {
-      const status = await window.ncc.identityDisconnect()
-      onStatus(status)
-      await refresh()
-    } catch (disconnectError) {
-      setRemoteError(messageOf(disconnectError))
-    } finally {
-      setIdentityBusy(false)
-    }
-  }
-
-  const copyNpub = async (): Promise<void> => {
-    const npub = options.identity?.npub
-    if (!npub) return
-    try {
-      await navigator.clipboard.writeText(npub)
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 1400)
-    } catch {
-      // clipboard unavailable
-    }
-  }
-
   const toggleEphemeralSigner = async (enabled: boolean): Promise<void> => {
     setEphemeralSigner(enabled)
     setIdentityError(null)
@@ -159,7 +128,6 @@ export function useIdentityAdmin(options: {
     identityError,
     setIdentityError,
     identityBusy,
-    copied,
     bunker,
     setBunker,
     connectBusy,
@@ -168,8 +136,6 @@ export function useIdentityAdmin(options: {
     runIdentity,
     updateIdentityProfile,
     connectBunker,
-    disconnectRemote,
-    copyNpub,
     toggleEphemeralSigner
   }
 }

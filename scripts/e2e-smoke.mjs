@@ -2412,6 +2412,19 @@ async function main() {
     await evaluate(chrome, 'Array.from(document.querySelectorAll(\'[role="menuitem"]\')).find((item) => item.textContent.includes("Wallet"))?.click()')
     await waitForValue(chrome, 'document.querySelector(\'[aria-label="Wallet"]\') ? "ready" : ""', 40)
     check('opens the wallet from the browser menu', (await evaluate(chrome, 'Boolean(document.querySelector(\'[aria-label="Wallet"]\'))')) === true)
+    check(
+      'wallet opens on the Bitcoin view',
+      (await evaluate(
+        chrome,
+        'Array.from(document.querySelectorAll("button")).some((item) => item.textContent.trim() === "Send") && document.body.innerText.includes("Transactions")'
+      )) === true
+    )
+    await evaluate(chrome, 'document.querySelector(\'button[aria-label="Lightning"]\')?.click()')
+    await waitForText(chrome, 'Connect a Lightning wallet', 40)
+    check(
+      'Lightning view offers an NWC connection',
+      (await evaluate(chrome, 'Boolean(document.querySelector(\'[aria-label="NWC connection URI"]\'))')) === true
+    )
     await evaluate(chrome, 'localStorage.setItem("ncc.wallet.monero-daemon", "http://127.0.0.1:1")')
     // The currency switch is icon-only, so it is selected by accessible name.
     await evaluate(chrome, 'document.querySelector(\'button[aria-label="Monero"]\')?.click()')

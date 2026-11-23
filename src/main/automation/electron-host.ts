@@ -1,5 +1,6 @@
 import type { WebContents } from 'electron'
 import type { BrowserShell } from '../shell'
+import { tagTab } from './agent-tabs'
 import { keyEvents } from './key-events'
 import type {
   AutomationContents,
@@ -247,6 +248,10 @@ export function createElectronHost(shell: BrowserShell): AutomationHost {
       const contents = shell.window.webContents
       return contents.isDestroyed() ? null : wrap(contents)
     },
-    openSettings: (section) => shell.openAutomationSettings(section)
+    openSettings: (section) => shell.openAutomationSettings(section),
+    tagAgentTab: (tabId, agentId) => {
+      const contents = live(tabId)
+      if (contents) tagTab(contents, agentId)
+    }
   }
 }

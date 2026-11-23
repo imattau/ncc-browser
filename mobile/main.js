@@ -1596,6 +1596,29 @@ async function invoke(command, args) {
   return globalThis.__TAURI__.core.invoke(command, args)
 }
 
+async function checkNccSearchUpdate(manual = false) {
+  const status = byId('nccsearch-update-status')
+  if (manual) status.textContent = 'Checking…'
+  try {
+    const version = await invoke('nccsearch_check_update')
+    if (!version) {
+      if (manual) status.textContent = 'You have the latest version.'
+      return
+    }
+    if (!manual && readSetting('ncc.nccsearch.dismissed-update', '') === version) return
+    if (confirm(`nccsearch ${version} is available. Install it now?`)) {
+      await invoke('nccsearch_install_update', { version })
+      status.textContent = 'Updated. Restart Nostr Navigator to apply it.'
+      alert('nccsearch is updated. Restart Nostr Navigator to apply it.')
+    } else {
+      writeSetting('ncc.nccsearch.dismissed-update', version)
+      if (manual) status.textContent = `Update ${version} is available.`
+    }
+  } catch {
+    if (manual) status.textContent = 'Could not check for updates.'
+  }
+}
+
 async function loadRelays() {
   const input = byId('relays-input')
   byId('relays-error').textContent = ''
@@ -2169,6 +2192,7 @@ function wireChrome() {
 
   byId('relays-save').addEventListener('click', () => void saveRelays())
   byId('search-save').addEventListener('click', () => void saveSearch())
+  byId('nccsearch-update-check').addEventListener('click', () => void checkNccSearchUpdate(true))
   byId('nccsearch-enabled').addEventListener('change', () => {
     nccSearchEnabled = byId('nccsearch-enabled').checked
     updateNccSearchButton()
@@ -2186,6 +2210,8 @@ function wireChrome() {
   byId('vault-unlock').addEventListener('click', () => void passwordFeature.unlockVault())
   byId('vault-lock').addEventListener('click', () => void passwordFeature.lockVault())
   byId('vault-search').addEventListener('input', () => void passwordFeature.renderVaultList())
+  byId('vault-filter').addEventListener('change', () => void passwordFeature.renderVaultList())
+  byId('vault-sort').addEventListener('change', () => void passwordFeature.renderVaultList())
   byId('vault-add').addEventListener('click', () => passwordFeature.openNewLogin(''))
   byId('vault-save-config').addEventListener('click', () => void passwordFeature.saveVaultConfig())
   byId('fill-add').addEventListener('click', () => passwordFeature.openNewLogin(displayAddress(activeUrl)))
@@ -2336,6 +2362,14 @@ async function main() {
     set('about-proxy', 'unavailable')
     return
   }
+
+  try {
+    const last = Number(readSetting('ncc.nccsearch.last-update-check', '0'))
+    if (Date.now() - last >= 86_400_000) {
+      writeSetting('ncc.nccsearch.last-update-check', String(Date.now()))
+      void checkNccSearchUpdate(false)
+    }
+  } catch { /* update checks never block startup */ }
 
   set('bridge', content ? 'ok (content bridge)' : 'ok')
 

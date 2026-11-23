@@ -1,5 +1,105 @@
 # Release notes
 
+## 0.42.3 — Android: fix all page/nsite loads hanging forever
+
+### Fixed
+
+- **Android: every https:// page and nsite got stuck loading forever.** Certificate
+  verification (`rustls-platform-verifier`, used to check certificates against the OS
+  trust store) requires an Android-side JNI init call before its first use, which the
+  app never made — so every HTTPS fetch, whether a plain page or nsite content (itself
+  fetched over HTTPS), panicked the worker handling it and the tab just sat there with a
+  stuck progress bar instead of loading or showing an error. Reproduced live against the
+  actual v0.42.1 build before fixing it; confirmed both a normal site and an nsite load
+  correctly afterward.
+
+## 0.42.2 — OAuth sign-in popups, and password vault backfill
+
+### Fixed
+
+- **"Continue with Google" (and similar OAuth popups) now work.** A popup was always
+  denied and reopened as a disconnected tab, losing `window.opener` — which broke the
+  `postMessage` handoff OAuth providers rely on to hand back the signed-in result. A
+  popup sized like a deliberate sign-in/payment dialog, or opened to a known
+  identity-provider host, now opens as a real auxiliary window with `window.opener`
+  intact. Applies to Android too (WebView's `onCreateWindow`, same underlying problem).
+- **Google Sign-In's FedCM path no longer errors out before the popup even opens.**
+  Electron exposes the FedCM JS surface but has no working implementation behind it;
+  FedCM is now disabled at the Chromium level so sites fall back to the popup flow.
+- **The app no longer appears to freeze after a sign-in popup closes.** The auxiliary
+  popup window has no native parent (some Wayland compositors don't support the
+  `xdg_foreign` protocol that would need), which could leave the main window never
+  getting input focus back. Focus is now reclaimed explicitly when the popup closes.
+- **A self-closing popup (e.g. once an OAuth flow finishes) no longer crashes the app
+  or leaves a dangling tab.** A tab whose `WebContentsView` destroys itself out from
+  under it (the page calling `window.close()`) is now cleanly removed.
+- **Every local Nostr identity now gets a recovery copy of its nsec in the password
+  vault**, not just ones freshly generated in-app. A key's nsec was previously only
+  ever saved to the vault at the moment it was generated — never on import, and never
+  retroactively for an identity that already existed. Importing now saves it too, and
+  existing identities are backfilled on the next unlock (a deliberately deleted entry
+  is not recreated).
+
+## 0.41.0 — agent sign-in, self-publishing nsite client, and profile display
+
+### Added
+
+- **An agent can sign in to sites as itself.** A tab opened by an agent's own `tab_new`
+  call now answers `window.nostr` (NIP-07) with that agent's own identity, not the
+  human's. Signing in is a second, independent approval track from site access, each
+  with its own revoke/"stop" control in Agent control.
+- **`agent-client/`**: a single-file, no-build nsite built for automation agents to
+  drive — sign in, set a profile and avatar, follow and unfollow accounts, post, read a
+  simple feed, and republish the exact same site under whoever is signed in (no
+  re-upload, since nsite files are content-addressed). Verified end-to-end as a live
+  connected agent.
+- **Agent control shows each agent's own profile and nsite.** A best-effort, cached,
+  non-blocking relay lookup surfaces an agent's name, avatar and nsite address next to
+  its npub, with its own refresh control.
+
+### Fixed
+
+- `saveAgentSecret` after an upstream refactor split the password vault's relay-sync
+  engine out of `PasswordService`.
+- The nccsearch/site-publisher prebuild scripts now fall back to a plain `npm` lookup
+  (through a shell) when an inherited `npm_execpath` turns out not to be runnable.
+
+## 0.40.1 — per-agent Nostr identities for Agent control
+
+### Added
+
+- **Each automation agent gets its own Nostr identity.** Settings → Agent control now
+  lists named agents instead of one shared token; adding an agent generates a Nostr
+  keypair whose nsec is its MCP connection credential, saves that nsec in the password
+  manager, and gives the agent its own independent site-approval grants. The connect
+  command is shown in full once, then stays masked behind a “Reveal” button that
+  requires the password manager to be unlocked.
+
+## 0.40.0 — password health and per-tab transport
+
+### Added
+
+- **Password strength and vault health.** The add/edit login form now scores each
+  password locally, and Settings → Passwords can scan the unlocked vault for weak,
+  reused and stale entries against a configurable rotation window. Scoring never
+  leaves the machine or touches a relay.
+
+### Fixed
+
+- **Transport is tracked per tab.** A Tor tab showing an onion document no longer
+  marks a normal tab for the same service as “over Tor” — which also stopped that
+  tab's subresources from being fetched through Tor.
+- **Quitting keeps the open tabs.** The empty window written during shutdown no
+  longer replaces the real session, so the next launch does not restore a blank
+  window.
+
+### Changed
+
+- **Smaller, independently testable main-process modules.** The browser shell,
+  bootstrap, settings, wallet, hosting discovery and password vault were split
+  into focused modules, with import-boundary lint and 720 unit tests. Selectors,
+  visible text and shortcuts are unchanged.
+
 ## 0.39.3 — deletion requests for nsites
 
 ### Added

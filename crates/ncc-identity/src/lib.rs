@@ -371,6 +371,18 @@ impl IdentityStore {
         Ok(self.status())
     }
 
+    /// Select a profile for an isolated service without changing the user's saved
+    /// active identity. Used by the password vault's separate default-key store.
+    pub fn select_profile_for_service(&self, id: &str) -> Result<(), IdentityError> {
+        self.refresh_profile_ids();
+        if !self.profile_ids.lock().expect("identity profile ids").contains(&id.to_string()) {
+            return Err(IdentityError::NotInitialised);
+        }
+        *self.active_id.lock().expect("identity active id") = Some(id.to_string());
+        *self.keys.lock().expect("identity lock") = None;
+        Ok(())
+    }
+
     pub fn set_default_profile(&self, id: &str) -> Result<(), IdentityError> {
         self.refresh_profile_ids();
         if !self.profile_ids.lock().expect("identity profile ids").contains(&id.to_string()) {
@@ -407,6 +419,16 @@ impl IdentityStore {
     fn refresh_profile_ids(&self) {
         let Some(root) = self.path.as_ref() else { return };
         let mut ids = self.profile_ids.lock().expect("identity profile ids");
+        let index = fs::read(profile_index_path(root)).ok()
+            .and_then(|bytes| serde_json::from_slice::<ProfileIndex>(&bytes).ok())
+            .filter(|index| index.version == 1);
+        if let Some(index) = index {
+            for id in index.ids {
+                if valid_profile_id(&id) && profile_path_for(root, &id).exists() && !ids.contains(&id) {
+                    ids.push(id);
+                }
+            }
+        }
         if let Some(id) = identity_id(root) { if !ids.contains(&id) { ids.push(id); } }
         ids.retain(|id| valid_profile_id(id) && profile_path_for(root, id).exists());
         let active_valid = self.active_id.lock().expect("identity active id").as_ref()

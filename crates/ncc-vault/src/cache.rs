@@ -25,6 +25,8 @@ pub struct CachedVault {
 struct CacheFile {
     version: u32,
     vaults: HashMap<String, CachedVault>,
+    #[serde(default)]
+    migrated_from: HashMap<String, Vec<String>>,
 }
 
 impl Default for CacheFile {
@@ -32,6 +34,7 @@ impl Default for CacheFile {
         Self {
             version: 1,
             vaults: HashMap::new(),
+            migrated_from: HashMap::new(),
         }
     }
 }
@@ -68,6 +71,19 @@ impl PasswordCache {
         if data.vaults.remove(pubkey).is_none() {
             return;
         }
+        self.write(&data);
+    }
+
+    pub fn source_migrated(&mut self, default_pubkey: &str, source_pubkey: &str) -> bool {
+        self.load().migrated_from.get(default_pubkey)
+            .is_some_and(|sources| sources.iter().any(|source| source == source_pubkey))
+    }
+
+    pub fn mark_source_migrated(&mut self, default_pubkey: &str, source_pubkey: &str) {
+        let mut data = self.load();
+        let sources = data.migrated_from.entry(default_pubkey.to_string()).or_default();
+        if sources.iter().any(|source| source == source_pubkey) { return; }
+        sources.push(source_pubkey.to_string());
         self.write(&data);
     }
 

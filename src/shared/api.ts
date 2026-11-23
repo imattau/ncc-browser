@@ -253,6 +253,7 @@ export interface NccApi {
   passwordsGenerate(options: PasswordGeneratorOptions): Promise<string>
   passwordsSave(entry: PasswordDraft): Promise<PasswordSaveResult>
   passwordsRemove(id: string): Promise<PasswordSaveResult>
+  passwordsFavorite(id: string, favorite: boolean): Promise<PasswordSaveResult>
   passwordsSync(): Promise<PasswordVaultStatus>
   passwordsFill(id: string): Promise<PasswordFillResult>
   passwordsSetConfig(config: Partial<PasswordConfig>): Promise<PasswordVaultStatus>
@@ -308,12 +309,23 @@ export interface NccApi {
   onExtensions(listener: (state: ExtensionsState) => void): () => void
   automationState(): Promise<AutomationState>
   automationSetEnabled(value: boolean): Promise<AutomationState>
-  automationRegenerate(): Promise<AutomationState>
-  automationRevoke(site: string | null): Promise<AutomationState>
-  automationCopyCommand(): Promise<boolean>
+  automationAddAgent(
+    name: string
+  ): Promise<{ state: AutomationState; command: string | null; error: string | null }>
+  automationRemoveAgent(id: string): Promise<AutomationState>
+  automationRegenerateIdentity(
+    id: string
+  ): Promise<{ state: AutomationState; command: string | null; error: string | null }>
+  automationRevoke(agentId: string, site: string | null): Promise<AutomationState>
+  automationRevokeSign(agentId: string, site: string | null): Promise<AutomationState>
+  automationRevealCommand(agentId: string): Promise<string | null>
+  automationRefreshProfile(agentId: string): Promise<AutomationState>
+  automationCopyCommand(command: string): Promise<boolean>
   onAutomation(listener: (state: AutomationState) => void): () => void
   torStatus(): Promise<TorStatus>
   appInfo(): Promise<AppInfo>
+  nccsearchCheckUpdate(): Promise<string | null>
+  nccsearchInstallUpdate(version: string): Promise<void>
   torTest(): Promise<TorStatus>
   torRestart(): Promise<TorStatus>
   identity(): Promise<IdentityStatus>

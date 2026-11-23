@@ -1,31 +1,16 @@
 import { randomBytes, randomUUID } from 'node:crypto'
+import { type Event, type EventTemplate, type Filter } from 'nostr-tools'
 import {
-  verifyEvent,
-  type Event,
-  type EventTemplate,
-  type Filter
-} from 'nostr-tools'
-import {
-  PASSWORD_VAULT_CLIENT,
-  PASSWORD_VAULT_D,
-  PASSWORD_VAULT_KIND,
-  PASSWORD_VAULT_TAG,
-  PASSWORD_VAULT_VERSION,
   activeEntries,
   canUsePasswordOrigin,
   entriesForOrigin,
   findEntry,
   findEntryFor,
   isPlaintextNcc,
-  isVaultWithinLimit,
   mergeVaults,
-  normalizeImportedOrigin,
-  normalizeVault,
   pageOriginFromUrl,
-  passwordVaultFilter,
   scanVaultHealth,
   summarizeVault,
-  vaultByteLength,
   type PasswordVault
 } from '@shared/passwords'
 import type { AppConfig, IdentityStatus } from '@shared/types'
@@ -41,7 +26,6 @@ import type {
   PasswordHealthReport,
   PasswordImportPreview,
   PasswordPage,
-  PasswordRelaySource,
   PasswordSaveRequest,
   PasswordSaveResult,
   PasswordSummary,
@@ -49,17 +33,25 @@ import type {
   PasswordTotpCode,
   PasswordVaultStatus
 } from '@shared/passwords'
-import type { PasswordCache, CachedVault } from './cache'
+import type { PasswordCache } from './cache'
 import { generatePassword } from './generator'
-import {
-  exportPasswordCsv,
-  parsePasswordCsv,
-  previewRows,
-  type ImportedRow
-} from './import-export'
-import { discoverWriteRelays } from '../relay/nip65'
 import { normalizeTotpInput, totpFor } from './totp'
-import { makeAssertion, makeCredential, validateRpId, type PasskeyCreationOptions, type PasskeyRequestOptions } from './passkeys'
+import type { PasskeyCreationOptions, PasskeyRequestOptions } from './passkeys'
+import { PasswordFill } from './fill'
+import { PasswordTransfer } from './transfer'
+import { messageOf } from './errors'
+import { PasswordSync } from './sync'
+import { VAULT_ERROR, applyEntry, emptyVault, safeTotp, summary } from './vault-ops'
+import {
+  canHandleWebauthn,
+  hasWebauthnCandidates,
+  hasWebauthnCredentials,
+  hasWebauthnCredentialsForPage,
+  isWebauthnAuthenticatorAvailable,
+  webauthnCreate,
+  webauthnGet,
+  type WebauthnContext
+} from './webauthn'
 
 export interface ProviderLike {
   getPublicKey(): Promise<string>
@@ -123,6 +115,8 @@ export interface PasswordFileDialogs {
 export interface PasswordServiceDeps {
   config: PasswordConfigStoreLike
   identity: PasswordIdentityLike
+  migrationSources?: () => Array<{ pubkey: string; provider: ProviderLike }>
+  localIdentitySecrets?: () => Array<{ npub: string; nsec: string }>
   relays: PasswordRelayPoolLike
   cache: PasswordCache
   host: PasswordHost
@@ -139,61 +133,93 @@ interface PendingSave {
   expires: number
 }
 
-interface PendingImport {
-  kind: 'rows' | 'vault'
-  rows?: ImportedRow[]
-  vault?: PasswordVault
-  createdAt: number
-}
-
-interface FillWaiter {
-  resolve: (result: PasswordFillResult) => void
-  timer: NodeJS.Timeout
-}
-
-const VAULT_ERROR = 'The password vault could not be read'
 const LOCKED = 'Unlock the password manager first'
-const MAX_EVENT_CONTENT = 1_000_000
 
 export class PasswordService {
   private readonly now: () => number
   private unlocked = false
   private pubkey: string | null = null
   private vault: PasswordVault | null = null
-  private cached: CachedVault | null = null
-  private lastCreatedAt = 0
-  private lastSyncedAt: number | null = null
-  private pending = false
-  private syncing = false
   private error: string | null = null
-  private resolvedRelays: string[] | null = null
-  private relaySource: PasswordRelaySource = 'browser'
   private lockTimer: NodeJS.Timeout | null = null
   private readonly pendingSaves = new Map<string, PendingSave>()
   private readonly saveTimers = new Map<string, NodeJS.Timeout>()
-  private readonly fillWaiters = new Map<string, FillWaiter>()
-  private readonly imports = new Map<string, PendingImport>()
-  private readonly formState = new Map<string, { hasLoginForm: boolean; title: string }>()
+  private readonly migratingVaults = new Set<string>()
+  private readonly backfillingSecrets = new Set<string>()
+  private readonly syncEngine: PasswordSync
+  private readonly transfer: PasswordTransfer
+  private readonly fillController: PasswordFill
+  private readonly webauthnContext: WebauthnContext
 
   constructor(private readonly deps: PasswordServiceDeps) {
     this.now = deps.now ?? (() => Date.now())
+    this.syncEngine = new PasswordSync({
+      isUnlocked: () => this.unlocked,
+      vault: () => this.vault,
+      setVault: (vault) => {
+        this.vault = vault
+      },
+      pubkey: () => this.pubkey,
+      setError: (error) => {
+        this.error = error
+      },
+      now: () => this.now(),
+      config: deps.config,
+      relays: deps.relays,
+      cache: deps.cache,
+      status: () => this.status(),
+      sendStatus: () => this.sendStatus(),
+      sendContext: () => this.sendContext()
+    })
+    this.fillController = new PasswordFill({
+      unlocked: () => this.unlocked,
+      vault: () => this.vault,
+      host: deps.host,
+      touch: () => this.touch(),
+      sendContext: () => this.sendContext()
+    })
+    this.transfer = new PasswordTransfer({
+      unlocked: () => this.unlocked,
+      vault: () => this.vault,
+      pubkey: () => this.pubkey,
+      now: () => this.now(),
+      dialogs: deps.dialogs,
+      cache: deps.cache,
+      requireProvider: () => this.requireProvider(),
+      decryptEvent: (provider, event) => this.syncEngine.decryptEvent(provider, event),
+      ensureLatest: (provider, pubkey) => this.syncEngine.ensureLatest(provider, pubkey),
+      commit: (provider, pubkey, next) => this.syncEngine.commit(provider, pubkey, next),
+      status: () => this.status(),
+      sendToast: (toast) => this.sendToast(toast)
+    })
+    this.webauthnContext = {
+      unlocked: () => this.unlocked,
+      vault: () => this.vault,
+      pubkey: () => this.pubkey,
+      now: () => this.now(),
+      touch: () => this.touch(),
+      requireProvider: () => this.requireProvider(),
+      ensureLatest: (provider, pubkey) => this.syncEngine.ensureLatest(provider, pubkey),
+      commit: (provider, pubkey, next) => this.syncEngine.commit(provider, pubkey, next)
+    }
   }
 
   status(): PasswordVaultStatus {
     const identity = this.deps.identity.status()
     const provider = this.deps.identity.provider()
     const config = this.deps.config.get().passwords
-    const fallback = this.defaultRelays(config)
+    const relays = this.syncEngine.relayInfo(config)
+    const sync = this.syncEngine.state()
     return {
       configured: identity.configured && provider != null,
       available: provider != null,
       unlocked: this.unlocked,
       entryCount: this.vault ? activeEntries(this.vault).length : 0,
-      pending: this.pending,
-      syncing: this.syncing,
-      lastSyncedAt: this.lastSyncedAt,
-      relays: this.resolvedRelays ?? fallback.urls,
-      relaySource: this.resolvedRelays ? this.relaySource : fallback.source,
+      pending: sync.pending,
+      syncing: sync.syncing,
+      lastSyncedAt: sync.lastSyncedAt,
+      relays: relays.urls,
+      relaySource: relays.source,
       mode: identity.mode,
       error: this.error,
       autoLockMinutes: config.autoLockMinutes,
@@ -215,6 +241,23 @@ export class PasswordService {
     return scanVaultHealth(this.vault, this.now(), rotationDays)
   }
 
+  async setFavorite(id: string, favorite: boolean): Promise<PasswordSaveResult> {
+    if (!this.unlocked || !this.vault || !this.pubkey) return { ok: false, error: LOCKED }
+    try {
+      const provider = this.requireProvider()
+      await this.syncEngine.ensureLatest(provider, this.pubkey)
+      const current = this.vault ?? emptyVault()
+      const entry = findEntry(current, id)
+      if (!entry || entry.deleted) return { ok: false, error: 'That login no longer exists' }
+      const next = applyEntry(current, { ...entry, favorite, favoriteUpdatedAt: Math.max(this.now(), (entry.favoriteUpdatedAt ?? 0) + 1) })
+      return await this.syncEngine.commit(provider, this.pubkey, next)
+    } catch (error) {
+      this.error = messageOf(error)
+      this.sendStatus()
+      return { ok: false, error: this.error, status: this.status() }
+    }
+  }
+
   context(): PasswordContext {
     const page = this.deps.host.activePage()
     const usable = page != null && page.mode !== 'blank' && page.mode !== 'error'
@@ -225,7 +268,7 @@ export class PasswordService {
       : []
     const matches = originEntries.filter((entry) => !entry.passkey).map(summary)
     const passkeys = originEntries.filter((entry) => entry.passkey).map(summary)
-    const form = page ? this.formState.get(page.tabId) : undefined
+    const form = page ? this.fillController.formFor(page.tabId) : undefined
     const locked = !this.unlocked
     const plaintext = isPlaintextNcc(page)
 
@@ -297,15 +340,13 @@ export class PasswordService {
 
     this.lockInternal(false)
     this.pubkey = pubkey
-    this.cached = this.deps.cache.get(pubkey)
-    this.lastCreatedAt = this.cached?.event.created_at ?? 0
-    this.lastSyncedAt = this.cached?.syncedAt ?? null
-    this.pending = this.cached?.pending ?? false
+    this.syncEngine.load(pubkey)
     this.error = null
 
-    if (this.cached) {
+    const cached = this.syncEngine.cachedVault()
+    if (cached) {
       try {
-        this.vault = await this.decryptEvent(provider, this.cached.event)
+        this.vault = await this.syncEngine.decryptEvent(provider, cached.event)
       } catch {
         this.vault = emptyVault()
         this.error = 'The local vault could not be decrypted. Fetching the relay copy.'
@@ -319,7 +360,7 @@ export class PasswordService {
     this.sendStatus()
 
     try {
-      await this.sync(provider, true)
+      await this.syncEngine.sync(provider, true)
       this.error = null
     } catch (error) {
       this.error = messageOf(error)
@@ -327,6 +368,12 @@ export class PasswordService {
     this.touch()
     this.sendStatus()
     this.sendContext()
+    void this.migrateLegacyVaults(provider, pubkey).catch((error) => {
+      console.warn('[passwords] legacy vault migration failed:', messageOf(error))
+    })
+    void this.backfillIdentitySecrets().catch((error) => {
+      console.warn('[passwords] identity secret backfill failed:', messageOf(error))
+    })
     return this.status()
   }
 
@@ -338,7 +385,7 @@ export class PasswordService {
   onIdentityChanged(): void {
     this.lockInternal(true)
     this.error = null
-    this.resolvedRelays = null
+    this.syncEngine.resetRelays()
     this.sendStatus()
     this.sendContext()
   }
@@ -347,8 +394,7 @@ export class PasswordService {
     this.lockInternal(false)
     for (const timer of this.saveTimers.values()) clearTimeout(timer)
     this.saveTimers.clear()
-    for (const waiter of this.fillWaiters.values()) clearTimeout(waiter.timer)
-    this.fillWaiters.clear()
+    this.fillController.dispose()
   }
 
   list(): PasswordSummary[] {
@@ -358,35 +404,23 @@ export class PasswordService {
   }
 
   hasWebauthnCredentials(): boolean {
-    return !!this.unlocked && !!this.vault?.entries.some((entry) => entry.deleted !== true && !!entry.passkey)
+    return hasWebauthnCredentials(this.webauthnContext)
   }
 
   hasWebauthnCredentialsForPage(page: PasswordPage | null, origin: string): boolean {
-    if (!this.unlocked || !this.vault || !page || page.kind === 'private' || page.mode === 'blank' || page.mode === 'error') return false
-    try {
-      const parsed = pageOriginFromUrl(page.url)
-      if (!parsed || parsed.scheme !== 'https' || parsed.origin !== new URL(origin).origin) return false
-      const rpId = validateRpId(origin)
-      return this.vault.entries.some((entry) => entry.deleted !== true && entry.passkey?.rpId === rpId && entry.passkey.discoverable)
-    } catch { return false }
+    return hasWebauthnCredentialsForPage(this.webauthnContext, page, origin)
   }
 
   isWebauthnAuthenticatorAvailable(): boolean {
-    return !!this.unlocked && !!this.vault && !!this.pubkey
+    return isWebauthnAuthenticatorAvailable(this.webauthnContext)
   }
 
-  hasWebauthnCandidates(page: PasswordPage | null, origin: string, options: PasskeyRequestOptions): boolean {
-    if (!this.unlocked || !this.vault || !page || page.kind === 'private' || page.mode === 'blank' || page.mode === 'error') return false
-    try {
-      const parsed = pageOriginFromUrl(page.url)
-      if (!parsed || parsed.scheme !== 'https' || parsed.origin !== new URL(origin).origin) return false
-      const rpId = validateRpId(origin, options.rpId)
-      const allowed = new Set((options.allowCredentials ?? []).map((item) => item.id).filter((id): id is string => typeof id === 'string'))
-      return this.vault.entries.some((entry) => {
-        const credential = entry.deleted !== true ? entry.passkey : undefined
-        return !!credential && credential.rpId === rpId && !(allowed.size && !allowed.has(credential.credentialId)) && (allowed.size > 0 || credential.discoverable)
-      })
-    } catch { return false }
+  hasWebauthnCandidates(
+    page: PasswordPage | null,
+    origin: string,
+    options: PasskeyRequestOptions
+  ): boolean {
+    return hasWebauthnCandidates(this.webauthnContext, page, origin, options)
   }
 
   entry(id: string): PasswordEntry | null {
@@ -395,75 +429,39 @@ export class PasswordService {
     return findEntry(this.vault, id)
   }
 
-  canHandleWebauthn(page: PasswordPage | null, origin: string, operation: 'create' | 'get', input: PasskeyCreationOptions | PasskeyRequestOptions): boolean {
-    if (!this.unlocked || !this.vault) return false
-    if (!page || page.kind === 'private' || page.mode === 'blank' || page.mode === 'error') return false
-    try {
-      const parsed = pageOriginFromUrl(page.url)
-      if (!parsed || parsed.scheme !== 'https' || parsed.origin !== new URL(origin).origin) return false
-      const rpId = validateRpId(origin, operation === 'create' ? (input as PasskeyCreationOptions).rp?.id : (input as PasskeyRequestOptions).rpId)
-      if (operation === 'create') {
-        const options = input as PasskeyCreationOptions
-        return !options.pubKeyCredParams || options.pubKeyCredParams.some((param) => param.type === 'public-key' && param.alg === -7)
-      }
-      const options = input as PasskeyRequestOptions
-      const allowed = new Set((options.allowCredentials ?? []).map((item) => item.id).filter((id): id is string => typeof id === 'string'))
-      return this.vault.entries.some((entry) => entry.deleted !== true && entry.passkey?.rpId === rpId && (allowed.size ? allowed.has(entry.passkey.credentialId) : entry.passkey.discoverable))
-    } catch { return false }
+  canHandleWebauthn(
+    page: PasswordPage | null,
+    origin: string,
+    operation: 'create' | 'get',
+    input: PasskeyCreationOptions | PasskeyRequestOptions
+  ): boolean {
+    return canHandleWebauthn(this.webauthnContext, page, origin, operation, input)
   }
 
-  async webauthnCreate(page: PasswordPage | null, origin: string, options: PasskeyCreationOptions, approve: (site: string, accounts: string[], action: string) => Promise<number | null>): Promise<{ handled: boolean; response?: Record<string, string>; error?: string }> {
-    if (!this.unlocked || !this.vault || !this.pubkey) return { handled: false }
-    if (!page || page.kind === 'private' || page.mode === 'blank' || page.mode === 'error') return { handled: false }
-    const parsed = pageOriginFromUrl(page.url)
-    if (!parsed || parsed.scheme !== 'https' || parsed.origin !== new URL(origin).origin) return { handled: false }
-    let rpId: string
-    try { rpId = validateRpId(origin, options.rp?.id) } catch { return { handled: false } }
-    if (options.pubKeyCredParams && !options.pubKeyCredParams.some((param) => param.type === 'public-key' && param.alg === -7)) return { handled: false }
-    const excluded = new Set((options.excludeCredentials ?? []).map((item) => item.id).filter((id): id is string => typeof id === 'string'))
-    if (this.vault.entries.some((entry) => entry.passkey?.rpId === rpId && excluded.has(entry.passkey.credentialId))) return { handled: true, error: 'InvalidStateError' }
-    const account = options.user?.name?.slice(0, 320) || 'Passkey'
-    if ((await approve(new URL(origin).host, [account], 'Create passkey')) !== 0) return { handled: true, error: 'NotAllowedError' }
-    try {
-      const provider = this.requireProvider()
-      const pubkey = this.pubkey
-      await this.ensureLatest(provider, pubkey)
-      const current = this.vault ?? emptyVault()
-      if (current.entries.some((entry) => entry.deleted !== true && entry.passkey?.rpId === rpId && excluded.has(entry.passkey.credentialId))) {
-        return { handled: true, error: 'InvalidStateError' }
-      }
-      const made = makeCredential(options, new URL(origin).origin, rpId)
-      const now = this.now()
-      const entry: PasswordEntry = { id: randomBytes(16).toString('hex'), origin: new URL(origin).origin, title: `${new URL(origin).host} passkey`, username: made.credential.userName, password: '', notes: '', totp: '', createdAt: now, updatedAt: now, passkey: made.credential }
-      await this.commit(provider, pubkey, { ...current, updatedAt: now, entries: [...current.entries, entry] })
-      this.touch()
-      return { handled: true, response: made.response }
-    } catch (error) { return { handled: true, error: error instanceof Error ? error.message : 'NotAllowedError' } }
+  webauthnCreate(
+    page: PasswordPage | null,
+    origin: string,
+    options: PasskeyCreationOptions,
+    approve: (site: string, accounts: string[], action: string) => Promise<number | null>
+  ): Promise<{ handled: boolean; response?: Record<string, string>; error?: string }> {
+    return webauthnCreate(this.webauthnContext, page, origin, options, approve)
   }
 
-  async webauthnGet(page: PasswordPage | null, origin: string, options: PasskeyRequestOptions, approve: (site: string, accounts: string[], action: string) => Promise<number | null>, selectedCredentialId?: string): Promise<{ handled: boolean; response?: Record<string, string>; error?: string }> {
-    if (!this.unlocked || !this.vault || !this.pubkey) return { handled: false }
-    if (!page || page.kind === 'private' || page.mode === 'blank' || page.mode === 'error') return { handled: false }
-    const parsed = pageOriginFromUrl(page.url)
-    if (!parsed || parsed.scheme !== 'https' || parsed.origin !== new URL(origin).origin) return { handled: false }
-    let rpId: string
-    try { rpId = validateRpId(origin, options.rpId) } catch { return { handled: false } }
-    const allowed = new Set((options.allowCredentials ?? []).map((item) => item.id).filter((id): id is string => typeof id === 'string'))
-    const candidates = this.vault.entries.filter((entry) => entry.deleted !== true && entry.passkey?.rpId === rpId && (allowed.size ? allowed.has(entry.passkey.credentialId) : entry.passkey.discoverable) && (!selectedCredentialId || entry.passkey.credentialId === selectedCredentialId))
-    if (!candidates.length) return { handled: false }
-    try {
-      // The unlocked vault is already the local authenticator's credential store.
-      // Do not put a relay round-trip in the WebAuthn response path: a relying
-      // party is waiting on this promise and synced credentials remain usable offline.
-      const available = candidates
-      if (!available.length) return { handled: false }
-      const selected = await approve(new URL(origin).host, available.map((entry) => entry.passkey!.userName || entry.passkey!.userDisplayName || 'Passkey'), 'Use passkey')
-      const chosen = selected == null ? undefined : available[selected]
-      if (!chosen) return { handled: true, error: 'NotAllowedError' }
-      const made = makeAssertion(chosen.passkey!, options.challenge, new URL(origin).origin, options.userVerification)
-      this.touch()
-      return { handled: true, response: made.response }
-    } catch (error) { return { handled: true, error: error instanceof Error ? error.message : 'NotAllowedError' } }
+  webauthnGet(
+    page: PasswordPage | null,
+    origin: string,
+    options: PasskeyRequestOptions,
+    approve: (site: string, accounts: string[], action: string) => Promise<number | null>,
+    selectedCredentialId?: string
+  ): Promise<{ handled: boolean; response?: Record<string, string>; error?: string }> {
+    return webauthnGet(
+      this.webauthnContext,
+      page,
+      origin,
+      options,
+      approve,
+      selectedCredentialId
+    )
   }
 
   reveal(id: string): string {
@@ -523,10 +521,10 @@ export class PasswordService {
     try {
       const provider = this.requireProvider()
       const entry = this.normalizeDraft(input)
-      await this.ensureLatest(provider, this.pubkey)
+      await this.syncEngine.ensureLatest(provider, this.pubkey)
       const current = this.vault ?? emptyVault()
       const next = applyEntry(current, entry)
-      const result = await this.commit(provider, this.pubkey, next)
+      const result = await this.syncEngine.commit(provider, this.pubkey, next)
       this.touch()
       return result
     } catch (error) {
@@ -536,16 +534,100 @@ export class PasswordService {
     }
   }
 
+  /**
+   * Stores an agent's Nostr identity in the vault, under a synthetic `agent:` origin that
+   * never matches a real page (so it is invisible to autofill/form-save). Used by Agent
+   * control to give the user one durable, revealable copy of each agent's nsec. The vault
+   * entry's id is the agent's own id, so calling this again for the same agent (after
+   * regenerating its identity) replaces the entry in place.
+   */
+  async saveAgentSecret(id: string, name: string, identityKey: string, credential: string): Promise<PasswordSaveResult> {
+    if (!this.unlocked || !this.vault || !this.pubkey) return { ok: false, error: LOCKED }
+    try {
+      const provider = this.requireProvider()
+      const now = this.now()
+      const entry: PasswordEntry = {
+        id,
+        origin: `agent:${id}`,
+        title: `Agent: ${name}`,
+        notes: 'Nostr Navigator agent credential',
+        totp: '',
+        createdAt: findEntry(this.vault, id)?.createdAt ?? now,
+        updatedAt: now,
+        username: identityKey,
+        password: credential
+      }
+      await this.syncEngine.ensureLatest(provider, this.pubkey)
+      const current = this.vault ?? emptyVault()
+      const next = applyEntry(current, entry)
+      return await this.syncEngine.commit(provider, this.pubkey, next)
+    } catch (error) {
+      this.error = messageOf(error)
+      this.sendStatus()
+      return { ok: false, error: this.error, status: this.status() }
+    }
+  }
+
+  /** Save a newly generated local Nostr key as a vault item. */
+  async saveIdentitySecret(nsec: string, npub: string): Promise<PasswordSaveResult> {
+    if (!this.unlocked) {
+      const status = await this.unlock()
+      if (!status.unlocked) return { ok: false, error: status.error ?? LOCKED, status }
+    }
+    return this.saveEntry({
+      origin: `ncc://${npub}/identity`,
+      title: 'Nostr identity',
+      username: npub,
+      password: nsec,
+      notes: 'Generated in Nostr Navigator. Keep this secret private.',
+      totp: ''
+    })
+  }
+
+  /**
+   * Give every locally-held identity a "Nostr identity" vault entry, even one whose
+   * nsec was never saved this way: saveIdentitySecret only ever runs once, right when
+   * a key is generated or imported (see ipc-chrome.ts), so an identity that predates
+   * that code — or was imported before import also started calling it — otherwise has
+   * no recovery copy at all.
+   */
+  private async backfillIdentitySecrets(): Promise<void> {
+    const pubkey = this.pubkey
+    if (!pubkey || !this.unlocked || !this.vault || this.backfillingSecrets.has(pubkey)) return
+    const secrets = this.deps.localIdentitySecrets?.() ?? []
+    if (!secrets.length) return
+
+    this.backfillingSecrets.add(pubkey)
+    try {
+      // Includes tombstoned entries deliberately: a "Nostr identity" entry the person
+      // chose to delete should not keep reappearing on every unlock.
+      const existing = new Set(
+        this.vault.entries
+          .filter((entry) => entry.origin.startsWith('ncc://') && entry.origin.endsWith('/identity'))
+          .map((entry) => entry.username)
+      )
+      for (const { npub, nsec } of secrets) {
+        if (!this.unlocked || this.pubkey !== pubkey) return
+        if (existing.has(npub)) continue
+        const saved = await this.saveIdentitySecret(nsec, npub)
+        if (saved.ok) existing.add(npub)
+        else console.warn(`[passwords] could not backfill identity entry for ${npub}:`, saved.error)
+      }
+    } finally {
+      this.backfillingSecrets.delete(pubkey)
+    }
+  }
+
   async removeEntry(id: string): Promise<PasswordSaveResult> {
     if (!this.unlocked || !this.vault || !this.pubkey) return { ok: false, error: LOCKED }
     try {
       const entry = findEntry(this.vault, id)
       if (!entry || entry.deleted) return { ok: false, error: 'That login no longer exists' }
       const provider = this.requireProvider()
-      await this.ensureLatest(provider, this.pubkey)
+      await this.syncEngine.ensureLatest(provider, this.pubkey)
       const current = this.vault ?? emptyVault()
       const next = applyEntry(current, { ...entry, deleted: true, updatedAt: this.now() })
-      return await this.commit(provider, this.pubkey, next)
+      return await this.syncEngine.commit(provider, this.pubkey, next)
     } catch (error) {
       this.error = messageOf(error)
       this.sendStatus()
@@ -555,15 +637,16 @@ export class PasswordService {
 
   /** Background sync when the window regains focus, throttled to once per 30s. */
   async onWindowFocus(): Promise<void> {
-    if (!this.unlocked || this.syncing) return
-    if (this.lastSyncedAt && this.now() - this.lastSyncedAt < 30_000) return
+    const sync = this.syncEngine.state()
+    if (!this.unlocked || sync.syncing) return
+    if (sync.lastSyncedAt && this.now() - sync.lastSyncedAt < 30_000) return
     await this.syncNow()
   }
 
   async syncNow(): Promise<PasswordVaultStatus> {
     if (!this.unlocked) return this.status()
     try {
-      await this.sync(this.requireProvider(), true)
+      await this.syncEngine.sync(this.requireProvider(), true)
       this.error = null
       this.touch()
     } catch (error) {
@@ -575,72 +658,15 @@ export class PasswordService {
   }
 
   async fill(id: string): Promise<PasswordFillResult> {
-    if (!this.unlocked || !this.vault) return { ok: false, error: LOCKED }
-    const page = this.deps.host.activePage()
-    if (!page) return { ok: false, error: 'There is no active page' }
-    if (page.kind === 'private') return { ok: false, error: 'Passwords are unavailable in private tabs' }
-    const info = pageOriginFromUrl(page.url)
-    if (!info || !canUsePasswordOrigin(info)) {
-      return { ok: false, error: 'Passwords are disabled on this page' }
-    }
-    const entry = findEntry(this.vault, id)
-    if (!entry || entry.deleted) return { ok: false, error: 'That login no longer exists' }
-    if (entry.origin !== info.origin) {
-      return { ok: false, error: 'That login belongs to a different site' }
-    }
-
-    const requestId = randomUUID()
-    const result = new Promise<PasswordFillResult>((resolve) => {
-      const timer = setTimeout(() => {
-        this.fillWaiters.delete(requestId)
-        resolve({ ok: false, error: 'The page did not accept the login' })
-      }, 5_000)
-      timer.unref?.()
-      this.fillWaiters.set(requestId, { resolve, timer })
-    })
-
-    const sent = this.deps.host.sendToContent(page.tabId, 'passwords:fill', {
-      requestId,
-      username: entry.username,
-      password: entry.password
-    })
-    if (!sent) {
-      const waiter = this.fillWaiters.get(requestId)
-      if (waiter) {
-        clearTimeout(waiter.timer)
-        waiter.resolve({ ok: false, error: 'The page is no longer available' })
-        this.fillWaiters.delete(requestId)
-      }
-    }
-    this.touch()
-    return result
+    return this.fillController.fill(id)
   }
 
   handleFillResult(payload: unknown): void {
-    if (!payload || typeof payload !== 'object') return
-    const value = payload as { requestId?: unknown; ok?: unknown; error?: unknown }
-    if (typeof value.requestId !== 'string') return
-    const waiter = this.fillWaiters.get(value.requestId)
-    if (!waiter) return
-    this.fillWaiters.delete(value.requestId)
-    clearTimeout(waiter.timer)
-    waiter.resolve({
-      ok: value.ok === true,
-      ...(typeof value.error === 'string' ? { error: value.error } : {})
-    })
+    this.fillController.handleResult(payload)
   }
 
   handleFormState(webContentsId: number, payload: unknown): void {
-    const tabId = this.deps.host.tabIdForContents(webContentsId)
-    if (!tabId) return
-    const page = this.deps.host.pageForTab(tabId)
-    if (!page || page.kind === 'private') return
-    const value = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {}
-    this.formState.set(tabId, {
-      hasLoginForm: value.hasLoginForm === true,
-      title: typeof value.title === 'string' ? value.title.slice(0, 200) : ''
-    })
-    if (this.deps.host.activePage()?.tabId === tabId) this.sendContext()
+    this.fillController.handleFormState(webContentsId, payload)
   }
 
   handleCapture(webContentsId: number, payload: unknown): void {
@@ -762,7 +788,7 @@ export class PasswordService {
     this.error = null
     if (this.unlocked) this.scheduleLock()
     if (input.vaultRelay !== undefined || input.useNip65 !== undefined) {
-      this.resolvedRelays = null
+      this.syncEngine.resetRelays()
     }
     this.sendStatus()
     this.sendContext()
@@ -776,132 +802,16 @@ export class PasswordService {
     this.sendContext()
   }
 
-  async importOpen(): Promise<PasswordImportPreview> {
-    if (!this.unlocked || !this.vault) {
-      return {
-        id: '',
-        format: 'chrome',
-        count: 0,
-        duplicates: 0,
-        projectedBytes: 0,
-        entries: [],
-        error: LOCKED
-      }
-    }
-    const file = await this.deps.dialogs.open()
-    if (!file) {
-      return {
-        id: '',
-        cancelled: true,
-        format: 'chrome',
-        count: 0,
-        duplicates: 0,
-        projectedBytes: 0,
-        entries: []
-      }
-    }
-    try {
-      const format = file.path.toLowerCase().endsWith('.json') ? 'encrypted' : 'csv'
-      if (format === 'encrypted') {
-        const event = parseEvent(file.text)
-        if (event.pubkey !== this.pubkey) throw new Error('That vault belongs to a different identity')
-        const imported = await this.decryptEvent(this.requireProvider(), event)
-        const rows = activeEntries(imported).map(toRow)
-        const next = applyRows(this.vault, rows, this.now(), 'merge')
-        const preview = previewRows(
-          randomUUID(),
-          'encrypted',
-          rows,
-          activeEntries(this.vault),
-          vaultByteLength(next)
-        )
-        this.imports.set(preview.id, { kind: 'vault', vault: imported, createdAt: this.now() })
-        return preview
-      }
-      const parsed = parsePasswordCsv(file.text)
-      const next = applyRows(this.vault, parsed.rows, this.now(), 'merge')
-      const preview = previewRows(
-        randomUUID(),
-        parsed.format,
-        parsed.rows,
-        activeEntries(this.vault),
-        vaultByteLength(next),
-        parsed.skipped
-      )
-      this.imports.set(preview.id, { kind: 'rows', rows: parsed.rows, createdAt: this.now() })
-      return preview
-    } catch (error) {
-      return {
-        id: '',
-        format: 'chrome',
-        count: 0,
-        duplicates: 0,
-        projectedBytes: 0,
-        entries: [],
-        error: messageOf(error)
-      }
-    }
+  importOpen(): Promise<PasswordImportPreview> {
+    return this.transfer.importOpen()
   }
 
-  async importCommit(
-    id: string,
-    mode: 'merge' | 'skip' | 'add'
-  ): Promise<PasswordSaveResult> {
-    if (!this.unlocked || !this.vault || !this.pubkey) return { ok: false, error: LOCKED }
-    const pending = this.imports.get(id)
-    if (!pending) return { ok: false, error: 'That import expired' }
-    this.imports.delete(id)
-    try {
-      const provider = this.requireProvider()
-      await this.ensureLatest(provider, this.pubkey)
-      const current = this.vault ?? emptyVault()
-      let next: PasswordVault
-      if (pending.kind === 'vault' && pending.vault) {
-        next = applyVaultImport(current, pending.vault, this.now(), mode)
-      } else {
-        next = applyRows(current, pending.rows ?? [], this.now(), mode)
-      }
-      if (!isVaultWithinLimit(next)) {
-        return {
-          ok: false,
-          error: `The imported vault would exceed ${Math.round(vaultByteLength(next) / 1024)} KB; remove entries or import in smaller batches.`,
-          status: this.status()
-        }
-      }
-      const result = await this.commit(provider, this.pubkey, next)
-      if (result.ok) this.sendToast({ tone: 'ok', message: 'Password vault imported.' })
-      return result
-    } catch (error) {
-      return { ok: false, error: messageOf(error), status: this.status() }
-    }
+  importCommit(id: string, mode: 'merge' | 'skip' | 'add'): Promise<PasswordSaveResult> {
+    return this.transfer.importCommit(id, mode)
   }
 
-  async export(format: 'encrypted' | 'csv'): Promise<PasswordExportResult> {
-    if (!this.unlocked || !this.vault || !this.pubkey) return { ok: false, error: LOCKED }
-    const stamp = new Date(this.now()).toISOString().slice(0, 10)
-    try {
-      if (format === 'csv') {
-        const data = exportPasswordCsv(activeEntries(this.vault))
-        const path = await this.deps.dialogs.save(`ncc-passwords-${stamp}.csv`, data)
-        return path ? { ok: true, path } : { ok: false, error: 'Export cancelled' }
-      }
-      const provider = this.requireProvider()
-      const cached = this.deps.cache.get(this.pubkey)
-      let event = cached?.event
-      if (!event) {
-        const result = await this.commit(provider, this.pubkey, this.vault)
-        if (!result.ok) return { ok: false, error: result.error }
-        event = this.deps.cache.get(this.pubkey)?.event
-      }
-      if (!event) return { ok: false, error: 'The vault has not been published yet' }
-      const path = await this.deps.dialogs.save(
-        `ncc-passwords-${stamp}.json`,
-        `${JSON.stringify(event, null, 2)}\n`
-      )
-      return path ? { ok: true, path } : { ok: false, error: 'Export cancelled' }
-    } catch (error) {
-      return { ok: false, error: messageOf(error) }
-    }
+  export(format: 'encrypted' | 'csv'): Promise<PasswordExportResult> {
+    return this.transfer.export(format)
   }
 
   /** Clear any pending chrome save request when the chrome renderer reloads. */
@@ -910,276 +820,70 @@ export class PasswordService {
     this.sendContext()
   }
 
-  private async sync(provider: ProviderLike, refreshRelays: boolean): Promise<void> {
-    if (!this.unlocked || !this.pubkey || !this.vault) throw new Error(LOCKED)
-    const pubkey = this.pubkey
-    this.syncing = true
-    this.sendStatus()
-    try {
-      const relays = await this.resolveRelays(pubkey, refreshRelays)
-      const remote = await this.fetchRemote(provider, pubkey, relays)
-      let next = this.vault
-
-      if (remote) {
-        const cachedId = this.cached?.event.id
-        if (remote.id !== cachedId || this.cached?.pending) {
-          const remoteVault = await this.decryptEvent(provider, remote)
-          const merged = mergeVaults(this.vault, remoteVault)
-          next = merged.vault
-          if (hasLocalChanges(this.vault, remoteVault) || this.cached?.pending) {
-            const published = await this.publish(provider, pubkey, next, relays)
-            this.vault = next
-            this.pending = published.pending
-            this.lastSyncedAt = this.now()
-            this.error = published.pending
-              ? (published.error ?? 'The vault is saved locally but relay sync failed.')
-              : null
-            this.sendStatus()
-            return
-          }
-          this.cached = { event: remote, pending: false, syncedAt: this.now() }
-          this.deps.cache.set(pubkey, this.cached)
-          this.lastCreatedAt = Math.max(this.lastCreatedAt, remote.created_at)
-        }
-        this.vault = next
-        this.lastSyncedAt = this.now()
-        this.pending = false
-        this.error = null
-        this.sendStatus()
-        return
-      }
-
-      if (this.vault.entries.length > 0 || this.cached?.pending) {
-        const published = await this.publish(provider, pubkey, this.vault, relays)
-        this.pending = published.pending
-        this.lastSyncedAt = this.now()
-        this.error = published.pending
-          ? (published.error ?? 'The vault is saved locally but relay sync failed.')
-          : null
-      } else {
-        this.lastSyncedAt = this.now()
-        this.pending = false
-        this.error = null
-      }
-      this.sendStatus()
-    } finally {
-      this.syncing = false
-      this.sendStatus()
-    }
-  }
-
-  private async commit(
-    provider: ProviderLike,
-    pubkey: string,
-    next: PasswordVault
-  ): Promise<PasswordSaveResult> {
-    if (!isVaultWithinLimit(next)) {
-      throw new Error(
-        `The vault would exceed ${Math.round(vaultByteLength(next) / 1024)} KB. Remove entries or shorten notes.`
-      )
-    }
-    const relays = await this.resolveRelays(pubkey, false)
-    const published = await this.publish(provider, pubkey, next, relays)
-    this.vault = next
-    this.pending = published.pending
-    this.lastSyncedAt = this.now()
-    this.error = published.pending ? 'The vault is saved locally but no relay accepted it.' : null
-    this.sendStatus()
-    this.sendContext()
-    return {
-      ok: true,
-      ...(published.pending ? { pending: true } : {}),
-      ...(published.pending ? { error: published.error } : {}),
-      status: this.status()
-    }
-  }
-
-  private async ensureLatest(provider: ProviderLike, pubkey: string): Promise<void> {
-    const relays = await this.resolveRelays(pubkey, false)
-    const remote = await this.fetchRemote(provider, pubkey, relays).catch(() => null)
-    if (!remote) return
-    const cachedId = this.cached?.event.id
-    if (remote.id === cachedId) return
-    if (this.cached && remote.created_at < this.cached.event.created_at) return
-    const local = this.vault ?? emptyVault()
-    const remoteVault = await this.decryptEvent(provider, remote)
-    const merged = mergeVaults(local, remoteVault)
-    this.vault = merged.vault
-    this.lastCreatedAt = Math.max(this.lastCreatedAt, remote.created_at)
-    if (hasLocalChanges(local, remoteVault)) return
-    this.cached = { event: remote, pending: false, syncedAt: this.now() }
-    this.deps.cache.set(pubkey, this.cached)
-  }
-
-  private async publish(
-    provider: ProviderLike,
-    pubkey: string,
-    vault: PasswordVault,
-    relays: string[]
-  ): Promise<{ pending: boolean; error?: string; event: Event }> {
-    if (relays.length === 0) throw new Error('No vault relay is configured')
-    if (!isVaultWithinLimit(vault)) {
-      throw new Error(
-        `The vault would exceed ${Math.round(vaultByteLength(vault) / 1024)} KB. Remove entries or shorten notes.`
-      )
-    }
-    const plaintext = JSON.stringify(vault)
-    const content = await provider.nip44Encrypt(pubkey, plaintext)
-    const created_at = Math.max(Math.floor(this.now() / 1000), this.lastCreatedAt + 1)
-    const event = await provider.signEvent({
-      kind: PASSWORD_VAULT_KIND,
-      created_at,
-      tags: [
-        ['d', PASSWORD_VAULT_D],
-        ['t', PASSWORD_VAULT_TAG],
-        ['client', PASSWORD_VAULT_CLIENT]
-      ],
-      content
-    })
-    if (!verifyEvent(event)) throw new Error('The signer returned an invalid vault event')
-    const onauth = (template: EventTemplate): Promise<Event> => this.signAuth(provider, template)
-    const results = await Promise.allSettled(
-      relays.map((url) => this.deps.relays.publishWithAuth(url, event, onauth))
-    )
-    const accepted = results.filter((result) => result.status === 'fulfilled').length
-    const pending = accepted < relays.length
-    this.lastCreatedAt = event.created_at
-    this.cached = {
-      event,
-      pending,
-      syncedAt: this.now()
-    }
-    this.deps.cache.set(pubkey, this.cached)
-    this.pending = pending
-    return {
-      pending,
-      event,
-      ...(pending
-        ? {
-            error:
-              accepted === 0
-                ? `No relay accepted the vault (${relays.length} tried)`
-                : `${relays.length - accepted} of ${relays.length} relays did not accept the vault`
-          }
-        : {})
-    }
-  }
-
-  /**
-   * New vault events replace the previous addressable event, but relays that were
-   * offline during a save keep the old copy; the next sync republishes the merged
-   * vault once those relays are reachable.
-   */
-  private async fetchRemote(
-    provider: ProviderLike,
-    pubkey: string,
-    relays: string[]
-  ): Promise<Event | null> {
-    if (relays.length === 0) return null
-    const onauth = (template: EventTemplate): Promise<Event> => this.signAuth(provider, template)
-    let events: Event[]
-    if (this.deps.relays.queryAuthReport) {
-      const report = await this.deps.relays.queryAuthReport(
-        relays,
-        passwordVaultFilter(pubkey),
-        onauth
-      )
-      // Nothing answered: say so, rather than treating it as a relay with no vault.
-      if (report.answered === 0 && report.events.length === 0) {
-        throw new Error(`No relay answered (${relays.length} tried)`)
-      }
-      events = report.events
-    } else {
-      events = await this.deps.relays.queryAuth(relays, passwordVaultFilter(pubkey), onauth)
-    }
-    const valid = events
-      .filter(
-        (event) =>
-          event.kind === PASSWORD_VAULT_KIND &&
-          event.pubkey === pubkey &&
-          event.content.length <= MAX_EVENT_CONTENT &&
-          event.tags.some((tag) => tag[0] === 'd' && tag[1] === PASSWORD_VAULT_D) &&
-          verifyEvent(event)
-      )
-      .sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id))
-    return valid[0] ?? null
-  }
-
-  private async decryptEvent(provider: ProviderLike, event: Event): Promise<PasswordVault> {
-    if (!this.pubkey) throw new Error(VAULT_ERROR)
-    const plaintext = await provider.nip44Decrypt(this.pubkey, event.content)
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(plaintext)
-    } catch {
-      throw new Error('The decrypted vault is not valid JSON')
-    }
-    const version =
-      parsed && typeof parsed === 'object' ? (parsed as { v?: unknown }).v : undefined
-    if (version !== PASSWORD_VAULT_VERSION) {
-      throw new Error('This vault was created by a newer version of Nostr Navigator')
-    }
-    return normalizeVault(parsed)
-  }
-
-  private signAuth(provider: ProviderLike, template: EventTemplate): Promise<Event> {
-    if (template.kind !== 22242) {
-      return Promise.reject(new Error('Unexpected AUTH event kind'))
-    }
-    return this.signAndVerify(provider, template)
-  }
-
-  private async signAndVerify(provider: ProviderLike, template: EventTemplate): Promise<Event> {
-    const event = await provider.signEvent(template)
-    if (!verifyEvent(event)) throw new Error('The signer returned an invalid AUTH event')
-    return event
-  }
-
   private requireProvider(): ProviderLike {
     const provider = this.deps.identity.provider()
     if (!provider) throw new Error('Set up a Nostr identity to use the password manager.')
     return provider
   }
 
-  /** The relays sync uses: the same set the vault does, so one setting covers both. */
-  relaysFor(pubkey: string): Promise<string[]> {
-    return this.resolveRelays(pubkey, false)
-  }
+  private async migrateLegacyVaults(provider: ProviderLike, defaultPubkey: string): Promise<void> {
+    const sources = this.deps.migrationSources?.() ?? []
+    if (!sources.length || !this.unlocked || !this.vault || this.migratingVaults.has(defaultPubkey)) return
 
-  private async resolveRelays(pubkey: string, force: boolean): Promise<string[]> {
-    if (this.resolvedRelays && !force) return this.resolvedRelays
-    const config = this.deps.config.get().passwords
-    if (config.vaultRelay) {
-      this.resolvedRelays = [trimRelay(config.vaultRelay)]
-      this.relaySource = 'dedicated'
-      return this.resolvedRelays
-    }
-    const configured = this.deps.config.getRelays()
-    if (!config.useNip65) {
-      this.resolvedRelays = configured
-      this.relaySource = 'browser'
-      return configured
-    }
-    let write: string[] = []
+    this.migratingVaults.add(defaultPubkey)
     try {
-      write = await discoverWriteRelays(this.deps.relays.query, pubkey, configured)
-    } catch {
-      write = []
+      const migrated = new Set(this.deps.cache.migratedSources(defaultPubkey))
+      let incomplete = false
+      for (const source of sources) {
+        if (source.pubkey === defaultPubkey || migrated.has(source.pubkey)) continue
+        const reader = new PasswordSync({
+          isUnlocked: () => true,
+          vault: () => null,
+          setVault: () => undefined,
+          pubkey: () => source.pubkey,
+          setError: () => undefined,
+          now: () => this.now(),
+          config: this.deps.config,
+          relays: this.deps.relays,
+          cache: this.deps.cache,
+          status: () => this.status(),
+          sendStatus: () => undefined,
+          sendContext: () => undefined
+        })
+
+        try {
+          const result = await reader.readVault(source.provider, source.pubkey)
+          if (!this.unlocked || this.pubkey !== defaultPubkey) return
+          if (result.vault?.entries.length) {
+            const merged = mergeVaults(this.vault, result.vault)
+            if (merged.changed) {
+              const committed = await this.syncEngine.commit(provider, defaultPubkey, merged.vault)
+              if (!committed.ok) throw new Error(committed.error ?? 'Could not save the migrated vault')
+            }
+          }
+          if (result.complete) {
+            this.deps.cache.markSourceMigrated(defaultPubkey, source.pubkey)
+            migrated.add(source.pubkey)
+          } else {
+            incomplete = true
+          }
+        } catch (error) {
+          incomplete = true
+          console.warn(`[passwords] legacy vault migration deferred for ${source.pubkey}:`, messageOf(error))
+        }
+      }
+
+      if (incomplete && this.unlocked && this.pubkey === defaultPubkey) {
+        this.error = 'Some older identity vaults could not be checked yet. They will be retried on a later unlock.'
+        this.sendStatus()
+      }
+    } finally {
+      this.migratingVaults.delete(defaultPubkey)
     }
-    const urls = [...new Set([...configured, ...write])].slice(0, 12)
-    this.resolvedRelays = urls
-    this.relaySource = write.length > 0 ? 'browser+nip65' : 'browser'
-    return urls
   }
 
-  private defaultRelays(config: PasswordConfig): {
-    urls: string[]
-    source: PasswordRelaySource
-  } {
-    if (config.vaultRelay) {
-      return { urls: [trimRelay(config.vaultRelay)], source: 'dedicated' }
-    }
-    return { urls: this.deps.config.getRelays(), source: 'browser' }
+  relaysFor(pubkey: string): Promise<string[]> {
+    return this.syncEngine.relaysFor(pubkey)
   }
 
   private normalizeDraft(input: PasswordDraft): PasswordEntry {
@@ -1202,7 +906,9 @@ export class PasswordService {
       notes: (input.notes ?? '').trim().slice(0, 4096),
       totp: normalizeTotpInput(input.totp),
       createdAt: existing?.createdAt ?? now,
-      updatedAt: now
+      updatedAt: now,
+      ...(existing?.favorite ? { favorite: true } : {}),
+      ...(existing?.favoriteUpdatedAt ? { favoriteUpdatedAt: existing.favoriteUpdatedAt } : {})
     }
   }
 
@@ -1227,11 +933,7 @@ export class PasswordService {
     this.pendingSaves.clear()
     for (const timer of this.saveTimers.values()) clearTimeout(timer)
     this.saveTimers.clear()
-    for (const waiter of this.fillWaiters.values()) {
-      clearTimeout(waiter.timer)
-      waiter.resolve({ ok: false, error: 'The password manager locked' })
-    }
-    this.fillWaiters.clear()
+    this.fillController.clear()
     if (this.lockTimer) clearTimeout(this.lockTimer)
     this.lockTimer = null
     this.deps.onLock?.()
@@ -1265,153 +967,4 @@ export class PasswordService {
   private sendToast(toast: PasswordToast): void {
     this.deps.host.sendToChrome('ncc:password-toast', toast)
   }
-}
-
-function emptyVault(): PasswordVault {
-  return { v: PASSWORD_VAULT_VERSION, updatedAt: 0, entries: [] }
-}
-
-/** True when the local copy has an entry the remote lacks or a newer version. */
-function hasLocalChanges(local: PasswordVault, remote: PasswordVault): boolean {
-  for (const entry of local.entries) {
-    const match = remote.entries.find((candidate) => candidate.id === entry.id)
-    if (!match || entry.updatedAt > match.updatedAt) return true
-  }
-  return false
-}
-
-function summary(entry: PasswordEntry) {
-  return {
-    id: entry.id,
-    origin: entry.origin,
-    title: entry.title,
-    username: entry.username,
-    hasTotp: entry.totp.length > 0,
-    ...(entry.passkey ? { isPasskey: true } : {}),
-    createdAt: entry.createdAt,
-    updatedAt: entry.updatedAt
-  }
-}
-
-function applyEntry(vault: PasswordVault, entry: PasswordEntry): PasswordVault {
-  const entries = vault.entries.filter((candidate) => candidate.id !== entry.id)
-  entries.push(entry)
-  return {
-    v: PASSWORD_VAULT_VERSION,
-    updatedAt: Math.max(vault.updatedAt, entry.updatedAt),
-    entries
-  }
-}
-
-function toRow(entry: PasswordEntry): ImportedRow {
-  return {
-    title: entry.title,
-    origin: entry.origin,
-    username: entry.username,
-    password: entry.password,
-    notes: entry.notes,
-    totp: entry.totp
-  }
-}
-
-function applyRows(
-  vault: PasswordVault,
-  rows: ImportedRow[],
-  now: number,
-  mode: 'merge' | 'skip' | 'add'
-): PasswordVault {
-  let next = vault
-  for (const row of rows) {
-    const origin = normalizeImportedOrigin(row.origin)
-    if (!origin) continue
-    const existing = findEntryFor(next, origin, row.username)
-    if (existing && mode !== 'add') {
-      if (mode === 'skip') continue
-      next = applyEntry(next, {
-        ...existing,
-        title: row.title || existing.title,
-        password: row.password,
-        notes: row.notes || existing.notes,
-        totp: row.totp ? safeTotp(row.totp) : existing.totp,
-        updatedAt: now
-      })
-      continue
-    }
-    next = applyEntry(next, {
-      id: randomBytes(8).toString('hex'),
-      origin,
-      title: row.title || origin,
-      username: row.username,
-      password: row.password,
-      notes: row.notes,
-      totp: safeTotp(row.totp),
-      createdAt: now,
-      updatedAt: now
-    })
-  }
-  return next
-}
-
-function applyVaultImport(
-  vault: PasswordVault,
-  imported: PasswordVault,
-  now: number,
-  mode: 'merge' | 'skip' | 'add'
-): PasswordVault {
-  let next = vault
-  for (const entry of activeEntries(imported)) {
-    const existing = findEntryFor(next, entry.origin, entry.username)
-    if (existing && mode !== 'add') {
-      if (mode === 'skip') continue
-      next = applyEntry(next, { ...entry, id: existing.id, createdAt: existing.createdAt, updatedAt: now })
-      continue
-    }
-    next = applyEntry(next, {
-      ...entry,
-      id: mode === 'add' ? randomBytes(8).toString('hex') : entry.id,
-      updatedAt: now
-    })
-  }
-  return next
-}
-
-function parseEvent(text: string): Event {
-  const parsed = JSON.parse(text) as Partial<Event>
-  if (
-    !parsed ||
-    typeof parsed !== 'object' ||
-    parsed.kind !== PASSWORD_VAULT_KIND ||
-    typeof parsed.pubkey !== 'string' ||
-    typeof parsed.content !== 'string' ||
-    typeof parsed.created_at !== 'number' ||
-    !Array.isArray(parsed.tags) ||
-    typeof parsed.sig !== 'string' ||
-    typeof parsed.id !== 'string'
-  ) {
-    throw new Error('That file is not an encrypted password vault')
-  }
-  const event = parsed as Event
-  if (!event.tags.some((tag) => tag[0] === 'd' && tag[1] === PASSWORD_VAULT_D)) {
-    throw new Error('That file is not a password vault event')
-  }
-  if (!verifyEvent(event)) throw new Error('The vault event signature is invalid')
-  return event
-}
-
-function trimRelay(url: string): string {
-  return url.replace(/\/$/, '')
-}
-
-function safeTotp(value: string): string {
-  try {
-    return normalizeTotpInput(value)
-  } catch {
-    return ''
-  }
-}
-
-function messageOf(error: unknown): string {
-  const raw = error instanceof Error ? error.message : String(error)
-  const marker = raw.lastIndexOf('Error: ')
-  return marker === -1 ? raw : raw.slice(marker + 7)
 }

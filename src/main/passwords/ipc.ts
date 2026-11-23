@@ -140,6 +140,11 @@ export function registerPasswordIpc(service: PasswordService, deps: PasswordIpcD
   handle('ncc:password-remove', (id) =>
     typeof id === 'string' ? service.removeEntry(id) : { ok: false, error: 'Invalid login' }
   )
+  handle('ncc:password-favorite', (id, favorite) =>
+    typeof id === 'string' && typeof favorite === 'boolean'
+      ? service.setFavorite(id, favorite)
+      : { ok: false, error: 'Invalid favorite update' }
+  )
   handle('ncc:password-sync', () => service.syncNow())
   handle('ncc:password-fill', (id) =>
     typeof id === 'string' ? service.fill(id) : { ok: false, error: 'Invalid login' }

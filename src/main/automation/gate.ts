@@ -18,24 +18,121 @@ export class ApprovalPendingError extends Error {
   }
 }
 
+interface GrantTracking {
+  allowed: Set<string>
+  inFlight: Map<string, Promise<boolean>>
+  asked: Map<string, { action: string; since: number }>
+}
+
+interface AskSpec extends GrantTracking {
+  kind: 'automation' | 'automation-signer'
+  /** First word(s) of the request's `action` field, e.g. "control" or "sign in to". */
+  actionVerb: string
+  identity: string | null
+  note: string
+  rememberLabel: string
+}
+
 /**
  * Per-site consent, like the Claude for Chrome extension: the first time an agent acts
  * on a site the user is asked, and "Allow for this session" lasts until the browser
  * quits. A denial is not remembered, so the next action asks again.
+ *
+ * Tracks two independent kinds of grant for the same agent: ordinary browsing
+ * (`authorize`) and signing in via NIP-07 as the agent's own Nostr identity
+ * (`authorizeSign`). Approving one never implies the other.
  */
 export class ApprovalGate implements AutomationGate {
-  private readonly allowed = new Set<string>()
-  private readonly inFlight = new Map<string, Promise<boolean>>()
-  private readonly asked = new Map<string, { action: string; since: number }>()
+  readonly agentId?: string
+  private readonly npub?: string
+  private readonly browse: GrantTracking = {
+    allowed: new Set(),
+    inFlight: new Map(),
+    asked: new Map()
+  }
+  private readonly sign: GrantTracking = {
+    allowed: new Set(),
+    inFlight: new Map(),
+    asked: new Map()
+  }
 
   constructor(
     private readonly approvals: Pick<ApprovalBroker, 'request'>,
-    private readonly options: { autoApprove?: boolean; waitMs?: number; now?: () => number } = {}
-  ) {}
+    private readonly options: {
+      autoApprove?: boolean
+      waitMs?: number
+      now?: () => number
+      /** The agent this gate belongs to, so the request can be labelled and shown. */
+      agentId?: string
+      npub?: string
+    } = {}
+  ) {
+    this.agentId = options.agentId
+    this.npub = options.npub
+  }
 
   async authorize(site: string, action: string): Promise<boolean> {
-    if (this.options.autoApprove || this.allowed.has(site)) return true
-    const decision = this.ask(site, action)
+    return this.gate(site, action, {
+      ...this.browse,
+      kind: 'automation',
+      actionVerb: 'control',
+      identity: null,
+      note:
+        site === 'browser://development'
+          ? `Development access can inspect and operate browser settings and prompts. First action: ${action}`
+          : `First action requested: ${action}`,
+      rememberLabel: 'Allow for this session'
+    })
+  }
+
+  /** Like `authorize`, but for this agent signing in to `site` as its own Nostr identity. */
+  async authorizeSign(site: string, action: string): Promise<boolean> {
+    return this.gate(site, action, {
+      ...this.sign,
+      kind: 'automation-signer',
+      actionVerb: 'sign in to',
+      identity: this.npub ?? null,
+      note: `This agent wants to sign in to ${site} using its own Nostr identity. First action: ${action}`,
+      rememberLabel: 'Allow this agent to sign in here without asking'
+    })
+  }
+
+  /** Prompts still waiting for the user, oldest first. */
+  pending(): PendingApproval[] {
+    return [...this.browse.asked]
+      .map(([site, entry]) => ({ site, action: entry.action, since: entry.since }))
+      .sort((a, b) => a.since - b.since)
+  }
+
+  grants(): string[] {
+    return [...this.browse.allowed].sort()
+  }
+
+  revoke(site: string): void {
+    this.browse.allowed.delete(site)
+  }
+
+  /** Forget every session grant: the "stop agent" control. */
+  revokeAll(): void {
+    this.browse.allowed.clear()
+  }
+
+  signGrants(): string[] {
+    return [...this.sign.allowed].sort()
+  }
+
+  revokeSign(site: string): void {
+    this.sign.allowed.delete(site)
+  }
+
+  /** Forget every sign-in grant: the "stop signing" control. */
+  revokeAllSign(): void {
+    this.sign.allowed.clear()
+  }
+
+  private async gate(site: string, action: string, spec: AskSpec): Promise<boolean> {
+    if (this.options.autoApprove || spec.allowed.has(site)) return true
+    const decision = this.ask(site, action, spec)
     const waitMs = this.options.waitMs ?? DEFAULT_APPROVAL_WAIT_MS
     if (waitMs <= 0) return decision
 
@@ -52,56 +149,34 @@ export class ApprovalGate implements AutomationGate {
     }
   }
 
-  /** Prompts still waiting for the user, oldest first. */
-  pending(): PendingApproval[] {
-    return [...this.asked]
-      .map(([site, entry]) => ({ site, action: entry.action, since: entry.since }))
-      .sort((a, b) => a.since - b.since)
-  }
-
-  private ask(site: string, action: string): Promise<boolean> {
-    const pending = this.inFlight.get(site)
+  private ask(site: string, action: string, spec: AskSpec): Promise<boolean> {
+    const pending = spec.inFlight.get(site)
     if (pending) return pending
-    this.asked.set(site, { action, since: (this.options.now ?? Date.now)() })
+    spec.asked.set(site, { action, since: (this.options.now ?? Date.now)() })
 
     const asked = this.approvals
       .request({
-        kind: 'automation',
+        kind: spec.kind,
         method: 'automation',
-        action: `control ${site}`,
+        action: `${spec.actionVerb} ${site}`,
         service: site,
         origin: siteOf(site),
-        identity: null,
+        identity: spec.identity,
         mode: 'none',
-        note: site === 'browser://development'
-          ? `Development access can inspect and operate browser settings and prompts. First action: ${action}`
-          : `First action requested: ${action}`,
+        note: spec.note,
         rememberable: true,
         ephemeral: true,
-        rememberLabel: 'Allow for this session'
+        rememberLabel: spec.rememberLabel
       })
       .then((decision) => {
-        if (decision.allow && decision.remember) this.allowed.add(site)
+        if (decision.allow && decision.remember) spec.allowed.add(site)
         return decision.allow
       })
       .finally(() => {
-        this.inFlight.delete(site)
-        this.asked.delete(site)
+        spec.inFlight.delete(site)
+        spec.asked.delete(site)
       })
-    this.inFlight.set(site, asked)
+    spec.inFlight.set(site, asked)
     return asked
-  }
-
-  grants(): string[] {
-    return [...this.allowed].sort()
-  }
-
-  revoke(site: string): void {
-    this.allowed.delete(site)
-  }
-
-  /** Forget every session grant: the "stop agent" control. */
-  revokeAll(): void {
-    this.allowed.clear()
   }
 }

@@ -126,6 +126,10 @@ A share is the same payload encrypted to one recipient under a reserved `d` tag:
 d = share-<12 hex chars>
 ```
 
+The resolver also reads the multi-recipient wrapped form used by ncc-server's
+sidecar for a private service: one `kind 30058` event with a per-recipient
+encrypted session key. No separate link is needed for each reader in that form.
+
 The suffix is a stable hash of the service id and the recipient, so the same pair
 reuses one share instead of piling up records. `share-` is reserved; service ids cannot
 start with it. The resolver treats a `share-` service as exact-only: a missing or

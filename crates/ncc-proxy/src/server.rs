@@ -714,6 +714,17 @@ fn serve_nccsearch(
     let Some(root) = state.nccsearch_directory.as_ref() else {
         return serve_nccsearch_embedded(request_path, method);
     };
+    let root = std::fs::read_to_string(root.join("active-version"))
+        .ok()
+        .map(|version| version.trim().to_owned())
+        .filter(|version| {
+            !version.is_empty()
+                && version
+                    .bytes()
+                    .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+        })
+        .map(|version| root.join(version))
+        .unwrap_or_else(|| root.clone());
     let mut file = root.clone();
     for segment in request_path.split('/') {
         if segment.is_empty() {

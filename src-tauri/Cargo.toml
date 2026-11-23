@@ -1,7 +1,7 @@
 [package]
 name = "ncc-navigator"
 description = "Nostr Navigator shell for Android"
-version = "0.39.3"
+version = "0.42.3"
 authors = ["imattau"]
 license = "MIT"
 edition = "2024"
@@ -18,7 +18,15 @@ tauri-build = { version = "2.7.4", features = [] }
 
 [dependencies]
 base64 = "0.23.1"
+ed25519-dalek = "2.2.0"
+sha2 = "0.10"
 jni = "0.21.1"
+# rustls-platform-verifier (pulled in transitively by reqwest's "rustls" feature) needs
+# its own Android init call before first use, and its own jni version — see
+# init_platform_verifier() in lib.rs.
+jni-for-verifier = { package = "jni", version = "=0.22.4" }
+rustls-platform-verifier = "0.7.1"
+ndk-context = "0.1"
 ncc-core = { path = "../crates/ncc-core" }
 ncc-identity = { path = "../crates/ncc-identity" }
 ncc-proxy = { path = "../crates/ncc-proxy" }

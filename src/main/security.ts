@@ -12,6 +12,63 @@ import { isOnionHost } from './tor/guard'
 
 const TOKEN_TTL_MS = 5 * 60_000
 
+/**
+ * Dedicated identity-provider login hosts, not general sites. A `window.open` popup
+ * to one of these keeps its `window.opener` (see `wireTab`'s window-open handler) so
+ * the OAuth popup flow can `postMessage` the result back; every other popup is denied
+ * and reopened as a plain tab, which loses that relationship but keeps the browser
+ * from spawning arbitrary popup windows.
+ *
+ * In practice most OAuth buttons open a same-origin relay URL first (e.g. Figma's
+ * Google button opens `/start_google_sso` on figma.com, which then redirects to
+ * accounts.google.com), so `window.open`'s resolved URL rarely names the identity
+ * provider at open time. `isDialogSizedPopupFeatures` below catches those by their
+ * `window.open` dimensions instead; this host list stays as a second, independent
+ * signal for the rarer case where a site opens the provider's URL directly.
+ */
+const AUTH_POPUP_HOSTS = new Set([
+  'accounts.google.com',
+  'appleid.apple.com',
+  'login.microsoftonline.com',
+  'login.live.com'
+])
+
+export function isAuthPopupUrl(url: string): boolean {
+  try {
+    return AUTH_POPUP_HOSTS.has(new URL(url).hostname.toLowerCase())
+  } catch {
+    return false
+  }
+}
+
+const DIALOG_POPUP_MIN = 300
+const DIALOG_POPUP_MAX = 800
+
+/**
+ * True for `window.open` calls sized like a deliberate sign-in/payment dialog (both
+ * width and height given, each in a modest, human-dialog range) rather than a full
+ * page or an undersized/unsized ad popup. `features` is the comma-separated string
+ * Electron's `setWindowOpenHandler` hands back, e.g. "width=600,height=600".
+ */
+export function isDialogSizedPopupFeatures(features: string): boolean {
+  let width: number | null = null
+  let height: number | null = null
+  for (const part of features.split(',')) {
+    const [key, value] = part.split('=').map((piece) => piece.trim())
+    if (key === 'width') width = Number(value)
+    else if (key === 'height') height = Number(value)
+  }
+  if (width === null || height === null || Number.isNaN(width) || Number.isNaN(height)) {
+    return false
+  }
+  return (
+    width >= DIALOG_POPUP_MIN &&
+    width <= DIALOG_POPUP_MAX &&
+    height >= DIALOG_POPUP_MIN &&
+    height <= DIALOG_POPUP_MAX
+  )
+}
+
 export function isLoopbackHost(hostname: string): boolean {
   const host = hostname.replace(/^\[/, '').replace(/\]$/, '').toLowerCase()
   return (

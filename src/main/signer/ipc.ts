@@ -1,7 +1,10 @@
-import { ipcMain, type IpcMainInvokeEvent, type Session } from 'electron'
+import { ipcMain, type IpcMainInvokeEvent, type Session, type WebContents } from 'electron'
 import type { TabKind } from '@shared/types'
+import { agentIdForContents } from '../automation/agent-tabs'
+import type { AutomationController } from '../automation/controller'
+import { validateTemplate } from './crypto'
 import { signerOriginFromUrl } from './origin'
-import type { Caller, Nip07Service } from './service'
+import { ACTION_BY_KIND, requireText, type Caller, type Nip07Service } from './service'
 
 /**
  * NIP-07 IPC endpoints, callable only from a sandboxed content preload. The caller's
@@ -12,35 +15,91 @@ export interface Nip07ContentSession {
   kind: TabKind
 }
 
-export function registerNip07(service: Nip07Service, sessions: Nip07ContentSession[]): void {
-  ipcMain.handle('nip07:get-public-key', (event) =>
-    service.getPublicKey(callerOf(event, sessions))
-  )
+/** Kind 22242 is NIP-42 relay authentication: signed once per relay, no user content. */
+const RELAY_AUTH_KIND = 22242
 
-  ipcMain.handle('nip07:sign-event', (event, template: unknown) =>
-    service.signEvent(callerOf(event, sessions), template)
-  )
+type Resolved =
+  | { kind: 'human'; caller: Caller }
+  | { kind: 'agent'; agentId: string; origin: string }
 
-  ipcMain.handle('nip07:nip04-encrypt', (event, peer: string, plaintext: unknown) =>
-    service.nip04Encrypt(callerOf(event, sessions), peer, plaintext)
-  )
+export function registerNip07(
+  service: Nip07Service,
+  sessions: Nip07ContentSession[],
+  /** Late-bound: the automation controller may not exist yet when this is called. */
+  getAutomation?: () => Pick<AutomationController, 'authorizeAndSign'> | null
+): void {
+  const agentCall = <T>(
+    resolved: Extract<Resolved, { kind: 'agent' }>,
+    action: string,
+    run: Parameters<AutomationController['authorizeAndSign']>[3]
+  ): Promise<T> => {
+    const automation = getAutomation?.()
+    if (!automation) throw new Error('Agent control is not available')
+    return automation.authorizeAndSign(resolved.agentId, resolved.origin, action, run) as Promise<T>
+  }
 
-  ipcMain.handle('nip07:nip04-decrypt', (event, peer: string, ciphertext: unknown) =>
-    service.nip04Decrypt(callerOf(event, sessions), peer, ciphertext)
-  )
+  ipcMain.handle('nip07:get-public-key', (event) => {
+    const resolved = callerOf(event, sessions)
+    if (resolved.kind === 'agent') {
+      return agentCall(resolved, 'see its public key', (signer) => signer.getPublicKey())
+    }
+    return service.getPublicKey(resolved.caller)
+  })
 
-  ipcMain.handle('nip07:nip44-encrypt', (event, peer: string, plaintext: unknown) =>
-    service.nip44Encrypt(callerOf(event, sessions), peer, plaintext)
-  )
+  ipcMain.handle('nip07:sign-event', (event, template: unknown) => {
+    const resolved = callerOf(event, sessions)
+    if (resolved.kind === 'agent') {
+      const normalized = validateTemplate(template)
+      const action =
+        ACTION_BY_KIND[normalized.kind] ??
+        (normalized.kind === RELAY_AUTH_KIND
+          ? 'log in to a relay'
+          : `sign a kind ${normalized.kind} event`)
+      return agentCall(resolved, action, (signer) => signer.signEvent(normalized))
+    }
+    return service.signEvent(resolved.caller, template)
+  })
 
-  ipcMain.handle('nip07:nip44-decrypt', (event, peer: string, ciphertext: unknown) =>
-    service.nip44Decrypt(callerOf(event, sessions), peer, ciphertext)
-  )
+  ipcMain.handle('nip07:nip04-encrypt', (event, peer: string, plaintext: unknown) => {
+    const resolved = callerOf(event, sessions)
+    if (resolved.kind === 'agent') {
+      const text = requireText(plaintext, 'Plaintext')
+      return agentCall(resolved, 'encrypt a NIP-04 message', (signer) => signer.nip04Encrypt(peer, text))
+    }
+    return service.nip04Encrypt(resolved.caller, peer, plaintext)
+  })
+
+  ipcMain.handle('nip07:nip04-decrypt', (event, peer: string, ciphertext: unknown) => {
+    const resolved = callerOf(event, sessions)
+    if (resolved.kind === 'agent') {
+      const text = requireText(ciphertext, 'Ciphertext')
+      return agentCall(resolved, 'decrypt a NIP-04 message', (signer) => signer.nip04Decrypt(peer, text))
+    }
+    return service.nip04Decrypt(resolved.caller, peer, ciphertext)
+  })
+
+  ipcMain.handle('nip07:nip44-encrypt', (event, peer: string, plaintext: unknown) => {
+    const resolved = callerOf(event, sessions)
+    if (resolved.kind === 'agent') {
+      const text = requireText(plaintext, 'Plaintext')
+      return agentCall(resolved, 'encrypt a NIP-44 message', (signer) => signer.nip44Encrypt(peer, text))
+    }
+    return service.nip44Encrypt(resolved.caller, peer, plaintext)
+  })
+
+  ipcMain.handle('nip07:nip44-decrypt', (event, peer: string, ciphertext: unknown) => {
+    const resolved = callerOf(event, sessions)
+    if (resolved.kind === 'agent') {
+      const text = requireText(ciphertext, 'Ciphertext')
+      return agentCall(resolved, 'decrypt a NIP-44 message', (signer) => signer.nip44Decrypt(peer, text))
+    }
+    return service.nip44Decrypt(resolved.caller, peer, ciphertext)
+  })
 
   ipcMain.handle('nip07:get-relays', () => service.getRelays())
 }
 
-function callerOf(event: IpcMainInvokeEvent, sessions: Nip07ContentSession[]): Caller {
+function callerOf(event: IpcMainInvokeEvent, sessions: Nip07ContentSession[]): Resolved {
   const content = sessions.find((entry) => entry.session === event.sender.session)
   if (!content) {
     throw new Error('NIP-07 is only available to page content')
@@ -69,11 +128,22 @@ function callerOf(event: IpcMainInvokeEvent, sessions: Nip07ContentSession[]): C
     )
   }
 
+  // Only an ordinary tab the `tab_new` tool created is ever tagged; private/Tor tabs
+  // are never reachable by automation at all, and merely navigating or clicking on an
+  // existing tab never tags it, so every other page is unaffected.
+  if (content.kind === 'normal') {
+    const agentId = agentIdForContents(event.sender as WebContents)
+    if (agentId) return { kind: 'agent', agentId, origin: resolved.origin }
+  }
+
   return {
-    origin: resolved.origin,
-    label: resolved.label,
-    kind: content.kind,
-    ephemeral: content.kind !== 'normal',
-    torTab: content.kind === 'tor'
+    kind: 'human',
+    caller: {
+      origin: resolved.origin,
+      label: resolved.label,
+      kind: content.kind,
+      ephemeral: content.kind !== 'normal',
+      torTab: content.kind === 'tor'
+    }
   }
 }

@@ -115,6 +115,20 @@ export function createPasswords(deps) {
       row.appendChild(totp)
     }
 
+    const favorite = document.createElement('button')
+    favorite.className = 'ib'
+    favorite.type = 'button'
+    favorite.setAttribute('aria-label', entry.favorite ? 'Remove favorite' : 'Add favorite')
+    favorite.textContent = entry.favorite ? '★' : '☆'
+    favorite.addEventListener('click', async (event) => {
+      event.stopPropagation()
+      try {
+        await invoke('vault_favorite', { id: entry.id, favorite: !entry.favorite })
+        await renderVaultList()
+      } catch (error) { byId('vault-note').textContent = String(error) }
+    })
+    row.appendChild(favorite)
+
     row.addEventListener('click', () => onOpen(entry))
     row.addEventListener('keydown', (event) => {
       if (event.key === 'Enter' || event.key === ' ') {
@@ -174,11 +188,10 @@ export function createPasswords(deps) {
     }
 
     const query = byId('vault-search').value.trim().toLowerCase()
-    const visible = query
-      ? entries.filter((entry) =>
-          `${entry.title} ${entry.username} ${entry.origin}`.toLowerCase().includes(query)
-        )
-      : entries
+    const filter = byId('vault-filter')?.value || 'all'
+    const sort = byId('vault-sort')?.value || 'newest'
+    const visible = entries.filter((entry) => (filter !== 'favorites' || entry.favorite) && (!query || `${entry.title} ${entry.username} ${entry.origin}`.toLowerCase().includes(query)))
+    visible.sort((a, b) => sort === 'title' ? (a.title || a.origin).localeCompare(b.title || b.origin) : sort === 'oldest' ? a.updatedAt - b.updatedAt : b.updatedAt - a.updatedAt)
 
     if (visible.length === 0) {
       list.appendChild(vaultEmpty(query ? 'No login matches that.' : 'No logins yet.'))
