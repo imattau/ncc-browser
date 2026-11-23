@@ -8,6 +8,20 @@ const REPO: &str = "imattau/ncc-browser";
 const PUBLIC_KEY: &str = "zGBJNgZh40T4WxQt62ZBV5qbnNNRNKRei3/cUnYKkyQ=";
 const MAX_FILE_SIZE: usize = 20 * 1024 * 1024;
 
+/// Use the same explicit root set as the NCC proxy. Reqwest's default platform
+/// verifier needs Android JNI initialisation; updater requests must not silently
+/// depend on that default.
+fn http_client() -> Result<reqwest::Client, String> {
+    let builder = match ncc_proxy::pins::webpki_tls_config() {
+        Ok(tls) => reqwest::Client::builder().use_preconfigured_tls(tls),
+        Err(error) => return Err(error.to_string()),
+    };
+    builder
+        .user_agent("ncc-browser-nccsearch-updater")
+        .build()
+        .map_err(|error| error.to_string())
+}
+
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ManifestFile {
@@ -89,10 +103,7 @@ fn valid_version(version: &str) -> bool {
 }
 
 async fn latest() -> Result<(Manifest, String), String> {
-    let client = reqwest::Client::builder()
-        .user_agent("ncc-browser-nccsearch-updater")
-        .build()
-        .map_err(|e| e.to_string())?;
+    let client = http_client()?;
     let response = client
         .get(format!(
             "https://api.github.com/repos/{REPO}/releases/latest"
@@ -159,10 +170,7 @@ pub async fn install(data_dir: &Path, version: &str) -> Result<(), String> {
     if manifest.version != version {
         return Err("The available update changed. Check again.".into());
     }
-    let client = reqwest::Client::builder()
-        .user_agent("ncc-browser-nccsearch-updater")
-        .build()
-        .map_err(|e| e.to_string())?;
+    let client = http_client()?;
     let root = data_dir.join("nccsearch-updates");
     let staging = root.join(format!("{version}.staging"));
     let target = root.join(&version);
