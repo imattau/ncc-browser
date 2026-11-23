@@ -1111,19 +1111,6 @@ async function navigate(text, { newTab = false, private: isPrivate = false, tor 
 
   let target = targetUrl(input, port)
 
-  // For a site, whether a `d`-like segment is a name or a path depends on what is
-  // published, so ask the proxy instead of guessing here.
-  if (/^nsite:/i.test(input) && !target.error) {
-    try {
-      const response = await fetch(
-        `http://127.0.0.1:${port}/__ncc/route?u=${encodeURIComponent(input)}`
-      )
-      if (response.ok) target = await response.json()
-    } catch {
-      // Fall back to the local guess; the proxy will answer 404 if it is wrong.
-    }
-  }
-
   if (target.error) return { error: target.error }
 
   if (content) {
