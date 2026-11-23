@@ -236,6 +236,23 @@ export class PasswordService {
     return scanVaultHealth(this.vault, this.now(), rotationDays)
   }
 
+  async setFavorite(id: string, favorite: boolean): Promise<PasswordSaveResult> {
+    if (!this.unlocked || !this.vault || !this.pubkey) return { ok: false, error: LOCKED }
+    try {
+      const provider = this.requireProvider()
+      await this.syncEngine.ensureLatest(provider, this.pubkey)
+      const current = this.vault ?? emptyVault()
+      const entry = findEntry(current, id)
+      if (!entry || entry.deleted) return { ok: false, error: 'That login no longer exists' }
+      const next = applyEntry(current, { ...entry, favorite, favoriteUpdatedAt: Math.max(this.now(), (entry.favoriteUpdatedAt ?? 0) + 1) })
+      return await this.syncEngine.commit(provider, this.pubkey, next)
+    } catch (error) {
+      this.error = messageOf(error)
+      this.sendStatus()
+      return { ok: false, error: this.error, status: this.status() }
+    }
+  }
+
   context(): PasswordContext {
     const page = this.deps.host.activePage()
     const usable = page != null && page.mode !== 'blank' && page.mode !== 'error'
@@ -788,7 +805,9 @@ export class PasswordService {
       notes: (input.notes ?? '').trim().slice(0, 4096),
       totp: normalizeTotpInput(input.totp),
       createdAt: existing?.createdAt ?? now,
-      updatedAt: now
+      updatedAt: now,
+      ...(existing?.favorite ? { favorite: true } : {}),
+      ...(existing?.favoriteUpdatedAt ? { favoriteUpdatedAt: existing.favoriteUpdatedAt } : {})
     }
   }
 

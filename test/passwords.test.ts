@@ -103,6 +103,15 @@ describe('mergeVaults', () => {
     expect(merged.changed).toBe(false)
     expect(merged.vault.entries).toHaveLength(1)
   })
+
+  it('merges favorite metadata independently from password age', () => {
+    const local = { ...base.entries[0], updatedAt: 100, favorite: false, favoriteUpdatedAt: 300 }
+    const remote = { ...base.entries[0], password: 'newer-password', updatedAt: 200, favorite: true, favoriteUpdatedAt: 250 }
+    const merged = mergeVaults({ v: 1, updatedAt: 100, entries: [local] }, { v: 1, updatedAt: 200, entries: [remote] })
+    expect(merged.vault.entries[0].password).toBe('newer-password')
+    expect(merged.vault.entries[0].favorite).toBe(false)
+    expect(merged.vault.entries[0].updatedAt).toBe(200)
+  })
 })
 
 describe('entry lookup and summaries', () => {

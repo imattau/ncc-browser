@@ -253,6 +253,7 @@ export interface NccApi {
   passwordsGenerate(options: PasswordGeneratorOptions): Promise<string>
   passwordsSave(entry: PasswordDraft): Promise<PasswordSaveResult>
   passwordsRemove(id: string): Promise<PasswordSaveResult>
+  passwordsFavorite(id: string, favorite: boolean): Promise<PasswordSaveResult>
   passwordsSync(): Promise<PasswordVaultStatus>
   passwordsFill(id: string): Promise<PasswordFillResult>
   passwordsSetConfig(config: Partial<PasswordConfig>): Promise<PasswordVaultStatus>

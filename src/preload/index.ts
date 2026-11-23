@@ -195,6 +195,7 @@ const api: NccApi = {
   passwordsGenerate: (options) => ipcRenderer.invoke('ncc:password-generate', options),
   passwordsSave: (entry) => ipcRenderer.invoke('ncc:password-save', entry),
   passwordsRemove: (id) => ipcRenderer.invoke('ncc:password-remove', id),
+  passwordsFavorite: (id, favorite) => ipcRenderer.invoke('ncc:password-favorite', id, favorite),
   passwordsSync: () => ipcRenderer.invoke('ncc:password-sync'),
   passwordsFill: (id) => ipcRenderer.invoke('ncc:password-fill', id),
   passwordsSetConfig: (config) => ipcRenderer.invoke('ncc:password-config', config),

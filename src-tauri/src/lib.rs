@@ -509,6 +509,11 @@ async fn vault_remove(
 }
 
 #[tauri::command]
+async fn vault_favorite(vault: tauri::State<'_, VaultHandle>, id: String, favorite: bool) -> Result<SaveOutcome, String> {
+    Ok(vault.0.set_favorite(&id, favorite).await)
+}
+
+#[tauri::command]
 fn vault_capture(
     vault: tauri::State<'_, VaultHandle>,
     url: String,
@@ -1673,6 +1678,7 @@ pub fn run() {
             vault_save,
             vault_passkey_save,
             vault_remove,
+            vault_favorite,
             vault_capture,
             vault_respond,
             vault_config,

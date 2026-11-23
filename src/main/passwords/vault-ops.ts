@@ -24,7 +24,7 @@ export function emptyVault(): PasswordVault {
 export function hasLocalChanges(local: PasswordVault, remote: PasswordVault): boolean {
   for (const entry of local.entries) {
     const match = remote.entries.find((candidate) => candidate.id === entry.id)
-    if (!match || entry.updatedAt > match.updatedAt) return true
+    if (!match || entry.updatedAt > match.updatedAt || (entry.favoriteUpdatedAt ?? 0) > (match.favoriteUpdatedAt ?? 0)) return true
   }
   return false
 }
@@ -38,7 +38,8 @@ export function summary(entry: PasswordEntry) {
     hasTotp: entry.totp.length > 0,
     ...(entry.passkey ? { isPasskey: true } : {}),
     createdAt: entry.createdAt,
-    updatedAt: entry.updatedAt
+    updatedAt: entry.updatedAt,
+    favorite: entry.favorite === true
   }
 }
 

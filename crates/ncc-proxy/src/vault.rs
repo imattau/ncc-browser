@@ -456,6 +456,29 @@ impl VaultService {
         ncc_vault::generate_password(options)
     }
 
+    pub async fn set_favorite(&self, id: &str, favorite: bool) -> SaveOutcome {
+        self.expire();
+        if !self.secure().unlocked { return SaveOutcome { ok: false, pending: false, error: Some(LOCKED.to_string()), status: self.status() }; }
+        let result = async {
+            let pubkey = self.require_pubkey()?;
+            self.ensure_latest(&pubkey).await;
+            let (vault, mut entry) = {
+                let state = self.secure();
+                let vault = state.vault.clone().ok_or_else(|| VAULT_ERROR.to_string())?;
+                let entry = find_entry(&vault, id).filter(|entry| !entry.deleted).cloned().ok_or_else(|| "That login no longer exists".to_string())?;
+                (vault, entry)
+            };
+            entry.favorite = favorite;
+            entry.favorite_updated_at = self.now().saturating_mul(1000).max(entry.favorite_updated_at.saturating_add(1));
+            let next = apply_entry(&vault, entry);
+            self.publish(&pubkey, next).await
+        }.await;
+        match result {
+            Ok((pending, error)) => SaveOutcome { ok: true, pending, error, status: self.status() },
+            Err(error) => SaveOutcome { ok: false, pending: false, error: Some(error), status: self.status() },
+        }
+    }
+
     pub fn entry(&self, id: &str) -> Result<PasswordEntry, String> {
         self.expire_for_read();
         self.touch();
@@ -727,6 +750,8 @@ impl VaultService {
                 .map(|entry| entry.created_at)
                 .unwrap_or(now),
             updated_at: now,
+            favorite: existing.as_ref().map(|entry| entry.favorite).unwrap_or(false),
+            favorite_updated_at: existing.as_ref().map(|entry| entry.favorite_updated_at).unwrap_or_default(),
             deleted: false,
             passkey: draft.passkey.or_else(|| existing.as_ref().and_then(|entry| entry.passkey.clone())),
         };

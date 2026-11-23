@@ -63,6 +63,10 @@ pub struct PasswordEntry {
     pub created_at: u64,
     #[serde(default)]
     pub updated_at: u64,
+    #[serde(default)]
+    pub favorite: bool,
+    #[serde(rename = "favoriteUpdatedAt", default, skip_serializing_if = "is_zero")]
+    pub favorite_updated_at: u64,
     /// A tombstone. Kept in the event so a delete survives a merge from a copy that
     /// still has the entry.
     #[serde(default, skip_serializing_if = "is_false")]
@@ -76,6 +80,7 @@ pub struct PasswordEntry {
 fn is_false(value: &bool) -> bool {
     !*value
 }
+fn is_zero(value: &u64) -> bool { *value == 0 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PasswordVault {
@@ -119,6 +124,8 @@ pub struct PasswordSummary {
     pub is_passkey: bool,
     pub created_at: u64,
     pub updated_at: u64,
+    #[serde(default)]
+    pub favorite: bool,
 }
 
 /// The canonical, allowed origin for an address, or `None`.
@@ -202,6 +209,8 @@ pub fn normalize_entry(input: &Value) -> Option<PasswordEntry> {
         totp: clamp_text(input.get("totp"), MAX_TOTP, ""),
         created_at,
         updated_at,
+        favorite: input.get("favorite").and_then(Value::as_bool).unwrap_or(false),
+        favorite_updated_at: input.get("favoriteUpdatedAt").and_then(Value::as_u64).unwrap_or_default(),
         deleted: input
             .get("deleted")
             .and_then(Value::as_bool)
@@ -288,7 +297,19 @@ pub fn merge_vaults(local: &PasswordVault, remote: &PasswordVault) -> (PasswordV
                 changed = true;
             }
             Some(existing) if entry.updated_at > existing.updated_at => {
-                by_id.insert(entry.id.clone(), entry.clone());
+                let mut winner = entry.clone();
+                if existing.favorite_updated_at > winner.favorite_updated_at {
+                    winner.favorite = existing.favorite;
+                    winner.favorite_updated_at = existing.favorite_updated_at;
+                }
+                by_id.insert(entry.id.clone(), winner);
+                changed = true;
+            }
+            Some(existing) if entry.favorite_updated_at > existing.favorite_updated_at => {
+                let mut winner = existing.clone();
+                winner.favorite = entry.favorite;
+                winner.favorite_updated_at = entry.favorite_updated_at;
+                by_id.insert(entry.id.clone(), winner);
                 changed = true;
             }
             _ => {}
@@ -359,6 +380,7 @@ pub fn summarize(entry: &PasswordEntry) -> PasswordSummary {
         is_passkey: entry.passkey.is_some(),
         created_at: entry.created_at,
         updated_at: entry.updated_at,
+        favorite: entry.favorite,
     }
 }
 
@@ -442,6 +464,8 @@ mod tests {
             totp: String::new(),
             created_at: 1,
             updated_at,
+            favorite: false,
+            favorite_updated_at: 0,
             deleted: false,
             passkey: None,
         }
@@ -612,6 +636,25 @@ mod tests {
         let (merged, changed) = merge_vaults(&local, &remote);
         assert!(!changed);
         assert_eq!(merged.entries[0].updated_at, 2);
+    }
+
+    #[test]
+    fn favorite_metadata_merges_without_changing_password_age() {
+        let mut local_entry = entry("0123456789abcdef", "https://a.example", 10);
+        local_entry.favorite = false;
+        local_entry.favorite_updated_at = 3000;
+        let mut remote_entry = entry("0123456789abcdef", "https://a.example", 20);
+        remote_entry.password = "newer".into();
+        remote_entry.favorite = true;
+        remote_entry.favorite_updated_at = 2000;
+        let local = PasswordVault { v: 1, updated_at: 10, entries: vec![local_entry] };
+        let remote = PasswordVault { v: 1, updated_at: 20, entries: vec![remote_entry] };
+        let (merged, changed) = merge_vaults(&local, &remote);
+        let result = find_entry(&merged, "0123456789abcdef").unwrap();
+        assert!(changed);
+        assert_eq!(result.password, "newer");
+        assert!(!result.favorite);
+        assert_eq!(result.updated_at, 20);
     }
 
     #[test]

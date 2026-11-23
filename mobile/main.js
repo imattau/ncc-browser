@@ -2189,6 +2189,8 @@ function wireChrome() {
   byId('vault-unlock').addEventListener('click', () => void passwordFeature.unlockVault())
   byId('vault-lock').addEventListener('click', () => void passwordFeature.lockVault())
   byId('vault-search').addEventListener('input', () => void passwordFeature.renderVaultList())
+  byId('vault-filter').addEventListener('change', () => void passwordFeature.renderVaultList())
+  byId('vault-sort').addEventListener('change', () => void passwordFeature.renderVaultList())
   byId('vault-add').addEventListener('click', () => passwordFeature.openNewLogin(''))
   byId('vault-save-config').addEventListener('click', () => void passwordFeature.saveVaultConfig())
   byId('fill-add').addEventListener('click', () => passwordFeature.openNewLogin(displayAddress(activeUrl)))
