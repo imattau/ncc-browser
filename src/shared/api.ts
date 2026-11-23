@@ -323,6 +323,8 @@ export interface NccApi {
   onAutomation(listener: (state: AutomationState) => void): () => void
   torStatus(): Promise<TorStatus>
   appInfo(): Promise<AppInfo>
+  nccsearchCheckUpdate(): Promise<string | null>
+  nccsearchInstallUpdate(version: string): Promise<void>
   torTest(): Promise<TorStatus>
   torRestart(): Promise<TorStatus>
   identity(): Promise<IdentityStatus>

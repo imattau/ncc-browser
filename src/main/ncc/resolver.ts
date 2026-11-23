@@ -145,6 +145,27 @@ interface Decoded {
   encrypted: boolean
 }
 
+/** Multi-recipient NCC-05 form used by ncc-sidecar for more than one reader. */
+interface WrappedContent {
+  ciphertext: string
+  wraps: Record<string, string>
+}
+
+function isWrappedContent(value: unknown): value is WrappedContent {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const record = value as Record<string, unknown>
+  return typeof record.ciphertext === 'string'
+    && Boolean(record.wraps)
+    && typeof record.wraps === 'object'
+    && !Array.isArray(record.wraps)
+}
+
+function sessionKeyBytes(value: string): Uint8Array | null {
+  const hex = value.trim()
+  if (!/^[0-9a-f]{64}$/i.test(hex)) return null
+  return Uint8Array.from(hex.match(/.{2}/g)!.map((byte) => Number.parseInt(byte, 16)))
+}
+
 type DecodeResult =
   | { ok: true; value: Decoded }
   | { ok: false; reason: 'undecryptable' | 'invalid' }
@@ -609,15 +630,23 @@ export class NccResolver {
   private async decode(event: Event): Promise<DecodeResult> {
     const content = event.content.trim()
 
-    // Public records are plaintext JSON. A wrapped record also starts with `{`,
-    // but has no endpoints, so it falls through as invalid in v0.1.
     if (content.startsWith('{')) {
+      let parsed: unknown
       try {
-        const payload = parsePayload(JSON.parse(content))
-        return payload ? { ok: true, value: { payload, encrypted: false } } : { ok: false, reason: 'invalid' }
+        parsed = JSON.parse(content)
       } catch {
         return { ok: false, reason: 'invalid' }
       }
+
+      // ncc-sidecar uses this wrapped form when a private locator has more
+      // than one recipient: one event with a per-recipient encrypted session
+      // key. A plaintext public payload has `endpoints` instead.
+      if (isWrappedContent(parsed)) {
+        return this.decodeWrapped(event, parsed)
+      }
+
+      const payload = parsePayload(parsed)
+      return payload ? { ok: true, value: { payload, encrypted: false } } : { ok: false, reason: 'invalid' }
     }
 
     const signer = this.currentSigner()
@@ -633,6 +662,38 @@ export class NccResolver {
         return { ok: false, reason: 'undecryptable' }
       }
       const payload = parsePayload(JSON.parse(plaintext))
+      return payload ? { ok: true, value: { payload, encrypted: true } } : { ok: false, reason: 'invalid' }
+    } catch {
+      return { ok: false, reason: 'undecryptable' }
+    }
+  }
+
+  private async decodeWrapped(event: Event, wrapped: WrappedContent): Promise<DecodeResult> {
+    const signer = this.currentSigner()
+    if (!signer) return { ok: false, reason: 'undecryptable' }
+
+    try {
+      const myPubkey = signer.getPublicKey ? await signer.getPublicKey() : null
+      if (!myPubkey) return { ok: false, reason: 'undecryptable' }
+
+      const myWrap = wrapped.wraps[myPubkey.toLowerCase()]
+        ?? wrapped.wraps[myPubkey]
+      if (!myWrap) return { ok: false, reason: 'undecryptable' }
+
+      let sessionKeyHex: string
+      if (signer.decrypt44) {
+        sessionKeyHex = await signer.decrypt44(event.pubkey, myWrap)
+      } else if (signer.getConversationKey) {
+        sessionKeyHex = nip44.decrypt(myWrap, await signer.getConversationKey(event.pubkey))
+      } else {
+        return { ok: false, reason: 'undecryptable' }
+      }
+
+      const sessionKey = sessionKeyBytes(sessionKeyHex)
+      if (!sessionKey) return { ok: false, reason: 'invalid' }
+
+      const conversationKey = nip44.getConversationKey(sessionKey, getPublicKey(sessionKey))
+      const payload = parsePayload(JSON.parse(nip44.decrypt(wrapped.ciphertext, conversationKey)))
       return payload ? { ok: true, value: { payload, encrypted: true } } : { ok: false, reason: 'invalid' }
     } catch {
       return { ok: false, reason: 'undecryptable' }

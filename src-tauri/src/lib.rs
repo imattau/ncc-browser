@@ -14,6 +14,7 @@ use ncc_proxy::settings::PasswordSettings;
 use ncc_proxy::vault::VaultService;
 use ncc_tor::{Tor, TorConfig, TorMode, TorState, TorStatus};
 mod payment_cards;
+mod nccsearch_update;
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_imattau_nccbrowser_MainActivity_nativePaymentCardAuthResult(
@@ -236,6 +237,17 @@ struct ShareHandle(Arc<ncc_proxy::share::ShareService>);
 #[tauri::command]
 fn proxy_port(state: tauri::State<'_, ProxyPort>) -> Option<u16> {
     state.0
+}
+
+#[tauri::command]
+async fn nccsearch_check_update(data_dir: tauri::State<'_, AppDataDir>, app: tauri::AppHandle) -> Result<Option<String>, String> {
+    let bundled = app.path().resource_dir().map_err(|e| e.to_string())?.join("nccsearch");
+    nccsearch_update::check(&data_dir.0, &bundled).await
+}
+
+#[tauri::command]
+async fn nccsearch_install_update(data_dir: tauri::State<'_, AppDataDir>, version: String) -> Result<(), String> {
+    nccsearch_update::install(&data_dir.0, &version).await
 }
 
 #[tauri::command]
@@ -1630,6 +1642,8 @@ pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             proxy_port,
+            nccsearch_check_update,
+            nccsearch_install_update,
             private_proxy_port,
             tor_proxy_port,
             tor_status,
@@ -1723,6 +1737,7 @@ pub fn run() {
                 .path()
                 .app_data_dir()
                 .unwrap_or_else(|_| std::env::temp_dir());
+            nccsearch_update::activate_pending(&data_dir);
             let identity = Arc::new(IdentityStore::open(data_dir.join("identity.json")));
             let remote_sessions_dir = data_dir.join("nip46-profiles");
             let profile_prefs = ProfilePrefs::open(data_dir.join("identity-profile-preferences.json"));
@@ -1735,11 +1750,7 @@ pub fn run() {
             }));
 
             let settings = Arc::new(SettingsStore::open(data_dir.join("config.json")));
-            let nccsearch_directory = if cfg!(debug_assertions) {
-                Some(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../mobile/public/nccsearch"))
-            } else {
-                app.path().resource_dir().ok().map(|directory| directory.join("nccsearch"))
-            };
+            let nccsearch_directory = Some(data_dir.join("nccsearch-updates"));
             ncc_proxy::protection::set_config(settings.get().protection.clone());
             let filter_cache = data_dir.join("protection");
             ncc_proxy::protection::load_cached_lists(&filter_cache);

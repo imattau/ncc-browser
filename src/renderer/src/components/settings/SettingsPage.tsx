@@ -102,7 +102,7 @@ export function SettingsPage({
     onIdentityChange?.(status)
   }
 
-  const identityAdmin = useIdentityAdmin({ open, identity, onStatus: publishIdentity })
+  const identityAdmin = useIdentityAdmin({ open, onStatus: publishIdentity })
 
   useEffect(() => {
     if (!open) return

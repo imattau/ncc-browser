@@ -21,10 +21,9 @@ const CONTENT_TYPES: Record<string, string> = {
 
 export function installNccSearchProtocol(
   sessions: Session[],
-  assetsDirectory: string,
+  assetsDirectory: string | (() => string),
   config: () => { relays: string[]; pubkey: string | null }
 ): void {
-  const root = resolve(assetsDirectory)
   for (const session of sessions) {
     session.protocol.handle(NCCSEARCH_SCHEME, async (request) => {
       if (request.method !== 'GET' && request.method !== 'HEAD') return response('Method not allowed', 405)
@@ -38,6 +37,8 @@ export function installNccSearchProtocol(
         const script = `window.NCC_SEARCH_RELAYS_B64=${JSON.stringify(Buffer.from(relays.join(',')).toString('base64'))};window.NCC_SEARCH_PUBKEY=${JSON.stringify(settings.pubkey ?? '')};`
         return response(script, 200, 'text/javascript; charset=utf-8')
       }
+
+      const root = resolve(typeof assetsDirectory === 'function' ? assetsDirectory() : assetsDirectory)
 
       let relative: string
       try { relative = decodeURIComponent(url.pathname.replace(/^\/+/, '')) || 'index.html' }

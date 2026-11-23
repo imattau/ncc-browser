@@ -412,7 +412,9 @@ dropdown always states what Enter will do:
 The embedded page is built from the `vendor/ncc-server` submodule on its
 `main` branch. To intentionally advance the upstream pin, run
 `git submodule update --remote vendor/ncc-server` and commit the resulting submodule
-pointer. Desktop and mobile builds run `npm run nccsearch:build` automatically.
+pointer. Desktop and mobile builds run `npm run nccsearch:build` automatically. Signed
+bundle updates can be offered independently between app releases; see
+[`docs/nccsearch-updates.md`](docs/nccsearch-updates.md) for the signing-key setup.
 
 ---
 

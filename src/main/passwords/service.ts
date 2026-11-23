@@ -540,6 +540,22 @@ export class PasswordService {
     }
   }
 
+  /** Save a newly generated local Nostr key as a vault item. */
+  async saveIdentitySecret(nsec: string, npub: string): Promise<PasswordSaveResult> {
+    if (!this.unlocked) {
+      const status = await this.unlock()
+      if (!status.unlocked) return { ok: false, error: status.error ?? LOCKED, status }
+    }
+    return this.saveEntry({
+      origin: `ncc://${npub}/identity`,
+      title: 'Nostr identity',
+      username: npub,
+      password: nsec,
+      notes: 'Generated in Nostr Navigator. Keep this secret private.',
+      totp: ''
+    })
+  }
+
   async removeEntry(id: string): Promise<PasswordSaveResult> {
     if (!this.unlocked || !this.vault || !this.pubkey) return { ok: false, error: LOCKED }
     try {
