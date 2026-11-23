@@ -462,6 +462,12 @@ class ContentSurface(
   private val report: (JSONObject) -> Unit,
   private val onDownload: (String, String?, String?) -> Unit,
   private val onOpenNewWindow: (String) -> Unit,
+  /**
+   * Create a new tab for a dialog-styled window.open() popup and return its WebView,
+   * unnavigated, so it can be wired as the WebViewTransport target directly — see
+   * onCreateWindow below. Null means no content host was available to put it in.
+   */
+  private val onOpenPopupWindow: () -> WebView?,
 ) {
   private external fun nativeProtectionCheck(url: String, source: String, requestType: String, method: String, kind: String): Boolean
   private external fun nativeProtectionLevel(): Int
@@ -866,6 +872,19 @@ class ContentSurface(
     return true
   }
 
+  /**
+   * Create this tab's WebView, without navigating it, so a window.open() popup can be
+   * wired directly as its WebViewTransport target. Keeping the transport-provided
+   * WebView itself as the popup (instead of reading its destination and reopening that
+   * URL in an unrelated tab) is what keeps window.opener, and so postMessage-based
+   * sign-in flows, working.
+   */
+  fun attachAsPopupTarget(): WebView {
+    val web = webView ?: create().also { webView = it }
+    web.visibility = View.VISIBLE
+    return web
+  }
+
   fun reload() {
     webView?.let { web ->
       currentUrl?.let { prepareCosmeticScript(web, it) }
@@ -1123,6 +1142,19 @@ class ContentSurface(
       ): Boolean {
         if (!isUserGesture || destroyed) return false
 
+        // A dialog-styled popup is the pattern most OAuth/payment sign-in buttons use
+        // for window.open(); keep the transport's WebView as the actual popup content
+        // instead of reading its destination and reopening that URL in an unrelated
+        // tab below, so the opener's window.opener (and so a postMessage-based
+        // handoff back to it once sign-in finishes) keeps working.
+        if (isDialog) {
+          val transport = resultMsg.obj as? WebView.WebViewTransport ?: return false
+          val popupWeb = onOpenPopupWindow() ?: return false
+          transport.webView = popupWeb
+          resultMsg.sendToTarget()
+          return true
+        }
+
         // WebView does not open target="_blank" links by itself. Give it a short-lived
         // child surface to learn the destination, then hand that URL to the tab manager.
         // The page never gets to keep a second unmanaged WebView around.
@@ -1169,6 +1201,13 @@ class ContentSurface(
         transport.webView = popup
         resultMsg.sendToTarget()
         return true
+      }
+
+      // JS called window.close() on a popup opened above (e.g. an OAuth dialog closing
+      // itself once sign-in finishes). Android WebView has no owner that reacts to this
+      // on its own, so left unhandled the tab just sits there instead of closing.
+      override fun onCloseWindow(window: WebView) {
+        emit(JSONObject().put("type", "close-requested"))
       }
 
       // HTML5 / embedded-player fullscreen: the WebView hands over a view that must be

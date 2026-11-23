@@ -386,6 +386,7 @@ class MainActivity : TauriActivity() {
         ::onTabEvent,
         ::startDownload,
         { target -> openTab(target, reuseActive = false, isPrivate = isPrivate, isTor = isTor) },
+        { openPopupTab(isPrivate, isTor) },
       )
       if (!tab.open(url)) {
         tab.destroy()
@@ -398,6 +399,40 @@ class MainActivity : TauriActivity() {
       emitTabs(false)
     }
     return true
+  }
+
+  /**
+   * Create a new tab for a dialog-styled window.open() popup and return its WebView,
+   * unnavigated — see ContentSurface.onCreateWindow. Shown immediately, since a
+   * sign-in/payment dialog is exactly the kind of popup the user needs to see and act
+   * on, unlike an ordinary target="_blank" link. Same kind as the opener so the popup
+   * shares its cookie jar.
+   */
+  private fun openPopupTab(isPrivate: Boolean, isTor: Boolean): WebView? {
+    val host = contentHost ?: return null
+    val tab = ContentSurface(
+      "tab-${nextTabId++}",
+      isPrivate,
+      isTor,
+      host,
+      {
+        when {
+          isTor -> torPortNumber
+          isPrivate -> privatePortNumber
+          else -> proxyPortNumber
+        }
+      },
+      ::onTabEvent,
+      ::startDownload,
+      { target -> openTab(target, reuseActive = false, isPrivate = isPrivate, isTor = isTor) },
+      { openPopupTab(isPrivate, isTor) },
+    )
+    active()?.hide()
+    tabs.add(tab)
+    activeId = tab.id
+    setExpanded(false)
+    emitTabs(false)
+    return tab.attachAsPopupTarget()
   }
 
   /**
@@ -415,6 +450,7 @@ class MainActivity : TauriActivity() {
       ::onTabEvent,
       ::startDownload,
       { target -> openTab(target, reuseActive = false) },
+      { openPopupTab(false, false) },
     )
     if (!tab.accepts(url)) {
       tab.destroy()
@@ -655,6 +691,15 @@ class MainActivity : TauriActivity() {
 
   private fun onTabEvent(payload: JSONObject) {
     val tab = tabs.firstOrNull { it.id == payload.optString("tab") }
+
+    // A popup tab closing itself (e.g. an OAuth dialog once sign-in finishes) — see
+    // ContentSurface.onCloseWindow. Handled before the generic forward below: the tab
+    // is gone by the time the shell would otherwise hear about this event.
+    if (payload.optString("type") == "close-requested" && tab != null) {
+      closeTab(tab.id)
+      return
+    }
+
     emitToShell("window.__nccContent", payload)
     if (payload.optString("type") == "nwc-request") emitToShell("window.__nccWalletRequest", payload)
 
