@@ -6,7 +6,7 @@ import { generateSecretKey, nip19 } from 'nostr-tools'
 import type { IdentityList, IdentityProfile, IdentityStatus, RelayEntry } from '@shared/types'
 import type { LocatorSigner } from '../ncc/resolver'
 import type { BunkerRelay } from './bunker-relay'
-import { hexPubkeyOf, parseSecretKey, secretKeyToHex } from './crypto'
+import { hexPubkeyOf, npubOf, nsecOf, parseSecretKey, secretKeyToHex } from './crypto'
 import type { IdentityStore } from './identity'
 import { parseBunker, RemoteIdentityProvider, type BunkerTarget } from './nip46'
 import { EphemeralIdentityProvider, LocalIdentityProvider, type IdentityProvider } from './provider'
@@ -172,6 +172,22 @@ export class IdentityManager {
         const provider = item?.remote ?? (item?.local ? new LocalIdentityProvider(item.local) : null)
         return provider ? [{ pubkey: id, provider }] : []
       })
+  }
+  /**
+   * Every locally-held identity's secret, for backfilling a "Nostr identity" vault
+   * entry — normally only written once, at the moment a key is generated or imported
+   * (see ipc-chrome.ts) — for an identity that predates that code or otherwise never
+   * got one. Remote (nip46) identities have no local secret to offer.
+   */
+  localIdentitySecrets(): Array<{ npub: string; nsec: string }> {
+    const out: Array<{ npub: string; nsec: string }> = []
+    for (const item of this.profiles.values()) {
+      if (item.mode !== 'local' || !item.local) continue
+      const secret = item.local.getSecret()
+      if (!secret) continue
+      out.push({ npub: npubOf(secret), nsec: nsecOf(secret) })
+    }
+    return out
   }
   status(): IdentityStatus { return this.provider()?.status() ?? this.deps.local.status() }
 

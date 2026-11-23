@@ -116,6 +116,7 @@ export interface PasswordServiceDeps {
   config: PasswordConfigStoreLike
   identity: PasswordIdentityLike
   migrationSources?: () => Array<{ pubkey: string; provider: ProviderLike }>
+  localIdentitySecrets?: () => Array<{ npub: string; nsec: string }>
   relays: PasswordRelayPoolLike
   cache: PasswordCache
   host: PasswordHost
@@ -144,6 +145,7 @@ export class PasswordService {
   private readonly pendingSaves = new Map<string, PendingSave>()
   private readonly saveTimers = new Map<string, NodeJS.Timeout>()
   private readonly migratingVaults = new Set<string>()
+  private readonly backfillingSecrets = new Set<string>()
   private readonly syncEngine: PasswordSync
   private readonly transfer: PasswordTransfer
   private readonly fillController: PasswordFill
@@ -369,6 +371,9 @@ export class PasswordService {
     void this.migrateLegacyVaults(provider, pubkey).catch((error) => {
       console.warn('[passwords] legacy vault migration failed:', messageOf(error))
     })
+    void this.backfillIdentitySecrets().catch((error) => {
+      console.warn('[passwords] identity secret backfill failed:', messageOf(error))
+    })
     return this.status()
   }
 
@@ -577,6 +582,40 @@ export class PasswordService {
       notes: 'Generated in Nostr Navigator. Keep this secret private.',
       totp: ''
     })
+  }
+
+  /**
+   * Give every locally-held identity a "Nostr identity" vault entry, even one whose
+   * nsec was never saved this way: saveIdentitySecret only ever runs once, right when
+   * a key is generated or imported (see ipc-chrome.ts), so an identity that predates
+   * that code — or was imported before import also started calling it — otherwise has
+   * no recovery copy at all.
+   */
+  private async backfillIdentitySecrets(): Promise<void> {
+    const pubkey = this.pubkey
+    if (!pubkey || !this.unlocked || !this.vault || this.backfillingSecrets.has(pubkey)) return
+    const secrets = this.deps.localIdentitySecrets?.() ?? []
+    if (!secrets.length) return
+
+    this.backfillingSecrets.add(pubkey)
+    try {
+      // Includes tombstoned entries deliberately: a "Nostr identity" entry the person
+      // chose to delete should not keep reappearing on every unlock.
+      const existing = new Set(
+        this.vault.entries
+          .filter((entry) => entry.origin.startsWith('ncc://') && entry.origin.endsWith('/identity'))
+          .map((entry) => entry.username)
+      )
+      for (const { npub, nsec } of secrets) {
+        if (!this.unlocked || this.pubkey !== pubkey) return
+        if (existing.has(npub)) continue
+        const saved = await this.saveIdentitySecret(nsec, npub)
+        if (saved.ok) existing.add(npub)
+        else console.warn(`[passwords] could not backfill identity entry for ${npub}:`, saved.error)
+      }
+    } finally {
+      this.backfillingSecrets.delete(pubkey)
+    }
   }
 
   async removeEntry(id: string): Promise<PasswordSaveResult> {

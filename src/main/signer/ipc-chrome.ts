@@ -76,6 +76,14 @@ export function registerSignerChromeIpc(deps: SignerChromeIpcDeps): void {
     const previousDefault = deps.identity.list().defaultId
     const status = await deps.identity.importLocal(String(secret ?? ''))
     if (deps.identity.list().defaultId !== previousDefault) deps.passwords.onIdentityChanged()
+    // Unlike generate, a failed save here does not fail the import: the key is already
+    // in place either way, and the vault being locked or briefly unreachable is not a
+    // reason to tell the person their import itself failed.
+    const imported = deps.identity.activeLocalSecret()
+    if (imported && status.npub) {
+      const saved = await deps.passwords.saveIdentitySecret(nip19.nsecEncode(imported), status.npub)
+      if (!saved.ok) console.warn(`[identity] could not save imported key's nsec to the password vault: ${saved.error ?? 'unknown error'}`)
+    }
     resetCaches(deps)
     return status
   })

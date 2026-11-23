@@ -6,6 +6,7 @@ import {
   finalizeEvent,
   generateSecretKey,
   getPublicKey,
+  nip19,
   nip44,
   type Event,
   type EventTemplate,
@@ -362,5 +363,69 @@ describe('PasswordService', () => {
     expect(synced.error).toBeNull()
     expect(synced.pending).toBe(false)
     expect(relayStore.size).toBe(1)
+  })
+
+  // unlock() itself fires backfillIdentitySecrets() in the background (see below), so
+  // these tests unlock with no localIdentitySecrets dep (making that auto-run a no-op),
+  // set up vault state deterministically, then inject the dep and call the private
+  // method directly — otherwise the auto-run would race the test's own setEntry calls.
+  function withInjectedIdentitySecrets(
+    h: ReturnType<typeof harness>,
+    secrets: Array<{ npub: string; nsec: string }>
+  ): Promise<void> {
+    ;(h.service as unknown as { deps: { localIdentitySecrets: () => typeof secrets } }).deps.localIdentitySecrets =
+      () => secrets
+    return (h.service as unknown as { backfillIdentitySecrets(): Promise<void> }).backfillIdentitySecrets()
+  }
+
+  it('backfills a "Nostr identity" entry for a local identity that never got one', async () => {
+    const alreadySaved = generateSecretKey()
+    const missingEntry = generateSecretKey()
+    const identity = (sk: Uint8Array) => ({
+      npub: nip19.npubEncode(getPublicKey(sk)),
+      nsec: nip19.nsecEncode(sk)
+    })
+    const h = harness()
+    await h.service.unlock()
+    // One of the two already has an entry (as if saved at generation time); the other
+    // predates that code and has none.
+    const already = identity(alreadySaved)
+    const missing = identity(missingEntry)
+    await h.service.saveEntry({
+      origin: `ncc://${already.npub}/identity`,
+      title: 'Nostr identity',
+      username: already.npub,
+      password: already.nsec,
+      notes: '',
+      totp: ''
+    })
+
+    await withInjectedIdentitySecrets(h, [already, missing])
+
+    const entries = h.service.list().filter((entry) => entry.title === 'Nostr identity')
+    expect(entries).toHaveLength(2)
+    expect(entries.map((entry) => entry.username).sort()).toEqual([already.npub, missing.npub].sort())
+  })
+
+  it('does not backfill an identity entry the user deliberately deleted', async () => {
+    const deleted = generateSecretKey()
+    const npub = nip19.npubEncode(getPublicKey(deleted))
+    const nsec = nip19.nsecEncode(deleted)
+    const h = harness()
+    await h.service.unlock()
+    const saved = await h.service.saveEntry({
+      origin: `ncc://${npub}/identity`,
+      title: 'Nostr identity',
+      username: npub,
+      password: nsec,
+      notes: '',
+      totp: ''
+    })
+    expect(saved.ok).toBe(true)
+    await h.service.removeEntry(h.service.list()[0].id)
+
+    await withInjectedIdentitySecrets(h, [{ npub, nsec }])
+
+    expect(h.service.list().filter((entry) => entry.title === 'Nostr identity')).toHaveLength(0)
   })
 })

@@ -85,6 +85,7 @@ export function createServices(
       status: () => identity.defaultStatus()
     },
     migrationSources: () => identity.passwordVaultMigrationSources(),
+    localIdentitySecrets: () => identity.localIdentitySecrets(),
     relays: relayPool,
     cache: new PasswordCache(join(userData, 'passwords.json')),
     host: shell,
