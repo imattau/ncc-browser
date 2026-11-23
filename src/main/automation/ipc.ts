@@ -27,6 +27,7 @@ export function registerAutomationIpc(
     controller.revokeSign(String(agentId), typeof site === 'string' ? site : null)
   )
   handle('ncc:automation-reveal-command', (agentId) => controller.revealCommand(String(agentId)))
+  handle('ncc:automation-refresh-profile', (agentId) => controller.refreshAgentProfile(String(agentId)))
   handle('ncc:automation-copy-command', (command) => {
     if (typeof command !== 'string' || !command) return false
     clipboard.writeText(command)

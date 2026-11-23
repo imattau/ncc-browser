@@ -1,0 +1,441 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Agent Nostr client</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 14px/1.5 system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.1rem; }
+  section { margin: 1.5rem 0; padding: 1rem; border: 1px solid #8884; border-radius: 8px; }
+  label { display: block; margin: 0.5rem 0 0.2rem; font-size: 0.85rem; opacity: 0.8; }
+  input, textarea { width: 100%; box-sizing: border-box; font: inherit; padding: 0.4rem; }
+  button { font: inherit; padding: 0.4rem 0.8rem; margin: 0.4rem 0.4rem 0 0; cursor: pointer; }
+  #log { white-space: pre-wrap; font: 12px/1.4 monospace; max-height: 240px; overflow: auto; background: #8882; padding: 0.5rem; border-radius: 6px; }
+  #feed div { padding: 0.4rem 0; border-top: 1px solid #8884; }
+  #feed div:first-child { border-top: none; }
+  .muted { opacity: 0.7; font-size: 0.85rem; }
+</style>
+</head>
+<body>
+<h1>Agent Nostr client</h1>
+<p class="muted">
+  A minimal Nostr client meant to be driven by an automation agent through
+  <code>window.nclient</code> (see the console or this page's source), with a plain
+  form below for a human to check the same thing by hand.
+</p>
+
+<section>
+  <button id="signin">Sign in</button>
+  <span id="whoami" class="muted"></span>
+</section>
+
+<section>
+  <strong>Profile</strong>
+  <label>Name</label><input id="profile-name" />
+  <label>About</label><input id="profile-about" />
+  <label>Avatar</label><input id="profile-avatar-file" type="file" accept="image/*" />
+  <button id="profile-save">Save profile</button>
+  <button id="profile-load">Reload profile</button>
+</section>
+
+<section>
+  <strong>Follow</strong>
+  <label>npub or hex pubkey</label><input id="follow-target" />
+  <button id="follow-add">Follow</button>
+  <button id="follow-remove">Unfollow</button>
+  <div id="follows" class="muted"></div>
+</section>
+
+<section>
+  <strong>Post</strong>
+  <textarea id="post-content" rows="3"></textarea>
+  <button id="post-send">Post</button>
+</section>
+
+<section>
+  <strong>Feed</strong> <button id="feed-reload">Reload feed</button>
+  <div id="feed"></div>
+</section>
+
+<section>
+  <strong>Publish this site as me</strong>
+  <p class="muted">Republishes this exact nsite under your own pubkey. No files are
+    re-uploaded — it reuses the ones already hosted.</p>
+  <button id="publish-as-me">Publish as me</button>
+</section>
+
+<strong>Log</strong>
+<div id="log"></div>
+
+<script>
+'use strict';
+
+const DEFAULT_RELAYS = ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.primal.net'];
+const DEFAULT_BLOSSOM_SERVERS = ['https://blossom.ditto.pub', 'https://blossom.primal.net'];
+const READ_TIMEOUT_MS = 4000;
+const PUBLISH_TIMEOUT_MS = 8000;
+
+function log(message) {
+  const el = document.getElementById('log');
+  el.textContent += `${new Date().toISOString().slice(11, 19)}  ${message}\n`;
+  el.scrollTop = el.scrollHeight;
+}
+
+// --- bech32 (BIP-173), just enough to decode an npub into its hex pubkey ---
+const BECH32_CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+
+function bech32Polymod(values) {
+  const GEN = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
+  let chk = 1;
+  for (const value of values) {
+    const top = chk >>> 25;
+    chk = ((chk & 0x1ffffff) << 5) ^ value;
+    for (let i = 0; i < 5; i++) if ((top >>> i) & 1) chk ^= GEN[i];
+  }
+  return chk;
+}
+
+function bech32HrpExpand(hrp) {
+  const out = [];
+  for (const ch of hrp) out.push(ch.charCodeAt(0) >>> 5);
+  out.push(0);
+  for (const ch of hrp) out.push(ch.charCodeAt(0) & 31);
+  return out;
+}
+
+function bech32Decode(input) {
+  const str = input.toLowerCase();
+  const pos = str.lastIndexOf('1');
+  if (pos < 1 || pos + 7 > str.length) throw new Error('Not a bech32 string');
+  const hrp = str.slice(0, pos);
+  const data = [];
+  for (const ch of str.slice(pos + 1)) {
+    const value = BECH32_CHARSET.indexOf(ch);
+    if (value === -1) throw new Error('Invalid bech32 character');
+    data.push(value);
+  }
+  if (bech32Polymod(bech32HrpExpand(hrp).concat(data)) !== 1) throw new Error('Bad bech32 checksum');
+  return { hrp, data: data.slice(0, -6) };
+}
+
+function convertBits(data, fromBits, toBits) {
+  let acc = 0;
+  let bits = 0;
+  const out = [];
+  const maxv = (1 << toBits) - 1;
+  for (const value of data) {
+    acc = (acc << fromBits) | value;
+    bits += fromBits;
+    while (bits >= toBits) {
+      bits -= toBits;
+      out.push((acc >>> bits) & maxv);
+    }
+  }
+  return out;
+}
+
+function bytesToHex(bytes) {
+  return bytes.map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** Accepts either a 64-char hex pubkey or an npub1... and always returns lowercase hex. */
+function toHexPubkey(value) {
+  const trimmed = (value || '').trim();
+  if (/^[0-9a-f]{64}$/i.test(trimmed)) return trimmed.toLowerCase();
+  if (/^npub1[a-z0-9]+$/i.test(trimmed)) {
+    const { hrp, data } = bech32Decode(trimmed);
+    if (hrp !== 'npub') throw new Error('Not an npub');
+    return bytesToHex(convertBits(data, 5, 8));
+  }
+  throw new Error('Expected a 64-character hex pubkey or an npub1... address');
+}
+
+// --- relay I/O: plain NIP-01 over WebSocket, no library ---
+function withRelay(url, timeoutMs, run) {
+  return new Promise((resolve) => {
+    let ws;
+    const timer = setTimeout(() => { try { ws && ws.close(); } catch {} resolve({ url, ok: false, error: 'timeout' }); }, timeoutMs);
+    try {
+      ws = new WebSocket(url);
+    } catch (error) {
+      clearTimeout(timer);
+      resolve({ url, ok: false, error: String(error) });
+      return;
+    }
+    const done = (result) => { clearTimeout(timer); try { ws.close(); } catch {} resolve(result); };
+    ws.onerror = () => done({ url, ok: false, error: 'connection error' });
+    ws.onopen = () => run(ws, done);
+  });
+}
+
+function publishToRelays(event, relays) {
+  return Promise.all(relays.map((url) => withRelay(url, PUBLISH_TIMEOUT_MS, (ws, done) => {
+    ws.onmessage = (message) => {
+      const data = JSON.parse(message.data);
+      if (data[0] === 'OK' && data[1] === event.id) done({ url, ok: data[2] !== false, error: data[3] });
+    };
+    ws.send(JSON.stringify(['EVENT', event]));
+  })));
+}
+
+/** Collects events matching `filter` from every relay until EOSE or the timeout, deduped by id. */
+function queryRelays(filter, relays, timeoutMs = READ_TIMEOUT_MS) {
+  const seen = new Map();
+  const subId = Math.random().toString(36).slice(2);
+  return Promise.all(relays.map((url) => withRelay(url, timeoutMs, (ws, done) => {
+    ws.onmessage = (message) => {
+      const data = JSON.parse(message.data);
+      if (data[0] === 'EVENT' && data[1] === subId) seen.set(data[2].id, data[2]);
+      else if (data[0] === 'EOSE' && data[1] === subId) done({ url, ok: true });
+    };
+    ws.send(JSON.stringify(['REQ', subId, filter]));
+  }))).then(() => [...seen.values()]);
+}
+
+async function getRelays() {
+  try {
+    const map = await window.nostr.getRelays();
+    const urls = Object.keys(map || {});
+    if (urls.length) return urls;
+  } catch {}
+  return DEFAULT_RELAYS;
+}
+
+function latestByAuthor(events) {
+  const byAuthor = new Map();
+  for (const event of events) {
+    const current = byAuthor.get(event.pubkey);
+    if (!current || event.created_at > current.created_at) byAuthor.set(event.pubkey, event);
+  }
+  return byAuthor;
+}
+
+// --- window.nclient: the API an automation agent (or this page's own form) drives ---
+let ownPubkey = null;
+
+async function signIn() {
+  if (!window.nostr) throw new Error('window.nostr is not available on this page (no NIP-07 signer)');
+  ownPubkey = await window.nostr.getPublicKey();
+  return ownPubkey;
+}
+
+function requireSignedIn() {
+  if (!ownPubkey) throw new Error('Call nclient.signIn() first');
+  return ownPubkey;
+}
+
+async function getProfile(pubkey) {
+  const author = pubkey ? toHexPubkey(pubkey) : requireSignedIn();
+  const relays = await getRelays();
+  const events = await queryRelays({ kinds: [0], authors: [author] }, relays);
+  const latest = latestByAuthor(events).get(author);
+  return latest ? JSON.parse(latest.content || '{}') : {};
+}
+
+async function setProfile(patch) {
+  const pubkey = requireSignedIn();
+  const current = await getProfile(pubkey).catch(() => ({}));
+  const content = JSON.stringify({ ...current, ...patch });
+  const relays = await getRelays();
+  const event = await window.nostr.signEvent({ kind: 0, created_at: nowSeconds(), tags: [], content });
+  await publishToRelays(event, relays);
+  return event;
+}
+
+async function uploadAvatar(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  const hash = bytesToHex([...new Uint8Array(digest)]);
+  const now = nowSeconds();
+  const auth = await window.nostr.signEvent({
+    kind: 24242,
+    created_at: now,
+    tags: [['t', 'upload'], ['expiration', String(now + 600)], ['x', hash]],
+    content: 'Upload an avatar'
+  });
+  const authorization = `Nostr ${toBase64Url(JSON.stringify(auth))}`;
+  let lastError = 'no Blossom server accepted the upload';
+  for (const server of DEFAULT_BLOSSOM_SERVERS) {
+    try {
+      const response = await fetch(`${server}/upload`, {
+        method: 'PUT',
+        headers: { Authorization: authorization, 'Content-Type': file.type || 'application/octet-stream', 'X-Sha-256': hash },
+        body: bytes
+      });
+      if (response.ok) return `${server}/${hash}`;
+      lastError = `${server}: HTTP ${response.status}`;
+    } catch (error) {
+      lastError = `${server}: ${error}`;
+    }
+  }
+  throw new Error(lastError);
+}
+
+function toBase64Url(text) {
+  const bytes = new TextEncoder().encode(text);
+  let binary = '';
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  }
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function nowSeconds() {
+  return Math.floor(Date.now() / 1000);
+}
+
+async function getFollowListEvent() {
+  const pubkey = requireSignedIn();
+  const relays = await getRelays();
+  const events = await queryRelays({ kinds: [3], authors: [pubkey] }, relays);
+  return latestByAuthor(events).get(pubkey) || null;
+}
+
+async function getFollows() {
+  const event = await getFollowListEvent();
+  return event ? event.tags.filter((tag) => tag[0] === 'p').map((tag) => tag[1]) : [];
+}
+
+async function setFollowing(targetHex, follow) {
+  const pubkey = requireSignedIn();
+  const current = await getFollowListEvent();
+  const tags = current ? current.tags.filter((tag) => !(tag[0] === 'p' && tag[1] === targetHex)) : [];
+  if (follow) tags.push(['p', targetHex]);
+  const relays = await getRelays();
+  const event = await window.nostr.signEvent({
+    kind: 3,
+    created_at: nowSeconds(),
+    tags,
+    content: current ? current.content : ''
+  });
+  await publishToRelays(event, relays);
+  return getFollows();
+}
+
+async function follow(pubkeyOrNpub) {
+  return setFollowing(toHexPubkey(pubkeyOrNpub), true);
+}
+
+async function unfollow(pubkeyOrNpub) {
+  return setFollowing(toHexPubkey(pubkeyOrNpub), false);
+}
+
+async function post(content) {
+  requireSignedIn();
+  const relays = await getRelays();
+  const event = await window.nostr.signEvent({ kind: 1, created_at: nowSeconds(), tags: [], content: String(content) });
+  await publishToRelays(event, relays);
+  return event;
+}
+
+async function getFeed(limit = 20) {
+  const pubkey = requireSignedIn();
+  const follows = await getFollows();
+  const authors = [pubkey, ...follows];
+  const relays = await getRelays();
+  const events = await queryRelays({ kinds: [1], authors, limit }, relays);
+  return events.sort((a, b) => b.created_at - a.created_at).slice(0, limit);
+}
+
+/** Parses the npub (and site id, for a named site) this page itself was loaded as. */
+function thisNsiteAddress() {
+  const host = location.hostname;
+  const dot = host.indexOf('.');
+  const pubkey = toHexPubkey(dot === -1 ? host : host.slice(0, dot));
+  const site = dot === -1 ? null : host.slice(dot + 1);
+  return { pubkey, site };
+}
+
+async function publishAsMe() {
+  const me = requireSignedIn();
+  const { pubkey: ownerHex, site } = thisNsiteAddress();
+  const relays = await getRelays();
+  const filter = site
+    ? { kinds: [35128], authors: [ownerHex], '#d': [site] }
+    : { kinds: [15128], authors: [ownerHex] };
+  const events = await queryRelays(filter, relays);
+  const manifest = latestByAuthor(events).get(ownerHex);
+  if (!manifest) throw new Error('Could not find this site\'s own manifest on the configured relays');
+  const KEEP = new Set(['d', 'path', 'server', 'title', 'description', 'source']);
+  const tags = manifest.tags.filter((tag) => KEEP.has(tag[0]));
+  const event = await window.nostr.signEvent({ kind: manifest.kind, created_at: nowSeconds(), tags, content: '' });
+  await publishToRelays(event, relays);
+  return site ? `nsite://${me}/${site}/` : `nsite://${me}/`;
+}
+
+window.nclient = { signIn, getProfile, setProfile, uploadAvatar, follow, unfollow, getFollows, post, getFeed, publishAsMe };
+
+// --- plain form, wired to the same functions, for a human to check by hand ---
+function wire(id, handler) {
+  document.getElementById(id).addEventListener('click', async () => {
+    try {
+      await handler();
+    } catch (error) {
+      log(`error: ${error && error.message ? error.message : error}`);
+    }
+  });
+}
+
+wire('signin', async () => {
+  const pubkey = await signIn();
+  document.getElementById('whoami').textContent = pubkey;
+  log(`signed in as ${pubkey}`);
+});
+
+wire('profile-load', async () => {
+  const profile = await getProfile();
+  document.getElementById('profile-name').value = profile.name || '';
+  document.getElementById('profile-about').value = profile.about || '';
+  log(`profile: ${JSON.stringify(profile)}`);
+});
+
+wire('profile-save', async () => {
+  const file = document.getElementById('profile-avatar-file').files[0];
+  const picture = file ? await uploadAvatar(file) : undefined;
+  const patch = { name: document.getElementById('profile-name').value, about: document.getElementById('profile-about').value };
+  if (picture) patch.picture = picture;
+  await setProfile(patch);
+  log('profile saved');
+});
+
+wire('follow-add', async () => {
+  const follows = await follow(document.getElementById('follow-target').value);
+  document.getElementById('follows').textContent = follows.join(', ');
+  log('followed');
+});
+
+wire('follow-remove', async () => {
+  const follows = await unfollow(document.getElementById('follow-target').value);
+  document.getElementById('follows').textContent = follows.join(', ');
+  log('unfollowed');
+});
+
+wire('post-send', async () => {
+  await post(document.getElementById('post-content').value);
+  document.getElementById('post-content').value = '';
+  log('posted');
+});
+
+wire('feed-reload', async () => {
+  const events = await getFeed();
+  document.getElementById('feed').innerHTML = events
+    .map((event) => `<div><strong>${event.pubkey.slice(0, 8)}…</strong> ${escapeHtml(event.content)}</div>`)
+    .join('');
+  log(`loaded ${events.length} note(s)`);
+});
+
+wire('publish-as-me', async () => {
+  const address = await publishAsMe();
+  log(`published at ${address}`);
+});
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+</script>
+</body>
+</html>

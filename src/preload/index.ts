@@ -239,6 +239,7 @@ const api: NccApi = {
   automationRevokeSign: (agentId, site) =>
     ipcRenderer.invoke('ncc:automation-revoke-sign', agentId, site),
   automationRevealCommand: (agentId) => ipcRenderer.invoke('ncc:automation-reveal-command', agentId),
+  automationRefreshProfile: (agentId) => ipcRenderer.invoke('ncc:automation-refresh-profile', agentId),
   automationCopyCommand: (command) => ipcRenderer.invoke('ncc:automation-copy-command', command),
   onAutomation: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, state: AutomationState): void =>

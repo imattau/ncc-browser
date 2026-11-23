@@ -12,6 +12,14 @@ export interface AgentSummary {
   signGrants: string[]
   /** The connect command with the nsec masked; null while the server isn't running. */
   maskedCommand: string | null
+  /** The agent's own public profile, if a lookup has found one. */
+  profile: { name?: string; pictureDataUrl?: string } | null
+  /** `nsite://...` address of a site this agent has published under its own key, if any. */
+  nsiteAddress: string | null
+  /** When the profile/nsite lookup last completed, or null if it has never run. */
+  profileCheckedAt: number | null
+  /** True while a profile/nsite lookup for this agent is in flight. */
+  profileLoading: boolean
 }
 
 /** State of the agent-control server, as shown in Settings → Agent control. */

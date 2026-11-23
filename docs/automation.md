@@ -94,6 +94,17 @@ Settings → Agent control shows a separate "Sites this agent can sign in to" li
 agent, with its own **Stop signing** and per-site revoke, next to the existing browsing
 grants.
 
+[`agent-client/`](../agent-client/README.md) is a minimal nsite built for exactly this —
+a no-build Nostr client that signs in, sets a profile and avatar, follows accounts, posts,
+and republishes itself under whoever is signed in, all through a small `window.nclient`
+API meant to be driven one `evaluate` call at a time.
+
+Each agent's card also shows, best-effort, whatever it has published publicly: its name
+and avatar if it has set a profile, and the address of an nsite if it has published one
+under its own key (a "Checked Xs ago" line and a refresh button next to it). This is a
+read-only relay lookup — it never changes what an agent can do, and an agent that hasn't
+set anything up just shows its npub as before.
+
 ## Safety
 
 - Loopback only, bearer token required, requests carrying an `Origin` header (any web

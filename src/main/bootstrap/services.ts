@@ -328,6 +328,8 @@ export function createServices(
     host: createElectronHost(shell),
     approvals,
     passwords: passwordService,
+    relays: relayPool.query,
+    configRelays: () => config.getRelays(),
     version: app.getVersion(),
     infoFile: join(userData, 'automation.json'),
     forced: process.env.NCC_AUTOMATION === '1',
