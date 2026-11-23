@@ -165,6 +165,18 @@ export function wireTab(internals: ShellInternals, tab: Tab): void {
     return { action: 'deny' }
   })
 
+  // The auxiliary popup window above has no native parent (some Wayland compositors
+  // don't support the xdg_foreign protocol Electron/GTK needs to set one without
+  // warning, and setting `parent` there is not reliably honored either), so closing it
+  // can leave the main window never getting input focus back — the whole app then
+  // looks frozen even though it is still running. Reclaim focus explicitly instead of
+  // depending on native window-transiency to do it.
+  contents.on('did-create-window', (childWindow) => {
+    childWindow.once('closed', () => {
+      if (!tab.owner.window.isDestroyed()) tab.owner.window.focus()
+    })
+  })
+
   contents.on('will-navigate', (event, url) => {
     if (tab.programmatic) return
     const protocol = safeProtocol(url)
