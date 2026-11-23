@@ -1,5 +1,13 @@
 # Release notes
 
+## 0.43.0 — add sites to the home screen
+
+### Added
+
+- Add a normal tab to the browser home screen on desktop and Android. Desktop also
+  creates an OS desktop launcher; Android offers to pin a launcher shortcut and uses
+  the page icon when available. Home screen entries can be removed from the browser.
+
 ## 0.42.3 — Android: fix all page/nsite loads hanging forever
 
 ### Fixed

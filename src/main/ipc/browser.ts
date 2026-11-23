@@ -3,6 +3,8 @@ import { COMMANDS, type CommandId } from '@shared/commands'
 import { OVERLAY_REASONS } from '@shared/types'
 import type { BrowserShell } from '../shell'
 import { isChromeSender, shellForSender } from './shared'
+import { normalizeHomeSite } from '@shared/home-sites'
+import { createHomeShortcut } from '../home-shortcut'
 
 export interface BrowserIpcDeps {
   shell: BrowserShell
@@ -113,6 +115,18 @@ export function registerBrowserIpc(deps: BrowserIpcDeps): void {
   })
 
   ipcMain.handle('ncc:get-state', (event) => shellFor(event).getState())
+
+  ipcMain.handle('ncc:create-home-shortcut', (event, value: unknown) => {
+    if (!fromChrome(event)) return { ok: false, error: 'Only the browser window can create shortcuts.' }
+    const site = normalizeHomeSite(value)
+    if (!site) return { ok: false, error: 'This page address cannot be added as a shortcut.' }
+    try {
+      createHomeShortcut(site)
+      return { ok: true }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : 'Could not create the desktop shortcut.' }
+    }
+  })
 
   ipcMain.handle('ncc:omnibox-suggest', (event, input: unknown) => {
     if (!fromChrome(event)) return []

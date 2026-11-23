@@ -143,6 +143,11 @@
         <p id="shortcuts-label" class="section-label">Shortcuts</p>
         <div id="shortcuts" class="shortcuts"></div>
 
+        <section id="home-saved-section" hidden>
+          <p class="section-label">Added to home screen</p>
+          <div id="home-saved" class="shortcuts"></div>
+        </section>
+
         <section id="home-ncc-section" hidden>
           <p class="section-label">NCC Services</p>
           <div id="home-ncc" class="shortcuts"></div>
@@ -1013,6 +1018,9 @@
         <div class="menu-rows">
           <button id="menu-home" class="row" type="button">
             <svg class="i"><use href="#i-home" /></svg><span class="row-text"><b>Home</b></span>
+          </button>
+          <button id="menu-add-home" class="row" type="button">
+            <svg class="i"><use href="#i-plus" /></svg><span class="row-text"><b>Add to home screen</b><small>Save this site and pin a launcher shortcut</small></span>
           </button>
           <button id="menu-share-nostr" class="row" type="button">
             <svg class="i"><use href="#i-share" /></svg><span class="row-text"><b>Share to Nostr</b><small id="menu-share-nostr-note"></small></span>

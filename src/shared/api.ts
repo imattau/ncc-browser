@@ -88,6 +88,7 @@ import type {
   PaymentCardSummary
 } from './payment-cards'
 import type { BitcoinSendPreview, MoneroWalletRecord, NwcInvoiceLookup, NwcSnapshot, WalletSnapshot, WalletStatus } from './wallet'
+import type { HomeSite } from './home-sites'
 
 export interface SetRelaysResult {
   ok: boolean
@@ -133,6 +134,7 @@ export interface NccApi {
   getState(): Promise<NavState>
   getConfig(): Promise<AppConfig>
   bookmarks(): Promise<Bookmark[]>
+  createHomeShortcut(site: HomeSite): Promise<{ ok: boolean; error?: string }>
   toggleBookmark(): Promise<Bookmark[]>
   removeBookmark(url: string): Promise<Bookmark[]>
   downloads(): Promise<DownloadNotice[]>

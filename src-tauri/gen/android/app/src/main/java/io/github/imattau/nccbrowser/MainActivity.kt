@@ -6,9 +6,11 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.util.Base64
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import android.view.ViewGroup
@@ -23,6 +25,9 @@ import androidx.activity.enableEdgeToEdge
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
+import androidx.core.content.pm.ShortcutInfoCompat
+import androidx.core.content.pm.ShortcutManagerCompat
+import androidx.core.graphics.drawable.IconCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import org.json.JSONArray
@@ -31,6 +36,7 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.security.MessageDigest
 
 /**
  * Tauri hosts the shell. This activity puts a 56 dp chrome strip and a tab container
@@ -1139,6 +1145,40 @@ class MainActivity : TauriActivity() {
           )
         } catch (error: Exception) {
           // No handler installed; nothing else to try.
+        }
+      }
+    }
+
+    @JavascriptInterface
+    fun pinShortcut(title: String?, url: String?, iconDataUrl: String?) {
+      val target = url?.takeIf { it.length <= 4096 } ?: return
+      val parsed = runCatching { Uri.parse(target) }.getOrNull() ?: return
+      if (parsed.scheme?.lowercase() !in setOf("http", "https", "ncc", "nsite")) return
+      val label = title?.trim()?.replace(Regex("\\s+"), " ")?.take(80)?.ifBlank { parsed.host ?: target } ?: (parsed.host ?: target)
+      val id = "site-" + MessageDigest.getInstance("SHA-256").digest(target.toByteArray()).take(12).joinToString("") { "%02x".format(it) }
+      runOnUiThread {
+        try {
+          if (!ShortcutManagerCompat.isRequestPinShortcutSupported(this@MainActivity)) {
+            Toast.makeText(this@MainActivity, "This launcher cannot pin shortcuts", Toast.LENGTH_SHORT).show()
+            return@runOnUiThread
+          }
+          val launch = Intent(Intent.ACTION_VIEW, parsed).setClass(this@MainActivity, MainActivity::class.java)
+          val customIcon = iconDataUrl
+            ?.takeIf { it.matches(Regex("^data:image/(png|jpeg|webp);base64,.{1,360000}$")) }
+            ?.substringAfter(',', "")
+            ?.let { encoded -> runCatching { Base64.decode(encoded, Base64.DEFAULT) }.getOrNull() }
+            ?.let { bytes -> BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }
+            ?.takeIf { bitmap -> !bitmap.isRecycled }
+            ?.let { IconCompat.createWithBitmap(it) }
+          val shortcut = ShortcutInfoCompat.Builder(this@MainActivity, id)
+            .setShortLabel(label.take(25))
+            .setLongLabel(label)
+            .setIcon(customIcon ?: IconCompat.createWithResource(this@MainActivity, R.mipmap.ic_launcher))
+            .setIntent(launch)
+            .build()
+          ShortcutManagerCompat.requestPinShortcut(this@MainActivity, shortcut, null)
+        } catch (_: Exception) {
+          Toast.makeText(this@MainActivity, "Could not create the launcher shortcut", Toast.LENGTH_SHORT).show()
         }
       }
     }

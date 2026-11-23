@@ -1,7 +1,7 @@
 export function createHome(deps) {
   const {
     readList, writeList, set, byId, labelFor, avatar, submit, renderHomeIdentity,
-    getNewTabMode, HOME_ORDER_KEY, HOME_HIDDEN_KEY, BOOKMARKS_KEY, HISTORY_KEY, DEFAULT_ADDRESS
+    getNewTabMode, HOME_ORDER_KEY, HOME_HIDDEN_KEY, HOME_SITES_KEY, BOOKMARKS_KEY, HISTORY_KEY, DEFAULT_ADDRESS
   } = deps
   let homeEditMode = false
 
@@ -49,6 +49,10 @@ export function createHome(deps) {
     set('shortcuts-label', suggested ? 'Suggested' : 'Shortcuts')
     renderHomeTiles(byId('shortcuts'), entries)
 
+    const savedSites = readList(HOME_SITES_KEY).filter((entry) => entry && typeof entry.address === 'string')
+    byId('home-saved-section').hidden = savedSites.length === 0
+    renderHomeTiles(byId('home-saved'), savedSites, true)
+
     for (const [scheme, sectionId, listId] of [
       ['ncc', 'home-ncc-section', 'home-ncc'],
       ['nsite', 'home-nsites-section', 'home-nsites']
@@ -60,7 +64,7 @@ export function createHome(deps) {
     }
   }
 
-  function renderHomeTiles(container, entries) {
+  function renderHomeTiles(container, entries, savedSite = false) {
     container.textContent = ''
     for (const entry of entries) {
       const label = labelFor(entry)
@@ -96,7 +100,8 @@ export function createHome(deps) {
         const removeTile = (event) => {
           event.preventDefault()
           event.stopPropagation()
-          writeList(HOME_HIDDEN_KEY, [...new Set([...readList(HOME_HIDDEN_KEY), entry.address])])
+          if (savedSite) writeList(HOME_SITES_KEY, readList(HOME_SITES_KEY).filter((site) => site.address !== entry.address))
+          else writeList(HOME_HIDDEN_KEY, [...new Set([...readList(HOME_HIDDEN_KEY), entry.address])])
           renderHome()
         }
         remove.addEventListener('click', removeTile)

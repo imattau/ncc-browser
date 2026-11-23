@@ -12,6 +12,7 @@ import { useBrowserData } from './hooks/useBrowserData'
 import { useOverlayController } from './hooks/useOverlayController'
 import { usePasswordPrompts } from './hooks/usePasswordPrompts'
 import { useSignerPrompts } from './hooks/useSignerPrompts'
+import { normalizeHomeSite } from '@shared/home-sites'
 
 export function App() {
   const data = useBrowserData()
@@ -200,6 +201,30 @@ export function App() {
     [setBookmarks]
   )
 
+  const addHomeSite = useCallback(() => {
+    const site = normalizeHomeSite({
+      url: state.displayUrl,
+      title: state.title || state.displayUrl,
+      icon: state.tabs.find((tab) => tab.id === state.activeTabId)?.favicon ?? undefined
+    })
+    if (!site || state.tabKind !== 'normal') return
+    try {
+      const stored = JSON.parse(localStorage.getItem('ncc.home-sites') || '[]') as unknown[]
+      const entries = stored.map(normalizeHomeSite).filter((entry) => entry !== null)
+      localStorage.setItem('ncc.home-sites', JSON.stringify([site, ...entries.filter((entry) => entry.url !== site.url)].slice(0, 40)))
+      window.dispatchEvent(new Event('ncc:home-sites-changed'))
+    } catch {
+      setHint('Could not save this home screen shortcut.')
+      closeOverlay()
+      return
+    }
+    void window.ncc.createHomeShortcut(site).then((result) => {
+      if (!result.ok) setHint(result.error ?? 'Could not create the desktop shortcut.')
+      else setHint('Added to the home screen and desktop.')
+    }).catch(() => setHint('The site was saved in NCC Browser, but the desktop shortcut could not be created.'))
+    closeOverlay()
+  }, [closeOverlay, state.activeTabId, state.displayUrl, state.tabKind, state.tabs, state.title])
+
   const openBookmark = useCallback(
     (url: string) => {
       closeOverlay()
@@ -382,6 +407,7 @@ export function App() {
           })
           openSettings('services')
         }}
+        onAddHomeSite={addHomeSite}
         onOpenBookmark={openBookmark}
         onRemoveBookmark={removeBookmark}
         onOpenDeviceTab={(url) => {

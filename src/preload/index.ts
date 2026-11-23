@@ -56,6 +56,7 @@ const api: NccApi = {
   getState: () => ipcRenderer.invoke('ncc:get-state'),
   getConfig: () => ipcRenderer.invoke('ncc:get-config'),
   bookmarks: () => ipcRenderer.invoke('ncc:bookmarks'),
+  createHomeShortcut: (site) => ipcRenderer.invoke('ncc:create-home-shortcut', site),
   toggleBookmark: () => ipcRenderer.invoke('ncc:toggle-bookmark'),
   removeBookmark: (url) => ipcRenderer.invoke('ncc:remove-bookmark', url),
   downloads: () => ipcRenderer.invoke('ncc:get-downloads'),

@@ -11,7 +11,7 @@
  */
 import { closeMoneroWallet, handleNwcPageRequest, loadWallet, wireWallet } from './wallet.js'
 import './downloads.js'
-import { addressParts, avatar, displayAddress, icon, iconKey, labelFor, saveIcon, setIcon, shortId } from './address.js'
+import { addressParts, avatar, displayAddress, icon, iconDataUrl, iconKey, labelFor, saveIcon, setIcon, shortId } from './address.js'
 import { createSync } from './sync.js'
 import { createProfile } from './profile.js'
 import { createHome } from './home.js'
@@ -1337,6 +1337,7 @@ function renderMenu() {
   byId('menu-share-nostr').setAttribute('aria-disabled', String(!nostr.ok))
   byId('menu-share-nostr-note').textContent = nostr.ok ? '' : nostr.why
   byId('menu-bookmark').disabled = !hasPage
+  byId('menu-add-home').disabled = !hasPage || activeKind() !== 'normal'
   byId('menu-find').setAttribute('aria-disabled', String(!hasPage))
   byId('menu-copy').setAttribute('aria-disabled', String(!hasPage))
   byId('menu-desktop').setAttribute('aria-disabled', String(!hasPage))
@@ -1360,6 +1361,16 @@ function wireMenu() {
     closePanel()
   })
   act('menu-home', () => showPanel('home'))
+  act('menu-add-home', () => {
+    const url = displayAddress(activeUrl)
+    if (!url || activeKind() !== 'normal' || !/^(https?:|ncc:|nsite:)/i.test(url)) return
+    const sites = readList('ncc.home.sites').filter((entry) => entry && entry.address !== url)
+    const site = { address: url, title: activeTitle || url }
+    writeList('ncc.home.sites', [site, ...sites].slice(0, 100))
+    try { content.pinShortcut?.(site.title, url, iconDataUrl(url)) } catch { /* home tile still works */ }
+    homeFeature.renderHome()
+    closePanel()
+  })
   act('menu-reload', () => {
     content.reload()
     closePanel()
@@ -2278,6 +2289,7 @@ const homeFeature = createHome({
   getNewTabMode: () => newTabMode,
   HOME_ORDER_KEY: 'ncc.home.order',
   HOME_HIDDEN_KEY: 'ncc.home.hidden',
+  HOME_SITES_KEY: 'ncc.home.sites',
   BOOKMARKS_KEY, HISTORY_KEY, DEFAULT_ADDRESS
 })
 

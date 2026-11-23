@@ -1,5 +1,10 @@
 # Nostr Navigator for Android
 
+## New in 0.43.0
+
+- Add a normal tab to the browser home screen, and request a launcher shortcut. The
+  shortcut uses the page icon when available and opens the site in NCC Browser.
+
 ## Fixes in 0.42.5
 
 - Nsite links open immediately instead of waiting for a hidden relay manifest lookup,
