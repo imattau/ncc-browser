@@ -126,7 +126,8 @@ export class BrowserShell {
       openInNewTab: (url, kind) => this.openInNewTab(url, kind),
       handleInput: (event, input) => this.handleInput(event, input),
       hasTab: (tab) => this.tabs.includes(tab),
-      showInsecurePrompt: (tab, url, key) => this.showInsecurePrompt(tab, url, key)
+      showInsecurePrompt: (tab, url, key) => this.showInsecurePrompt(tab, url, key),
+      closeTab: (id) => this.closeTab(id)
     }
     const savedWindow = deps.initialSession?.window
     const bounds = deps.initialBounds

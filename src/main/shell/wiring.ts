@@ -128,6 +128,15 @@ export function wireTab(internals: ShellInternals, tab: Tab): void {
     internals.syncState()
   })
 
+  // A WebContentsView has no owning BrowserWindow to react to `window.close()` for it
+  // (e.g. a Google SSO popup that closes itself once auth completes); left alone, the
+  // page's own close request destroys the webContents out from under the tab, and
+  // `tab.view.webContents` later reads as undefined and crashes tabTitle(). Removing
+  // the tab as soon as its contents are destroyed keeps the tab list in sync.
+  contents.on('destroyed', () => {
+    if (internals.hasTab(tab)) internals.closeTab(tab.id)
+  })
+
   contents.setWindowOpenHandler(({ url }) => {
     void internals.openInNewTab(url, tab.kind)
     return { action: 'deny' }

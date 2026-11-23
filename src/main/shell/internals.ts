@@ -19,4 +19,5 @@ export interface ShellInternals {
   handleInput: (event: { preventDefault(): void }, input: Input) => void
   hasTab: (tab: Tab) => boolean
   showInsecurePrompt: (tab: Tab, url: string, key: string) => void
+  closeTab: (id: string) => void
 }
