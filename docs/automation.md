@@ -36,6 +36,13 @@ scratch config home:
 XDG_CONFIG_HOME=/tmp/ncc-scratch NCC_AUTOMATION=1 npm run dev
 ```
 
+An MCP client's `initialize` call gets this back in `instructions`, so any agent — not
+just one already familiar with this app — knows not to try to create a second identity:
+the connection already has one fixed Nostr identity (the keypair generated once in
+Settings → Agent control), `tab_new` ties a tab's `window.nostr` to it, and setting up a
+profile/posting/following is just signing and publishing the matching kind of event
+(or using `window.nclient` on a page that defines one, such as `agent-client/`).
+
 ## Tools
 
 `batch` (up to 20 ordered tool calls), `tabs_list`, `tab_new`, `tab_close`, `navigate`, `read_page` (numbered interactive
