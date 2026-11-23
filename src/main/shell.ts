@@ -336,10 +336,16 @@ export class BrowserShell {
     this.tabs.splice(index, 1)
 
     try {
-      target.view.webContents.stop()
-      this.deps.torGuard.delete(target.view.webContents.id)
+      // A tab whose page closed itself (e.g. an SSO popup after `window.close()`)
+      // reaches here with its webContents already gone; there is nothing left to
+      // stop/close in that case, just the view to detach.
+      const contents = target.view.webContents
+      if (contents && !contents.isDestroyed()) {
+        contents.stop()
+        this.deps.torGuard.delete(contents.id)
+        contents.close()
+      }
       this.window.contentView.removeChildView(target.view)
-      target.view.webContents.close()
     } catch (error) {
       console.warn('[shell] could not close tab:', error)
     }
