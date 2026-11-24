@@ -24,10 +24,13 @@ import {
 import type { IdentityStatus } from '@shared/types'
 import { cn } from '../lib/cn'
 import { messageOf, relativeSeconds, shortIdentity } from '../lib/format'
+import { ServiceIdentityPicker } from './hosting/ServiceIdentityPicker'
+import { useHostingIdentity } from './hosting/useHostingIdentity'
 
 interface SitePublishingSettingsProps {
   identity: IdentityStatus | null
   onOpenIdentity: () => void
+  onIdentityChange?: (status: IdentityStatus) => void
   onClose: () => void
 }
 
@@ -70,6 +73,7 @@ function formatBytes(bytes: number): string {
 export function SitePublishingSettings({
   identity,
   onOpenIdentity,
+  onIdentityChange,
   onClose
 }: SitePublishingSettingsProps) {
   const [state, setState] = useState<NsitePublishState | null>(null)
@@ -77,6 +81,7 @@ export function SitePublishingSettings({
   const [scan, setScan] = useState<NsiteFolderScan | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const identityAdmin = useHostingIdentity({ identity, onIdentityChange, setError })
   const [progress, setProgress] = useState<NsiteProgress | null>(null)
   const [log, setLog] = useState<string[]>([])
   const [result, setResult] = useState<NsitePublishResult | null>(null)
@@ -309,7 +314,14 @@ export function SitePublishingSettings({
             Set up an identity
           </button>
         </div>
-      ) : null}
+      ) : (
+        <ServiceIdentityPicker
+          identity={identity}
+          identityAdmin={identityAdmin}
+          copied={copied}
+          copy={copy}
+        />
+      )}
 
       {error ? (
         <p role="alert" className="flex items-start gap-2 rounded-lg border border-[color:var(--color-danger)]/30 bg-[color:var(--color-danger)]/10 px-3 py-2 text-ui-11 text-[color:var(--color-danger)]">

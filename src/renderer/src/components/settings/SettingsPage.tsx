@@ -231,6 +231,7 @@ export function SettingsPage({
             <SitePublishingSettings
               identity={identity}
               onOpenIdentity={() => setSection('identity')}
+              onIdentityChange={publishIdentity}
               onClose={onClose}
             />
           ) : null}
