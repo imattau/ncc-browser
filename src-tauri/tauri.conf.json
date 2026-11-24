@@ -38,7 +38,7 @@
     ],
     "android": {
       "minSdkVersion": 26,
-      "versionCode": 44003,
+      "versionCode": 44004,
       "debugApplicationIdSuffix": ".debug"
     }
   }
