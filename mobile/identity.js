@@ -2,6 +2,7 @@ export function createIdentity(deps) {
   const {
     byId, set, shortId, invoke, emptyState, confirm, content, applyLayout,
     getPanel, getTabs, getIdentity, setIdentity, getBrowserSettings, setBrowserSettings,
+    showPanel, closePanel,
     renderHomeIdentity, loadProfile
   } = deps
   let identityProfiles = null
@@ -81,6 +82,51 @@ export function createIdentity(deps) {
   async function refreshIdentityProfiles() {
     try { renderIdentityProfiles(await invoke('identity_profiles')) }
     catch (error) { identityFailure(error) }
+  }
+
+  async function openSignerChooser() {
+    try {
+      const result = await invoke('identity_profiles')
+      if ((result?.identities || []).length <= 1) return
+      const list = byId('signer-chooser-list')
+      const error = byId('signer-chooser-error')
+      error.textContent = ''
+      list.replaceChildren()
+      for (const profile of result.identities) {
+        const button = document.createElement('button')
+        button.type = 'button'
+        button.className = 'row signer-choice'
+        button.disabled = Boolean(profile.active)
+        const mark = document.createElement('span')
+        mark.className = 'signer-choice-mark'
+        mark.textContent = profile.active ? '✓' : profile.mode === 'nip46' ? '↗' : '○'
+        const text = document.createElement('span')
+        text.className = 'row-text'
+        const title = document.createElement('b')
+        title.textContent = profile.npub || profile.id
+        const detail = document.createElement('small')
+        detail.textContent = `${profile.mode === 'nip46' ? 'Remote signer' : 'Local key'}${profile.is_default ? ' · Default' : ''}${profile.active ? ' · Active' : ''}`
+        text.append(title, detail)
+        button.append(mark, text)
+        button.addEventListener('click', async () => {
+          button.disabled = true
+          error.textContent = ''
+          try {
+            await invoke('identity_select', { id: profile.id })
+            await refreshIdentity()
+            await refreshBunker()
+            closePanel()
+          } catch (selectionError) {
+            button.disabled = false
+            error.textContent = String(selectionError)
+          }
+        })
+        list.append(button)
+      }
+      showPanel('signer-chooser')
+    } catch (error) {
+      // A failed lookup should not interrupt the normal single-press menu.
+    }
   }
 
   function renderIdentity(status) {
@@ -347,6 +393,7 @@ export function createIdentity(deps) {
 
   return {
     hasSignerRequest: () => Boolean(signerRequest),
-    setupIdentity, refreshIdentity, refreshBunker, renderIdentity, answerSigner
+    setupIdentity, refreshIdentity, refreshBunker, renderIdentity, answerSigner,
+    openSignerChooser
   }
 }

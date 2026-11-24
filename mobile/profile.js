@@ -28,6 +28,7 @@ export function npubToHex(npub) {
 export function createProfile({ invoke, byId, avatar, shortId, getIdentity, getBrowserSettings }) {
   const profilePictureRequests = new Set()
   let profile = null
+  let profileHex = null
 
   function readProfiles() {
     try {
@@ -149,10 +150,12 @@ export function createProfile({ invoke, byId, avatar, shortId, getIdentity, getB
     const hex = npubToHex(getIdentity()?.npub)
     if (!hex || !getIdentity()?.unlocked) {
       profile = null
+      profileHex = null
       renderHomeIdentity()
       return
     }
 
+    profileHex = hex
     const cached = readProfiles()[hex]
     profile = cached || null
     renderHomeIdentity()
@@ -239,16 +242,19 @@ export function createProfile({ invoke, byId, avatar, shortId, getIdentity, getB
     const mark = byId('brand-mark')
     const identity = getIdentity()
     if (!identity) return
+    const activeProfile = npubToHex(identity.npub) === profileHex ? profile : null
+
+    renderToolbarAvatar(identity, activeProfile)
 
     text.textContent = !identity.initialised
       ? 'Set up your identity'
       : identity.unlocked
-        ? `${profile?.name ? `${profile.name} · ` : 'Unlocked · '}${shortId(identity.npub)}`
+        ? `${activeProfile?.name ? `${activeProfile.name} · ` : 'Unlocked · '}${shortId(identity.npub)}`
         : `Locked · ${shortId(identity.npub)}`
 
     const signedIn = identity.initialised && identity.unlocked
-    const picture = signedIn && isCachedPictureData(profile?.pictureData) ? profile.pictureData : ''
-    const key = `${signedIn}|${profile?.picture || ''}|${profile?.pictureDataAt || 0}|${profile?.name || ''}`
+    const picture = signedIn && isCachedPictureData(activeProfile?.pictureData) ? activeProfile.pictureData : ''
+    const key = `${signedIn}|${activeProfile?.picture || ''}|${activeProfile?.pictureDataAt || 0}|${activeProfile?.name || ''}`
     if (mark.dataset.key === key) return
     mark.dataset.key = key
 
@@ -257,7 +263,7 @@ export function createProfile({ invoke, byId, avatar, shortId, getIdentity, getB
 
     const fallback = () => {
       mark.textContent = ''
-      mark.appendChild(avatar(profile?.name || identity.npub || 'N'))
+      mark.appendChild(avatar(activeProfile?.name || identity.npub || 'N'))
     }
 
     if (!signedIn) {
@@ -275,6 +281,31 @@ export function createProfile({ invoke, byId, avatar, shortId, getIdentity, getB
       mark.appendChild(image)
     } else {
       fallback()
+    }
+  }
+
+  function renderToolbarAvatar(identity, activeProfile) {
+    const button = byId('bar-avatar')
+    if (!button) return
+    const signedIn = identity.initialised && identity.unlocked
+    const picture = signedIn && isCachedPictureData(activeProfile?.pictureData) ? activeProfile.pictureData : ''
+    const key = `${identity.npub || ''}|${signedIn}|${activeProfile?.pictureDataAt || 0}|${activeProfile?.name || ''}`
+    if (button.dataset.avatarKey === key) return
+    button.dataset.avatarKey = key
+    button.replaceChildren()
+    button.setAttribute('aria-label', signedIn ? `Menu · ${activeProfile?.name || shortId(identity.npub)}` : 'Menu')
+    if (picture) {
+      const image = document.createElement('img')
+      image.src = picture
+      image.alt = ''
+      image.draggable = false
+      image.onerror = () => {
+        if (button.dataset.avatarKey !== key) return
+        button.replaceChildren(avatar(activeProfile?.name || identity.npub || 'N', 'toolbar-avatar-fallback'))
+      }
+      button.appendChild(image)
+    } else {
+      button.appendChild(avatar(signedIn ? activeProfile?.name || identity.npub : 'N', 'toolbar-avatar-fallback'))
     }
   }
 

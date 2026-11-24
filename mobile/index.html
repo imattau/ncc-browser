@@ -91,8 +91,8 @@
         <button id="bar-tabs" class="tabs-btn" type="button" aria-label="Tabs">
           <span id="bar-tabs-n">1</span>
         </button>
-        <button id="bar-menu" class="ib" type="button" aria-label="Menu">
-          <svg class="i"><use href="#i-more" /></svg>
+        <button id="bar-avatar" class="ib toolbar-avatar" type="button" aria-label="Menu">
+          <span class="avatar toolbar-avatar-fallback">N</span>
         </button>
       </div>
 
@@ -961,6 +961,18 @@
         <button id="bunker-connect" class="btn block" type="button">Connect a remote signer</button>
         <button id="bunker-disconnect" class="btn tonal block" type="button" hidden>Disconnect</button>
         <p id="bunker-error" class="status" role="status"></p>
+      </div>
+    </section>
+
+    <section id="signer-chooser" class="screen" hidden>
+      <header class="appbar">
+        <button class="ib" type="button" data-back aria-label="Back"><svg class="i"><use href="#i-back" /></svg></button>
+        <h2>Choose signer</h2>
+      </header>
+      <div class="body">
+        <p class="hint">Choose the key used for new signing requests.</p>
+        <div id="signer-chooser-list" class="identity-profile-list"></div>
+        <p id="signer-chooser-error" class="status" role="alert"></p>
       </div>
     </section>
 

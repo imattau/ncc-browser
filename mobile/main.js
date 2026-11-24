@@ -147,6 +147,7 @@ const PANELS = [
   'payment-edit',
   'storage',
   'identity',
+  'signer-chooser',
   'signer-settings',
   'history',
   'bookmarks',
@@ -2192,7 +2193,35 @@ function wireChrome() {
     if (activeUrl) showPanel('info')
   })
   byId('bar-tabs').addEventListener('click', () => showPanel('switcher'))
-  byId('bar-menu').addEventListener('click', () => showPanel('menu'))
+  const avatarButton = byId('bar-avatar')
+  let avatarPressTimer = null
+  let avatarLongPressed = false
+  const cancelAvatarPress = () => {
+    if (avatarPressTimer !== null) {
+      clearTimeout(avatarPressTimer)
+      avatarPressTimer = null
+    }
+  }
+  avatarButton.addEventListener('pointerdown', () => {
+    cancelAvatarPress()
+    avatarLongPressed = false
+    avatarPressTimer = setTimeout(() => {
+      avatarPressTimer = null
+      avatarLongPressed = true
+      void identityFeature.openSignerChooser()
+    }, 550)
+  })
+  avatarButton.addEventListener('pointerup', cancelAvatarPress)
+  avatarButton.addEventListener('pointerleave', cancelAvatarPress)
+  avatarButton.addEventListener('pointercancel', cancelAvatarPress)
+  avatarButton.addEventListener('contextmenu', (event) => event.preventDefault())
+  avatarButton.addEventListener('click', () => {
+    if (avatarLongPressed) {
+      avatarLongPressed = false
+      return
+    }
+    showPanel('menu')
+  })
 
   byId('home-search').addEventListener('click', () => openOmnibox({ newTab: tabs.length > 0 }))
 
@@ -2379,6 +2408,8 @@ const identityFeature = createIdentity({
   getTabs: () => tabs,
   getIdentity: () => identity,
   setIdentity: (value) => { identity = value },
+  showPanel,
+  closePanel,
   getBrowserSettings: () => browserSettings,
   setBrowserSettings: (value) => { browserSettings = value },
   renderHomeIdentity: () => profileFeature.renderHomeIdentity(),

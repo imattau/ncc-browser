@@ -1,5 +1,12 @@
 # Nostr Navigator for Android
 
+## New in 0.45.0
+
+- The toolbar now shows the active signer's Nostr profile avatar. Tap it to open the
+  browser menu; long-press it to choose another signer when multiple identities are
+  available.
+- Fixed the site information panel's Android crash and saved tab closures immediately.
+
 ## Fixes in 0.44.4
 
 - Viewing an `ncc://` site you don't own now offers a "Message this owner via White
