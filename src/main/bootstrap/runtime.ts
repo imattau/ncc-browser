@@ -4,6 +4,7 @@ import type { AutomationController } from '../automation/controller'
 import type { ExtensionService } from '../extensions/runtime'
 import type { NwcService } from '../wallet/nwc-service'
 import type { OnionManager } from '../tor/onion'
+import type { TlsProxyManager } from '../hosting/tls-proxy'
 import type { PasswordService } from '../passwords/service'
 import type { PaymentCardService } from '../payment-cards/service'
 import type { PortMappingService } from '../hosting/port-mapping'
@@ -25,6 +26,7 @@ export interface Runtime {
   contentSessions: ContentSessions | null
   torManager: TorManager | null
   onionManager: OnionManager | null
+  tlsProxyManager: TlsProxyManager | null
   portMappings: PortMappingService | null
   torRelays: TorRelayPool | null
   relaySync: RelaySync | null
@@ -45,6 +47,7 @@ export function createRuntime(): Runtime {
     contentSessions: null,
     torManager: null,
     onionManager: null,
+    tlsProxyManager: null,
     portMappings: null,
     torRelays: null,
     relaySync: null,

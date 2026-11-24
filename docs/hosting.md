@@ -82,11 +82,19 @@ The service form offers:
   folder you choose, and pins it.
 - **Remove pin** — clears `k`; existing `https://` endpoints then use normal CA
   validation.
+- **Local TLS proxy** — for a plain `http://` endpoint (the common case for a service
+  you run yourself), the browser can terminate TLS in front of it instead of asking
+  you to install anything. It listens on a loopback port with a self-signed
+  certificate it generates and keeps, forwards the raw connection to your `http://`
+  backend unchanged, and publishes that proxy's `https://` address pinned with the
+  certificate's SPKI hash. The certificate and the port are reused on every restart,
+  so the published address and pin stay stable; removing the proxy also removes that
+  endpoint from the service. The underlying `http://` endpoint is left in place.
 
-The browser never terminates TLS for the tested service; install the generated
-certificate and key in whatever serves it, then start that server on the HTTPS port.
-A certificate that does not name an endpoint host leaves that endpoint unpinned and
-the form reports it.
+Outside that case, the browser does not terminate TLS for the tested service; install
+a generated certificate and key in whatever serves it, then start that server on the
+HTTPS port. A certificate that does not name an endpoint host leaves that endpoint
+unpinned and the form reports it.
 
 ### Strict anchoring
 

@@ -52,6 +52,7 @@ export function installShutdown(runtime: Runtime): void {
     runtime.nwcService?.dispose()
     runtime.extensions?.dispose()
     void runtime.onionManager?.shutdown()
+    runtime.tlsProxyManager?.shutdown()
     void runtime.portMappings?.removeAll()
     runtime.relaySync?.stop()
     closeSharedPool()

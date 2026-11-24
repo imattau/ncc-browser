@@ -18,6 +18,7 @@ import {
   MAX_SHARE_DAYS,
   MIN_SHARE_DAYS,
   isLoopbackEndpoint,
+  isTlsProxyEndpoint,
   parseRecipient,
   recipientNpub,
   serviceAddress,
@@ -202,6 +203,51 @@ export class HostingService {
     const service = this.options.store.find(id)
     if (!service) throw new HostingError('not-found', 'That service no longer exists')
     const endpoints = service.endpoints.filter((endpoint) => !isOnionEndpointUrl(endpoint.url))
+    if (endpoints.length === service.endpoints.length) return service
+    const updated = this.options.store.update(id, {
+      title: service.title,
+      service: service.service,
+      endpoints,
+      ttlSeconds: service.ttlSeconds,
+      visibility: service.visibility,
+      anchor: service.anchor,
+      notes: service.notes
+    })
+    this.changed()
+    return updated
+  }
+
+  /**
+   * Add or replace the service's local TLS-proxy endpoint: an `https://` address the
+   * browser itself terminates in front of a plain `http://` backend, pinned with the
+   * generated certificate's SPKI hash. The underlying `http://` endpoint stays, so the
+   * backend is never required to speak TLS.
+   */
+  attachTlsProxy(id: string, url: string, pin: string): HostedService {
+    const service = this.options.store.find(id)
+    if (!service) throw new HostingError('not-found', 'That service no longer exists')
+    const others = service.endpoints.filter((endpoint) => !isTlsProxyEndpoint(endpoint))
+    const priority = others.reduce((max, endpoint) => Math.max(max, endpoint.priority), 0) + 1
+    const updated = this.options.store.update(id, {
+      title: service.title,
+      service: service.service,
+      endpoints: [
+        ...others.map((endpoint) => ({ ...endpoint })),
+        { url, priority, k: pin, source: 'tls-proxy' as const }
+      ],
+      ttlSeconds: service.ttlSeconds,
+      visibility: service.visibility,
+      anchor: service.anchor,
+      notes: service.notes
+    })
+    this.changed()
+    return updated
+  }
+
+  detachTlsProxy(id: string): HostedService {
+    const service = this.options.store.find(id)
+    if (!service) throw new HostingError('not-found', 'That service no longer exists')
+    const endpoints = service.endpoints.filter((endpoint) => !isTlsProxyEndpoint(endpoint))
     if (endpoints.length === service.endpoints.length) return service
     const updated = this.options.store.update(id, {
       title: service.title,

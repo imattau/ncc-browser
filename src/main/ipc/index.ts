@@ -19,6 +19,7 @@ import type { BrowserShell } from '../shell'
 import type { IdentityManager } from '../signer/manager'
 import type { PermissionStore } from '../signer/permissions'
 import type { OnionManager } from '../tor/onion'
+import type { TlsProxyManager } from '../hosting/tls-proxy'
 import type { TorManager } from '../tor/manager'
 import { registerHostingIpc } from '../hosting/ipc'
 import { registerSignerChromeIpc } from '../signer/ipc-chrome'
@@ -52,6 +53,7 @@ export interface IpcDeps {
   protection: ProtectionService
   hosting: HostingService
   onion: OnionManager
+  tlsProxy: TlsProxyManager
   publicAddress: PublicAddressService
   portMappings: PortMappingService
   network: NetworkWatch

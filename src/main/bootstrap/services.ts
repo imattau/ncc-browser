@@ -319,6 +319,7 @@ export function createServices(
     passwords: passwordService,
     hosting: foundation.hosting,
     onion: runtime.onionManager!,
+    tlsProxy: runtime.tlsProxyManager!,
     publicAddress: foundation.publicAddress,
     portMappings: runtime.portMappings!,
     network: foundation.networkWatch

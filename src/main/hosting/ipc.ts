@@ -1,6 +1,6 @@
 import { dialog, ipcMain } from 'electron'
 import { readFileSync } from 'node:fs'
-import { isLoopbackEndpoint, type HostingDraft } from '@shared/hosting'
+import { isLoopbackEndpoint, isTlsProxyEndpoint, type HostingDraft } from '@shared/hosting'
 import { normalizeEndpointSeed } from '@shared/reachability'
 import type { ConfigStore } from '../config'
 import { isChromeSender, shellForSender } from '../ipc/shared'
@@ -13,12 +13,14 @@ import type { NetworkWatch } from './network-watch'
 import type { PortMappingService } from './port-mapping'
 import type { PublicAddressService } from './public-address'
 import type { HostingService } from './service'
+import type { TlsProxyManager } from './tls-proxy'
 
 export interface HostingIpcDeps {
   shell: BrowserShell
   config: ConfigStore
   hosting: HostingService
   onion: OnionManager
+  tlsProxy: TlsProxyManager
   portMappings: PortMappingService
   publicAddress: PublicAddressService
   network: NetworkWatch
@@ -310,6 +312,30 @@ export function registerHostingIpc(deps: HostingIpcDeps): void {
     if (typeof id !== 'string') throw new Error('A service id is required')
     await deps.onion.remove(id)
     deps.hosting.detachOnion(id)
+    return deps.hosting.state()
+  })
+  ipcMain.handle('ncc:hosting-publish-tls-proxy', async (event, id: unknown) => {
+    chromeOnly(event)
+    if (typeof id !== 'string') throw new Error('A service id is required')
+    const service = deps.hosting.find(id)
+    if (!service) throw new Error('That service no longer exists')
+    const local = service.endpoints.find(
+      (endpoint) => endpoint.url.startsWith('http://') && !isTlsProxyEndpoint(endpoint)
+    )
+    if (!local) {
+      throw new Error(
+        'A local TLS proxy needs a plain http:// endpoint, such as http://127.0.0.1:8080. Add one to this service first.'
+      )
+    }
+    const proxy = await deps.tlsProxy.ensure(id, { url: local.url })
+    deps.hosting.attachTlsProxy(id, proxy.url, proxy.pin)
+    return { state: deps.hosting.state(), proxy }
+  })
+  ipcMain.handle('ncc:hosting-remove-tls-proxy', async (event, id: unknown) => {
+    chromeOnly(event)
+    if (typeof id !== 'string') throw new Error('A service id is required')
+    await deps.tlsProxy.remove(id)
+    deps.hosting.detachTlsProxy(id)
     return deps.hosting.state()
   })
 }

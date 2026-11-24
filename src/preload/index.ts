@@ -133,6 +133,8 @@ const api: NccApi = {
   hostingImportCertificate: () => ipcRenderer.invoke('ncc:hosting-import-certificate'),
   hostingGenerateCertificate: (input) =>
     ipcRenderer.invoke('ncc:hosting-generate-certificate', input),
+  hostingPublishTlsProxy: (serviceId) => ipcRenderer.invoke('ncc:hosting-publish-tls-proxy', serviceId),
+  hostingRemoveTlsProxy: (serviceId) => ipcRenderer.invoke('ncc:hosting-remove-tls-proxy', serviceId),
   onHostingChanged: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, state: HostingState): void => listener(state)
     ipcRenderer.on('ncc:hosting-changed', handler)

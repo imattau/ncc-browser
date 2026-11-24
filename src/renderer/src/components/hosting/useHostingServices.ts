@@ -15,6 +15,8 @@ export interface HostingServicesApi {
   remove: (service: HostedService) => Promise<void>
   publishOnion: (service: HostedService) => Promise<void>
   removeOnion: (service: HostedService) => Promise<void>
+  publishTlsProxy: (service: HostedService) => Promise<void>
+  removeTlsProxy: (service: HostedService) => Promise<void>
 }
 
 /** Publish and remove actions for an existing service. */
@@ -83,5 +85,36 @@ export function useHostingServices({
     }
   }
 
-  return { publish, remove, publishOnion, removeOnion }
+  const publishTlsProxy = async (service: HostedService): Promise<void> => {
+    setBusy(true)
+    setError(null)
+    try {
+      const result = await window.ncc.hostingPublishTlsProxy(service.id)
+      apply(result.state)
+    } catch (proxyError) {
+      setError(messageOf(proxyError))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const removeTlsProxy = async (service: HostedService): Promise<void> => {
+    if (
+      !window.confirm(
+        'Remove the local TLS proxy? Its https:// address stops working; the plain http:// endpoint stays.'
+      )
+    ) {
+      return
+    }
+    setBusy(true)
+    try {
+      apply(await window.ncc.hostingRemoveTlsProxy(service.id))
+    } catch (proxyError) {
+      setError(messageOf(proxyError))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return { publish, remove, publishOnion, removeOnion, publishTlsProxy, removeTlsProxy }
 }

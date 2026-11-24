@@ -33,7 +33,8 @@ import type {
   HostingPublishResult,
   HostingShareBatchResult,
   HostingShareResult,
-  HostingState
+  HostingState,
+  HostingTlsProxyResult
 } from './hosting'
 import type {
   NetworkChange,
@@ -220,6 +221,8 @@ export interface NccApi {
   onPortStatus(listener: (event: PortStatusEvent) => void): () => void
   hostingPublishOnion(serviceId: string): Promise<HostingOnionResult>
   hostingRemoveOnion(serviceId: string): Promise<HostingState>
+  hostingPublishTlsProxy(serviceId: string): Promise<HostingTlsProxyResult>
+  hostingRemoveTlsProxy(serviceId: string): Promise<HostingState>
   hostingImportCertificate(): Promise<CertificateInfo | null>
   hostingGenerateCertificate(input: {
     commonName: string

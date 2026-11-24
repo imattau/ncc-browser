@@ -200,6 +200,8 @@ export function HostingSettings({
             onPublish={(target) => void services.publish(target)}
             onPublishOnion={(target) => void services.publishOnion(target)}
             onRemoveOnion={(target) => void services.removeOnion(target)}
+            onPublishTlsProxy={(target) => void services.publishTlsProxy(target)}
+            onRemoveTlsProxy={(target) => void services.removeTlsProxy(target)}
             onEdit={form.startEdit}
             onRemove={(target) => void services.remove(target)}
             sharesApi={shares}

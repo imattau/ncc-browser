@@ -1,6 +1,7 @@
-import { ExternalLink, Globe, Lock, Pencil, Radar, RefreshCw, Share2, Trash2 } from 'lucide-react'
+import { ExternalLink, Globe, Lock, Pencil, Radar, RefreshCw, Share2, ShieldCheck, Trash2 } from 'lucide-react'
 import {
   isLoopbackEndpoint,
+  isTlsProxyEndpoint,
   recipientNpub,
   serviceAddress,
   type HostedService,
@@ -26,6 +27,8 @@ interface ServiceCardProps {
   onPublish: (service: HostedService) => void
   onPublishOnion: (service: HostedService) => void
   onRemoveOnion: (service: HostedService) => void
+  onPublishTlsProxy: (service: HostedService) => void
+  onRemoveTlsProxy: (service: HostedService) => void
   onEdit: (service: HostedService) => void
   onRemove: (service: HostedService) => void
   sharesApi: HostingSharesApi
@@ -45,6 +48,8 @@ export function ServiceCard({
   onPublish,
   onPublishOnion,
   onRemoveOnion,
+  onPublishTlsProxy,
+  onRemoveTlsProxy,
   onEdit,
   onRemove,
   sharesApi
@@ -55,6 +60,10 @@ export function ServiceCard({
   const onion = (onions ?? []).find((entry) => entry.serviceId === service.id)
   const canOnion = service.endpoints.some((endpoint) => isLoopbackEndpoint(endpoint))
   const canShare = service.endpoints.some((endpoint) => !isLoopbackEndpoint(endpoint))
+  const tlsProxy = service.endpoints.find(isTlsProxyEndpoint)
+  const canTlsProxy = service.endpoints.some(
+    (endpoint) => endpoint.url.startsWith('http://') && !isTlsProxyEndpoint(endpoint)
+  )
   const expired = Boolean(
     service.lastPublishedAt &&
       service.lastPublishedAt + service.ttlSeconds <= Math.floor(Date.now() / 1000)
@@ -162,6 +171,31 @@ export function ServiceCard({
               )}
             </div>
           ) : null}
+          {tlsProxy ? (
+            <div data-service-tls-proxy className="mt-1.5 rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-ink)]/40 px-2 py-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-ui-95 font-semibold text-[color:var(--color-text)]">Local TLS proxy</span>
+                <button
+                  type="button"
+                  onClick={() => void copy(`tls-proxy:${service.id}`, tlsProxy.url)}
+                  className="min-w-0 truncate font-mono text-ui-95 text-[color:var(--color-muted)] hover:text-[color:var(--color-text)]"
+                >
+                  {copied === `tls-proxy:${service.id}` ? 'copied' : tlsProxy.url}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onRemoveTlsProxy(service)}
+                  className="ml-auto rounded border border-[color:var(--color-line)] px-1.5 py-0.5 text-ui-95 text-[color:var(--color-muted)] hover:bg-[color:var(--color-danger)]/10 hover:text-[color:var(--color-danger)]"
+                >
+                  Remove
+                </button>
+              </div>
+              <p className="mt-0.5 text-ui-95 text-[color:var(--color-faint)]">
+                The browser terminates TLS here with a self-generated certificate and forwards to the
+                plain http:// endpoint. The address and pin stay the same across restarts.
+              </p>
+            </div>
+          ) : null}
           {service.lastPublishError ? (
             <p className="mt-1 text-ui-10 text-[color:var(--color-danger)]">{service.lastPublishError}</p>
           ) : null}
@@ -193,6 +227,18 @@ export function ServiceCard({
               className="inline-flex items-center gap-1 rounded-lg border border-[color:var(--color-line)] px-2 py-1 text-ui-10 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)] disabled:opacity-40"
             >
               <Radar className="h-3 w-3" /> Onion
+            </button>
+          ) : null}
+          {canTlsProxy && !tlsProxy ? (
+            <button
+              type="button"
+              data-publish-tls-proxy
+              onClick={() => onPublishTlsProxy(service)}
+              disabled={busy}
+              title="Terminate TLS locally in front of the http:// endpoint, with no server setup"
+              className="inline-flex items-center gap-1 rounded-lg border border-[color:var(--color-line)] px-2 py-1 text-ui-10 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)] disabled:opacity-40"
+            >
+              <ShieldCheck className="h-3 w-3" /> HTTPS
             </button>
           ) : null}
           <button

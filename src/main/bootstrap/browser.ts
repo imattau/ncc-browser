@@ -17,6 +17,7 @@ import { clearContentSession, createContentSessions, type ContentSessions } from
 import { TorGuard } from '../tor/guard'
 import { TorManager } from '../tor/manager'
 import { OnionManager, verifyOnionThroughSocks } from '../tor/onion'
+import { TlsProxyManager } from '../hosting/tls-proxy'
 import { TorControl } from '../tor/control'
 import { TorSessionProxy } from '../tor/session'
 import { TransportPolicy } from '../ncc/transport'
@@ -147,6 +148,18 @@ export async function createBrowserStack(
       })
     }, 5_000)
   }
+
+  const tlsProxies = new TlsProxyManager({
+    filePath: join(app.getPath('userData'), 'tls-proxies.json'),
+    onChange: () => broadcastToChrome(runtime, 'ncc:hosting-changed', foundation.hosting.state()),
+    ...(process.env.NCC_TOR_DEBUG === '1'
+      ? { log: (line: string) => console.log('[tls-proxy]', line) }
+      : {})
+  })
+  runtime.tlsProxyManager = tlsProxies
+  void tlsProxies.restoreAll().catch((error) => {
+    console.warn('[tls-proxy] could not restore proxies:', error)
+  })
 
   const httpPolicies: Record<TabKind, HttpPolicy> = {
     normal: new HttpPolicy('normal', config),

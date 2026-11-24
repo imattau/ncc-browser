@@ -20,6 +20,8 @@ export interface ServiceEndpoint {
   family?: 'ipv4' | 'ipv6' | 'onion'
   /** base64url(sha256(SPKI)) when the publisher pins TLS. */
   k?: string
+  /** Set on an endpoint the browser generated itself, such as a local TLS proxy. */
+  source?: 'tls-proxy'
 }
 
 export interface HostedService {
@@ -97,6 +99,21 @@ export interface OnionStatus {
 export interface HostingOnionResult {
   state: HostingState
   onion: OnionStatus
+}
+
+export interface TlsProxyStatus {
+  serviceId: string
+  /** The `https://` address the local proxy listens on. */
+  url: string
+  /** base64url(sha256(SPKI)) of the generated certificate; published as the endpoint `k`. */
+  pin: string
+  /** The `http://` backend the proxy forwards to, as `host:port`. */
+  target: string
+}
+
+export interface HostingTlsProxyResult {
+  state: HostingState
+  proxy: TlsProxyStatus
 }
 
 export interface CertificateInfo {
@@ -338,9 +355,14 @@ export function normalizeEndpoint(
     value: {
       ...parsed.value,
       priority,
-      ...(k ? { k } : {})
+      ...(k ? { k } : {}),
+      ...(input.source === 'tls-proxy' ? { source: input.source } : {})
     }
   }
+}
+
+export function isTlsProxyEndpoint(endpoint: ServiceEndpoint): boolean {
+  return endpoint.source === 'tls-proxy'
 }
 
 export function validateHostingDraft(input: HostingDraft): Validation<NormalizedHostingDraft> {
