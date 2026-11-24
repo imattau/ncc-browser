@@ -3983,7 +3983,7 @@ dependencies = [
 
 [[package]]
 name = "ncc-navigator"
-version = "0.45.0"
+version = "0.45.1"
 dependencies = [
  "base64 0.23.1",
  "ed25519-dalek 2.2.0",

@@ -1,5 +1,13 @@
 # Release notes
 
+## 0.45.1 — site publishing identity picker
+
+### Added
+
+- The site publishing settings now have the same "Signing identity" picker as hosted
+  services: pick an existing identity, create a new one, or use a one-off key, instead
+  of always publishing under whatever identity happened to be active.
+
 ## 0.44.4 — White Noise hand-off
 
 ### Added
