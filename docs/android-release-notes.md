@@ -1,5 +1,15 @@
 # Nostr Navigator for Android
 
+## New in 0.44.0
+
+- Browser-owned notifications report completed or failed downloads.
+- Optional background work keeps the browser running after it moves to the background,
+  shown by an ongoing notification. It is off by default; NCC asks once on first start,
+  and Android notification permission is requested when needed. Returning to the app
+  stops the foreground service. This does not enable website notifications.
+- Added a background work control to Android settings.
+- Hardened home-screen shortcut icon decoding against malformed and oversized favicons.
+
 ## New in 0.43.0
 
 - Add a normal tab to the browser home screen, and request a launcher shortcut. The

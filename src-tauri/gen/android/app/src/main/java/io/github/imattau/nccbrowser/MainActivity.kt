@@ -1,7 +1,9 @@
 package io.github.imattau.nccbrowser
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.app.KeyguardManager
+import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -10,9 +12,9 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.content.pm.PackageManager
 import android.util.Base64
 import android.widget.Toast
-import androidx.activity.result.contract.ActivityResultContracts
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
@@ -25,6 +27,8 @@ import androidx.activity.enableEdgeToEdge
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.pm.ShortcutInfoCompat
 import androidx.core.content.pm.ShortcutManagerCompat
 import androidx.core.graphics.drawable.IconCompat
@@ -59,6 +63,10 @@ import java.security.MessageDigest
  * Pages never see it.
  */
 class MainActivity : TauriActivity() {
+  companion object {
+    private const val KEY_ENABLED = "enabled"
+    private const val KEY_PROMPTED = "prompted"
+  }
   private var shell: WebView? = null
   private var column: LinearLayout? = null
   private var contentHost: FrameLayout? = null
@@ -81,6 +89,24 @@ class MainActivity : TauriActivity() {
   private var torPortNumber = 0
   private var pendingDownload: Pair<File, String>? = null
   private lateinit var downloads: Downloads
+  private var pendingBackgroundEnable = false
+  private var pendingDownloadNotificationsPermission = false
+  private val backgroundWorkPrefs by lazy { getSharedPreferences("background-work", MODE_PRIVATE) }
+  private val notificationPermission: ActivityResultLauncher<String> =
+    registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+      val enableBackgroundWork = pendingBackgroundEnable
+      if (pendingBackgroundEnable) {
+        pendingBackgroundEnable = false
+      }
+      pendingDownloadNotificationsPermission = false
+      if (enableBackgroundWork && granted) {
+        backgroundWorkPrefs.edit().putBoolean(KEY_ENABLED, true).apply()
+        emitBackgroundWorkState(true, null)
+      } else if (enableBackgroundWork) {
+        backgroundWorkPrefs.edit().putBoolean(KEY_ENABLED, false).apply()
+        emitBackgroundWorkState(false, "Notifications are required for Android background work.")
+      }
+    }
 
   /**
    * Saving goes through the system picker: no storage permission, and the user chooses
@@ -168,7 +194,19 @@ class MainActivity : TauriActivity() {
 
     barHeight = (56 * resources.displayMetrics.density).toInt()
     downloads = Downloads(this).also { store ->
-      store.onChange = { json -> emitToShellRaw("window.__nccDownloads", json) }
+      val alreadyRecorded = mutableSetOf<String>()
+      try {
+        val entries = org.json.JSONArray(store.json())
+        for (index in 0 until entries.length()) {
+          val item = entries.getJSONObject(index)
+          if (item.optString("state") != "running") alreadyRecorded.add(item.optString("id"))
+        }
+      } catch (_: Exception) { }
+      backgroundWorkPrefs.edit().putStringSet("notified-downloads", alreadyRecorded).apply()
+      store.onChange = { json ->
+        emitToShellRaw("window.__nccDownloads", json)
+        notifyFinishedDownloads(json)
+      }
     }
 
     val root = findViewById<ViewGroup>(android.R.id.content)
@@ -208,6 +246,7 @@ class MainActivity : TauriActivity() {
     column = columnView
     contentHost = host
     shell = chromeView
+    emitBackgroundWorkState(backgroundWorkPrefs.getBoolean(KEY_ENABLED, false), null)
 
     // The window is edge-to-edge, so both halves would sit under the status bar, the
     // camera cutout and the gesture bar. Inset the column once and everything stays
@@ -246,6 +285,108 @@ class MainActivity : TauriActivity() {
     chromeView.addJavascriptInterface(Bridge(), "NccContent")
 
     chromeView.evaluateJavascript("window.__nccContentReady && window.__nccContentReady()", null)
+    root.postDelayed({ maybePromptBackgroundWork() }, 700)
+  }
+
+  override fun onStart() {
+    super.onStart()
+    stopService(Intent(this, BackgroundWorkService::class.java))
+  }
+
+  override fun onStop() {
+    if (backgroundWorkPrefs.getBoolean(KEY_ENABLED, false)) {
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+        ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+      ) {
+        backgroundWorkPrefs.edit().putBoolean(KEY_ENABLED, false).apply()
+        emitBackgroundWorkState(false, "Notifications were disabled in Android settings, so background work was turned off.")
+      } else try {
+        ContextCompat.startForegroundService(this, Intent(this, BackgroundWorkService::class.java))
+      } catch (error: Exception) {
+        backgroundWorkPrefs.edit().putBoolean(KEY_ENABLED, false).apply()
+        emitBackgroundWorkState(false, "Android could not keep NCC running in the background: ${error.message ?: "service unavailable"}")
+      }
+    }
+    super.onStop()
+  }
+
+  private fun maybePromptBackgroundWork() {
+    if (backgroundWorkPrefs.contains(KEY_PROMPTED)) return
+    backgroundWorkPrefs.edit().putBoolean(KEY_PROMPTED, true).apply()
+    val dialog = AlertDialog.Builder(this)
+      .setTitle("Keep browser work running?")
+      .setMessage("When you switch apps, NCC can keep tabs and their active work running with an ongoing notification. Android may still pause or stop background work to save battery.")
+      .setPositiveButton("Enable") { _, _ -> requestBackgroundWorkEnable() }
+      .setNegativeButton("Keep off") { _, _ -> backgroundWorkPrefs.edit().putBoolean(KEY_ENABLED, false).apply() }
+      .setOnCancelListener { backgroundWorkPrefs.edit().putBoolean(KEY_ENABLED, false).apply() }
+      .create()
+    dialog.show()
+  }
+
+  private fun requestBackgroundWorkEnable() {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+      ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+    ) {
+      pendingBackgroundEnable = true
+      notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+      return
+    }
+    backgroundWorkPrefs.edit().putBoolean(KEY_ENABLED, true).apply()
+    emitBackgroundWorkState(true, null)
+  }
+
+  private fun requestDownloadNotificationPermission() {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+      ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED ||
+      pendingBackgroundEnable || pendingDownloadNotificationsPermission
+    ) return
+    pendingDownloadNotificationsPermission = true
+    notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+  }
+
+  private fun setBackgroundWorkEnabled(enabled: Boolean) {
+    if (!enabled) {
+      backgroundWorkPrefs.edit().putBoolean(KEY_ENABLED, false).putBoolean(KEY_PROMPTED, true).apply()
+      stopService(Intent(this, BackgroundWorkService::class.java))
+      emitBackgroundWorkState(false, null)
+      return
+    }
+    backgroundWorkPrefs.edit().putBoolean(KEY_PROMPTED, true).apply()
+    requestBackgroundWorkEnable()
+  }
+
+  private fun emitBackgroundWorkState(enabled: Boolean, error: String?) {
+    val payload = JSONObject().put("enabled", enabled).put("error", error ?: JSONObject.NULL)
+    emitToShell("window.__nccBackgroundWorkState", payload)
+  }
+
+  private fun notifyFinishedDownloads(json: String) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+      ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+    ) return
+    try {
+      val entries = org.json.JSONArray(json)
+      for (index in 0 until entries.length()) {
+        val item = entries.getJSONObject(index)
+        if (item.optBoolean("private") || item.optString("state") !in setOf("saved", "failed")) continue
+        val notified = backgroundWorkPrefs.getStringSet("notified-downloads", emptySet())?.toMutableSet() ?: mutableSetOf()
+        val id = item.optString("id")
+        if (!notified.add(id)) continue
+        backgroundWorkPrefs.edit().putStringSet("notified-downloads", notified).apply()
+        val manager = getSystemService(android.app.NotificationManager::class.java)
+        val channelId = BackgroundWorkService.DOWNLOAD_CHANNEL_ID
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && manager.getNotificationChannel(channelId) == null) {
+          manager.createNotificationChannel(android.app.NotificationChannel(channelId, "Browser notifications", android.app.NotificationManager.IMPORTANCE_DEFAULT))
+        }
+        val notification = android.app.Notification.Builder(this, channelId)
+          .setSmallIcon(android.R.drawable.stat_sys_download_done)
+          .setContentTitle(if (item.optString("state") == "saved") "Download saved" else "Download failed")
+          .setContentText(item.optString("name"))
+          .setAutoCancel(true)
+          .build()
+        manager.notify((id.hashCode() and 0x7fffffff).coerceAtLeast(1), notification)
+      }
+    } catch (_: Exception) { /* notification delivery must not interrupt a download */ }
   }
 
   /**
@@ -390,7 +531,7 @@ class MainActivity : TauriActivity() {
           }
         },
         ::onTabEvent,
-        ::startDownload,
+        { target, mime, disposition -> startDownload(target, mime, disposition, isPrivate || isTor) },
         { target -> openTab(target, reuseActive = false, isPrivate = isPrivate, isTor = isTor) },
         { openPopupTab(isPrivate, isTor) },
       )
@@ -589,7 +730,8 @@ class MainActivity : TauriActivity() {
    * the proxy (`/__ncc/fetch?u=…`). A clearnet URL needs no help: this process can
    * open it directly.
    */
-  private fun startDownload(url: String, mimeType: String?, contentDisposition: String?) {
+  private fun startDownload(url: String, mimeType: String?, contentDisposition: String?, ephemeral: Boolean = false) {
+    requestDownloadNotificationPermission()
     val parsed = Uri.parse(url)
     val host = parsed.host?.lowercase() ?: ""
     val throughProxy = host.endsWith(".localhost")
@@ -612,7 +754,7 @@ class MainActivity : TauriActivity() {
 
     Thread {
       val temp = File(cacheDir, "download-${System.currentTimeMillis()}")
-      val id = downloads.start(name, if (fromEphemeralTab) "" else url, -1)
+      val id = downloads.start(name, if (fromEphemeralTab || ephemeral) "" else url, -1, fromEphemeralTab || ephemeral)
 
       val fetched = try {
         val source = if (throughProxy) {
@@ -771,6 +913,13 @@ class MainActivity : TauriActivity() {
   }
 
   inner class Bridge {
+    @JavascriptInterface
+    fun backgroundWorkEnabled(): Boolean = backgroundWorkPrefs.getBoolean(KEY_ENABLED, false)
+
+    @JavascriptInterface
+    fun setBackgroundWorkEnabled(enabled: Boolean) {
+      runOnUiThread { setBackgroundWorkEnabled(enabled) }
+    }
     @JavascriptInterface
     fun resolveNwc(tabId: String?, requestId: String?, response: String?) {
       val tabKey = tabId ?: return
@@ -1163,13 +1312,7 @@ class MainActivity : TauriActivity() {
             return@runOnUiThread
           }
           val launch = Intent(Intent.ACTION_VIEW, parsed).setClass(this@MainActivity, MainActivity::class.java)
-          val customIcon = iconDataUrl
-            ?.takeIf { it.matches(Regex("^data:image/(png|jpeg|webp);base64,.{1,360000}$")) }
-            ?.substringAfter(',', "")
-            ?.let { encoded -> runCatching { Base64.decode(encoded, Base64.DEFAULT) }.getOrNull() }
-            ?.let { bytes -> BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }
-            ?.takeIf { bitmap -> !bitmap.isRecycled }
-            ?.let { IconCompat.createWithBitmap(it) }
+          val customIcon = decodeShortcutIcon(iconDataUrl)?.let { IconCompat.createWithBitmap(it) }
           val shortcut = ShortcutInfoCompat.Builder(this@MainActivity, id)
             .setShortLabel(label.take(25))
             .setLongLabel(label)
@@ -1180,6 +1323,35 @@ class MainActivity : TauriActivity() {
         } catch (_: Exception) {
           Toast.makeText(this@MainActivity, "Could not create the launcher shortcut", Toast.LENGTH_SHORT).show()
         }
+      }
+    }
+
+    /**
+     * Site favicons are remote input. Decode bounds first and cap the raster before
+     * allocating pixels: tiny compressed images can otherwise expand to enormous
+     * bitmaps and kill the browser while a launcher shortcut is being pinned.
+     */
+    private fun decodeShortcutIcon(dataUrl: String?): android.graphics.Bitmap? {
+      if (dataUrl == null || !dataUrl.matches(Regex("^data:image/(png|jpeg|webp);base64,.{1,360000}$"))) return null
+      return try {
+        val bytes = Base64.decode(dataUrl.substringAfter(','), Base64.DEFAULT)
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        val width = bounds.outWidth
+        val height = bounds.outHeight
+        if (width <= 0 || height <= 0 || width > 16_384 || height > 16_384) return null
+        var sample = 1
+        while (maxOf(width, height) / sample > 256) sample *= 2
+        val options = BitmapFactory.Options().apply {
+          inSampleSize = sample
+          inPreferredConfig = android.graphics.Bitmap.Config.ARGB_8888
+        }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+          ?.takeUnless { it.isRecycled }
+      } catch (_: Exception) {
+        null
+      } catch (_: OutOfMemoryError) {
+        null
       }
     }
 

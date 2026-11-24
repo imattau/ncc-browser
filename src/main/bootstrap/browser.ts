@@ -1,4 +1,4 @@
-import { app } from 'electron'
+import { app, Notification } from 'electron'
 import { join } from 'node:path'
 import { parseNccAddress } from '@shared/ncc-url'
 import { parseNsiteAddress } from '@shared/nsite-url'
@@ -168,7 +168,14 @@ export async function createBrowserStack(
   const downloadDirectory = process.env.NCC_DOWNLOAD_DIR?.trim()
   const downloads = new DownloadManager({
     ...(downloadDirectory ? { directory: downloadDirectory } : {}),
-    notify: (notice) => runtime.shell?.notifyDownload(notice)
+    notify: (notice) => {
+      runtime.shell?.notifyDownload(notice)
+      if (notice.private || notice.state === 'started' || notice.state === 'cancelled' || !Notification.isSupported()) return
+      new Notification({
+        title: notice.state === 'completed' ? 'Download complete' : 'Download failed',
+        body: notice.filename
+      }).show()
+    }
   })
   downloads.install(content.normal, 'normal')
   downloads.install(content.private, 'private')

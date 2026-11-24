@@ -132,6 +132,7 @@ const PANELS = [
   'nccsearch',
   'security',
   'tor',
+  'background-work',
   'passwords',
   'wallet',
   'sync',
@@ -640,6 +641,7 @@ function showPanel(name) {
   if (name === 'nccsearch') void loadNccSearch()
   if (name === 'security') void loadSecurity()
   if (name === 'tor') void loadTor()
+  if (name === 'background-work') void loadBackgroundWork()
   if (name === 'passwords') void passwordFeature.loadPasswords()
   if (name === 'payment-cards') void paymentFeature.load()
   if (name === 'wallet') void loadWallet()
@@ -1894,6 +1896,36 @@ async function saveTor() {
   }
 }
 
+async function loadBackgroundWork() {
+  byId('background-work-note').textContent = ''
+  try {
+    const enabled = Boolean(content?.backgroundWorkEnabled?.())
+    byId('background-work-enabled').checked = enabled
+    byId('background-work-note').textContent = enabled
+      ? 'Enabled. NCC will show an ongoing notification while running in the background.'
+      : 'Off. Browser work may pause when you leave NCC.'
+  } catch (error) {
+    byId('background-work-note').textContent = `Could not read background-work status: ${error}`
+  }
+}
+
+function setBackgroundWork(enabled) {
+  const note = byId('background-work-note')
+  if (!content || typeof content.setBackgroundWorkEnabled !== 'function') {
+    byId('background-work-enabled').checked = false
+    note.textContent = 'Android background work is unavailable in this build.'
+    return
+  }
+  byId('background-work-enabled').disabled = true
+  content.setBackgroundWorkEnabled(enabled)
+}
+
+globalThis.__nccBackgroundWorkState = ({ enabled, error } = {}) => {
+  byId('background-work-enabled').checked = enabled === true
+  byId('background-work-enabled').disabled = false
+  byId('background-work-note').textContent = error || (enabled ? 'Enabled. NCC will show an ongoing notification while running in the background.' : 'Off. Browser work may pause when you leave NCC.')
+}
+
 /* ───────────────────────────── Passwords ───────────────────────────── */
 
 function activeKind() {
@@ -2183,6 +2215,7 @@ function wireChrome() {
   byId('protection-update-lists').addEventListener('click', () => void updateProtectionFilterLists())
   byId('tor-save').addEventListener('click', () => void saveTor())
   byId('tor-refresh').addEventListener('click', () => void refreshTorState())
+  byId('background-work-enabled').addEventListener('change', (event) => setBackgroundWork(event.target.checked))
 
   byId('vault-unlock').addEventListener('click', () => void passwordFeature.unlockVault())
   byId('vault-lock').addEventListener('click', () => void passwordFeature.lockVault())

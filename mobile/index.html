@@ -261,6 +261,11 @@
             <span class="row-text"><b>Tor</b><small id="sub-tor">Onion tabs and proxies</small></span>
             <svg class="i chev"><use href="#i-chevron" /></svg>
           </button>
+          <button class="row" type="button" data-panel="background-work">
+            <span class="row-icon"><svg class="i"><use href="#i-shield" /></svg></span>
+            <span class="row-text"><b>Background work</b><small>Keep browser tabs active when you leave</small></span>
+            <svg class="i chev"><use href="#i-chevron" /></svg>
+          </button>
           <button class="row" type="button" data-panel="relays">
             <span class="row-icon"><svg class="i"><use href="#i-radio" /></svg></span>
             <span class="row-text"><b>Relays</b><small>Where locators are looked up</small></span>
@@ -586,6 +591,21 @@
           Tor tabs load .onion and https:// sites through Tor, and nothing they fetch is
           cached or written down. Signal, mail and telephone links still leave the app.
         </p>
+      </div>
+    </section>
+
+    <section id="background-work" class="screen" hidden>
+      <header class="appbar">
+        <button class="ib" type="button" data-back aria-label="Back"><svg class="i"><use href="#i-back" /></svg></button>
+        <h2>Background work</h2>
+      </header>
+      <div class="body">
+        <label class="switch-row">
+          <span>Keep tabs working in the background</span>
+          <input id="background-work-enabled" class="switch" type="checkbox" role="switch" />
+        </label>
+        <p class="hint">When enabled, Android keeps NCC running with an ongoing notification while you use another app. The system can still pause or stop work to save battery. Force-stopping NCC ends background work.</p>
+        <p id="background-work-note" class="status" role="status"></p>
       </div>
     </section>
 

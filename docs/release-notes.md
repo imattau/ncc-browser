@@ -1,5 +1,23 @@
 # Release notes
 
+## 0.44.0 — notifications and background work
+
+### Added
+
+- Browser-owned notifications now report completed or failed downloads on desktop and
+  Android.
+- Android can keep browser work running after the app moves to the background, using
+  an ongoing foreground-service notification. This is opt-in, off by default, and
+  offered once on first launch; Android notification permission is requested when
+  needed.
+- Android settings now include a control for background work. Returning to NCC Browser
+  stops the foreground service.
+
+### Fixed
+
+- Android home-screen shortcut icons are decoded with bounded dimensions and memory use,
+  preventing malformed or oversized page favicons from crashing shortcut creation.
+
 ## 0.43.0 — add sites to the home screen
 
 ### Added
