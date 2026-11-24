@@ -1,5 +1,16 @@
 # Release notes
 
+## 0.44.4 — White Noise hand-off
+
+### Added
+
+- Viewing an `ncc://` site you don't own now offers a "Message this owner via White
+  Noise" action in the site info panel, on both desktop and Android. It opens
+  `whitenoise://user/<npub>` through the OS; no signer or session state is shared with
+  White Noise.
+- The project website links to the project's own White Noise contact in its header,
+  mobile menu and footer.
+
 ## 0.44.0 — notifications and background work
 
 ### Added

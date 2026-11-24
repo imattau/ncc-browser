@@ -1,5 +1,12 @@
 # Nostr Navigator for Android
 
+## Fixes in 0.44.4
+
+- Viewing an `ncc://` site you don't own now offers a "Message this owner via White
+  Noise" action in the site info panel, matching the desktop build.
+- Fixed two bugs that could crash the site info panel with a `ReferenceError`
+  (`kindOf`, `shortId` were never wired through).
+
 ## Fixes in 0.44.3
 
 - Certificate errors are now clearly explained when a website is blocked. Date errors
