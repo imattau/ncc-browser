@@ -174,6 +174,8 @@ export interface NccApi {
   cacheInfo(): Promise<CacheInfo>
   clearCache(): Promise<CacheInfo>
   reResolveSite(): Promise<boolean>
+  /** Opens the system's White Noise handler to start a chat with this npub. */
+  openInWhiteNoise(npub: string): Promise<void>
   setSearchConfig(config: {
     engine: SearchEngineId
     custom: string

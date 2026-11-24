@@ -88,6 +88,7 @@ const api: NccApi = {
   cacheInfo: () => ipcRenderer.invoke('ncc:cache-info'),
   clearCache: () => ipcRenderer.invoke('ncc:clear-cache'),
   reResolveSite: () => ipcRenderer.invoke('ncc:re-resolve-site'),
+  openInWhiteNoise: (npub) => ipcRenderer.invoke('ncc:open-in-white-noise', npub),
   setSearchConfig: (config) => ipcRenderer.invoke('ncc:set-search-config', config),
   setAppearance: (appearance) => ipcRenderer.invoke('ncc:set-appearance', appearance),
   hostingState: () => ipcRenderer.invoke('ncc:hosting-state'),

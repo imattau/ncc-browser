@@ -17,6 +17,7 @@ import {
 import { nip19 } from 'nostr-tools'
 import { parseNccAddress } from '@shared/ncc-url'
 import { ERROR_COPY } from '@shared/types'
+import { isNpub } from '@shared/white-noise'
 import type { SiteDataInfo } from '@shared/site-data'
 import type { AnchorInfo, LocatorInfo, NavState, SignerOriginState, TransportSecurity } from '@shared/types'
 import { clearnetState } from '../lib/clearnet'
@@ -215,7 +216,12 @@ export function SiteInfoPanel({
         ) : null}
 
         {!web && security?.locator ? (
-          <LocatorBlock locator={security.locator} owned={owned} onClose={onClose} />
+          <LocatorBlock
+            locator={security.locator}
+            owned={owned}
+            ownerNpub={ownerNpub}
+            onClose={onClose}
+          />
         ) : null}
 
         {!web ? (
@@ -519,10 +525,12 @@ function TorBlock({
 function LocatorBlock({
   locator,
   owned,
+  ownerNpub,
   onClose
 }: {
   locator: LocatorInfo
   owned: boolean
+  ownerNpub: string
   onClose: () => void
 }) {
   const [busy, setBusy] = useState(false)
@@ -600,6 +608,16 @@ function LocatorBlock({
           className="mt-2 w-full rounded-lg border border-[color:var(--color-line)] px-2.5 py-1.5 text-ui-11 text-[color:var(--color-text)] hover:bg-[color:var(--color-hover)]"
         >
           Manage this service
+        </button>
+      ) : isNpub(ownerNpub) ? (
+        <button
+          type="button"
+          onClick={() => {
+            void window.ncc.openInWhiteNoise(ownerNpub)
+          }}
+          className="mt-2 w-full rounded-lg border border-[color:var(--color-line)] px-2.5 py-1.5 text-ui-11 text-[color:var(--color-text)] hover:bg-[color:var(--color-hover)]"
+        >
+          Message this owner via White Noise
         </button>
       ) : null}
 
