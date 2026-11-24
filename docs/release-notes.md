@@ -1,5 +1,16 @@
 # Release notes
 
+## 0.47.0 — local TLS proxy for hosted services
+
+### Added
+
+- Publishing a hosted service with a plain `http://` endpoint can now add a local TLS
+  proxy: the browser generates and keeps a self-signed certificate, terminates TLS on
+  a loopback port in front of the endpoint, and publishes that proxy's `https://`
+  address pinned with the certificate's fingerprint. No certificate needs to be
+  installed on the service's own server, and the address and pin stay stable across
+  restarts. The plain `http://` endpoint is left in place.
+
 ## 0.46.0 — profile-aware signer selection
 
 ### Added
