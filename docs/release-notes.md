@@ -1,5 +1,13 @@
 # Release notes
 
+## 0.45.2 — fix the release build
+
+### Fixed
+
+- Bumped the bundled Tor Expert Bundle to 16.0.3; 16.0.1's assets were removed from
+  dist.torproject.org, which 404'd every platform's release build (this blocked
+  v0.45.0 and v0.45.1 from publishing).
+
 ## 0.45.1 — site publishing identity picker
 
 ### Added
