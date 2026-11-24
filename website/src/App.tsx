@@ -36,6 +36,8 @@ const SPEC = 'https://github.com/imattau/nostr-community-conventions'
 const NPACK = 'https://github.com/imattau/npack'
 const PUBLISHER_NPUB = 'npub1g3vdg46zq7xpkmtdnta7l8u9684zd2p4e9wrp3xd7wv4xk7vq03svh653x'
 const SITE_NPUB = 'npub1khf5amw8mrupe649a5mhkk3d2d8wjj06urz6kwawpftk4f68tjlstdmd3q'
+const CONTACT_NPUB = 'npub15d7l6vky77x34wu2rl2jdlafmpuycjsca06sjpmqgc7ggnd0zazsja3gma'
+const WHITE_NOISE_CONTACT = `whitenoise://user/${CONTACT_NPUB}`
 const PUBLISHER_HEX = '4458d45742078c1b6d6d9afbef9f85d1ea26a835c95c30c4cdf399535bcc03e3'
 const FALLBACK_VERSION = '0.41.0'
 const NPACK_COMMAND = `npack install ${PUBLISHER_NPUB}/ncc-browser`
@@ -250,6 +252,9 @@ export function App() {
             <a href="#publish" className="hover:text-text">Publish</a>
             <a href="#download" className="hover:text-text">Download</a>
             <a href={DOCS} className="hover:text-text">Docs</a>
+            <a href={WHITE_NOISE_CONTACT} className="inline-flex items-center gap-1.5 hover:text-text">
+              <img src="/whitenoise-logo.svg" alt="" className="h-3.5 w-3.5 rounded-sm" /> Message us on White Noise
+            </a>
           </nav>
           <a
             href={REPO}
@@ -274,6 +279,9 @@ export function App() {
               <a href="#publish" onClick={() => setMenuOpen(false)}>Publish</a>
               <a href="#download" onClick={() => setMenuOpen(false)}>Download</a>
               <a href={DOCS}>Docs</a>
+              <a href={WHITE_NOISE_CONTACT} onClick={() => setMenuOpen(false)} className="inline-flex items-center gap-1.5">
+                <img src="/whitenoise-logo.svg" alt="" className="h-3.5 w-3.5 rounded-sm" /> Message us on White Noise
+              </a>
             </div>
           </nav>
         ) : null}
@@ -663,6 +671,9 @@ export function App() {
               <a href={SPEC} className="hover:text-text">NCC conventions</a>
               <a href={NPACK} className="hover:text-text">npack</a>
               <a href={`${REPO}/blob/main/README.md`} className="hover:text-text">README</a>
+              <a href={WHITE_NOISE_CONTACT} className="inline-flex items-center gap-1.5 hover:text-text">
+                <img src="/whitenoise-logo.svg" alt="" className="h-3.5 w-3.5 rounded-sm" /> Message us on White Noise
+              </a>
             </div>
           </div>
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-5 text-[10px] text-faint">

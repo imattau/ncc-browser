@@ -3,30 +3,31 @@ const PROFILE_TTL = 6 * 60 * 60 * 1000
 const PROFILE_CACHE_LIMIT = 8
 const BECH32 = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l'
 
+/** `npub1…` to the 64-character hex key. The checksum is not needed to read one. */
+export function npubToHex(npub) {
+  const text = String(npub || '').toLowerCase()
+  if (!text.startsWith('npub1')) return null
+  const data = [...text.slice(5, -6)].map((char) => BECH32.indexOf(char))
+  if (data.length === 0 || data.includes(-1)) return null
+
+  let acc = 0
+  let bits = 0
+  const out = []
+  for (const value of data) {
+    acc = (acc << 5) | value
+    bits += 5
+    while (bits >= 8) {
+      bits -= 8
+      out.push((acc >> bits) & 255)
+    }
+    acc &= (1 << bits) - 1
+  }
+  return out.length === 32 ? out.map((byte) => byte.toString(16).padStart(2, '0')).join('') : null
+}
+
 export function createProfile({ invoke, byId, avatar, shortId, getIdentity, getBrowserSettings }) {
   const profilePictureRequests = new Set()
   let profile = null
-  /** `npub1…` to the 64-character hex key. The checksum is not needed to read one. */
-  function npubToHex(npub) {
-    const text = String(npub || '').toLowerCase()
-    if (!text.startsWith('npub1')) return null
-    const data = [...text.slice(5, -6)].map((char) => BECH32.indexOf(char))
-    if (data.length === 0 || data.includes(-1)) return null
-
-    let acc = 0
-    let bits = 0
-    const out = []
-    for (const value of data) {
-      acc = (acc << 5) | value
-      bits += 5
-      while (bits >= 8) {
-        bits -= 8
-        out.push((acc >> bits) & 255)
-      }
-      acc &= (1 << bits) - 1
-    }
-    return out.length === 32 ? out.map((byte) => byte.toString(16).padStart(2, '0')).join('') : null
-  }
 
   function readProfiles() {
     try {

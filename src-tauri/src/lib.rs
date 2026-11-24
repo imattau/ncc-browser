@@ -239,6 +239,21 @@ fn proxy_port(state: tauri::State<'_, ProxyPort>) -> Option<u16> {
     state.0
 }
 
+/// Hands an npub to White Noise (whitenoise.chat), a separate Nostr/MLS messenger, to
+/// start a chat with it. Nothing about our own signer or session is shared with it.
+#[tauri::command]
+fn open_in_white_noise(app: tauri::AppHandle, npub: String) -> Result<(), String> {
+    use nostr::nips::nip19::ToBech32;
+    use tauri_plugin_opener::OpenerExt;
+    // Accepts hex or bech32 so the caller can hand over whichever form it has; White
+    // Noise's deep link wants the bech32 npub, so normalize to that.
+    let key = nostr::PublicKey::parse(&npub).map_err(|_| "Not a valid npub".to_string())?;
+    let npub = key.to_bech32().map_err(|e| e.to_string())?;
+    app.opener()
+        .open_url(format!("whitenoise://user/{npub}"), None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 async fn nccsearch_check_update(data_dir: tauri::State<'_, AppDataDir>, app: tauri::AppHandle) -> Result<Option<String>, String> {
     let bundled = app.path().resource_dir().map_err(|e| e.to_string())?.join("nccsearch");
@@ -1716,8 +1731,10 @@ pub fn run() {
     ncc_proxy::install_crypto_provider();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             proxy_port,
+            open_in_white_noise,
             nccsearch_check_update,
             nccsearch_install_update,
             private_proxy_port,

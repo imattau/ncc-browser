@@ -1,9 +1,18 @@
+import { shortId } from './address.js'
+import { npubToHex } from './profile.js'
+
 export function createSecurityInfo(deps) {
   const {
     byId, icon, displayAddress, security, invoke, content, confirm, renderPill, activeKind,
     KIND_INFO, getActiveUrl, getTabs, getActiveTabId, getPrivateSessionDetail, setSecurityState,
-    getCertificateFailure
+    getCertificateFailure, getIdentity, kindOf
   } = deps
+
+  /** Hex form of either an npub or an already-hex pubkey, for comparing identities. */
+  function toHex(value) {
+    const text = String(value || '').toLowerCase()
+    return /^[0-9a-f]{64}$/.test(text) ? text : npubToHex(text)
+  }
   let siteClearWaiter = null
   /** What the proxy knows about the page in front of you. */
   async function loadInfo() {
@@ -171,6 +180,26 @@ export function createSecurityInfo(deps) {
     if (data.service) row('Service', data.service)
     if (data.site) row('Site', data.site)
     if (data.title) row('Title', data.title)
+
+    const ownerHex = toHex(data.pubkey)
+    const ownHex = toHex(getIdentity?.()?.npub)
+    if (ownerHex && (!ownHex || ownerHex !== ownHex)) {
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.className = 'btn tonal block'
+      button.textContent = 'Message this owner via White Noise'
+      button.addEventListener('click', async () => {
+        try {
+          await invoke('open_in_white_noise', { npub: data.pubkey })
+        } catch (error) {
+          const line = document.createElement('p')
+          line.className = 'empty'
+          line.textContent = String(error)
+          body.appendChild(line)
+        }
+      })
+      body.appendChild(button)
+    }
 
     section('Record')
     if (data.dTag) row('d tag', data.dTag)

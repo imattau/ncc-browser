@@ -2331,7 +2331,9 @@ const securityInfo = createSecurityInfo({
   getTabs: () => tabs,
   getActiveTabId: () => activeTabId,
   getPrivateSessionDetail: () => privateSessionDetail,
-  setSecurityState: (value) => { securityState = value }
+  setSecurityState: (value) => { securityState = value },
+  getIdentity: () => identity,
+  kindOf
 })
 
 const profileFeature = createProfile({
