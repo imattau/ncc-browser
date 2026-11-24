@@ -1,5 +1,12 @@
 # Nostr Navigator for Android
 
+## Updates in 0.44.1
+
+- The Password Manager can reveal a saved password from its login list for 15 seconds,
+  or temporarily show it with the eye button in the add/edit password field. Revealed
+  passwords are hidden when the vault locks, the Password Manager closes, or the app
+  moves to the background.
+
 ## New in 0.44.0
 
 - Browser-owned notifications report completed or failed downloads.
