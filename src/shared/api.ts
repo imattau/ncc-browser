@@ -88,6 +88,7 @@ import type {
   PaymentCardSummary
 } from './payment-cards'
 import type { BitcoinSendPreview, MoneroWalletRecord, NwcInvoiceLookup, NwcSnapshot, WalletSnapshot, WalletStatus } from './wallet'
+import type { HomeSite } from './home-sites'
 
 export interface SetRelaysResult {
   ok: boolean
@@ -133,6 +134,7 @@ export interface NccApi {
   getState(): Promise<NavState>
   getConfig(): Promise<AppConfig>
   bookmarks(): Promise<Bookmark[]>
+  createHomeShortcut(site: HomeSite): Promise<{ ok: boolean; error?: string }>
   toggleBookmark(): Promise<Bookmark[]>
   removeBookmark(url: string): Promise<Bookmark[]>
   downloads(): Promise<DownloadNotice[]>
@@ -172,6 +174,8 @@ export interface NccApi {
   cacheInfo(): Promise<CacheInfo>
   clearCache(): Promise<CacheInfo>
   reResolveSite(): Promise<boolean>
+  /** Opens the system's White Noise handler to start a chat with this npub. */
+  openInWhiteNoise(npub: string): Promise<void>
   setSearchConfig(config: {
     engine: SearchEngineId
     custom: string

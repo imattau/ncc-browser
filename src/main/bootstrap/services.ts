@@ -8,6 +8,7 @@ import { AutomationSettings } from '../automation/settings'
 import { registerContactsIpc } from '../contacts/ipc'
 import { registerExtensionIpc } from '../extensions/ipc'
 import { ExtensionService } from '../extensions/runtime'
+import { registerExternalAppsIpc } from '../external-apps-ipc'
 import { registerIpc } from '../ipc'
 import { registerNsitePublishIpc } from '../nsite-publish/ipc'
 import { PasswordCache } from '../passwords/cache'
@@ -246,6 +247,7 @@ export function createServices(
     }
   })
   registerSiteDataIpc(siteDataService, { shell })
+  registerExternalAppsIpc()
 
   shell.window.on('closed', () => approvals.cancelAll())
 

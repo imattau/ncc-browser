@@ -44,6 +44,7 @@
         <symbol id="i-shield-check" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" /><path d="m9 12 2 2 4-4" /></symbol>
         <symbol id="i-shield-alert" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" /><path d="M12 8v4" /><path d="M12 16h.01" /></symbol>
         <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5" /></symbol>
+        <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z" /><circle cx="12" cy="12" r="3" /></symbol>
         <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49" /><path d="M14.084 14.158a3 3 0 0 1-4.242-4.242" /><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143" /><path d="m2 2 20 20" /></symbol>
         <symbol id="i-onion" viewBox="0 0 24 24"><path d="M12 21c4.7 0 8.2-3.7 8.2-8.2C20.2 7.4 16.5 3 12 3S3.8 7.4 3.8 12.8C3.8 17.3 7.3 21 12 21Z" /><path d="M12 18.2c2.9 0 5.1-2.4 5.1-5.5 0-3.2-1.9-5.7-5.1-5.7s-5.1 2.5-5.1 5.7c0 3.1 2.2 5.5 5.1 5.5Z" /><path d="M12 15.3c1.3 0 2.2-1.1 2.2-2.7 0-1.6-.9-2.7-2.2-2.7s-2.2 1.1-2.2 2.7c0 1.6.9 2.7 2.2 2.7Z" /><path d="M12 3c0-1 .6-1.7 1.6-2" /></symbol>
         <symbol id="i-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" /></symbol>
@@ -142,6 +143,11 @@
 
         <p id="shortcuts-label" class="section-label">Shortcuts</p>
         <div id="shortcuts" class="shortcuts"></div>
+
+        <section id="home-saved-section" hidden>
+          <p class="section-label">Added to home screen</p>
+          <div id="home-saved" class="shortcuts"></div>
+        </section>
 
         <section id="home-ncc-section" hidden>
           <p class="section-label">NCC Services</p>
@@ -254,6 +260,11 @@
           <button class="row" type="button" data-panel="tor">
             <span class="row-icon"><svg class="i"><use href="#i-shield" /></svg></span>
             <span class="row-text"><b>Tor</b><small id="sub-tor">Onion tabs and proxies</small></span>
+            <svg class="i chev"><use href="#i-chevron" /></svg>
+          </button>
+          <button class="row" type="button" data-panel="background-work">
+            <span class="row-icon"><svg class="i"><use href="#i-shield" /></svg></span>
+            <span class="row-text"><b>Background work</b><small>Keep browser tabs active when you leave</small></span>
             <svg class="i chev"><use href="#i-chevron" /></svg>
           </button>
           <button class="row" type="button" data-panel="relays">
@@ -584,6 +595,21 @@
       </div>
     </section>
 
+    <section id="background-work" class="screen" hidden>
+      <header class="appbar">
+        <button class="ib" type="button" data-back aria-label="Back"><svg class="i"><use href="#i-back" /></svg></button>
+        <h2>Background work</h2>
+      </header>
+      <div class="body">
+        <label class="switch-row">
+          <span>Keep tabs working in the background</span>
+          <input id="background-work-enabled" class="switch" type="checkbox" role="switch" />
+        </label>
+        <p class="hint">When enabled, Android keeps NCC running with an ongoing notification while you use another app. The system can still pause or stop work to save battery. Force-stopping NCC ends background work.</p>
+        <p id="background-work-note" class="status" role="status"></p>
+      </div>
+    </section>
+
     <section id="wallet" class="screen" hidden>
       <header class="appbar">
         <button class="ib" type="button" data-back aria-label="Back"><svg class="i"><use href="#i-back" /></svg></button>
@@ -800,7 +826,12 @@
         </label>
         <label class="field">
           <span>Password</span>
-          <input id="edit-password" type="password" autocomplete="new-password" spellcheck="false" />
+          <div class="password-input-group">
+            <input id="edit-password" type="password" autocomplete="new-password" spellcheck="false" />
+            <button id="edit-password-toggle" class="ib" type="button" aria-label="Show password" aria-pressed="false">
+              <svg class="i"><use href="#i-eye" /></svg>
+            </button>
+          </div>
         </label>
         <button id="edit-generate" class="btn tonal block" type="button">Generate a password</button>
         <label class="field">
@@ -1013,6 +1044,9 @@
         <div class="menu-rows">
           <button id="menu-home" class="row" type="button">
             <svg class="i"><use href="#i-home" /></svg><span class="row-text"><b>Home</b></span>
+          </button>
+          <button id="menu-add-home" class="row" type="button">
+            <svg class="i"><use href="#i-plus" /></svg><span class="row-text"><b>Add to home screen</b><small>Save this site and pin a launcher shortcut</small></span>
           </button>
           <button id="menu-share-nostr" class="row" type="button">
             <svg class="i"><use href="#i-share" /></svg><span class="row-text"><b>Share to Nostr</b><small id="menu-share-nostr-note"></small></span>

@@ -114,6 +114,10 @@ function saveIcon(address, dataUrl) {
   }
 }
 
+function iconDataUrl(address) {
+  return readIcons()[iconKey(address)] || ''
+}
+
 /**
  * The service's own icon when the page has supplied one, otherwise a gradient tile
  * with its initial. Both are the same box, so a late icon swaps in without reflow.
@@ -143,4 +147,4 @@ function avatar(text, className = '', address = '') {
 }
 
 
-export { addressParts, avatar, displayAddress, icon, iconKey, labelFor, saveIcon, setIcon, shortId }
+export { addressParts, avatar, displayAddress, icon, iconDataUrl, iconKey, labelFor, saveIcon, setIcon, shortId }

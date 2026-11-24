@@ -11,20 +11,23 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::body::Body;
-use axum::http::{header, HeaderValue, Method, StatusCode};
+use axum::http::{HeaderValue, Method, StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
+use futures_util::stream::{FuturesUnordered, StreamExt};
 use nostr::{Alphabet, Event, Filter, Kind, PublicKey, SingleLetterTag, ToBech32};
 
 use ncc_core::{
-    content_type_for, match_path, nsite_host, PathMatch, NSITE_NAMED_KIND, NSITE_ROOT_KIND,
+    NSITE_NAMED_KIND, NSITE_ROOT_KIND, PathMatch, content_type_for, match_path, nsite_host,
 };
 
-use crate::vhost::Vhost;
 use crate::ProxyState;
+use crate::vhost::Vhost;
 
 const CACHE_SECONDS: i64 = 60;
 const NEGATIVE_SECONDS: i64 = 15;
 const MAX_SERVERS: usize = 8;
+const MAX_PARALLEL_BLOB_REQUESTS: usize = 3;
+const MAX_BLOB_FETCH_TIME: Duration = Duration::from_secs(20);
 const MAX_FILE_BYTES: usize = 25 * 1024 * 1024;
 const DEFAULT_CACHE_BYTES: usize = 64 * 1024 * 1024;
 const DISK_CACHE_BYTES: u64 = 256 * 1024 * 1024;
@@ -374,35 +377,38 @@ impl Blobs {
             return Err("the manifest lists no Blossom servers".to_string());
         }
 
+        let servers = servers.iter().take(MAX_SERVERS).cloned();
+        let mut pending = FuturesUnordered::new();
+        let mut servers = servers.peekable();
         let mut last = "no server answered".to_string();
-        for server in servers.iter().take(MAX_SERVERS) {
-            let url = format!("{server}/{hash}");
-            match self.client.get(&url).send().await {
-                Ok(response) => {
-                    if !response.status().is_success() {
-                        last = format!("{server}: HTTP {}", response.status());
-                        continue;
-                    }
-                    let bytes = match response.bytes().await {
-                        Ok(bytes) => bytes,
-                        Err(error) => {
-                            last = format!("{server}: {error}");
-                            continue;
-                        }
-                    };
-                    if bytes.len() > MAX_FILE_BYTES {
-                        last = format!("{server}: file larger than {MAX_FILE_BYTES} bytes");
-                        continue;
-                    }
-                    if sha256_hex(&bytes) != hash {
-                        last = format!("{server}: content does not match {hash}");
-                        continue;
-                    }
-                    self.remember(hash, bytes.to_vec());
-                    self.write_disk(hash, &bytes);
-                    return Ok(bytes.to_vec());
+        let deadline = tokio::time::sleep(MAX_BLOB_FETCH_TIME);
+        tokio::pin!(deadline);
+
+        for _ in 0..MAX_PARALLEL_BLOB_REQUESTS {
+            if let Some(server) = servers.next() {
+                pending.push(fetch_blob(&self.client, server, hash));
+            }
+        }
+
+        while !pending.is_empty() {
+            tokio::select! {
+                _ = &mut deadline => {
+                    return Err(format!("Blossom servers did not provide {hash} within {} seconds", MAX_BLOB_FETCH_TIME.as_secs()));
                 }
-                Err(error) => last = format!("{server}: {error}"),
+                result = pending.next() => {
+                    let Some((server, result)) = result else { break };
+                    match result {
+                        Ok(bytes) => {
+                            self.remember(hash, bytes.clone());
+                            self.write_disk(hash, &bytes);
+                            return Ok(bytes);
+                        }
+                        Err(error) => last = format!("{server}: {error}"),
+                    }
+                    if let Some(server) = servers.next() {
+                        pending.push(fetch_blob(&self.client, server, hash));
+                    }
+                }
             }
         }
 
@@ -507,6 +513,33 @@ impl Blobs {
     }
 }
 
+async fn fetch_blob(
+    client: &reqwest::Client,
+    server: String,
+    hash: &str,
+) -> (String, Result<Vec<u8>, String>) {
+    let result = async {
+        let response = client
+            .get(format!("{server}/{hash}"))
+            .send()
+            .await
+            .map_err(|error| error.to_string())?;
+        if !response.status().is_success() {
+            return Err(format!("HTTP {}", response.status()));
+        }
+        let bytes = response.bytes().await.map_err(|error| error.to_string())?;
+        if bytes.len() > MAX_FILE_BYTES {
+            return Err(format!("file larger than {MAX_FILE_BYTES} bytes"));
+        }
+        if sha256_hex(&bytes) != hash {
+            return Err(format!("content does not match {hash}"));
+        }
+        Ok(bytes.to_vec())
+    }
+    .await;
+    (server, result)
+}
+
 fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     Sha256::digest(bytes)
@@ -529,17 +562,34 @@ pub async fn serve(
     }
 
     let site = vhost.site.as_deref();
-    let manifest = match state.nsite().resolve(&vhost.pubkey, site).await {
-        Ok(manifest) => manifest,
+    let (manifest, lookup_path) = match state.nsite().resolve(&vhost.pubkey, site).await {
+        Ok(manifest) => (manifest, path.to_string()),
+        Err(_) if site.is_some() => {
+            // A d-like first segment is ambiguous: it may name a published site,
+            // or be the first path component on the identity's root site. Keep
+            // that fallback in the proxy so Android can open the provisional
+            // named-site URL immediately and show page loading while relays are
+            // queried instead of waiting for a shell-side /__ncc/route preflight.
+            let root = match state.nsite().resolve(&vhost.pubkey, None).await {
+                Ok(manifest) => manifest,
+                Err(error) => {
+                    return page(
+                        StatusCode::NOT_FOUND,
+                        &format!("{error} for {}", display(vhost)),
+                    );
+                }
+            };
+            (root, format!("/{}{path}", site.unwrap_or_default()))
+        }
         Err(error) => {
             return page(
                 StatusCode::NOT_FOUND,
                 &format!("{error} for {}", display(vhost)),
-            )
+            );
         }
     };
 
-    let matched = match_path(&manifest.paths, path, search);
+    let matched = match_path(&manifest.paths, &lookup_path, search);
 
     match matched {
         // A manifest can hold any string here, and `header()` panics on one it cannot

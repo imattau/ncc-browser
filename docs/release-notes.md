@@ -1,5 +1,42 @@
 # Release notes
 
+## 0.44.4 — White Noise hand-off
+
+### Added
+
+- Viewing an `ncc://` site you don't own now offers a "Message this owner via White
+  Noise" action in the site info panel, on both desktop and Android. It opens
+  `whitenoise://user/<npub>` through the OS; no signer or session state is shared with
+  White Noise.
+- The project website links to the project's own White Noise contact in its header,
+  mobile menu and footer.
+
+## 0.44.0 — notifications and background work
+
+### Added
+
+- Browser-owned notifications now report completed or failed downloads on desktop and
+  Android.
+- Android can keep browser work running after the app moves to the background, using
+  an ongoing foreground-service notification. This is opt-in, off by default, and
+  offered once on first launch; Android notification permission is requested when
+  needed.
+- Android settings now include a control for background work. Returning to NCC Browser
+  stops the foreground service.
+
+### Fixed
+
+- Android home-screen shortcut icons are decoded with bounded dimensions and memory use,
+  preventing malformed or oversized page favicons from crashing shortcut creation.
+
+## 0.43.0 — add sites to the home screen
+
+### Added
+
+- Add a normal tab to the browser home screen on desktop and Android. Desktop also
+  creates an OS desktop launcher; Android offers to pin a launcher shortcut and uses
+  the page icon when available. Home screen entries can be removed from the browser.
+
 ## 0.42.3 — Android: fix all page/nsite loads hanging forever
 
 ### Fixed

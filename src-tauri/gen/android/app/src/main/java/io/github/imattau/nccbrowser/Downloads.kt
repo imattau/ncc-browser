@@ -28,6 +28,7 @@ class Downloads(private val context: Context) {
     var bytes: Long,
     val total: Long,
     val at: Long,
+    val ephemeral: Boolean = false,
   )
 
   init {
@@ -46,16 +47,17 @@ class Downloads(private val context: Context) {
           .put("state", entry.state)
           .put("bytes", entry.bytes)
           .put("total", entry.total)
-          .put("at", entry.at),
+          .put("at", entry.at)
+          .put("private", entry.ephemeral),
       )
     }
     return array.toString()
   }
 
   @Synchronized
-  fun start(name: String, url: String, total: Long): String {
+  fun start(name: String, url: String, total: Long, ephemeral: Boolean = false): String {
     val id = "dl-${System.currentTimeMillis()}"
-    entries.add(0, Entry(id, name, url, "running", 0, total, System.currentTimeMillis()))
+    entries.add(0, Entry(id, name, url, "running", 0, total, System.currentTimeMillis(), ephemeral))
     trim()
     persist()
     emit()
@@ -106,7 +108,8 @@ class Downloads(private val context: Context) {
             .put("state", entry.state)
             .put("bytes", entry.bytes)
             .put("total", entry.total)
-            .put("at", entry.at),
+            .put("at", entry.at)
+            .put("private", entry.ephemeral),
         )
       }
       file.writeText(array.toString())
@@ -131,6 +134,7 @@ class Downloads(private val context: Context) {
             item.optLong("bytes"),
             item.optLong("total", -1),
             item.optLong("at"),
+            item.optBoolean("private"),
           ),
         )
       }

@@ -19,12 +19,13 @@ export function securitySummary(state: NavState): SecuritySummary {
   const anchor = security?.anchor ?? null
 
   if (failure) {
+    const certificateFailure = failure.code.startsWith('certificate-')
     return {
       tone: 'danger',
-      label: 'failure',
+      label: certificateFailure ? 'certificate error' : 'failure',
       host: security?.host ?? hostOf(state.url || state.displayUrl),
       anchorState: 'none',
-      tooltip: `Security problem: ${failure.code} — click for details`,
+      tooltip: `${certificateFailure ? 'Certificate error' : 'Security problem'}: ${certificateFailure ? failure.code.replaceAll('-', ' ') : failure.code} — click for details`,
       clickable: true
     }
   }

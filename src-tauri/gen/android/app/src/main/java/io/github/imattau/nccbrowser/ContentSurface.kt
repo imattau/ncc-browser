@@ -481,6 +481,7 @@ class ContentSurface(
   /** Captured from the first Tor URL so filtering does not race the shell bridge. */
   private var torListenerPort: Int? = null
   private var showingError = false
+  private var pendingCertificateError: Pair<String, String>? = null
   /** Page whose refreshed favicon supersedes a potentially stale WebView bitmap. */
   private var refreshedFaviconPage: String? = null
   /// Set once the tab is gone, so a callback posted before that cannot touch it.
@@ -1459,11 +1460,22 @@ class ContentSurface(
         if (host.endsWith(".localhost")) {
           handler.proceed()
         } else {
+          val (code, rawError) = when (error.primaryError) {
+            android.net.http.SslError.SSL_DATE_INVALID,
+            android.net.http.SslError.SSL_EXPIRED,
+            android.net.http.SslError.SSL_NOTYETVALID -> "certificate-date-invalid" to "net::ERR_CERT_DATE_INVALID"
+            android.net.http.SslError.SSL_IDMISMATCH -> "certificate-name-mismatch" to "net::ERR_CERT_COMMON_NAME_INVALID"
+            android.net.http.SslError.SSL_UNTRUSTED -> "certificate-untrusted" to "net::ERR_CERT_AUTHORITY_INVALID"
+            else -> "certificate-invalid" to "net::ERR_CERT_INVALID"
+          }
+          pendingCertificateError = error.url.orEmpty() to "$code|$rawError"
           handler.cancel()
         }
       }
 
       override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
+        if (showingError && url?.startsWith("data:text/html") == true) return
+        pendingCertificateError = null
         pendingPasskeys.entries.toList().forEach { (requestId, reply) ->
           pendingPasskeys.remove(requestId)
           reply("{\"handled\":true,\"error\":\"AbortError\"}")
@@ -1531,12 +1543,27 @@ class ContentSurface(
         error: android.webkit.WebResourceError,
       ) {
         if (!request.isForMainFrame) return
+        if (showingError) return
         val detail = "${error.errorCode} ${error.description}"
         currentUrl = request.url.toString()
-        emit(JSONObject().put("type", "failed").put("url", request.url.toString()).put("reason", detail))
+        val pending = pendingCertificateError?.takeIf { it.first == request.url.toString() }
+        pendingCertificateError = null
+        val certificate = pending?.second?.split('|', limit = 2)
+        val code = certificate?.getOrNull(0)
+        val rawError = certificate?.getOrNull(1)
+        val certificateMessage = when (code) {
+          "certificate-date-invalid" -> "The certificate is outside its valid date range. Check this device’s date and time; if they are correct, the site owner may need to renew the certificate."
+          "certificate-name-mismatch" -> "The certificate does not identify this website. Check the address or contact the site owner."
+          "certificate-untrusted" -> "The browser could not verify who issued this certificate. The connection was blocked."
+          "certificate-revoked" -> "The certificate issuer has withdrawn this certificate. The connection was blocked."
+          else -> "The browser could not verify this website’s certificate, so it blocked the connection."
+        }
+        val payload = JSONObject().put("type", "failed").put("url", request.url.toString()).put("reason", if (rawError != null) rawError else detail)
+        if (code != null) payload.put("certificateError", JSONObject().put("code", code).put("rawError", rawError).put("message", certificateMessage))
+        emit(payload)
         // Chromium's own error page hides the address that failed, which is the one
         // thing needed to tell a bad address apart from a broken proxy.
-        showFailure(view, request.url.toString(), detail)
+        showFailure(view, request.url.toString(), detail, certificateMessage, rawError)
       }
     }
 
@@ -1645,7 +1672,7 @@ class ContentSurface(
     report(payload)
   }
 
-  private fun showFailure(view: WebView, url: String, detail: String) {
+  private fun showFailure(view: WebView, url: String, detail: String, certificateMessage: String? = null, rawError: String? = null) {
     if (destroyed) return
     showingError = true
     val safeUrl = escapeHtml(url)
@@ -1664,11 +1691,10 @@ class ContentSurface(
           border-radius:999px;background:#2457e6;color:#fff;font-weight:600;
           text-decoration:none}
       </style>
-      <h1>This page did not load</h1>
-      <p>The proxy answered with an error or refused the connection. If the address
-      below is right, try again in a moment.</p>
+      <h1>${if (certificateMessage != null) "Connection blocked" else "This page did not load"}</h1>
+      <p>${escapeHtml(certificateMessage ?: "The page could not be reached. If the address below is right, try again in a moment.")}</p>
       <code>$safeUrl</code>
-      <p><small>${escapeHtml(detail)}</small></p>
+      <p><small>${escapeHtml(rawError ?: detail)}</small></p>
       <a class="retry" href="$safeUrl">Try again</a>
     """.trimIndent()
 

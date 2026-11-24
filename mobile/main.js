@@ -11,7 +11,7 @@
  */
 import { closeMoneroWallet, handleNwcPageRequest, loadWallet, wireWallet } from './wallet.js'
 import './downloads.js'
-import { addressParts, avatar, displayAddress, icon, iconKey, labelFor, saveIcon, setIcon, shortId } from './address.js'
+import { addressParts, avatar, displayAddress, icon, iconDataUrl, iconKey, labelFor, saveIcon, setIcon, shortId } from './address.js'
 import { createSync } from './sync.js'
 import { createProfile } from './profile.js'
 import { createHome } from './home.js'
@@ -132,6 +132,7 @@ const PANELS = [
   'nccsearch',
   'security',
   'tor',
+  'background-work',
   'passwords',
   'wallet',
   'sync',
@@ -275,10 +276,12 @@ function readNumber(key) {
 /* ───────────────────────────── Security state ───────────────────────────── */
 
 let securityState = 'unknown'
+const certificateFailures = new Map()
 
 async function refreshSecurity() {
   const url = activeUrl
-  const state = url ? await security.securityFor(url) : 'unknown'
+  const activeFailure = certificateFailures.get(activeTabId)
+  const state = activeFailure ? 'certificate-error' : url ? await security.securityFor(url) : 'unknown'
   if (url !== activeUrl) return
   securityState = state
   renderPill()
@@ -469,7 +472,10 @@ function restoreTabs() {
 }
 
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) writeTabs()
+  if (document.hidden) {
+    writeTabs()
+    passwordFeature.onAppBackground()
+  }
 })
 
 /** Tab list from the native tab manager. */
@@ -482,10 +488,15 @@ globalThis.__nccTabs = (payload) => {
     activeUrl = active.url || activeUrl
     activeTitle = active.title || ''
     setBackdrop(active.thumbnail)
+    if (!certificateFailures.has(activeTabId)) securityState = 'unknown'
   } else {
     activeUrl = ''
     activeTitle = ''
     setBackdrop(null)
+  }
+
+  for (const id of certificateFailures.keys()) {
+    if (!tabs.some((tab) => tab.id === id)) certificateFailures.delete(id)
   }
 
   for (const id of Object.keys(progressByTab)) {
@@ -519,7 +530,11 @@ globalThis.__nccContent = (state) => {
     return
   }
 
-  if (state.type === 'loading') progressByTab[id] = progressByTab[id] ?? 8
+  if (state.type === 'loading') {
+    progressByTab[id] = progressByTab[id] ?? 8
+    certificateFailures.delete(id)
+    if (id === activeTabId) securityState = 'unknown'
+  }
   if (state.type === 'progress') {
     if (state.value >= 100) delete progressByTab[id]
     else progressByTab[id] = state.value
@@ -534,6 +549,8 @@ globalThis.__nccContent = (state) => {
 
   if (state.type === 'failed' || state.type === 'blocked' || state.type === 'rejected') {
     delete progressByTab[id]
+    if (state.type === 'failed' && state.certificateError) certificateFailures.set(id, { ...state.certificateError, url: state.url })
+    else if (state.type === 'failed') certificateFailures.set(id, { code: 'load-failed', rawError: state.reason || 'Page failed to load', message: 'The page could not be loaded. Check the address and try again.', url: state.url })
   }
 
   // A login the native hook saw submitted. The secret goes straight into the vault
@@ -584,6 +601,10 @@ globalThis.__nccContent = (state) => {
     void refreshSecurity()
   }
 
+  if (id === activeTabId && state.type === 'failed') {
+    if (!state.certificateError) securityState = 'failure'
+    void refreshSecurity()
+  }
   renderPill()
 }
 
@@ -631,6 +652,7 @@ globalThis.__nccBack = () => {
 /** Every full-window surface is the shell expanded over the page. */
 function showPanel(name) {
   if (!content) return
+  passwordFeature.onPanelChange(panel, name)
   if (panel === 'nccsearch' && name !== 'nccsearch') {
     // Unload the document, not just the attribute: Android WebView can keep a
     // <video> inside a hidden iframe audible after `removeAttribute('src')`.
@@ -655,6 +677,7 @@ function showPanel(name) {
   if (name === 'nccsearch') void loadNccSearch()
   if (name === 'security') void loadSecurity()
   if (name === 'tor') void loadTor()
+  if (name === 'background-work') void loadBackgroundWork()
   if (name === 'passwords') void passwordFeature.loadPasswords()
   if (name === 'payment-cards') void paymentFeature.load()
   if (name === 'wallet') void loadWallet()
@@ -677,6 +700,7 @@ function showPanel(name) {
 }
 
 function closePanel() {
+  passwordFeature.onPanelChange(panel, 'home')
   panel = 'home'
   newTabMode = false
   privateMode = false
@@ -1126,19 +1150,6 @@ async function navigate(text, { newTab = false, private: isPrivate = false, tor 
 
   let target = targetUrl(input, port)
 
-  // For a site, whether a `d`-like segment is a name or a path depends on what is
-  // published, so ask the proxy instead of guessing here.
-  if (/^nsite:/i.test(input) && !target.error) {
-    try {
-      const response = await fetch(
-        `http://127.0.0.1:${port}/__ncc/route?u=${encodeURIComponent(input)}`
-      )
-      if (response.ok) target = await response.json()
-    } catch {
-      // Fall back to the local guess; the proxy will answer 404 if it is wrong.
-    }
-  }
-
   if (target.error) return { error: target.error }
 
   if (content) {
@@ -1366,6 +1377,7 @@ function renderMenu() {
   byId('menu-share-nostr').setAttribute('aria-disabled', String(!nostr.ok))
   byId('menu-share-nostr-note').textContent = nostr.ok ? '' : nostr.why
   byId('menu-bookmark').disabled = !hasPage
+  byId('menu-add-home').disabled = !hasPage || activeKind() !== 'normal'
   byId('menu-find').setAttribute('aria-disabled', String(!hasPage))
   byId('menu-copy').setAttribute('aria-disabled', String(!hasPage))
   byId('menu-desktop').setAttribute('aria-disabled', String(!hasPage))
@@ -1389,6 +1401,16 @@ function wireMenu() {
     closePanel()
   })
   act('menu-home', () => showPanel('home'))
+  act('menu-add-home', () => {
+    const url = displayAddress(activeUrl)
+    if (!url || activeKind() !== 'normal' || !/^(https?:|ncc:|nsite:)/i.test(url)) return
+    const sites = readList('ncc.home.sites').filter((entry) => entry && entry.address !== url)
+    const site = { address: url, title: activeTitle || url }
+    writeList('ncc.home.sites', [site, ...sites].slice(0, 100))
+    try { content.pinShortcut?.(site.title, url, iconDataUrl(url)) } catch { /* home tile still works */ }
+    homeFeature.renderHome()
+    closePanel()
+  })
   act('menu-reload', () => {
     content.reload()
     closePanel()
@@ -1913,6 +1935,36 @@ async function saveTor() {
   }
 }
 
+async function loadBackgroundWork() {
+  byId('background-work-note').textContent = ''
+  try {
+    const enabled = Boolean(content?.backgroundWorkEnabled?.())
+    byId('background-work-enabled').checked = enabled
+    byId('background-work-note').textContent = enabled
+      ? 'Enabled. NCC will show an ongoing notification while running in the background.'
+      : 'Off. Browser work may pause when you leave NCC.'
+  } catch (error) {
+    byId('background-work-note').textContent = `Could not read background-work status: ${error}`
+  }
+}
+
+function setBackgroundWork(enabled) {
+  const note = byId('background-work-note')
+  if (!content || typeof content.setBackgroundWorkEnabled !== 'function') {
+    byId('background-work-enabled').checked = false
+    note.textContent = 'Android background work is unavailable in this build.'
+    return
+  }
+  byId('background-work-enabled').disabled = true
+  content.setBackgroundWorkEnabled(enabled)
+}
+
+globalThis.__nccBackgroundWorkState = ({ enabled, error } = {}) => {
+  byId('background-work-enabled').checked = enabled === true
+  byId('background-work-enabled').disabled = false
+  byId('background-work-note').textContent = error || (enabled ? 'Enabled. NCC will show an ongoing notification while running in the background.' : 'Off. Browser work may pause when you leave NCC.')
+}
+
 /* ───────────────────────────── Passwords ───────────────────────────── */
 
 function activeKind() {
@@ -2206,6 +2258,7 @@ function wireChrome() {
   byId('protection-update-lists').addEventListener('click', () => void updateProtectionFilterLists())
   byId('tor-save').addEventListener('click', () => void saveTor())
   byId('tor-refresh').addEventListener('click', () => void refreshTorState())
+  byId('background-work-enabled').addEventListener('change', (event) => setBackgroundWork(event.target.checked))
 
   byId('vault-unlock').addEventListener('click', () => void passwordFeature.unlockVault())
   byId('vault-lock').addEventListener('click', () => void passwordFeature.lockVault())
@@ -2220,6 +2273,7 @@ function wireChrome() {
   byId('edit-save').addEventListener('click', () => void passwordFeature.saveEdits())
   byId('edit-delete').addEventListener('click', () => void passwordFeature.deleteEditing())
   byId('edit-generate').addEventListener('click', () => void passwordFeature.generateIntoEdit())
+  byId('edit-password-toggle').addEventListener('click', () => passwordFeature.toggleEditPasswordReveal())
   byId('save-accept').addEventListener('click', () => void passwordFeature.respondSave('save'))
   byId('save-never').addEventListener('click', () => void passwordFeature.respondSave('never'))
   byId('save-dismiss').addEventListener('click', () => void passwordFeature.respondSave('dismiss'))
@@ -2294,10 +2348,13 @@ const securityInfo = createSecurityInfo({
   byId, icon, displayAddress, security, invoke, content, confirm, renderPill, activeKind,
   KIND_INFO, kindOf,
   getActiveUrl: () => activeUrl,
+  getCertificateFailure: () => certificateFailures.get(activeTabId) || null,
   getTabs: () => tabs,
   getActiveTabId: () => activeTabId,
   getPrivateSessionDetail: () => privateSessionDetail,
-  setSecurityState: (value) => { securityState = value }
+  setSecurityState: (value) => { securityState = value },
+  getIdentity: () => identity,
+  kindOf
 })
 
 const profileFeature = createProfile({
@@ -2312,6 +2369,7 @@ const homeFeature = createHome({
   getNewTabMode: () => newTabMode,
   HOME_ORDER_KEY: 'ncc.home.order',
   HOME_HIDDEN_KEY: 'ncc.home.hidden',
+  HOME_SITES_KEY: 'ncc.home.sites',
   BOOKMARKS_KEY, HISTORY_KEY, DEFAULT_ADDRESS
 })
 

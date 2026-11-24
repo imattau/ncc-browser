@@ -1,4 +1,5 @@
 import { shell } from 'electron'
+import { certificateErrorFromDescription } from '@shared/certificate-errors'
 import { installContentContextMenu } from '../context-menu'
 import { fetchFavicon } from '../favicon'
 import { isAllowedTorUrl } from '../tor/guard'
@@ -117,10 +118,13 @@ export function wireTab(internals: ShellInternals, tab: Tab): void {
         return
       }
 
-      tab.failure ??= {
-        code: validatedURL.startsWith('ncc://') ? 'endpoint-unreachable' : 'load-failed',
-        message: errorDescription
-      }
+      const certificateError = certificateErrorFromDescription(errorDescription)
+      tab.failure ??= certificateError
+        ? { code: certificateError.code, message: certificateError.rawError }
+        : {
+            code: validatedURL.startsWith('ncc://') ? 'endpoint-unreachable' : 'load-failed',
+            message: errorDescription
+          }
       internals.syncState()
     }
   )

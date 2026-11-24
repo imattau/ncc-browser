@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Check, Copy, EyeOff, Globe, KeyRound, Server, Settings2, ShieldCheck, TimerOff } from 'lucide-react'
+import { AppWindow, Check, Copy, EyeOff, Globe, KeyRound, Server, Settings2, ShieldCheck, TimerOff, X } from 'lucide-react'
 import type { TabKind } from '@shared/types'
+import { normalizeHomeSite, type HomeSite } from '@shared/home-sites'
 import { recipientNpub, serviceAddress, type HostedService } from '@shared/hosting'
 import { cn } from '../lib/cn'
 import { TAB_KIND_SUMMARY, TAB_KIND_TONE } from '../lib/tab-kind'
@@ -21,6 +22,23 @@ export function Welcome({ onOpenSettings, onOpenServices, onNewPrivateTab, onNew
   const [services, setServices] = useState<HostedService[]>([])
   const [npub, setNpub] = useState('')
   const [copied, setCopied] = useState(false)
+  const [homeSites, setHomeSites] = useState<HomeSite[]>(() => readHomeSites())
+
+  useEffect(() => {
+    const refresh = (): void => setHomeSites(readHomeSites())
+    window.addEventListener('ncc:home-sites-changed', refresh)
+    window.addEventListener('storage', refresh)
+    return () => {
+      window.removeEventListener('ncc:home-sites-changed', refresh)
+      window.removeEventListener('storage', refresh)
+    }
+  }, [])
+
+  const removeHomeSite = (url: string): void => {
+    const next = homeSites.filter((site) => site.url !== url)
+    localStorage.setItem('ncc.home-sites', JSON.stringify(next))
+    setHomeSites(next)
+  }
 
   useEffect(() => {
     let alive = true
@@ -131,6 +149,27 @@ export function Welcome({ onOpenSettings, onOpenServices, onNewPrivateTab, onNew
             </button>
           </div>
 
+          {kind === 'normal' && homeSites.length > 0 ? (
+            <section className="mt-8 rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel)]/70 p-3.5">
+              <h2 className="flex items-center gap-2 text-ui-12 font-semibold text-[color:var(--color-text-strong)]">
+                <AppWindow className="h-3.5 w-3.5 text-[color:var(--color-accent)]" /> Home screen
+              </h2>
+              <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
+                {homeSites.map((site) => (
+                  <div key={site.url} className="flex min-w-0 items-center gap-1 rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-field)]">
+                    <button type="button" onClick={() => void window.ncc.navigate(site.url)} className="flex min-w-0 flex-1 items-center gap-2 px-2.5 py-2 text-left hover:bg-[color:var(--color-hover)]">
+                      {site.icon ? <img src={site.icon} alt="" className="h-5 w-5 rounded" /> : <Globe className="h-4 w-4 shrink-0 text-[color:var(--color-accent)]" />}
+                      <span className="truncate text-ui-11 text-[color:var(--color-text)]">{site.title}</span>
+                    </button>
+                    <button type="button" aria-label={`Remove ${site.title} from home screen`} title="Remove" onClick={() => removeHomeSite(site.url)} className="rounded p-1.5 text-[color:var(--color-faint)] hover:text-[color:var(--color-danger)]">
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ) : null}
+
           {services.length > 0 ? (
             <div className="mt-8 rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel)]/70 p-3.5">
               <div className="flex items-center justify-between gap-2">
@@ -239,6 +278,15 @@ export function Welcome({ onOpenSettings, onOpenServices, onNewPrivateTab, onNew
       </div>
     </div>
   )
+}
+
+function readHomeSites(): HomeSite[] {
+  try {
+    const values: unknown = JSON.parse(localStorage.getItem('ncc.home-sites') || '[]')
+    return Array.isArray(values) ? values.map(normalizeHomeSite).filter((site): site is HomeSite => site !== null) : []
+  } catch {
+    return []
+  }
 }
 
 interface FactProps {

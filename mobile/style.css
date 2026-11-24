@@ -259,6 +259,11 @@ body[data-bar='top'] .strip {
   color: var(--warn);
 }
 
+.pill-lock[data-state='certificate-error'] {
+  background: color-mix(in srgb, var(--danger) 20%, transparent);
+  color: var(--danger);
+}
+
 .pill-addr {
   flex: 1;
   min-width: 0;
@@ -686,6 +691,34 @@ select {
   font: inherit;
   font-size: calc(16px * var(--text-scale));
   outline: none;
+}
+
+.password-input-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.password-input-group input {
+  flex: 1 1 0;
+  min-width: 0;
+  width: 0;
+}
+
+.password-input-group .ib {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  color: var(--muted);
+}
+
+.vault-entry-password {
+  display: block;
+  padding: 4px 16px 12px 72px;
+  color: var(--text);
+  font: 14px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 input:focus,
@@ -1442,6 +1475,11 @@ body[data-bar='top'] .home-bar {
 .info-badge[data-state='plain'] {
   background: color-mix(in srgb, var(--warn) 16%, transparent);
   color: var(--warn);
+}
+
+.info-badge[data-state='certificate-error'] {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  color: var(--danger);
 }
 
 .info-head b {

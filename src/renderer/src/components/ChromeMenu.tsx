@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { Bookmark as BookmarkIcon, Server, Smartphone, WalletCards, X } from 'lucide-react'
+import { Bookmark as BookmarkIcon, Server, Smartphone, WalletCards, X, AppWindow } from 'lucide-react'
 import { COMMANDS, COMMAND_ORDER, type CommandId } from '@shared/commands'
 import type { Bookmark, IdentityStatus, NavState } from '@shared/types'
 import type { SyncDevice } from '@shared/sync-status'
@@ -14,6 +14,7 @@ interface ChromeMenuProps {
   onCommand: (command: CommandId) => void
   onOpenWallet: () => void
   onPublishService: (url: string) => void
+  onAddHomeSite: () => void
   onOpenBookmark: (url: string) => void
   onRemoveBookmark: (url: string) => void
   devices?: SyncDevice[]
@@ -28,6 +29,7 @@ export function ChromeMenu({
   onCommand,
   onOpenWallet,
   onPublishService,
+  onAddHomeSite,
   onOpenBookmark,
   onRemoveBookmark,
   devices = [],
@@ -95,6 +97,15 @@ export function ChromeMenu({
         <div className="px-1.5 pt-1.5">
           <button type="button" role="menuitem" onClick={onOpenWallet} className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-ui-12 text-[color:var(--color-text-strong)] hover:bg-[color:var(--color-hover)]">
             <WalletCards className="h-4 w-4 text-[color:var(--color-accent)]" /> Wallet
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            disabled={!state.displayUrl || state.tabKind !== 'normal'}
+            onClick={onAddHomeSite}
+            className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-ui-12 text-[color:var(--color-text-strong)] hover:bg-[color:var(--color-hover)] disabled:cursor-default disabled:opacity-40"
+          >
+            <AppWindow className="h-4 w-4 text-[color:var(--color-accent)]" /> Add to home screen
           </button>
           {publishUrl ? (
             <button

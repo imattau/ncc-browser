@@ -311,5 +311,25 @@ export const ERROR_COPY: Record<string, { title: string; hint: string }> = {
   'certificate-expired': {
     title: 'Transport certificate expired',
     hint: 'The endpoint presented a certificate that is no longer valid. The locator pins a transport identity; an expired certificate cannot satisfy it.'
+  },
+  'certificate-date-invalid': {
+    title: 'Certificate date is invalid',
+    hint: 'The certificate is outside its valid date range. Check this device’s date and time; if those are correct, the site owner may need to renew the certificate.'
+  },
+  'certificate-untrusted': {
+    title: 'Certificate authority is not trusted',
+    hint: 'The browser could not verify who issued this certificate. The connection was blocked.'
+  },
+  'certificate-name-mismatch': {
+    title: 'Certificate is for a different site',
+    hint: 'The certificate does not identify this website. Check the address or contact the site owner.'
+  },
+  'certificate-revoked': {
+    title: 'Certificate has been revoked',
+    hint: 'The certificate issuer has withdrawn this certificate. The connection was blocked.'
+  },
+  'certificate-invalid': {
+    title: 'Certificate is invalid',
+    hint: 'The browser could not verify this website’s certificate, so it blocked the connection.'
   }
 }

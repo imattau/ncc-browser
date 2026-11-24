@@ -17,6 +17,7 @@ import {
 import { nip19 } from 'nostr-tools'
 import { parseNccAddress } from '@shared/ncc-url'
 import { ERROR_COPY } from '@shared/types'
+import { isNpub } from '@shared/white-noise'
 import type { SiteDataInfo } from '@shared/site-data'
 import type { AnchorInfo, LocatorInfo, NavState, SignerOriginState, TransportSecurity } from '@shared/types'
 import { clearnetState } from '../lib/clearnet'
@@ -155,7 +156,9 @@ export function SiteInfoPanel({
         ) : null}
         {failure ? <FailureBlock code={failure.code} message={failure.message} /> : null}
 
-        {web ? <ClearnetBlock url={state.url || state.displayUrl} /> : null}
+        {web && !failure?.code.startsWith('certificate-') && !/\.localhost(?::|\/|$)/i.test(state.url || state.displayUrl) ? (
+          <ClearnetBlock url={state.url || state.displayUrl} />
+        ) : null}
 
         {!web && security ? (
           <TransportBlock
@@ -213,7 +216,12 @@ export function SiteInfoPanel({
         ) : null}
 
         {!web && security?.locator ? (
-          <LocatorBlock locator={security.locator} owned={owned} onClose={onClose} />
+          <LocatorBlock
+            locator={security.locator}
+            owned={owned}
+            ownerNpub={ownerNpub}
+            onClose={onClose}
+          />
         ) : null}
 
         {!web ? (
@@ -276,13 +284,16 @@ function ClearnetBlock({ url }: { url: string }) {
 
 function FailureBlock({ code, message }: { code: string; message: string }) {
   const copy = ERROR_COPY[code]
+  const rawCertificateError = message.match(/net::ERR_CERT_[A-Z0-9_]+/i)?.[0]
   return (
     <div className="rounded-xl border border-[color:var(--color-danger)]/30 bg-[color:var(--color-danger)]/[0.07] p-3">
       <p className="flex items-center gap-1.5 text-ui-11 font-semibold text-[color:var(--color-danger)]">
         <AlertTriangle className="h-3.5 w-3.5" />
         {copy?.title ?? 'Page failed'}
       </p>
-      <p className="mt-1 font-mono text-ui-95 text-[color:var(--color-danger)]/80">{code}</p>
+      <p className="mt-1 font-mono text-ui-95 text-[color:var(--color-danger)]/80">
+        {rawCertificateError ?? code}
+      </p>
       <p className="mt-1 text-ui-11 leading-relaxed text-[color:var(--color-muted)]">
         {copy?.hint ?? message}
       </p>
@@ -514,10 +525,12 @@ function TorBlock({
 function LocatorBlock({
   locator,
   owned,
+  ownerNpub,
   onClose
 }: {
   locator: LocatorInfo
   owned: boolean
+  ownerNpub: string
   onClose: () => void
 }) {
   const [busy, setBusy] = useState(false)
@@ -595,6 +608,16 @@ function LocatorBlock({
           className="mt-2 w-full rounded-lg border border-[color:var(--color-line)] px-2.5 py-1.5 text-ui-11 text-[color:var(--color-text)] hover:bg-[color:var(--color-hover)]"
         >
           Manage this service
+        </button>
+      ) : isNpub(ownerNpub) ? (
+        <button
+          type="button"
+          onClick={() => {
+            void window.ncc.openInWhiteNoise(ownerNpub)
+          }}
+          className="mt-2 w-full rounded-lg border border-[color:var(--color-line)] px-2.5 py-1.5 text-ui-11 text-[color:var(--color-text)] hover:bg-[color:var(--color-hover)]"
+        >
+          Message this owner via White Noise
         </button>
       ) : null}
 

@@ -1,8 +1,18 @@
+import { shortId } from './address.js'
+import { npubToHex } from './profile.js'
+
 export function createSecurityInfo(deps) {
   const {
     byId, icon, displayAddress, security, invoke, content, confirm, renderPill, activeKind,
-    KIND_INFO, kindOf, getActiveUrl, getTabs, getActiveTabId, getPrivateSessionDetail, setSecurityState
+    KIND_INFO, getActiveUrl, getTabs, getActiveTabId, getPrivateSessionDetail, setSecurityState,
+    getCertificateFailure, getIdentity, kindOf
   } = deps
+
+  /** Hex form of either an npub or an already-hex pubkey, for comparing identities. */
+  function toHex(value) {
+    const text = String(value || '').toLowerCase()
+    return /^[0-9a-f]{64}$/.test(text) ? text : npubToHex(text)
+  }
   let siteClearWaiter = null
   /** What the proxy knows about the page in front of you. */
   async function loadInfo() {
@@ -26,6 +36,12 @@ export function createSecurityInfo(deps) {
     message('Loading…')
 
     try {
+      const certificateFailure = getCertificateFailure?.()
+      if (certificateFailure && certificateFailure.url === getActiveUrl()) {
+        const isCertificate = certificateFailure.code?.startsWith('certificate-')
+        await renderInfo({ kind: isCertificate ? 'certificate-error' : 'page-failure', host: new URL(displayAddress(getActiveUrl())).host, certificateFailure })
+        return
+      }
       const data = security.isOnionPage(getActiveUrl())
         ? security.onionInfo(getActiveUrl())
         : security.isTorWebPage(getActiveUrl())
@@ -47,8 +63,8 @@ export function createSecurityInfo(deps) {
     head.textContent = ''
     body.textContent = ''
 
-    const state = security.classifySecurity(data)
-    security.cache.set(new URL(getActiveUrl()).host, state)
+    const state = data.kind === 'certificate-error' ? 'certificate-error' : data.kind === 'page-failure' ? 'failure' : security.classifySecurity(data)
+    if (data.kind !== 'certificate-error' && data.kind !== 'page-failure') security.cache.set(new URL(getActiveUrl()).host, state)
     setSecurityState(state)
 
     const badge = document.createElement('span')
@@ -60,7 +76,9 @@ export function createSecurityInfo(deps) {
     title.textContent = security.SECURITY[state].label
     const detail = document.createElement('small')
     detail.textContent =
-      data.kind === 'clearnet'
+      data.kind === 'certificate-error' || data.kind === 'page-failure'
+        ? data.certificateFailure.message
+        : data.kind === 'clearnet'
         ? data.secure
           ? 'An HTTPS website, outside the NCC network'
           : 'This page is sent without encryption'
@@ -112,6 +130,14 @@ export function createSecurityInfo(deps) {
       return
     }
 
+    if (data.kind === 'certificate-error' || data.kind === 'page-failure') {
+      section('Problem')
+      row('Website', data.host)
+      row('Error', data.certificateFailure.rawError || data.certificateFailure.code)
+      row('Details', data.certificateFailure.message)
+      return
+    }
+
     if (/^https?:/i.test(getActiveUrl())) {
       try {
         const origin = new URL(getActiveUrl()).origin
@@ -154,6 +180,26 @@ export function createSecurityInfo(deps) {
     if (data.service) row('Service', data.service)
     if (data.site) row('Site', data.site)
     if (data.title) row('Title', data.title)
+
+    const ownerHex = toHex(data.pubkey)
+    const ownHex = toHex(getIdentity?.()?.npub)
+    if (ownerHex && (!ownHex || ownerHex !== ownHex)) {
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.className = 'btn tonal block'
+      button.textContent = 'Message this owner via White Noise'
+      button.addEventListener('click', async () => {
+        try {
+          await invoke('open_in_white_noise', { npub: data.pubkey })
+        } catch (error) {
+          const line = document.createElement('p')
+          line.className = 'empty'
+          line.textContent = String(error)
+          body.appendChild(line)
+        }
+      })
+      body.appendChild(button)
+    }
 
     section('Record')
     if (data.dTag) row('d tag', data.dTag)

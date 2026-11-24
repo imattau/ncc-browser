@@ -183,6 +183,7 @@ export function createIdentity(deps) {
       }
       try {
         renderIdentity(await invoke('identity_import_profile', { secret }))
+        byId('nsec').value = ''
         byId('identity-error').textContent = ''
         await refreshIdentityProfiles()
       } catch (error) {

@@ -1,5 +1,58 @@
 # Nostr Navigator for Android
 
+## Fixes in 0.44.4
+
+- Viewing an `ncc://` site you don't own now offers a "Message this owner via White
+  Noise" action in the site info panel, matching the desktop build.
+- Fixed two bugs that could crash the site info panel with a `ReferenceError`
+  (`kindOf`, `shortId` were never wired through).
+
+## Fixes in 0.44.3
+
+- Certificate errors are now clearly explained when a website is blocked. Date errors
+  suggest checking the device clock or asking the site owner to renew the certificate.
+  The site information badge now shows the connection as blocked instead of secure.
+
+## Fixes in 0.44.2
+
+- Clear the nsec input after successfully importing a local identity. Failed imports
+  keep the field value so it can be corrected and retried.
+
+## Updates in 0.44.1
+
+- The Password Manager can reveal a saved password from its login list for 15 seconds,
+  or temporarily show it with the eye button in the add/edit password field. Revealed
+  passwords are hidden when the vault locks, the Password Manager closes, or the app
+  moves to the background.
+
+## New in 0.44.0
+
+- Browser-owned notifications report completed or failed downloads.
+- Optional background work keeps the browser running after it moves to the background,
+  shown by an ongoing notification. It is off by default; NCC asks once on first start,
+  and Android notification permission is requested when needed. Returning to the app
+  stops the foreground service. This does not enable website notifications.
+- Added a background work control to Android settings.
+- Hardened home-screen shortcut icon decoding against malformed and oversized favicons.
+
+## New in 0.43.0
+
+- Add a normal tab to the browser home screen, and request a launcher shortcut. The
+  shortcut uses the page icon when available and opens the site in NCC Browser.
+
+## Fixes in 0.42.5
+
+- Nsite links open immediately instead of waiting for a hidden relay manifest lookup,
+  so the browser shows page loading while the site resolves.
+- Blossom downloads try up to three servers concurrently and stop after 20 seconds,
+  avoiding long waits when a manifest lists slow or unavailable servers.
+
+## Fixes in 0.42.4
+
+- Fixed the nccsearch update check and downloads failing on Android because their HTTPS
+  client used reqwest's uninitialized platform verifier instead of the app's explicit
+  TLS root configuration.
+
 ## Fixes in 0.42.3
 
 - **Fixed: every https:// page and nsite got stuck loading forever**, with a blank tab

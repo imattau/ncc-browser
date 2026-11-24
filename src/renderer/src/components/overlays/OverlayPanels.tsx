@@ -43,6 +43,7 @@ interface OverlayPanelsProps {
   onOpenSettings: () => void
   onCommand: (command: CommandId) => void
   onPublishService: (url: string) => void
+  onAddHomeSite: () => void
   onOpenBookmark: (url: string) => void
   onRemoveBookmark: (url: string) => void
   onOpenDeviceTab: (url: string) => void
@@ -91,6 +92,7 @@ export function OverlayPanels({
   onOpenSettings,
   onCommand,
   onPublishService,
+  onAddHomeSite,
   onOpenBookmark,
   onRemoveBookmark,
   onOpenDeviceTab,
@@ -120,6 +122,7 @@ export function OverlayPanels({
         onCommand={onCommand}
         onOpenWallet={onOpenWallet}
         onPublishService={onPublishService}
+        onAddHomeSite={onAddHomeSite}
         onOpenBookmark={onOpenBookmark}
         onRemoveBookmark={onRemoveBookmark}
         devices={syncDevices}
