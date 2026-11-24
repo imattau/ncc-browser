@@ -1,5 +1,10 @@
 # Nostr Navigator for Android
 
+## Fixes in 0.44.2
+
+- Clear the nsec input after successfully importing a local identity. Failed imports
+  keep the field value so it can be corrected and retried.
+
 ## Updates in 0.44.1
 
 - The Password Manager can reveal a saved password from its login list for 15 seconds,
