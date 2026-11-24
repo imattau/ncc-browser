@@ -229,6 +229,14 @@ body[data-bar='top'] .strip {
   background: var(--surface-2);
 }
 
+.signer-choice-avatar, .identity-profile-avatar { width: 40px; height: 40px; flex: 0 0 40px; border-radius: 50%; object-fit: cover; }
+.identity-profile-avatar-fallback { display: grid; place-items: center; color: var(--accent); background: var(--surface-2); font-weight: 700; }
+.identity-profile-header { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.identity-profile-labels { min-width: 0; }
+.identity-profile-labels .identity-profile-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.identity-profile-npub { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .72; font-family: monospace; }
+.identity-profile-avatar[hidden], .signer-choice-avatar[hidden] { display: none !important; }
+
 .signer-choice-mark {
   width: 28px;
   flex: none;

@@ -23,6 +23,7 @@ import type { PaymentCardDraft, PaymentCardSaveRequest } from '@shared/payment-c
 import type { HostingState } from '@shared/hosting'
 import type { NetworkChange, PortStatusEvent } from '@shared/reachability'
 import type { ContactsState } from '@shared/contacts'
+import type { IdentityProfileMetadata } from '@shared/types/identity'
 import type { NsiteProgress, NsitePublishState } from '@shared/nsite-publish'
 
 const api: NccApi = {
@@ -270,6 +271,12 @@ const api: NccApi = {
   torRestart: () => ipcRenderer.invoke('ncc:tor-restart'),
   identity: () => ipcRenderer.invoke('ncc:identity-status'),
   identityList: () => ipcRenderer.invoke('ncc:identity-list'),
+  identityProfileMetadata: (pubkeys) => ipcRenderer.invoke('ncc:identity-profile-metadata', pubkeys),
+  onIdentityProfileMetadata: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, profiles: IdentityProfileMetadata[]): void => listener(profiles)
+    ipcRenderer.on('ncc:identity-profile-metadata-changed', handler)
+    return () => ipcRenderer.removeListener('ncc:identity-profile-metadata-changed', handler)
+  },
   identitySelect: (id) => ipcRenderer.invoke('ncc:identity-select', id),
   identitySetDefault: (id) => ipcRenderer.invoke('ncc:identity-default', id),
   identityRemove: (id) => ipcRenderer.invoke('ncc:identity-remove-profile', id),

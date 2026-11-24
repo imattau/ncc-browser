@@ -3,6 +3,8 @@ import { Copy, ShieldCheck, Smartphone, Trash2 } from 'lucide-react'
 import type { IdentityProfile, IdentityStatus } from '@shared/types'
 import { SectionHeading } from './shared'
 import type { IdentityAdminApi } from './useIdentityAdmin'
+import { IdentityAvatar, IdentityLabels } from '../IdentityVisual'
+import { useIdentityProfileMetadata } from '../../hooks/useIdentityProfileMetadata'
 
 /** The encryption-at-rest badge text for one identity row. */
 function encryptionLabel(profile: IdentityProfile, identity: IdentityStatus | null): string {
@@ -44,6 +46,7 @@ export function IdentitySettings({
     toggleEphemeralSigner
   } = admin
   const [copiedId, setCopiedId] = useState<string | null>(null)
+  const profileMetadata = useIdentityProfileMetadata(identityList.identities)
 
   const copyProfileNpub = async (profile: IdentityProfile): Promise<void> => {
     if (!profile.npub) return
@@ -71,13 +74,13 @@ export function IdentitySettings({
             {identityList.identities.map((profile) => (
               <li key={profile.id} className="flex flex-col gap-2 rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-field)] p-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="min-w-0">
-                    <p className="truncate font-mono text-ui-11 text-[color:var(--color-text-strong)]">{profile.npub ?? profile.id}</p>
-                    <p className="mt-1 text-ui-105 text-[color:var(--color-muted)]">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <IdentityAvatar profile={profileMetadata[profile.hexPubkey]} fallback={profile.npub ?? profile.id} size="h-9 w-9" />
+                    <IdentityLabels profile={profileMetadata[profile.hexPubkey]} npub={profile.npub} fallback={profile.id} detail={<>
                       {profile.mode === 'nip46' ? 'NIP-46 remote signer' : 'Local key'}
                       {profile.active ? ' · Active' : ''}{profile.isDefault ? ' · Default' : ''}
                       {profile.mode === 'nip46' ? (profile.connected ? ' · Connected' : ' · Connects on use') : ''}
-                    </p>
+                    </>} />
                   </div>
                   <div className="flex shrink-0 items-center gap-1.5">
                     <button

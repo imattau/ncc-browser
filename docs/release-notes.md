@@ -1,5 +1,17 @@
 # Release notes
 
+## 0.46.0 — profile-aware signer selection
+
+### Added
+
+- Identity pickers on desktop and Android now show a profile image and username when
+  available, with a shortened npub beneath the name. Pickers fall back to the npub and
+  an initial avatar when profile metadata is missing or unavailable.
+- Profile metadata is loaded from configured relays and cached for six hours, so signer
+  selection remains usable while relays are offline.
+- The service signing identity picker now uses the same profile-aware presentation as
+  the other identity selectors.
+
 ## 0.45.2 — fix the release build
 
 ### Fixed

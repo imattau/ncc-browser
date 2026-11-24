@@ -1,6 +1,8 @@
-import { Check, Smartphone } from 'lucide-react'
+import { Check } from 'lucide-react'
 import type { IdentityProfile } from '@shared/types'
 import { Popover, type PopoverAnchor } from './Popover'
+import { IdentityAvatar, IdentityLabels } from './IdentityVisual'
+import { useIdentityProfileMetadata } from '../hooks/useIdentityProfileMetadata'
 
 interface IdentityChooserProps {
   identities: IdentityProfile[]
@@ -19,6 +21,7 @@ export function IdentityChooser({
   onClose,
   onSelect
 }: IdentityChooserProps) {
+  const metadata = useIdentityProfileMetadata(identities)
   return (
     <Popover
       title="Choose identity"
@@ -38,20 +41,11 @@ export function IdentityChooser({
             onClick={() => onSelect(identity.id)}
             className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left hover:bg-[color:var(--color-hover)] disabled:opacity-50"
           >
-            {identity.mode === 'nip46' ? (
-              <Smartphone className="h-4 w-4 shrink-0 text-[color:var(--color-accent)]" />
-            ) : (
-              <span className="h-4 w-4 shrink-0 rounded-full border border-[color:var(--color-line)]" />
-            )}
-            <span className="min-w-0 flex-1">
-              <span className="block truncate font-mono text-ui-10 text-[color:var(--color-text-strong)]">
-                {identity.npub ?? identity.id}
-              </span>
-              <span className="mt-0.5 block text-ui-10 text-[color:var(--color-muted)]">
+            <IdentityAvatar profile={metadata[identity.hexPubkey]} fallback={identity.npub ?? identity.id} size="h-8 w-8" />
+            <IdentityLabels profile={metadata[identity.hexPubkey]} npub={identity.npub} fallback={identity.id} detail={<>
                 {identity.mode === 'nip46' ? 'Remote signer' : 'Local key'}
                 {identity.isDefault ? ' · Default' : ''}
-              </span>
-            </span>
+              </>} />
             {identity.active ? (
               <Check className="h-4 w-4 shrink-0 text-[color:var(--color-accent)]" />
             ) : null}

@@ -1,5 +1,11 @@
 # Nostr Navigator for Android
 
+## New in 0.46.0
+
+- Signer selection shows profile images and usernames when available, with a shortened
+  npub beneath the name. Missing profile data falls back to the npub and an initial.
+- Profile metadata is cached and refreshed from configured relays in the background.
+
 ## New in 0.45.0
 
 - The toolbar now shows the active signer's Nostr profile avatar. Tap it to open the

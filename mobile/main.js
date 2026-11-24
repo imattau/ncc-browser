@@ -653,6 +653,7 @@ globalThis.__nccBack = () => {
 /** Every full-window surface is the shell expanded over the page. */
 function showPanel(name) {
   if (!content) return
+  if (panel !== name) identityFeature?.stopProfileWatches?.()
   passwordFeature.onPanelChange(panel, name)
   if (panel === 'nccsearch' && name !== 'nccsearch') {
     // Unload the document, not just the attribute: Android WebView can keep a
@@ -2413,7 +2414,8 @@ const identityFeature = createIdentity({
   getBrowserSettings: () => browserSettings,
   setBrowserSettings: (value) => { browserSettings = value },
   renderHomeIdentity: () => profileFeature.renderHomeIdentity(),
-  loadProfile: () => profileFeature.loadProfile()
+  loadProfile: () => profileFeature.loadProfile(),
+  watchIdentityProfiles: (items, listener) => profileFeature.watchIdentityProfiles(items, listener)
 })
 
 const syncFeature = createSync({

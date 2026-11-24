@@ -13,6 +13,7 @@ import type {
 } from './site-data'
 import type { SearchEngineId } from './search'
 import type { ContactsState } from './contacts'
+import type { IdentityProfileMetadata } from './types/identity'
 import type {
   NsiteCancelled,
   NsiteDiscoverResult,
@@ -334,6 +335,8 @@ export interface NccApi {
   torRestart(): Promise<TorStatus>
   identity(): Promise<IdentityStatus>
   identityList(): Promise<IdentityList>
+  identityProfileMetadata(pubkeys: string[]): Promise<IdentityProfileMetadata[]>
+  onIdentityProfileMetadata(listener: (profiles: IdentityProfileMetadata[]) => void): () => void
   identitySelect(id: string): Promise<IdentityStatus>
   identitySetDefault(id: string): Promise<IdentityList>
   identityRemove(id: string): Promise<IdentityStatus>

@@ -3,15 +3,17 @@ export function createIdentity(deps) {
     byId, set, shortId, invoke, emptyState, confirm, content, applyLayout,
     getPanel, getTabs, getIdentity, setIdentity, getBrowserSettings, setBrowserSettings,
     showPanel, closePanel,
-    renderHomeIdentity, loadProfile
+    renderHomeIdentity, loadProfile, watchIdentityProfiles
   } = deps
   let identityProfiles = null
   let signerRequest = null
   let signerTimer = null
   let signerDeadline = 0
+  let stopSettingsProfileWatch = null
+  let stopChooserProfileWatch = null
 
 
-  function renderIdentityProfiles(result) {
+  function renderIdentityProfiles(result, metadata = {}) {
     identityProfiles = result
     const list = byId('identity-profiles')
     if (!list) return
@@ -29,11 +31,23 @@ export function createIdentity(deps) {
       row.className = 'identity-profile'
       const title = document.createElement('div')
       title.className = 'identity-profile-title'
-      title.textContent = profile.npub || (profile.mode === 'nip46' ? 'Remote signer' : profile.id.replace(/^local:/, ''))
+      const hex = npubToHex(profile.npub)
+      const meta = metadata[hex] || {}
+      const header = document.createElement('div'); header.className = 'identity-profile-header'
+      const image = document.createElement('img'); image.className = 'identity-profile-avatar'; image.alt = ''; image.src = meta.pictureData || ''; image.hidden = !meta.pictureData
+      image.onerror = () => { image.hidden = true }
+      const fallback = document.createElement('span'); fallback.className = 'identity-profile-avatar identity-profile-avatar-fallback'; fallback.textContent = (meta.name || profile.npub || '?').slice(0, 1).toUpperCase()
+      fallback.hidden = Boolean(meta.pictureData)
+      const labels = document.createElement('div'); labels.className = 'identity-profile-labels'
+      title.textContent = meta.name || profile.npub || (profile.mode === 'nip46' ? 'Remote signer' : profile.id.replace(/^local:/, ''))
+      labels.append(title)
+      if (meta.name && profile.npub) { const npub = document.createElement('small'); npub.className = 'identity-profile-npub'; npub.textContent = shortId(profile.npub); labels.append(npub) }
+      image.addEventListener('error', () => { fallback.hidden = false })
+      header.append(image, fallback, labels)
       const detail = document.createElement('div')
       detail.className = 'identity-profile-detail'
       detail.textContent = [profile.mode === 'nip46' ? 'NIP-46 remote signer' : 'Local key', profile.active ? 'Active' : '', profile.is_default ? 'Default' : '', profile.mode === 'local' ? (profile.unlocked ? 'Unlocked' : 'Locked') : ''].filter(Boolean).join(' · ')
-      row.append(title, detail)
+      row.append(header, detail)
       const actions = document.createElement('div')
       actions.className = 'identity-profile-actions'
       if (!profile.active) {
@@ -80,7 +94,11 @@ export function createIdentity(deps) {
   }
 
   async function refreshIdentityProfiles() {
-    try { renderIdentityProfiles(await invoke('identity_profiles')) }
+    try {
+      const result = await invoke('identity_profiles')
+      stopSettingsProfileWatch?.()
+      stopSettingsProfileWatch = watchIdentityProfiles(result?.identities || [], (metadata) => renderIdentityProfiles(result, metadata))
+    }
     catch (error) { identityFailure(error) }
   }
 
@@ -92,38 +110,25 @@ export function createIdentity(deps) {
       const error = byId('signer-chooser-error')
       error.textContent = ''
       list.replaceChildren()
-      for (const profile of result.identities) {
-        const button = document.createElement('button')
-        button.type = 'button'
-        button.className = 'row signer-choice'
-        button.disabled = Boolean(profile.active)
-        const mark = document.createElement('span')
-        mark.className = 'signer-choice-mark'
-        mark.textContent = profile.active ? '✓' : profile.mode === 'nip46' ? '↗' : '○'
-        const text = document.createElement('span')
-        text.className = 'row-text'
-        const title = document.createElement('b')
-        title.textContent = profile.npub || profile.id
-        const detail = document.createElement('small')
-        detail.textContent = `${profile.mode === 'nip46' ? 'Remote signer' : 'Local key'}${profile.is_default ? ' · Default' : ''}${profile.active ? ' · Active' : ''}`
-        text.append(title, detail)
-        button.append(mark, text)
-        button.addEventListener('click', async () => {
-          button.disabled = true
-          error.textContent = ''
-          try {
-            await invoke('identity_select', { id: profile.id })
-            await refreshIdentity()
-            await refreshBunker()
-            closePanel()
-          } catch (selectionError) {
-            button.disabled = false
-            error.textContent = String(selectionError)
-          }
-        })
-        list.append(button)
-      }
       showPanel('signer-chooser')
+      stopChooserProfileWatch?.()
+      stopChooserProfileWatch = watchIdentityProfiles(result.identities, (metadata) => {
+        list.replaceChildren()
+        for (const item of result.identities) {
+          const button = document.createElement('button'); button.type = 'button'; button.className = 'row signer-choice'; button.disabled = Boolean(item.active)
+          const meta = metadata[npubToHex(item.npub)] || {}
+          const image = document.createElement('img'); image.className = 'signer-choice-avatar'; image.alt = ''; image.src = meta.pictureData || ''
+          image.hidden = !meta.pictureData
+          const fallback = document.createElement('span'); fallback.className = 'signer-choice-avatar identity-profile-avatar-fallback'; fallback.textContent = (meta.name || item.npub || '?').slice(0, 1).toUpperCase(); fallback.hidden = Boolean(meta.pictureData)
+          image.addEventListener('error', () => { image.hidden = true; fallback.hidden = false })
+          const text = document.createElement('span'); text.className = 'row-text'
+          const title = document.createElement('b'); title.textContent = meta.name || item.npub || item.id
+          const detail = document.createElement('small'); detail.textContent = `${meta.name && item.npub ? `${shortId(item.npub)} · ` : ''}${item.mode === 'nip46' ? 'Remote signer' : 'Local key'}${item.is_default ? ' · Default' : ''}${item.active ? ' · Active' : ''}`
+          text.append(title, detail); button.append(image, fallback, text)
+          button.addEventListener('click', async () => { button.disabled = true; error.textContent = ''; try { await invoke('identity_select', { id: item.id }); await refreshIdentity(); await refreshBunker(); closePanel() } catch (e) { button.disabled = false; error.textContent = String(e) } })
+          list.append(button)
+        }
+      })
     } catch (error) {
       // A failed lookup should not interrupt the normal single-press menu.
     }
@@ -391,9 +396,11 @@ export function createIdentity(deps) {
     }
   }
 
+  function stopProfileWatches() { stopSettingsProfileWatch?.(); stopSettingsProfileWatch = null; stopChooserProfileWatch?.(); stopChooserProfileWatch = null }
+
   return {
     hasSignerRequest: () => Boolean(signerRequest),
     setupIdentity, refreshIdentity, refreshBunker, renderIdentity, answerSigner,
-    openSignerChooser
+    openSignerChooser, stopProfileWatches
   }
 }

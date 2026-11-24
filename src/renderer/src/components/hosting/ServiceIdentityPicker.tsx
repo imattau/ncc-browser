@@ -1,6 +1,9 @@
-import type { IdentityStatus } from '@shared/types'
+import type { IdentityProfile, IdentityStatus } from '@shared/types'
+import { useState } from 'react'
 import { cn } from '../../lib/cn'
 import { shortIdentity } from '../../lib/format'
+import { IdentityAvatar, IdentityLabels } from '../IdentityVisual'
+import { useIdentityProfileMetadata } from '../../hooks/useIdentityProfileMetadata'
 import type { HostingIdentityApi } from './useHostingIdentity'
 
 interface ServiceIdentityPickerProps {
@@ -32,6 +35,11 @@ export function ServiceIdentityPicker({
   const alreadyListed = identityList?.identities.some(
     (entry) => entry.hexPubkey === identity?.hexPubkey
   )
+  const profiles = identityList?.identities ?? []
+  const metadata = useIdentityProfileMetadata(profiles)
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const selected = profiles.find((entry) => entry.hexPubkey === identity?.hexPubkey)
+  const choose = (value: string) => { setPickerOpen(false); if (value !== 'session') void selectIdentity(value) }
 
   return (
     <div data-service-identity className="rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-ink)]/40 p-3">
@@ -44,25 +52,17 @@ export function ServiceIdentityPicker({
             The active identity signs this service. Pick an existing one, or create a new one.
           </p>
           {identityList && identityList.identities.length > 0 ? (
-            <select
-              data-service-identity-select
-              value={identity?.source === 'session' ? 'session' : (identity?.hexPubkey ?? '')}
-              disabled={identityBusy}
-              onChange={(event) => void selectIdentity(event.target.value)}
-              className="mt-1 w-full max-w-md rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-ink)] px-2 py-1 text-ui-11 text-[color:var(--color-text)] outline-none focus:border-[color:var(--color-accent)]"
-            >
-              {identity?.source === 'session' ? (
-                <option value="session">
-                  One-off · {identity.npub ? shortIdentity(identity.npub) : 'session only'}
-                </option>
-              ) : null}
-              {identityList.identities.map((entry) => (
-                <option key={entry.id} value={entry.id}>
-                  {(entry.npub ? shortIdentity(entry.npub) : entry.id.slice(0, 12)) +
-                    ` · ${entry.mode}${entry.persisted ? '' : ' · session'}`}
-                </option>
-              ))}
-            </select>
+            <div className="relative mt-1 w-full max-w-md" data-service-identity>
+              <button type="button" data-service-identity-select aria-haspopup="listbox" aria-expanded={pickerOpen} disabled={identityBusy} onClick={() => setPickerOpen(!pickerOpen)} className="flex w-full items-center gap-2 rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-ink)] px-2 py-1.5 text-left disabled:opacity-50">
+                <IdentityAvatar profile={identity?.source === 'session' ? undefined : selected ? metadata[selected.hexPubkey] : undefined} fallback={identity?.npub ?? 'No identity'} size="h-8 w-8" />
+                <IdentityLabels profile={selected ? metadata[selected.hexPubkey] : undefined} npub={identity?.npub} fallback={identity?.npub ? shortIdentity(identity.npub) : 'No identity'} detail={identity?.source === 'session' ? 'One-off identity' : selected ? `${selected.mode}${selected.persisted ? '' : ' · session'}` : undefined} />
+                <span aria-hidden="true">▾</span>
+              </button>
+              {pickerOpen ? <div role="listbox" aria-label="Signing identity" className="absolute z-30 mt-1 max-h-64 w-full overflow-auto rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-1 shadow-xl">
+                {identity?.source === 'session' ? <button role="option" aria-selected="true" type="button" onClick={() => choose('session')} className="flex w-full items-center gap-2 rounded-md p-2 text-left hover:bg-[color:var(--color-hover)]"><IdentityAvatar fallback={identity.npub ?? 'One-off'} size="h-8 w-8" /><IdentityLabels npub={identity.npub} fallback="One-off identity" detail="One-off · session only" /></button> : null}
+                {profiles.map((entry: IdentityProfile) => <button key={entry.id} role="option" aria-selected={entry.id === selected?.id} type="button" onClick={() => choose(entry.id)} className="flex w-full items-center gap-2 rounded-md p-2 text-left hover:bg-[color:var(--color-hover)]"><IdentityAvatar profile={metadata[entry.hexPubkey]} fallback={entry.npub ?? entry.id} size="h-8 w-8" /><IdentityLabels profile={metadata[entry.hexPubkey]} npub={entry.npub} fallback={entry.id} detail={`${entry.mode}${entry.persisted ? '' : ' · session'}`} /></button>)}
+              </div> : null}
+            </div>
           ) : (
             <p className="mt-1 text-ui-105 text-[color:var(--color-muted)]">
               {identity?.npub ? shortIdentity(identity.npub) : 'No identity yet'}

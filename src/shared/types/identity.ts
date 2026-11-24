@@ -39,6 +39,16 @@ export interface IdentityList {
   defaultId: string | null
 }
 
+/** Public kind-0 metadata used to label an identity in the browser chrome. */
+export interface IdentityProfileMetadata {
+  /** Hex pubkey, lower-case. */
+  pubkey: string
+  /** `display_name`, falling back to `name`. */
+  name?: string
+  /** A bounded, validated image data URL suitable for a small avatar. */
+  pictureDataUrl?: string
+}
+
 export interface SignerPermission {
   /** `ncc://<npub>` or a web origin. */
   origin: string

@@ -1,6 +1,6 @@
 const PROFILE_KEY = 'ncc.profiles'
 const PROFILE_TTL = 6 * 60 * 60 * 1000
-const PROFILE_CACHE_LIMIT = 8
+const PROFILE_CACHE_LIMIT = 32
 const BECH32 = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l'
 
 /** `npub1…` to the 64-character hex key. The checksum is not needed to read one. */
@@ -29,6 +29,7 @@ export function createProfile({ invoke, byId, avatar, shortId, getIdentity, getB
   const profilePictureRequests = new Set()
   let profile = null
   let profileHex = null
+  const profileWatchers = new Set()
 
   function readProfiles() {
     try {
@@ -54,6 +55,43 @@ export function createProfile({ invoke, byId, avatar, shortId, getIdentity, getB
     } catch {
       // Not persisted; it is asked for again next launch.
     }
+    notifyProfileWatchers()
+  }
+
+  function notifyProfileWatchers() {
+    const cache = readProfiles()
+    for (const watcher of profileWatchers) watcher(cache)
+  }
+
+  function watchIdentityProfiles(identities, onUpdate) {
+    const keys = identities.map((item) => npubToHex(item.npub)).filter(Boolean)
+    profileWatchers.add(onUpdate)
+    onUpdate(readProfiles())
+    const activeHex = npubToHex(getIdentity()?.npub)
+    if (activeHex && profileHex !== activeHex) {
+      profileHex = activeHex
+      profile = readProfiles()[activeHex] || null
+      renderHomeIdentity()
+    }
+    for (const hex of keys) void loadIdentityProfile(hex)
+    return () => profileWatchers.delete(onUpdate)
+  }
+
+  async function loadIdentityProfile(hex) {
+    const cached = readProfiles()[hex]
+    if (cached && Date.now() - cached.at < PROFILE_TTL) {
+      if (cached.picture && !cached.pictureData) void cacheProfilePicture(hex, cached.picture)
+      return
+    }
+    const event = await queryProfile(hex, getBrowserSettings()?.relays || [])
+    if (!event) return
+    try {
+      const meta = JSON.parse(event.content)
+      const picture = safePicture(meta.picture)
+      const previous = readProfiles()[hex]
+      saveProfile(hex, { name: String(meta.display_name || meta.name || '').slice(0, 60), picture, pictureData: picture === previous?.picture ? previous.pictureData || '' : '' })
+      if (picture && !readProfiles()[hex]?.pictureData) void cacheProfilePicture(hex, picture)
+    } catch { /* Ignore malformed kind-0 metadata. */ }
   }
 
   function saveProfilePicture(hex, url, pictureData) {
@@ -165,7 +203,7 @@ export function createProfile({ invoke, byId, avatar, shortId, getIdentity, getB
     }
 
     const event = await queryProfile(hex, getBrowserSettings()?.relays || [])
-    if (!event || npubToHex(getIdentity()?.npub) !== hex) return
+    if (!event) return
 
     try {
       const meta = JSON.parse(event.content)
@@ -223,12 +261,13 @@ export function createProfile({ invoke, byId, avatar, shortId, getIdentity, getB
     profilePictureRequests.add(requestKey)
     try {
       const downloaded = await invoke('profile_picture_data', { url })
-      if (!downloaded || npubToHex(getIdentity()?.npub) !== hex) return
+      if (!downloaded) return
       // Avatars are shown small; keep a compact copy so the local cache stays within quota.
       const pictureData = await shrinkPicture(downloaded)
       if (!pictureData) return
       if (!saveProfilePicture(hex, url, pictureData)) return
-      profile = readProfiles()[hex] || null
+      if (profileHex === hex) profile = readProfiles()[hex] || null
+      notifyProfileWatchers()
       renderHomeIdentity()
     } catch {
       // The cached letter avatar remains usable when the image host is unavailable.
@@ -309,5 +348,5 @@ export function createProfile({ invoke, byId, avatar, shortId, getIdentity, getB
     }
   }
 
-  return { loadProfile, renderHomeIdentity }
+  return { loadProfile, renderHomeIdentity, watchIdentityProfiles }
 }

@@ -22,6 +22,8 @@ import { PaymentCardService } from '../payment-cards/service'
 import { RelaySync } from '../relay/sync'
 import { EXTENSION_PARTITION } from '../sessions'
 import { registerNip07 } from '../signer/ipc'
+import { registerIdentityProfileMetadataIpc } from '../signer/profile-metadata-ipc'
+import { IdentityProfileMetadataService } from '../signer/profile-metadata'
 import { Nip07Service } from '../signer/service'
 import { registerSiteDataIpc } from '../site-data-ipc'
 import { SiteDataService } from '../site-data'
@@ -52,6 +54,13 @@ export function createServices(
   const { config, identity, permissions, sitePermissions, relayPool } = foundation
   const shell = shellStack.shell
   const userData = app.getPath('userData')
+
+  const identityProfileMetadata = new IdentityProfileMetadataService(
+    relayPool,
+    () => config.getRelays(),
+    (profiles) => shell.sendToChrome('ncc:identity-profile-metadata-changed', profiles)
+  )
+  registerIdentityProfileMetadataIpc(identityProfileMetadata, shell)
 
   ipcMain.handle('ncc:nccsearch-check-update', () => browser.nccSearchUpdater.check())
   ipcMain.handle('ncc:nccsearch-install-update', async (_event, version: unknown) => {
