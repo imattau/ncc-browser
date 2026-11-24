@@ -276,10 +276,12 @@ function readNumber(key) {
 /* ───────────────────────────── Security state ───────────────────────────── */
 
 let securityState = 'unknown'
+const certificateFailures = new Map()
 
 async function refreshSecurity() {
   const url = activeUrl
-  const state = url ? await security.securityFor(url) : 'unknown'
+  const activeFailure = certificateFailures.get(activeTabId)
+  const state = activeFailure ? 'certificate-error' : url ? await security.securityFor(url) : 'unknown'
   if (url !== activeUrl) return
   securityState = state
   renderPill()
@@ -471,10 +473,15 @@ globalThis.__nccTabs = (payload) => {
     activeUrl = active.url || activeUrl
     activeTitle = active.title || ''
     setBackdrop(active.thumbnail)
+    if (!certificateFailures.has(activeTabId)) securityState = 'unknown'
   } else {
     activeUrl = ''
     activeTitle = ''
     setBackdrop(null)
+  }
+
+  for (const id of certificateFailures.keys()) {
+    if (!tabs.some((tab) => tab.id === id)) certificateFailures.delete(id)
   }
 
   for (const id of Object.keys(progressByTab)) {
@@ -508,7 +515,11 @@ globalThis.__nccContent = (state) => {
     return
   }
 
-  if (state.type === 'loading') progressByTab[id] = progressByTab[id] ?? 8
+  if (state.type === 'loading') {
+    progressByTab[id] = progressByTab[id] ?? 8
+    certificateFailures.delete(id)
+    if (id === activeTabId) securityState = 'unknown'
+  }
   if (state.type === 'progress') {
     if (state.value >= 100) delete progressByTab[id]
     else progressByTab[id] = state.value
@@ -523,6 +534,8 @@ globalThis.__nccContent = (state) => {
 
   if (state.type === 'failed' || state.type === 'blocked' || state.type === 'rejected') {
     delete progressByTab[id]
+    if (state.type === 'failed' && state.certificateError) certificateFailures.set(id, { ...state.certificateError, url: state.url })
+    else if (state.type === 'failed') certificateFailures.set(id, { code: 'load-failed', rawError: state.reason || 'Page failed to load', message: 'The page could not be loaded. Check the address and try again.', url: state.url })
   }
 
   // A login the native hook saw submitted. The secret goes straight into the vault
@@ -573,6 +586,10 @@ globalThis.__nccContent = (state) => {
     void refreshSecurity()
   }
 
+  if (id === activeTabId && state.type === 'failed') {
+    if (!state.certificateError) securityState = 'failure'
+    void refreshSecurity()
+  }
   renderPill()
 }
 
@@ -2310,6 +2327,7 @@ const securityInfo = createSecurityInfo({
   byId, icon, displayAddress, security, invoke, content, confirm, renderPill, activeKind,
   KIND_INFO,
   getActiveUrl: () => activeUrl,
+  getCertificateFailure: () => certificateFailures.get(activeTabId) || null,
   getTabs: () => tabs,
   getActiveTabId: () => activeTabId,
   getPrivateSessionDetail: () => privateSessionDetail,

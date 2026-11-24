@@ -1,5 +1,11 @@
 # Nostr Navigator for Android
 
+## Fixes in 0.44.3
+
+- Certificate errors are now clearly explained when a website is blocked. Date errors
+  suggest checking the device clock or asking the site owner to renew the certificate.
+  The site information badge now shows the connection as blocked instead of secure.
+
 ## Fixes in 0.44.2
 
 - Clear the nsec input after successfully importing a local identity. Failed imports

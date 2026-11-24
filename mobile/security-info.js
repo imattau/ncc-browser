@@ -1,7 +1,8 @@
 export function createSecurityInfo(deps) {
   const {
     byId, icon, displayAddress, security, invoke, content, confirm, renderPill, activeKind,
-    KIND_INFO, getActiveUrl, getTabs, getActiveTabId, getPrivateSessionDetail, setSecurityState
+    KIND_INFO, getActiveUrl, getTabs, getActiveTabId, getPrivateSessionDetail, setSecurityState,
+    getCertificateFailure
   } = deps
   let siteClearWaiter = null
   /** What the proxy knows about the page in front of you. */
@@ -26,6 +27,12 @@ export function createSecurityInfo(deps) {
     message('Loading…')
 
     try {
+      const certificateFailure = getCertificateFailure?.()
+      if (certificateFailure && certificateFailure.url === getActiveUrl()) {
+        const isCertificate = certificateFailure.code?.startsWith('certificate-')
+        await renderInfo({ kind: isCertificate ? 'certificate-error' : 'page-failure', host: new URL(displayAddress(getActiveUrl())).host, certificateFailure })
+        return
+      }
       const data = security.isOnionPage(getActiveUrl())
         ? security.onionInfo(getActiveUrl())
         : security.isTorWebPage(getActiveUrl())
@@ -47,8 +54,8 @@ export function createSecurityInfo(deps) {
     head.textContent = ''
     body.textContent = ''
 
-    const state = security.classifySecurity(data)
-    security.cache.set(new URL(getActiveUrl()).host, state)
+    const state = data.kind === 'certificate-error' ? 'certificate-error' : data.kind === 'page-failure' ? 'failure' : security.classifySecurity(data)
+    if (data.kind !== 'certificate-error' && data.kind !== 'page-failure') security.cache.set(new URL(getActiveUrl()).host, state)
     setSecurityState(state)
 
     const badge = document.createElement('span')
@@ -60,7 +67,9 @@ export function createSecurityInfo(deps) {
     title.textContent = security.SECURITY[state].label
     const detail = document.createElement('small')
     detail.textContent =
-      data.kind === 'clearnet'
+      data.kind === 'certificate-error' || data.kind === 'page-failure'
+        ? data.certificateFailure.message
+        : data.kind === 'clearnet'
         ? data.secure
           ? 'An HTTPS website, outside the NCC network'
           : 'This page is sent without encryption'
@@ -109,6 +118,14 @@ export function createSecurityInfo(deps) {
     if (data.error) {
       section('Problem')
       row('Error', data.error)
+      return
+    }
+
+    if (data.kind === 'certificate-error' || data.kind === 'page-failure') {
+      section('Problem')
+      row('Website', data.host)
+      row('Error', data.certificateFailure.rawError || data.certificateFailure.code)
+      row('Details', data.certificateFailure.message)
       return
     }
 

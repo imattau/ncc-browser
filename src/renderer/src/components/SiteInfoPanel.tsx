@@ -155,7 +155,9 @@ export function SiteInfoPanel({
         ) : null}
         {failure ? <FailureBlock code={failure.code} message={failure.message} /> : null}
 
-        {web ? <ClearnetBlock url={state.url || state.displayUrl} /> : null}
+        {web && !failure?.code.startsWith('certificate-') && !/\.localhost(?::|\/|$)/i.test(state.url || state.displayUrl) ? (
+          <ClearnetBlock url={state.url || state.displayUrl} />
+        ) : null}
 
         {!web && security ? (
           <TransportBlock
@@ -276,13 +278,16 @@ function ClearnetBlock({ url }: { url: string }) {
 
 function FailureBlock({ code, message }: { code: string; message: string }) {
   const copy = ERROR_COPY[code]
+  const rawCertificateError = message.match(/net::ERR_CERT_[A-Z0-9_]+/i)?.[0]
   return (
     <div className="rounded-xl border border-[color:var(--color-danger)]/30 bg-[color:var(--color-danger)]/[0.07] p-3">
       <p className="flex items-center gap-1.5 text-ui-11 font-semibold text-[color:var(--color-danger)]">
         <AlertTriangle className="h-3.5 w-3.5" />
         {copy?.title ?? 'Page failed'}
       </p>
-      <p className="mt-1 font-mono text-ui-95 text-[color:var(--color-danger)]/80">{code}</p>
+      <p className="mt-1 font-mono text-ui-95 text-[color:var(--color-danger)]/80">
+        {rawCertificateError ?? code}
+      </p>
       <p className="mt-1 text-ui-11 leading-relaxed text-[color:var(--color-muted)]">
         {copy?.hint ?? message}
       </p>

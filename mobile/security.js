@@ -5,6 +5,8 @@ export function createSecurity({ getProxyPort }) {
     verified: { label: 'Verified', detail: 'Site files are checked against their hashes', lock: 'shield-check' },
     onion: { label: 'Onion service', detail: 'Reached through a Tor onion endpoint', lock: 'shield-check' },
     plain: { label: 'Not secure', detail: 'This service is only offered over cleartext HTTP', lock: 'shield-alert' },
+    'certificate-error': { label: 'Certificate error', detail: 'The browser blocked this connection because it could not verify the website certificate', lock: 'shield-alert' },
+    failure: { label: 'Page failed', detail: 'The page could not be loaded', lock: 'shield-alert' },
     unknown: { label: 'Unverified', detail: 'No endpoint information yet', lock: 'shield' }
   }
 
@@ -12,6 +14,7 @@ export function createSecurity({ getProxyPort }) {
 
   function classifySecurity(data) {
     if (!data || data.error) return 'unknown'
+    if (data.kind === 'certificate-error') return 'certificate-error'
     if (data.kind === 'nsite') return 'verified'
     if (data.kind === 'onion') return 'onion'
     if (data.kind === 'clearnet') return data.secure ? 'tls' : 'plain'
