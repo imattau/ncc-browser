@@ -430,6 +430,21 @@ function saveTabs() {
 }
 
 /**
+ * Drop a tab from the in-memory list and persist right away, ahead of native's
+ * confirmation. `closeTab` only asks native to close the tab; if the app is
+ * backgrounded or killed before native calls back into `__nccTabs`, the debounced
+ * `saveTabs()` never runs and the closed tab reappears from the stale save on the
+ * next launch.
+ */
+function closeTabLocally(id) {
+  const index = tabs.findIndex((tab) => tab.id === id)
+  if (index === -1) return
+  tabs.splice(index, 1)
+  if (saveTabsTimer) clearTimeout(saveTabsTimer)
+  writeTabs()
+}
+
+/**
  * Reopen what was open. Native keeps all but the active tab parked, so nothing loads
  * until it is picked and a long list does not hit the relays at launch.
  */
@@ -1293,6 +1308,7 @@ function renderTabGrid() {
     close.appendChild(icon('close'))
     close.addEventListener('click', (event) => {
       event.stopPropagation()
+      closeTabLocally(tab.id)
       content?.closeTab(tab.id)
     })
     head.appendChild(close)
@@ -1431,6 +1447,7 @@ function wireMenu() {
   act('menu-close', () => {
     const id = activeTabId
     closePanel()
+    closeTabLocally(id)
     content.closeTab(id)
   })
 
@@ -2204,8 +2221,12 @@ function wireChrome() {
     // Only the tabs of the kind on screen: closing private tabs must never take
     // normal ones with them, or the other way round.
     const closing = tabs.filter((tab) => kindOf(tab) === switcherKind)
-    for (const tab of closing) content.closeTab(tab.id)
-    if (closing.length === tabs.length) {
+    const totalBefore = tabs.length
+    for (const tab of closing) {
+      closeTabLocally(tab.id)
+      content.closeTab(tab.id)
+    }
+    if (closing.length === totalBefore) {
       // Native expands the shell itself when the last tab goes.
       panel = 'home'
       applyLayout()
@@ -2325,7 +2346,7 @@ const security = createSecurity({ getProxyPort: () => proxyPort })
 
 const securityInfo = createSecurityInfo({
   byId, icon, displayAddress, security, invoke, content, confirm, renderPill, activeKind,
-  KIND_INFO,
+  KIND_INFO, kindOf,
   getActiveUrl: () => activeUrl,
   getCertificateFailure: () => certificateFailures.get(activeTabId) || null,
   getTabs: () => tabs,
