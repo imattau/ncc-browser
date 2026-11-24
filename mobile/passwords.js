@@ -8,6 +8,10 @@ export function createPasswords(deps) {
   let vaultStatus = null
   let pendingSave = null
   let editingId = null
+  let revealedPassword = null
+  let revealTimer = null
+  let revealRequest = 0
+  let editPasswordRevealed = false
   let deviceWaiter = null
   let fillNotice = ''
   /** Ask for the device credential: the shell cannot check it, Android can. */
@@ -82,7 +86,7 @@ export function createPasswords(deps) {
     return svg
   }
 
-  function vaultRow(entry, onOpen) {
+  function vaultRow(entry, onOpen, { allowReveal = false } = {}) {
     const row = document.createElement('div')
     row.className = 'row'
     row.setAttribute('role', 'button')
@@ -129,6 +133,21 @@ export function createPasswords(deps) {
     })
     row.appendChild(favorite)
 
+    if (allowReveal && !entry.isPasskey) {
+      const reveal = document.createElement('button')
+      reveal.className = 'ib'
+      reveal.type = 'button'
+      const isRevealed = revealedPassword?.id === entry.id
+      reveal.setAttribute('aria-label', isRevealed ? 'Hide password' : 'Reveal password')
+      reveal.setAttribute('aria-pressed', String(isRevealed))
+      reveal.appendChild(vaultIcon(isRevealed ? 'eye-off' : 'eye'))
+      reveal.addEventListener('click', (event) => {
+        event.stopPropagation()
+        void togglePasswordReveal(entry.id)
+      })
+      row.appendChild(reveal)
+    }
+
     row.addEventListener('click', () => onOpen(entry))
     row.addEventListener('keydown', (event) => {
       if (event.key === 'Enter' || event.key === ' ') {
@@ -136,7 +155,76 @@ export function createPasswords(deps) {
         onOpen(entry)
       }
     })
-    return row
+    if (!allowReveal) return row
+
+    const wrapper = document.createElement('div')
+    wrapper.className = 'vault-entry'
+    wrapper.appendChild(row)
+    if (revealedPassword?.id === entry.id) {
+      const password = document.createElement('code')
+      password.className = 'vault-entry-password'
+      password.textContent = revealedPassword.password
+      wrapper.appendChild(password)
+    }
+    return wrapper
+  }
+
+  function clearPasswordReveal(render = false) {
+    revealRequest += 1
+    if (revealTimer !== null) clearTimeout(revealTimer)
+    revealTimer = null
+    revealedPassword = null
+    const list = byId('vault-list')
+    list.querySelectorAll('.vault-entry-password').forEach((node) => node.remove())
+    list.querySelectorAll('button[aria-label="Hide password"]').forEach((button) => {
+      button.setAttribute('aria-label', 'Reveal password')
+      button.setAttribute('aria-pressed', 'false')
+      button.querySelector('use')?.setAttribute('href', '#i-eye')
+    })
+    if (render && vaultStatus?.unlocked) void renderVaultList()
+  }
+
+  async function togglePasswordReveal(id) {
+    if (revealedPassword?.id === id) {
+      clearPasswordReveal(true)
+      return
+    }
+
+    clearPasswordReveal(false)
+    const request = ++revealRequest
+    try {
+      const entry = await invoke('vault_entry', { id })
+      if (request !== revealRequest || !vaultStatus?.unlocked) return
+      revealedPassword = { id, password: entry.password || '' }
+      await renderVaultList()
+      if (request !== revealRequest || revealedPassword?.id !== id) return
+      revealTimer = setTimeout(() => {
+        if (revealedPassword?.id !== id) return
+        clearPasswordReveal(true)
+      }, 15_000)
+    } catch (error) {
+      if (request === revealRequest) byId('vault-note').textContent = String(error)
+    }
+  }
+
+  function setEditPasswordRevealed(revealed) {
+    editPasswordRevealed = revealed
+    const input = byId('edit-password')
+    const button = byId('edit-password-toggle')
+    input.type = revealed ? 'text' : 'password'
+    button.setAttribute('aria-label', revealed ? 'Hide password' : 'Show password')
+    button.setAttribute('aria-pressed', String(revealed))
+    button.querySelector('use').setAttribute('href', revealed ? '#i-eye-off' : '#i-eye')
+  }
+
+  function onPanelChange(from, to) {
+    if (from === 'passwords' && to !== 'passwords') clearPasswordReveal(false)
+    if (from === 'password-edit' && to !== 'password-edit') setEditPasswordRevealed(false)
+  }
+
+  function onAppBackground() {
+    clearPasswordReveal(false)
+    setEditPasswordRevealed(false)
   }
 
   async function copyTotp(id) {
@@ -168,7 +256,11 @@ export function createPasswords(deps) {
       )
 
       if (vaultStatus.unlocked) await renderVaultList()
-      else byId('vault-list').textContent = ''
+      else {
+        clearPasswordReveal(false)
+        setEditPasswordRevealed(false)
+        byId('vault-list').textContent = ''
+      }
     } catch (error) {
       state.textContent = String(error)
     }
@@ -205,7 +297,7 @@ export function createPasswords(deps) {
           return
         }
         void openPasswordEdit(chosen.id)
-      }))
+      }, { allowReveal: true }))
     }
   }
 
@@ -262,6 +354,8 @@ export function createPasswords(deps) {
   }
 
   async function lockVault() {
+    clearPasswordReveal(false)
+    setEditPasswordRevealed(false)
     try {
       vaultStatus = await invoke('vault_lock')
       await loadPasswords()
@@ -464,6 +558,7 @@ export function createPasswords(deps) {
   }
 
   function openNewLogin(origin) {
+    setEditPasswordRevealed(false)
     editingId = null
     byId('edit-heading').textContent = 'Add login'
     byId('edit-origin').value = origin || ''
@@ -480,6 +575,7 @@ export function createPasswords(deps) {
   async function openPasswordEdit(id) {
     try {
       const entry = await invoke('vault_entry', { id })
+      setEditPasswordRevealed(false)
       editingId = id
       byId('edit-heading').textContent = 'Edit login'
       byId('edit-origin').value = entry.origin
@@ -630,6 +726,7 @@ export function createPasswords(deps) {
   return {
     deviceCredentialReply, reportFillFailure, loadPasswords, renderVaultList, unlockVault, lockVault,
     handleWebauthnRequest, saveVaultConfig, renderPasswordFill, openNewLogin, renderPasswordSave, renderPasswordEdit,
-    saveEdits, deleteEditing, generateIntoEdit, respondSave, handlePasswordCapture
+    saveEdits, deleteEditing, generateIntoEdit, respondSave, handlePasswordCapture, onPanelChange, onAppBackground,
+    toggleEditPasswordReveal: () => setEditPasswordRevealed(!editPasswordRevealed)
   }
 }

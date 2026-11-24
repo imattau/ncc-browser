@@ -688,6 +688,34 @@ select {
   outline: none;
 }
 
+.password-input-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.password-input-group input {
+  flex: 1 1 0;
+  min-width: 0;
+  width: 0;
+}
+
+.password-input-group .ib {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  color: var(--muted);
+}
+
+.vault-entry-password {
+  display: block;
+  padding: 4px 16px 12px 72px;
+  color: var(--text);
+  font: 14px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 input:focus,
 textarea:focus,
 select:focus {

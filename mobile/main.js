@@ -455,7 +455,10 @@ function restoreTabs() {
 }
 
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) writeTabs()
+  if (document.hidden) {
+    writeTabs()
+    passwordFeature.onAppBackground()
+  }
 })
 
 /** Tab list from the native tab manager. */
@@ -617,6 +620,7 @@ globalThis.__nccBack = () => {
 /** Every full-window surface is the shell expanded over the page. */
 function showPanel(name) {
   if (!content) return
+  passwordFeature.onPanelChange(panel, name)
   if (panel === 'nccsearch' && name !== 'nccsearch') {
     // Unload the document, not just the attribute: Android WebView can keep a
     // <video> inside a hidden iframe audible after `removeAttribute('src')`.
@@ -664,6 +668,7 @@ function showPanel(name) {
 }
 
 function closePanel() {
+  passwordFeature.onPanelChange(panel, 'home')
   panel = 'home'
   newTabMode = false
   privateMode = false
@@ -2230,6 +2235,7 @@ function wireChrome() {
   byId('edit-save').addEventListener('click', () => void passwordFeature.saveEdits())
   byId('edit-delete').addEventListener('click', () => void passwordFeature.deleteEditing())
   byId('edit-generate').addEventListener('click', () => void passwordFeature.generateIntoEdit())
+  byId('edit-password-toggle').addEventListener('click', () => passwordFeature.toggleEditPasswordReveal())
   byId('save-accept').addEventListener('click', () => void passwordFeature.respondSave('save'))
   byId('save-never').addEventListener('click', () => void passwordFeature.respondSave('never'))
   byId('save-dismiss').addEventListener('click', () => void passwordFeature.respondSave('dismiss'))

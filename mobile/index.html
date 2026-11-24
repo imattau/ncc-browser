@@ -44,6 +44,7 @@
         <symbol id="i-shield-check" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" /><path d="m9 12 2 2 4-4" /></symbol>
         <symbol id="i-shield-alert" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" /><path d="M12 8v4" /><path d="M12 16h.01" /></symbol>
         <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5" /></symbol>
+        <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z" /><circle cx="12" cy="12" r="3" /></symbol>
         <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49" /><path d="M14.084 14.158a3 3 0 0 1-4.242-4.242" /><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143" /><path d="m2 2 20 20" /></symbol>
         <symbol id="i-onion" viewBox="0 0 24 24"><path d="M12 21c4.7 0 8.2-3.7 8.2-8.2C20.2 7.4 16.5 3 12 3S3.8 7.4 3.8 12.8C3.8 17.3 7.3 21 12 21Z" /><path d="M12 18.2c2.9 0 5.1-2.4 5.1-5.5 0-3.2-1.9-5.7-5.1-5.7s-5.1 2.5-5.1 5.7c0 3.1 2.2 5.5 5.1 5.5Z" /><path d="M12 15.3c1.3 0 2.2-1.1 2.2-2.7 0-1.6-.9-2.7-2.2-2.7s-2.2 1.1-2.2 2.7c0 1.6.9 2.7 2.2 2.7Z" /><path d="M12 3c0-1 .6-1.7 1.6-2" /></symbol>
         <symbol id="i-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" /></symbol>
@@ -825,7 +826,12 @@
         </label>
         <label class="field">
           <span>Password</span>
-          <input id="edit-password" type="password" autocomplete="new-password" spellcheck="false" />
+          <div class="password-input-group">
+            <input id="edit-password" type="password" autocomplete="new-password" spellcheck="false" />
+            <button id="edit-password-toggle" class="ib" type="button" aria-label="Show password" aria-pressed="false">
+              <svg class="i"><use href="#i-eye" /></svg>
+            </button>
+          </div>
         </label>
         <button id="edit-generate" class="btn tonal block" type="button">Generate a password</button>
         <label class="field">
