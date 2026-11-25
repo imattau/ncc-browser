@@ -1,5 +1,10 @@
 # Nostr Navigator for Android
 
+## Improved in 0.47.5
+
+- Pull-to-refresh now shows progress and completion feedback. Swiping a tab card to
+  close it displays a close cue and slide-away animation.
+
 ## 0.47.4
 
 - Maintenance release with no Android-specific changes.

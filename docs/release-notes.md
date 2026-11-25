@@ -1,5 +1,12 @@
 # Release notes
 
+## 0.47.5 — Android swipe feedback
+
+### Improved
+
+- Android now shows a pull-to-refresh indicator and animates tab cards as they are
+  swiped closed.
+
 ## 0.47.4 — editing hosted services
 
 ### Fixed
