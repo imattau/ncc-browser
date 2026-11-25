@@ -35,7 +35,7 @@ const DOCS = `${REPO}/tree/main/docs`
 const SPEC = 'https://github.com/imattau/nostr-community-conventions'
 const NPACK = 'https://github.com/imattau/npack'
 const PUBLISHER_NPUB = 'npub1g3vdg46zq7xpkmtdnta7l8u9684zd2p4e9wrp3xd7wv4xk7vq03svh653x'
-const SITE_NPUB = 'npub1khf5amw8mrupe649a5mhkk3d2d8wjj06urz6kwawpftk4f68tjlstdmd3q'
+const SITE_NPUB = 'npub15d7l6vky77x34wu2rl2jdlafmpuycjsca06sjpmqgc7ggnd0zazsja3gma'
 const CONTACT_NPUB = 'npub15d7l6vky77x34wu2rl2jdlafmpuycjsca06sjpmqgc7ggnd0zazsja3gma'
 const WHITE_NOISE_CONTACT = `whitenoise://user/${CONTACT_NPUB}`
 const PUBLISHER_HEX = '4458d45742078c1b6d6d9afbef9f85d1ea26a835c95c30c4cdf399535bcc03e3'
@@ -680,7 +680,7 @@ export function App() {
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-5 text-[10px] text-faint">
             <span>This page is published with Nostr Navigator as an nsite.</span>
             <span className="inline-flex items-center gap-1.5 font-mono">
-              <Globe className="h-3 w-3" /> nsite://{SITE_NPUB.slice(0, 12)}…/navigator
+              <Globe className="h-3 w-3" /> nsite://{SITE_NPUB.slice(0, 12)}…/
             </span>
           </div>
         </div>

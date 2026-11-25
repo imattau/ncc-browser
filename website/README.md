@@ -24,10 +24,10 @@ The build uses absolute asset paths, so it can be served at the root of an nsite
 
 1. Build the site.
 2. In Nostr Navigator: **Settings → Sites → Choose folder** → `website/dist`.
-3. Site id `navigator`, title `Nostr Navigator`, source `https://github.com/imattau/ncc-browser`.
+3. Sign in as the Nostr Navigator identity, tick **root site**, and set title `Nostr Navigator`, source `https://github.com/imattau/ncc-browser`.
 4. Keep the default Blossom servers and relays, then **Upload and publish**.
-5. Verify the uploaded files and open `nsite://<npub>/navigator/`.
+5. Verify the uploaded files and open `nsite://<npub>/`.
 
 The site has no host, DNS or certificate. It is public; NIP-5A has no access control.
 
-Live: `nsite://npub1khf5amw8mrupe649a5mhkk3d2d8wjj06urz6kwawpftk4f68tjlstdmd3q/navigator/`.
+Live: `nsite://npub15d7l6vky77x34wu2rl2jdlafmpuycjsca06sjpmqgc7ggnd0zazsja3gma/`.
