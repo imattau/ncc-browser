@@ -92,6 +92,10 @@ const kindOf = (tab) => (tab && KINDS.includes(tab.kind) ? tab.kind : 'normal')
 let switcherKind = 'normal'
 let switcherTouch = null
 let suppressSwitcherClick = false
+let switcherRefreshing = false
+let switcherRefreshTabId = ''
+let switcherRefreshTimer = null
+let switcherRefreshHideTimer = null
 
 let tabs = []
 let activeTabId = ''
@@ -554,6 +558,11 @@ globalThis.__nccContent = (state) => {
     delete progressByTab[id]
     if (state.type === 'failed' && state.certificateError) certificateFailures.set(id, { ...state.certificateError, url: state.url })
     else if (state.type === 'failed') certificateFailures.set(id, { code: 'load-failed', rawError: state.reason || 'Page failed to load', message: 'The page could not be loaded. Check the address and try again.', url: state.url })
+  }
+
+  if (switcherRefreshing && id === switcherRefreshTabId) {
+    if (state.type === 'loaded') finishSwitcherRefresh(true)
+    else if (state.type === 'failed' || state.type === 'blocked' || state.type === 'rejected') finishSwitcherRefresh(false)
   }
 
   // A login the native hook saw submitted. The secret goes straight into the vault
@@ -1376,6 +1385,54 @@ function closeSwitcherTab(id) {
   content?.closeTab(id)
 }
 
+function updateSwitcherRefresh(distance = 0, mode = 'pull') {
+  const indicator = byId('switcher-refresh')
+  const label = mode === 'refreshing'
+    ? 'Refreshing page…'
+    : mode === 'ready'
+      ? 'Release to refresh'
+      : mode === 'done'
+        ? 'Page refreshed'
+        : mode === 'failed'
+          ? 'Refresh failed'
+          : 'Pull down to refresh'
+  const symbol = mode === 'done' ? 'check' : mode === 'failed' ? 'close' : 'refresh'
+  indicator.replaceChildren(icon(symbol), document.createElement('span'))
+  indicator.lastElementChild.textContent = label
+  indicator.classList.toggle('visible', distance > 0 || mode !== 'pull')
+  indicator.classList.toggle('refreshing', mode === 'refreshing')
+  indicator.classList.toggle('complete', mode === 'done')
+  indicator.classList.toggle('failed', mode === 'failed')
+  indicator.setAttribute('aria-hidden', String(distance <= 0 && mode === 'pull'))
+  indicator.style.height = `${mode === 'pull' ? Math.min(68, distance * 0.58) : 48}px`
+}
+
+function finishSwitcherRefresh(success) {
+  if (!switcherRefreshing) return
+  switcherRefreshing = false
+  switcherRefreshTabId = ''
+  if (switcherRefreshTimer) clearTimeout(switcherRefreshTimer)
+  switcherRefreshTimer = null
+  if (switcherRefreshHideTimer) clearTimeout(switcherRefreshHideTimer)
+  updateSwitcherRefresh(0, success ? 'done' : 'failed')
+  switcherRefreshHideTimer = setTimeout(() => {
+    switcherRefreshHideTimer = null
+    updateSwitcherRefresh()
+  }, 1800)
+}
+
+function startSwitcherRefresh() {
+  if (!activeUrl || progressByTab[activeTabId] !== undefined || switcherRefreshing) return false
+  if (switcherRefreshHideTimer) clearTimeout(switcherRefreshHideTimer)
+  switcherRefreshHideTimer = null
+  switcherRefreshing = true
+  switcherRefreshTabId = activeTabId
+  updateSwitcherRefresh(0, 'refreshing')
+  switcherRefreshTimer = setTimeout(() => finishSwitcherRefresh(false), 30_000)
+  content?.reload()
+  return true
+}
+
 function wireSwitcherGestures() {
   const grid = byId('tab-grid')
   grid.addEventListener('touchstart', (event) => {
@@ -1389,10 +1446,37 @@ function wireSwitcherGestures() {
       x: touch.clientX,
       y: touch.clientY,
       id: card?.dataset.tabId ?? '',
+      card,
+      axis: null,
       scrollTop: grid.scrollTop
     }
     suppressSwitcherClick = false
   }, { passive: true })
+
+  grid.addEventListener('touchmove', (event) => {
+    const start = switcherTouch
+    if (!start || event.touches.length !== 1) return
+    const touch = event.touches[0]
+    const dx = touch.clientX - start.x
+    const dy = touch.clientY - start.y
+    if (!start.axis && Math.max(Math.abs(dx), Math.abs(dy)) > 8) {
+      start.axis = Math.abs(dx) > Math.abs(dy) ? 'horizontal' : 'vertical'
+    }
+
+    if (start.axis === 'horizontal' && start.card && dx !== 0) {
+      start.card.classList.add('is-swiping')
+      start.card.style.transform = `translateX(${dx}px) scale(${Math.max(0.94, 1 - Math.abs(dx) / 1800)})`
+    } else if (start.axis === 'vertical') {
+      event.preventDefault()
+      if (Math.abs(dy) > 8) suppressSwitcherClick = true
+      if (dy > 0 && start.scrollTop <= 0 && activeUrl && progressByTab[activeTabId] === undefined && !switcherRefreshing) {
+        updateSwitcherRefresh(dy, dy >= 100 ? 'ready' : 'pull')
+      } else {
+        updateSwitcherRefresh()
+        grid.scrollTop = Math.max(0, start.scrollTop - dy)
+      }
+    }
+  }, { passive: false })
 
   grid.addEventListener('touchend', (event) => {
     const start = switcherTouch
@@ -1404,15 +1488,33 @@ function wireSwitcherGestures() {
     if (Math.abs(dx) > 70 && Math.abs(dx) > Math.abs(dy) * 1.25 && start.id) {
       suppressSwitcherClick = true
       event.preventDefault()
-      closeSwitcherTab(start.id)
+      if (start.card) {
+        start.card.classList.remove('is-swiping')
+        start.card.classList.add('is-dismissing')
+        start.card.style.transform = `translateX(${Math.sign(dx) * window.innerWidth}px) scale(0.96)`
+        setTimeout(() => closeSwitcherTab(start.id), 200)
+      } else closeSwitcherTab(start.id)
       setTimeout(() => { suppressSwitcherClick = false }, 500)
-    } else if (dy > 100 && dy > Math.abs(dx) * 1.25 && start.scrollTop <= 0 && grid.scrollTop <= 0 && activeUrl && progressByTab[activeTabId] === undefined) {
+    } else if (dy > 100 && dy > Math.abs(dx) * 1.25 && start.scrollTop <= 0 && grid.scrollTop <= 0) {
       event.preventDefault()
-      content?.reload()
+      const started = (!start.id || start.id === activeTabId) && startSwitcherRefresh()
+      if (!started) updateSwitcherRefresh()
+      setTimeout(() => { suppressSwitcherClick = false }, 500)
+    } else {
+      start.card?.classList.remove('is-swiping')
+      if (start.card) start.card.style.transform = ''
+      updateSwitcherRefresh()
+      if (Math.abs(dx) > 8 || Math.abs(dy) > 8) setTimeout(() => { suppressSwitcherClick = false }, 500)
     }
   }, { passive: false })
 
-  grid.addEventListener('touchcancel', () => { switcherTouch = null }, { passive: true })
+  grid.addEventListener('touchcancel', () => {
+    switcherTouch?.card?.classList.remove('is-swiping')
+    if (switcherTouch?.card) switcherTouch.card.style.transform = ''
+    switcherTouch = null
+    suppressSwitcherClick = false
+    updateSwitcherRefresh()
+  }, { passive: true })
 }
 
 /* ───────────────────────────── Menu ───────────────────────────── */
