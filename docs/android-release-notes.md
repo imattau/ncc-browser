@@ -1,5 +1,9 @@
 # Nostr Navigator for Android
 
+## 0.47.8
+
+- Maintenance release with no Android-specific changes.
+
 ## 0.47.7
 
 - Maintenance release with no Android-specific changes.

@@ -1,5 +1,14 @@
 # Release notes
 
+## 0.47.8 — sharing contacts
+
+### Fixed
+
+- On desktop, the contacts offered when sharing a service now belong to the identity
+  that signs it, not the one that was active when Services opened. Switching identity
+  also clears recipients already chosen. An identity that follows nobody shows no
+  contacts; paste the recipient's npub instead.
+
 ## 0.47.7 — private service privacy
 
 ### Fixed
