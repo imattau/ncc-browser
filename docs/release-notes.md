@@ -1,5 +1,21 @@
 # Release notes
 
+## 0.47.7 — private service privacy
+
+### Fixed
+
+- New readable records (NCC-02) for private services and shares no longer include the
+  certificate fingerprint; it stays in the encrypted locator. Publishing replaces older
+  records that have it, as far as the queried relays return them.
+- A private service now keeps its anchor setting after a restart.
+- New share links use random IDs. Older IDs could be matched to a recipient; the
+  service card marks active ones. Revoke, renew and send the new link.
+- The browser's HTTPS certificate no longer names your LAN address. An older one is
+  replaced when its proxy starts, so publish again.
+
+Service names, your identity, record times, expiry and size remain readable, and old
+copies of records may still exist.
+
 ## 0.47.6 — HTTPS for hosted services
 
 ### Fixed
