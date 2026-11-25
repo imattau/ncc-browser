@@ -1,5 +1,19 @@
 # Release notes
 
+## 0.47.6 — HTTPS for hosted services
+
+### Fixed
+
+- On desktop, HTTPS added by the browser can now be reached from other devices. Saved
+  endpoints stay as typed; publishing and sharing send the correct ports and
+  certificate pins. Internet visitors need the router rule shown on the service card.
+- Publishing or sharing turns HTTPS on when one of this computer's `https://`
+  endpoints is really a plain HTTP server.
+- Removing a service now stops its HTTPS proxy.
+- Onion setup handles a plain HTTP server saved as `https://`.
+- A failed HTTPS handshake is no longer reported as a certificate mismatch, and other
+  HTTPS endpoints are tried.
+
 ## 0.47.5 — Android swipe feedback
 
 ### Improved

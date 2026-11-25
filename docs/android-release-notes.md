@@ -1,5 +1,9 @@
 # Nostr Navigator for Android
 
+## 0.47.6
+
+- Maintenance release with no Android-specific changes.
+
 ## Improved in 0.47.5
 
 - Pull-to-refresh now shows progress and completion feedback. Swiping a tab card to
