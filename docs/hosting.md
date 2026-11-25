@@ -16,15 +16,16 @@ HTTP. The browser holds the identity and signs the locator; you do not need a do
 a certificate or a reverse proxy. Reaching it directly from the internet still needs a
 router port-forward; an onion endpoint does not.
 
-The same mechanism shares a private service with exactly one person:
+The same mechanism shares a private service with one or more people. Each person gets
+their own link:
 
 ```
 ncc://<your-npub>/share-1a2b3c4d5e
 ```
 
-That link is an NCC-05 record whose payload is NIP-44 encrypted to the recipient's
-npub. Relays see the author, the `d` tag and when it changed; they do not see the
-endpoint.
+Each link is an NCC-05 record whose payload is NIP-44 encrypted to that recipient's
+npub, so it can be renewed or revoked without affecting the others. Relays see the
+author, the `d` tag and when it changed; they do not see the endpoint.
 
 ## Publishing
 
@@ -147,7 +148,7 @@ while it runs. With a NIP-46 remote signer, renewal is manual: **Publish** on th
 
 ## Sharing privately
 
-A share is the same payload encrypted to one recipient under a reserved `d` tag:
+Each share is the same payload encrypted to one recipient under a reserved `d` tag:
 
 ```
 d = share-<12 hex chars>
@@ -400,8 +401,8 @@ service that is not meant for everyone needs its own login.
   headless renewer next to the service) is future work.
 - NIP-59 gift-wrap shares are not implemented. Each share has its own `d` tag, so the
   link differs per recipient.
-- Onion service creation is manual: run a Tor hidden service and enter its `.onion`
-  URL. The browser does not call `ADD_ONION` yet.
+- Automatic onion endpoints need a loopback endpoint and Tor control access. Otherwise,
+  run a Tor hidden service yourself and enter its `.onion` URL.
 - Android has no Services UI yet.
 - A share record is public metadata even when encrypted; an observer can count shares
   and see when they are renewed or revoked.

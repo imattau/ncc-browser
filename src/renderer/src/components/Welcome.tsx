@@ -219,7 +219,7 @@ export function Welcome({ onOpenSettings, onOpenServices, onNewPrivateTab, onNew
                     Publish a service you run
                   </span>
                   <span className="block text-ui-105 text-[color:var(--color-muted)]">
-                    Give it an npub address, then share it privately with one person.
+                    Give it an npub address, then share it privately with the people you choose.
                   </span>
                 </span>
               </button>
