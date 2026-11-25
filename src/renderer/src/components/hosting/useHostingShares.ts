@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import { contactLabel, type ContactList, type ContactProfile } from '@shared/contacts'
+import {
+  contactLabel,
+  contactsOwnedBy,
+  type ContactList,
+  type ContactProfile,
+  type ContactsState
+} from '@shared/contacts'
 import {
   DEFAULT_SHARE_DAYS,
   MAX_SHARE_DAYS,
@@ -42,10 +48,16 @@ export interface HostingSharesApi {
   renewShare: (service: HostedService, share: ServiceShare) => Promise<void>
 }
 
-/** Contact list, recipient selection and share creation for one service at a time. */
-export function useHostingShares(feedback: Feedback): HostingSharesApi {
+/**
+ * Contact list, recipient selection and share creation for one service at a time.
+ * `owner` is the active identity's pubkey: the one that signs, and whose follow list
+ * the picker offers.
+ */
+export function useHostingShares(feedback: Feedback, owner: string | null): HostingSharesApi {
   const { apply, setBusy, setError } = feedback
-  const [contacts, setContacts] = useState<ContactList | null>(null)
+  const [loadedContacts, setContacts] = useState<ContactList | null>(null)
+  // Never offer another identity's list, not even in the render that switches.
+  const contacts = contactsOwnedBy(loadedContacts, owner)
   const [contactsLoading, setContactsLoading] = useState(false)
   const [contactsError, setContactsError] = useState<string | null>(null)
   const [sharing, setSharing] = useState<string | null>(null)
@@ -57,28 +69,31 @@ export function useHostingShares(feedback: Feedback): HostingSharesApi {
   const [shareResults, setShareResults] = useState<ShareResult[]>([])
   const [shareFailures, setShareFailures] = useState<ShareFailure[]>([])
 
+  // The main process only announces contacts when it refreshes them, so ask again
+  // whenever the identity changes, and drop what was picked under the previous one.
   useEffect(() => {
     let alive = true
-    void window.ncc
-      .contactsState()
-      .then((state) => {
-        if (!alive) return
-        setContacts(state.list)
-        setContactsLoading(state.refreshing)
-        setContactsError(state.error ?? null)
-      })
-      .catch(() => undefined)
-    const off = window.ncc.onContactsChanged((state) => {
-      if (!alive) return
+    setContacts(null)
+    setContactsLoading(false)
+    setContactsError(null)
+    setShareRecipients([])
+    setShareQuery('')
+    setManualRecipient('')
+    setShareResults([])
+    setShareFailures([])
+    const receive = (state: ContactsState): void => {
+      if (!alive || state.owner !== owner) return
       setContacts(state.list)
       setContactsLoading(state.refreshing)
       setContactsError(state.error ?? null)
-    })
+    }
+    const off = window.ncc.onContactsChanged(receive)
+    void window.ncc.contactsState().then(receive).catch(() => undefined)
     return () => {
       alive = false
       off()
     }
-  }, [])
+  }, [owner])
 
   const toggleShare = (serviceId: string): void => {
     setSharing((current) => (current === serviceId ? null : serviceId))

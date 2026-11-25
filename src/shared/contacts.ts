@@ -33,6 +33,11 @@ export interface ContactsState {
   error?: string
 }
 
+/** A follow list only when it belongs to `owner`, the identity doing the sharing. */
+export function contactsOwnedBy(list: ContactList | null, owner: string | null): ContactList | null {
+  return list && owner && list.owner === owner.toLowerCase() ? list : null
+}
+
 export function contactLabel(contact: ContactProfile): string {
   return (
     contact.displayName?.trim() ||

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { finalizeEvent, generateSecretKey, getPublicKey, type Event } from 'nostr-tools'
+import { contactsOwnedBy } from '../src/shared/contacts'
 import { ContactsStore } from '../src/main/contacts/store'
 import { ContactsService } from '../src/main/contacts/service'
 import type { ConfigStore } from '../src/main/config'
@@ -78,6 +79,18 @@ function setup() {
     getQueries: () => queries
   }
 }
+
+describe('contactsOwnedBy', () => {
+  const list = { owner: 'a'.repeat(64), contacts: [], contactsFetchedAt: 1, profilesFetchedAt: 1, stale: false }
+
+  it('offers a follow list only to the identity it belongs to', () => {
+    expect(contactsOwnedBy(list, 'a'.repeat(64))).toBe(list)
+    expect(contactsOwnedBy(list, 'A'.repeat(64))).toBe(list)
+    expect(contactsOwnedBy(list, 'b'.repeat(64))).toBeNull()
+    expect(contactsOwnedBy(list, null)).toBeNull()
+    expect(contactsOwnedBy(null, 'a'.repeat(64))).toBeNull()
+  })
+})
 
 describe('ContactsService', () => {
   it('fetches the newest kind 3 and labels contacts from kind 0', async () => {

@@ -31,7 +31,7 @@ export function HostingSettings({
     onIdentityChange,
     setError: data.setError
   })
-  const shares = useHostingShares(data)
+  const shares = useHostingShares(data, identity?.hexPubkey ?? null)
   const form = useHostingDraft({
     feedback: data,
     strictAnchors: data.strictAnchors,
