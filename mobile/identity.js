@@ -228,19 +228,33 @@ export function createIdentity(deps) {
       }
     })
 
-    byId('identity-import').addEventListener('click', async () => {
+    byId('identity-import-form').addEventListener('submit', async (event) => {
+      event.preventDefault()
+      const button = byId('identity-import')
+      const status = byId('identity-import-status')
+      const error = byId('identity-error')
       const secret = byId('nsec').value.trim()
       if (!secret) {
-        identityFailure('Paste an nsec first.')
+        error.textContent = 'Paste an nsec first.'
+        status.textContent = ''
         return
       }
+
+      error.textContent = ''
+      status.textContent = 'Importing identity…'
+      button.disabled = true
+      button.textContent = 'Importing…'
       try {
         renderIdentity(await invoke('identity_import_profile', { secret }))
         byId('nsec').value = ''
-        byId('identity-error').textContent = ''
+        status.textContent = 'Identity imported.'
         await refreshIdentityProfiles()
       } catch (error) {
         identityFailure(error)
+        status.textContent = ''
+      } finally {
+        button.disabled = false
+        button.textContent = 'Import'
       }
     })
 

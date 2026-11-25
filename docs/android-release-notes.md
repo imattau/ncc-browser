@@ -1,5 +1,18 @@
 # Nostr Navigator for Android
 
+## 0.47.11
+
+- Fixed importing an nsec into a local identity. Import now responds immediately and
+  shows progress and errors while the key is being processed.
+- Fixed deleting logins when the password vault is full.
+- Fixed password edits and deletes made on Android being undone by an older desktop
+  copy. If a deleted login came back, delete it again.
+- Saved passwords now appear without waiting for relays. Sync continues in the
+  background, and the synced vault is kept on the device for the next restart.
+- Added reading and updating of password vaults stored in several parts, to prepare
+  for longer password lists. The storage limit has not increased yet.
+- Update your other devices too: older versions can still undo or refuse deletions.
+
 ## 0.47.10
 
 - Private NCC-05 records can now be opened with the active local identity. Android also

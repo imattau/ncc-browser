@@ -1,5 +1,26 @@
 # Release notes
 
+## 0.47.11 — password deletion
+
+### Fixed
+
+- Logins can be deleted when the password vault is full. A deleted login no longer
+  keeps its password, notes or other secrets, which also frees the space used by
+  earlier deletions. The space saving is stored with your next change.
+- A failed delete now shows its error on that login.
+- On Android, password edits and deletes could be undone by an older desktop copy. If a
+  deleted login came back, delete it again.
+
+### Changed
+
+- Android shows saved passwords without waiting for relays.
+- Desktop and Android can read and update password vaults stored in several parts, to
+  prepare for longer password lists. No version creates a second part yet, so the
+  storage limit has not increased.
+- Update every device: older versions can still undo or refuse deletions.
+
+The nsec import fix in this release is Android only; see the Android release notes.
+
 ## 0.47.9 — managing people and duplicate services
 
 These changes are to the desktop app.

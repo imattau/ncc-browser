@@ -927,11 +927,14 @@
           <button id="identity-create" class="btn block" type="button">Create a new identity</button>
           <details class="import">
             <summary>Import an existing key</summary>
-            <label class="field">
-              <span>nsec</span>
-              <input id="nsec" type="password" autocomplete="off" spellcheck="false" />
-            </label>
-            <button id="identity-import" class="btn tonal block" type="button">Import</button>
+            <form id="identity-import-form">
+              <label class="field">
+                <span>nsec</span>
+                <input id="nsec" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" />
+              </label>
+              <button id="identity-import" class="btn tonal block" type="submit">Import</button>
+              <p id="identity-import-status" class="status" role="status" aria-live="polite"></p>
+            </form>
           </details>
         </div>
 
