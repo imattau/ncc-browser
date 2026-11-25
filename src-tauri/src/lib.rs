@@ -11,7 +11,7 @@ use ncc_proxy::{
 };
 use ncc_vault::{GeneratorOptions, PasswordSummary, TotpCode};
 use ncc_proxy::settings::PasswordSettings;
-use ncc_proxy::vault::VaultService;
+use ncc_proxy::vault::{LocalOpen, VaultService};
 use ncc_tor::{Tor, TorConfig, TorMode, TorState, TorStatus};
 mod payment_cards;
 mod nccsearch_update;
@@ -413,6 +413,7 @@ async fn payment_cards_authenticate(
 /// identity stays locked and says so.
 #[tauri::command]
 async fn vault_unlock(
+    app: tauri::AppHandle,
     state: tauri::State<'_, SignerState>,
     vault: tauri::State<'_, VaultHandle>,
     data_dir: tauri::State<'_, AppDataDir>,
@@ -427,31 +428,61 @@ async fn vault_unlock(
         return Ok(vault.0.status());
     };
     vault.0.prepare_identity_profile(local_id, envelope(None).as_ref())?;
-    let mut status = vault.0.unlock().await;
-
-    if status.unlocked {
-        let mut migration_pending = false;
-        for profile in state.identity.profiles().into_iter().filter(|profile| profile.id != local_id) {
-            let source = Arc::new(IdentityStore::open(data_dir.0.join("identity.json")));
-            if source.select_profile_for_service(&profile.id).is_err()
-                || source.unlock(envelope(None).as_ref()).is_err()
-            {
-                migration_pending = true;
-                continue;
-            }
-            match vault.0.migrate_from(source.clone()).await {
-                Ok(complete) => migration_pending |= !complete,
-                Err(error) => {
-                    eprintln!("[passwords] Android legacy vault migration deferred for {}: {error}", profile.id);
-                    migration_pending = true;
-                }
-            }
-            source.lock();
-        }
-        vault.0.set_migration_pending(migration_pending);
-        status = vault.0.status();
+    let opened = vault.0.open_local();
+    if opened == LocalOpen::Failed {
+        return Ok(vault.0.status());
     }
-    Ok(status)
+    // With nothing saved on this device there is nothing to show until a relay answers.
+    if opened == LocalOpen::Empty {
+        vault.0.refresh().await;
+    }
+
+    let sources: Vec<_> = state
+        .identity
+        .profiles()
+        .into_iter()
+        .filter(|profile| profile.id != local_id)
+        .map(|profile| {
+            let source = Arc::new(IdentityStore::open(data_dir.0.join("identity.json")));
+            (profile.id, source)
+        })
+        .collect();
+    // Relays can take many seconds, so the saved vault is handed back first and the
+    // shell is told when it has caught up.
+    let service = vault.0.clone();
+    tauri::async_runtime::spawn(async move {
+        if opened == LocalOpen::Cached {
+            service.refresh().await;
+            let _ = app.emit("ncc:vault", ());
+        }
+        migrate_vault_sources(&service, sources).await;
+        let _ = app.emit("ncc:vault", ());
+    });
+    Ok(vault.0.status())
+}
+
+async fn migrate_vault_sources(vault: &VaultService, sources: Vec<(String, Arc<IdentityStore>)>) {
+    if !vault.status().unlocked {
+        return;
+    }
+    let mut migration_pending = false;
+    for (id, source) in sources {
+        if source.select_profile_for_service(&id).is_err()
+            || source.unlock(envelope(None).as_ref()).is_err()
+        {
+            migration_pending = true;
+            continue;
+        }
+        match vault.migrate_from(source.clone()).await {
+            Ok(complete) => migration_pending |= !complete,
+            Err(error) => {
+                eprintln!("[passwords] Android legacy vault migration deferred for {id}: {error}");
+                migration_pending = true;
+            }
+        }
+        source.lock();
+    }
+    vault.set_migration_pending(migration_pending);
 }
 
 fn configure_vault_default(state: &SignerState, vault: &VaultService) {

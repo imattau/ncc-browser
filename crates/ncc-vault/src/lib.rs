@@ -15,6 +15,7 @@
 
 pub mod cache;
 pub mod generator;
+pub mod parts;
 pub mod sync;
 pub mod totp;
 
@@ -35,6 +36,8 @@ pub const VAULT_CLIENT: &str = "ncc-browser";
 /// Keep the plaintext under the usual 64 KB relay event limit once base64 and NIP-44
 /// framing are added.
 pub const MAX_VAULT_BYTES: usize = 40_000;
+/// The most NIP-44 v2 can encrypt. A merged or shrinking vault may sit between the two.
+pub const MAX_VAULT_PLAINTEXT_BYTES: usize = 65_535;
 
 pub const MAX_TITLE: usize = 200;
 pub const MAX_USERNAME: usize = 320;
@@ -63,7 +66,7 @@ pub struct PasswordEntry {
     pub created_at: u64,
     #[serde(default)]
     pub updated_at: u64,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_false")]
     pub favorite: bool,
     #[serde(rename = "favoriteUpdatedAt", default, skip_serializing_if = "is_zero")]
     pub favorite_updated_at: u64,
@@ -197,7 +200,7 @@ pub fn normalize_entry(input: &Value) -> Option<PasswordEntry> {
         .and_then(Value::as_u64)
         .unwrap_or(created_at);
 
-    Some(PasswordEntry {
+    let entry = PasswordEntry {
         id,
         origin: origin.clone(),
         title: clamp_text(input.get("title"), MAX_TITLE, &origin),
@@ -216,7 +219,37 @@ pub fn normalize_entry(input: &Value) -> Option<PasswordEntry> {
             .and_then(Value::as_bool)
             .unwrap_or(false),
         passkey: input.get("passkey").and_then(normalize_passkey),
+    };
+    Some(if entry.deleted {
+        to_tombstone(&entry)
+    } else {
+        entry
     })
+}
+
+/// What is left of a deleted entry: enough to win a merge, and none of its secrets. The
+/// username stays only for identity entries, so a deleted one is not backfilled again.
+pub fn to_tombstone(entry: &PasswordEntry) -> PasswordEntry {
+    let is_identity = entry.origin.starts_with("ncc://") && entry.origin.ends_with("/identity");
+    PasswordEntry {
+        id: entry.id.clone(),
+        origin: entry.origin.clone(),
+        title: String::new(),
+        username: if is_identity {
+            entry.username.clone()
+        } else {
+            String::new()
+        },
+        password: String::new(),
+        notes: String::new(),
+        totp: String::new(),
+        created_at: entry.created_at,
+        updated_at: entry.updated_at,
+        favorite: false,
+        favorite_updated_at: 0,
+        deleted: true,
+        passkey: None,
+    }
 }
 
 fn normalize_passkey(value: &Value) -> Option<Value> {
@@ -316,7 +349,16 @@ pub fn merge_vaults(local: &PasswordVault, remote: &PasswordVault) -> (PasswordV
         }
     }
 
-    let mut entries: Vec<PasswordEntry> = by_id.into_values().collect();
+    let mut entries: Vec<PasswordEntry> = by_id
+        .into_values()
+        .map(|entry| {
+            if entry.deleted {
+                to_tombstone(&entry)
+            } else {
+                entry
+            }
+        })
+        .collect();
     entries.sort_by(|a, b| {
         a.created_at
             .cmp(&b.created_at)
@@ -404,13 +446,21 @@ pub fn is_vault_within_limit(vault: &PasswordVault) -> bool {
     vault_byte_length(vault) <= MAX_VAULT_BYTES
 }
 
+/// Whether a local change may be saved. The size limit only stops growth: a vault that a
+/// merge pushed over it must still accept deletions and edits that make it smaller.
+pub fn is_vault_change_allowed(current: &PasswordVault, next: &PasswordVault) -> bool {
+    is_vault_within_limit(next)
+        || next.active().count() < current.active().count()
+        || vault_byte_length(next) <= vault_byte_length(current)
+}
+
 /// The filter that finds the vault event for an identity.
 pub fn vault_filter(pubkey: &str) -> Value {
     json!({
         "kinds": [VAULT_KIND],
         "authors": [pubkey],
-        "#d": [VAULT_D],
-        "limit": 10,
+        "#d": (0..parts::MAX_VAULT_PARTS).map(parts::vault_part_d).collect::<Vec<_>>(),
+        "limit": 64,
     })
 }
 
@@ -675,7 +725,9 @@ mod tests {
     fn the_filter_names_the_vault_and_nothing_else() {
         let filter = vault_filter("abc");
         assert_eq!(filter["kinds"], json!([30078]));
-        assert_eq!(filter["#d"], json!([VAULT_D]));
+        let tags = filter["#d"].as_array().unwrap();
+        assert_eq!(tags.len(), parts::MAX_VAULT_PARTS);
+        assert_eq!(tags[0], json!(VAULT_D));
     }
 
     #[test]

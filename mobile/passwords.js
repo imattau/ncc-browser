@@ -266,18 +266,40 @@ export function createPasswords(deps) {
     }
   }
 
+  /**
+   * The native side caught the vault up in the background. Only the list and the status
+   * line are redrawn, so settings someone is typing are left alone.
+   */
+  async function vaultSynced() {
+    try {
+      vaultStatus = await invoke('vault_status')
+      if (!vaultStatus.unlocked) return
+      const state = vaultStateText(vaultStatus)
+      byId('vault-state').textContent = vaultStatus.error ? `${state} — ${vaultStatus.error}` : state
+      set('sub-passwords', `${vaultStatus.entryCount} saved`)
+      await renderVaultList()
+    } catch (error) {
+      byId('vault-note').textContent = String(error)
+    }
+  }
+
   async function renderVaultList() {
     const list = byId('vault-list')
-    list.textContent = ''
-    if (!vaultStatus?.unlocked) return
+    if (!vaultStatus?.unlocked) {
+      list.textContent = ''
+      return
+    }
 
     let entries = []
     try {
       entries = await invoke('vault_list')
     } catch (error) {
+      list.textContent = ''
       list.appendChild(vaultEmpty(String(error)))
       return
     }
+    // Cleared only now, so two renders in flight cannot both append their rows.
+    list.textContent = ''
 
     const query = byId('vault-search').value.trim().toLowerCase()
     const filter = byId('vault-filter')?.value || 'all'
@@ -724,7 +746,7 @@ export function createPasswords(deps) {
   }
 
   return {
-    deviceCredentialReply, reportFillFailure, loadPasswords, renderVaultList, unlockVault, lockVault,
+    deviceCredentialReply, reportFillFailure, loadPasswords, renderVaultList, vaultSynced, unlockVault, lockVault,
     handleWebauthnRequest, saveVaultConfig, renderPasswordFill, openNewLogin, renderPasswordSave, renderPasswordEdit,
     saveEdits, deleteEditing, generateIntoEdit, respondSave, handlePasswordCapture, onPanelChange, onAppBackground,
     toggleEditPasswordReveal: () => setEditPasswordRevealed(!editPasswordRevealed)

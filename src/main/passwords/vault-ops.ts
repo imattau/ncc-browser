@@ -1,7 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { verifyEvent, type Event } from 'nostr-tools'
 import {
-  PASSWORD_VAULT_D,
   PASSWORD_VAULT_KIND,
   PASSWORD_VAULT_VERSION,
   activeEntries,
@@ -10,6 +9,7 @@ import {
   type PasswordEntry,
   type PasswordVault
 } from '@shared/passwords'
+import { MAX_VAULT_PARTS, vaultPartIndex } from '@shared/password-parts'
 import type { ImportedRow } from './import-export'
 import { normalizeTotpInput } from './totp'
 
@@ -130,8 +130,21 @@ export function applyVaultImport(
   return next
 }
 
-export function parseEvent(text: string): Event {
-  const parsed = JSON.parse(text) as Partial<Event>
+export const VAULT_EXPORT_FORMAT = 'ncc-password-vault'
+
+/** An encrypted export: one vault event, or a bundle with one event per part. */
+export function parseExport(text: string): Event[] {
+  const parsed = JSON.parse(text) as { format?: unknown; events?: unknown } | null
+  if (parsed?.format !== VAULT_EXPORT_FORMAT) return [checkVaultEvent(parsed)]
+  const events = parsed.events
+  if (!Array.isArray(events) || events.length === 0 || events.length > MAX_VAULT_PARTS) {
+    throw new Error('That file is not an encrypted password vault')
+  }
+  return events.map(checkVaultEvent)
+}
+
+function checkVaultEvent(input: unknown): Event {
+  const parsed = input as Partial<Event> | null
   if (
     !parsed ||
     typeof parsed !== 'object' ||
@@ -146,7 +159,7 @@ export function parseEvent(text: string): Event {
     throw new Error('That file is not an encrypted password vault')
   }
   const event = parsed as Event
-  if (!event.tags.some((tag) => tag[0] === 'd' && tag[1] === PASSWORD_VAULT_D)) {
+  if (vaultPartIndex(event.tags) === null) {
     throw new Error('That file is not a password vault event')
   }
   if (!verifyEvent(event)) throw new Error('The vault event signature is invalid')

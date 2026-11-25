@@ -2617,6 +2617,8 @@ async function main() {
 
   set('bridge', content ? 'ok (content bridge)' : 'ok')
 
+  void tauri.event.listen('ncc:vault', () => void passwordFeature.vaultSynced())
+
   try {
     const version = await tauri.app.getVersion()
     set('about-version', version)

@@ -4,7 +4,7 @@
 //! password ever reaching disk: the content is already NIP-44 ciphertext and only the
 //! identity's key can read it.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -27,6 +27,9 @@ struct CacheFile {
     vaults: HashMap<String, CachedVault>,
     #[serde(default)]
     migrated_from: HashMap<String, Vec<String>>,
+    /// Parts after the first, by pubkey then part index. The first stays in `vaults`.
+    #[serde(default)]
+    parts: HashMap<String, BTreeMap<usize, CachedVault>>,
 }
 
 impl Default for CacheFile {
@@ -35,6 +38,7 @@ impl Default for CacheFile {
             version: 1,
             vaults: HashMap::new(),
             migrated_from: HashMap::new(),
+            parts: HashMap::new(),
         }
     }
 }
@@ -66,9 +70,32 @@ impl PasswordCache {
         self.write(&data);
     }
 
+    /// Every saved part of a vault, keyed by part index.
+    pub fn get_parts(&mut self, pubkey: &str) -> BTreeMap<usize, CachedVault> {
+        let mut parts = self.load().parts.remove(pubkey).unwrap_or_default();
+        parts.retain(|_, value| value.event.kind.as_u16() as u64 == VAULT_KIND);
+        if let Some(first) = self.get(pubkey) {
+            parts.insert(0, first);
+        }
+        parts
+    }
+
+    pub fn set_part(&mut self, pubkey: &str, index: usize, value: CachedVault) {
+        if index == 0 {
+            return self.set(pubkey, value);
+        }
+        let mut data = self.load();
+        data.parts
+            .entry(pubkey.to_string())
+            .or_default()
+            .insert(index, value);
+        self.write(&data);
+    }
+
     pub fn clear(&mut self, pubkey: &str) {
         let mut data = self.load();
-        if data.vaults.remove(pubkey).is_none() {
+        let had_parts = data.parts.remove(pubkey).is_some();
+        if data.vaults.remove(pubkey).is_none() && !had_parts {
             return;
         }
         self.write(&data);
@@ -174,6 +201,27 @@ mod tests {
 
         reopened.clear("npub1test");
         assert!(PasswordCache::open(&path).get("npub1test").is_none());
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn later_parts_are_saved_beside_the_first() {
+        let path = path("parts");
+        let keys = Keys::generate();
+        let cached = CachedVault {
+            event: event(&keys),
+            pending: false,
+            synced_at: None,
+        };
+        let mut cache = PasswordCache::open(&path);
+        cache.set_part("npub1test", 0, cached.clone());
+        cache.set_part("npub1test", 2, cached);
+
+        let mut reopened = PasswordCache::open(&path);
+        let parts = reopened.get_parts("npub1test");
+        assert_eq!(parts.keys().copied().collect::<Vec<_>>(), vec![0, 2]);
+        reopened.clear("npub1test");
+        assert!(PasswordCache::open(&path).get_parts("npub1test").is_empty());
         let _ = fs::remove_file(&path);
     }
 

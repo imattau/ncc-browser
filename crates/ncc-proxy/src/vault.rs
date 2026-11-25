@@ -5,7 +5,7 @@
 //! it through commands, and a page never reaches it. A page can only *offer* a capture,
 //! and a fill is always something the person asked for by choosing an entry.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -13,11 +13,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use ncc_identity::IdentityStore;
+use ncc_vault::parts::{
+    declared_parts, is_part_change_allowed, is_vault_incomplete, part_payload, split_vault,
+    vault_part_d, vault_part_index, VaultLayout, VAULT_INCOMPLETE,
+};
 use ncc_vault::{
-    apply_entry, draft_origin, entries_for_origin, find_entry, find_entry_for,
-    is_vault_within_limit, merge_vaults, normalize_vault, password_origin, summarize_vault,
-    vault_byte_length, vault_filter, CachedVault, GeneratorOptions, PasswordCache, PasswordEntry,
-    PasswordVault, TotpCode, TotpSecret, VAULT_CLIENT, VAULT_D, VAULT_KIND, VAULT_TAG,
+    apply_entry, draft_origin, entries_for_origin, find_entry, find_entry_for, merge_vaults,
+    normalize_vault, password_origin, summarize_vault, to_tombstone, vault_byte_length,
+    vault_filter, CachedVault, GeneratorOptions, PasswordCache, PasswordEntry, PasswordVault,
+    TotpCode, TotpSecret, MAX_VAULT_PLAINTEXT_BYTES, VAULT_CLIENT, VAULT_KIND, VAULT_TAG,
     VAULT_VERSION,
 };
 
@@ -107,20 +111,59 @@ struct Pending {
     expires: u64,
 }
 
+/// What this device knows about one encrypted part of the vault.
+#[derive(Default)]
+struct PartState {
+    /// The ciphertext saved on disk.
+    cached: Option<CachedVault>,
+    /// The newest decrypted copy seen from a relay or saved here.
+    base: Option<PasswordVault>,
+    /// So a replacement event is always newer than the one it replaces.
+    last_created_at: u64,
+}
+
+impl PartState {
+    fn is_pending(&self) -> bool {
+        self.cached.as_ref().is_some_and(|cached| cached.pending)
+    }
+}
+
+impl State {
+    /// Note which entries a part holds. Ids are only ever added: absence deletes nothing.
+    fn register(&mut self, index: usize, vault: &PasswordVault, declared: usize) {
+        let ids = self.layout.entry(index).or_default();
+        ids.extend(vault.entries.iter().map(|entry| entry.id.clone()));
+        self.declared = self.declared.max(declared);
+    }
+}
+
 #[derive(Default)]
 struct State {
     identity_disabled: bool,
     unlocked: bool,
     pubkey: Option<String>,
     vault: Option<PasswordVault>,
-    cached: Option<CachedVault>,
-    /// The `created_at` of the last event we signed, so a replacement is always newer.
-    last_created_at: u64,
+    parts: BTreeMap<usize, PartState>,
+    layout: VaultLayout,
+    /// The highest part count any payload has stated.
+    declared: usize,
     pending: HashMap<String, Pending>,
     syncing: bool,
     error: Option<String>,
     last_synced_at: Option<u64>,
     last_activity: u64,
+}
+
+/// What `open_local` could do without the network.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocalOpen {
+    /// No identity to open the vault with.
+    Failed,
+    AlreadyOpen,
+    /// The saved copy is open and usable. Call `refresh` to catch up with the relays.
+    Cached,
+    /// There is no readable saved copy: the vault is empty until `refresh` returns.
+    Empty,
 }
 
 pub struct VaultService {
@@ -129,6 +172,9 @@ pub struct VaultService {
     own_relays: OwnRelays,
     cache: Mutex<PasswordCache>,
     state: Mutex<State>,
+    /// Held across every read-modify-publish. A background sync must not finish after a
+    /// save and put back the vault it started with.
+    writes: tokio::sync::Mutex<()>,
     now: Arc<dyn Fn() -> u64 + Send + Sync>,
 }
 
@@ -153,12 +199,21 @@ impl VaultService {
             own_relays: OwnRelays::default(),
             cache: Mutex::new(PasswordCache::open(cache_path)),
             state: Mutex::new(State::default()),
+            writes: tokio::sync::Mutex::new(()),
             now,
         }
     }
 
     fn now(&self) -> u64 {
         (self.now)()
+    }
+
+    /// An entry timestamp in milliseconds, the unit the desktop writes, and always newer
+    /// than the version it replaces so the change wins the next merge.
+    fn entry_stamp(&self, previous: u64) -> u64 {
+        self.now()
+            .saturating_mul(1000)
+            .max(previous.saturating_add(1))
     }
 
     /// Bind this isolated vault signer to the selected default local identity without
@@ -209,44 +264,54 @@ impl VaultService {
     /// is retried on a later unlock until every configured relay has answered.
     pub async fn migrate_from(&self, source_identity: Arc<IdentityStore>) -> Result<bool, String> {
         self.expire();
-        let (default_pubkey, target) = {
+        let default_pubkey = {
             let state = self.secure();
             if !state.unlocked { return Err(LOCKED.to_string()); }
-            (state.pubkey.clone().ok_or_else(|| NO_IDENTITY.to_string())?, state.vault.clone().unwrap_or_default())
+            state.pubkey.clone().ok_or_else(|| NO_IDENTITY.to_string())?
         };
         let source_pubkey = source_identity.public_key().map_err(|error| error.to_string())?.to_hex();
         if source_pubkey == default_pubkey { return Ok(true); }
         if self.cache().source_migrated(&default_pubkey, &source_pubkey) { return Ok(true); }
 
-        let cached = { self.cache().get(&source_pubkey) };
-        let mut source_vault = match cached.as_ref() {
-            Some(value) => Some(decrypt(&source_identity, &source_pubkey, &value.event)?),
-            None => None,
-        };
+        let mut layout = VaultLayout::new();
+        let mut declared = 0;
+        let mut source_vault: Option<PasswordVault> = None;
+        let mut events: Vec<(usize, nostr::Event)> = self
+            .cache()
+            .get_parts(&source_pubkey)
+            .into_iter()
+            .map(|(index, cached)| (index, cached.event))
+            .collect();
         let relays = self.network_relays(&source_pubkey).await;
-        let mut complete = false;
+        let mut answered_all = false;
         if !relays.is_empty() {
-            match self.fetch_remote_report(source_identity.clone(), &relays, &source_pubkey).await {
-                Ok((remote, answered)) => {
-                    complete = answered == relays.len();
-                    if let Some(event) = remote {
-                        let remote_vault = decrypt(&source_identity, &source_pubkey, &event)?;
-                        source_vault = Some(match source_vault {
-                            Some(local) => merge_vaults(&local, &remote_vault).0,
-                            None => remote_vault,
-                        });
-                    }
-                }
-                Err(_) => complete = false,
+            if let Ok((remote, answered)) = self
+                .fetch_remote_report(source_identity.clone(), &relays, &source_pubkey)
+                .await
+            {
+                answered_all = answered == relays.len();
+                events.extend(remote);
             }
         }
+        for (index, event) in events {
+            let (read, stated) = decrypt(&source_identity, &source_pubkey, &event)?;
+            layout.entry(index).or_default();
+            declared = declared.max(stated);
+            source_vault = Some(merge_vaults(&source_vault.unwrap_or_default(), &read).0);
+        }
+        let complete = answered_all && !is_vault_incomplete(&layout, declared);
 
         if let Some(imported) = source_vault {
+            let _writes = self.writes.lock().await;
             self.ensure_latest(&default_pubkey).await;
-            let current = self.secure().vault.clone().unwrap_or(target);
+            let current = {
+                let state = self.secure();
+                if !is_session(&state, &default_pubkey) { return Err(LOCKED.to_string()); }
+                state.vault.clone().unwrap_or_default()
+            };
             let (merged, changed) = merge_vaults(&current, &imported);
             if changed {
-                let (_, error) = self.publish(&default_pubkey, merged).await?;
+                let (_, error) = self.commit(&default_pubkey, merged).await?;
                 if let Some(error) = error { return Err(error); }
             }
         }
@@ -311,11 +376,7 @@ impl VaultService {
                 .as_ref()
                 .map(|vault| vault.active().count())
                 .unwrap_or_default(),
-            pending: state
-                .cached
-                .as_ref()
-                .map(|cached| cached.pending)
-                .unwrap_or(false),
+            pending: state.parts.values().any(PartState::is_pending),
             syncing: state.syncing,
             last_synced_at: state.last_synced_at,
             relays: self.relays(),
@@ -324,7 +385,10 @@ impl VaultService {
             vault_relay: settings.vault_relay,
             use_nip65: settings.use_nip65,
             never_save: settings.never_save,
-            error: state.error.clone(),
+            error: state.error.clone().or_else(|| {
+                (state.unlocked && is_vault_incomplete(&state.layout, state.declared))
+                    .then(|| VAULT_INCOMPLETE.to_string())
+            }),
         }
     }
 
@@ -347,13 +411,21 @@ impl VaultService {
     }
 
     pub async fn unlock(&self) -> VaultStatus {
+        if matches!(self.open_local(), LocalOpen::Cached | LocalOpen::Empty) {
+            self.refresh().await;
+        }
+        self.status()
+    }
+
+    /// Open the vault from the copy on this device, without waiting for any relay.
+    pub fn open_local(&self) -> LocalOpen {
         self.expire();
 
         let pubkey = match self.require_pubkey() {
             Ok(pubkey) => pubkey,
             Err(error) => {
                 self.fail(error);
-                return self.status();
+                return LocalOpen::Failed;
             }
         };
 
@@ -363,7 +435,7 @@ impl VaultService {
         };
         if already_open {
             self.touch();
-            return self.status();
+            return LocalOpen::AlreadyOpen;
         }
 
         {
@@ -373,42 +445,53 @@ impl VaultService {
             state.error = None;
         }
 
-        let cached = { self.cache().get(&pubkey) };
+        let saved = { self.cache().get_parts(&pubkey) };
 
         // An explicit block, not `drop`: the guard's scope has to end before the
         // await below for the future to stay `Send` for the command layer.
+        let mut opened = LocalOpen::Empty;
         {
             let mut state = self.secure();
-            state.last_created_at = cached
-                .as_ref()
-                .map(|cached| cached.event.created_at.as_secs())
-                .unwrap_or_default();
-            state.last_synced_at = cached.as_ref().and_then(|cached| cached.synced_at);
-            state.cached = cached.clone();
+            state.parts.clear();
+            state.layout.clear();
+            state.declared = 0;
+            state.last_synced_at = saved.values().filter_map(|cached| cached.synced_at).min();
 
-            if let Some(cached) = &cached {
+            let mut vault = PasswordVault::default();
+            for (index, cached) in saved {
+                let mut part = PartState {
+                    last_created_at: cached.event.created_at.as_secs(),
+                    ..Default::default()
+                };
                 match decrypt(&self.identity, &pubkey, &cached.event) {
-                    Ok(vault) => state.vault = Some(vault),
+                    Ok((read, declared)) => {
+                        state.register(index, &read, declared);
+                        vault = merge_vaults(&vault, &read).0;
+                        part.base = Some(read);
+                        opened = LocalOpen::Cached;
+                    }
                     Err(error) => {
-                        state.vault = Some(PasswordVault::default());
                         state.error = Some(format!("{error}. Fetching the relay copy."));
                     }
                 }
-            } else {
-                state.vault = Some(PasswordVault::default());
+                part.cached = Some(cached);
+                state.parts.insert(index, part);
             }
 
+            state.vault = Some(vault);
             state.unlocked = true;
             state.last_activity = self.now();
         }
 
-        match self.sync(true).await {
-            Ok(()) => {}
-            Err(error) => self.fail(error),
-        }
+        opened
+    }
 
+    /// Catch the open vault up with the relays. Failures are reported in the status.
+    pub async fn refresh(&self) {
+        if let Err(error) = self.sync(true).await {
+            self.fail(error);
+        }
         self.touch();
-        self.status()
     }
 
     pub fn lock(&self) -> VaultStatus {
@@ -556,6 +639,7 @@ impl VaultService {
     pub async fn set_favorite(&self, id: &str, favorite: bool) -> SaveOutcome {
         self.expire();
         if !self.secure().unlocked { return SaveOutcome { ok: false, pending: false, error: Some(LOCKED.to_string()), status: self.status() }; }
+        let _writes = self.writes.lock().await;
         let result = async {
             let pubkey = self.require_pubkey()?;
             self.ensure_latest(&pubkey).await;
@@ -568,7 +652,7 @@ impl VaultService {
             entry.favorite = favorite;
             entry.favorite_updated_at = self.now().saturating_mul(1000).max(entry.favorite_updated_at.saturating_add(1));
             let next = apply_entry(&vault, entry);
-            self.publish(&pubkey, next).await
+            self.commit(&pubkey, next).await
         }.await;
         match result {
             Ok((pending, error)) => SaveOutcome { ok: true, pending, error, status: self.status() },
@@ -773,6 +857,7 @@ impl VaultService {
             };
         }
 
+        let _writes = self.writes.lock().await;
         let result = self.save_inner(draft).await;
         match result {
             Ok((entry, pending, error)) => {
@@ -812,7 +897,6 @@ impl VaultService {
         let pubkey = self.require_pubkey()?;
         self.ensure_latest(&pubkey).await;
 
-        let now = self.now();
         let (vault, existing) = {
             let state = self.secure();
             let vault = state.vault.clone().ok_or_else(|| VAULT_ERROR.to_string())?;
@@ -823,6 +907,7 @@ impl VaultService {
                 .cloned();
             (vault, existing)
         };
+        let now = self.entry_stamp(existing.as_ref().map(|entry| entry.updated_at).unwrap_or(0));
 
         let id = existing
             .as_ref()
@@ -854,7 +939,7 @@ impl VaultService {
         };
 
         let next = apply_entry(&vault, entry.clone());
-        let (published, error) = self.publish(&pubkey, next).await?;
+        let (published, error) = self.commit(&pubkey, next).await?;
         Ok((entry, published, error))
     }
 
@@ -869,6 +954,7 @@ impl VaultService {
             };
         }
 
+        let _writes = self.writes.lock().await;
         let result = self.remove_inner(id).await;
         match result {
             Ok((pending, error)) => SaveOutcome {
@@ -903,10 +989,10 @@ impl VaultService {
             (vault, entry)
         };
         entry.deleted = true;
-        entry.updated_at = self.now();
+        entry.updated_at = self.entry_stamp(entry.updated_at);
 
-        let next = apply_entry(&vault, entry);
-        let (pending, error) = self.publish(&pubkey, next).await?;
+        let next = apply_entry(&vault, to_tombstone(&entry));
+        let (pending, error) = self.commit(&pubkey, next).await?;
         Ok((pending, error))
     }
 
@@ -919,50 +1005,78 @@ impl VaultService {
         }
 
         // Offline is fine here: a save goes ahead locally and is retried by the next sync.
-        let Ok(Some(remote)) = self.fetch_remote(&relays, pubkey).await else {
+        let Ok((events, _)) = self
+            .fetch_remote_report(self.identity.clone(), &relays, pubkey)
+            .await
+        else {
             return;
         };
 
-        let mut state = self.secure();
-        let cached_at = state
-            .cached
-            .as_ref()
-            .map(|cached| cached.event.created_at.as_secs());
-        if cached_at
-            .map(|at| remote.created_at.as_secs() < at)
-            .unwrap_or(false)
+        let mut adopted = Vec::new();
         {
-            return;
+            let mut state = self.secure();
+            if !is_session(&state, pubkey) {
+                return;
+            }
+            for (index, event) in events {
+                let stale = state
+                    .parts
+                    .get(&index)
+                    .and_then(|part| part.cached.as_ref())
+                    .is_some_and(|cached| {
+                        event.id == cached.event.id
+                            || event.created_at.as_secs() < cached.event.created_at.as_secs()
+                    });
+                if stale {
+                    continue;
+                }
+                let Ok((read, declared)) = decrypt(&self.identity, pubkey, &event) else {
+                    continue;
+                };
+                state.register(index, &read, declared);
+                let merged = merge_vaults(&state.vault.clone().unwrap_or_default(), &read).0;
+                let current = split_vault(&merged, &state.layout)
+                    .get(&index)
+                    .is_some_and(|content| !has_local_changes(content, &read));
+                state.vault = Some(merged);
+                let part = state.parts.entry(index).or_default();
+                part.last_created_at = part.last_created_at.max(event.created_at.as_secs());
+                part.base = Some(read);
+                if current {
+                    let cached = self.synced_copy(event);
+                    part.cached = Some(cached.clone());
+                    adopted.push((index, cached));
+                }
+            }
+            if !adopted.is_empty() {
+                state.last_synced_at = Some(self.now());
+            }
         }
-        if state
-            .cached
-            .as_ref()
-            .map(|cached| cached.event.id == remote.id)
-            .unwrap_or(false)
-        {
-            return;
-        }
+        self.save_parts(pubkey, adopted);
+    }
 
-        let Ok(remote_vault) = decrypt(&self.identity, pubkey, &remote) else {
-            return;
-        };
-        let local = state.vault.clone().unwrap_or_default();
-        let (merged, changed) = merge_vaults(&local, &remote_vault);
-        state.vault = Some(merged);
-        state.last_created_at = state.last_created_at.max(remote.created_at.as_secs());
-        if !changed {
-            state.cached = Some(CachedVault {
-                event: remote,
-                pending: false,
-                synced_at: Some(self.now()),
-            });
-            state.last_synced_at = Some(self.now());
+    fn synced_copy(&self, event: nostr::Event) -> CachedVault {
+        CachedVault {
+            event,
+            pending: false,
+            synced_at: Some(self.now()),
+        }
+    }
+
+    /// Keep relay copies on this device, so the next unlock does not need the network.
+    fn save_parts(&self, pubkey: &str, parts: Vec<(usize, CachedVault)>) {
+        for (index, cached) in parts {
+            self.cache().set_part(pubkey, index, cached);
         }
     }
 
     /// Pull the relay copy and publish the union when the remote had entries we lacked.
     async fn sync(&self, publish_merged: bool) -> Result<(), String> {
+        let _writes = self.writes.lock().await;
         let pubkey = self.require_pubkey()?;
+        if !is_session(&self.secure(), &pubkey) {
+            return Ok(());
+        }
         let relays = self.network_relays(&pubkey).await;
         if relays.is_empty() {
             return Ok(());
@@ -1001,80 +1115,89 @@ impl VaultService {
     ) -> Result<(), String> {
         // No relay answering is a failure, not an empty vault: calling it "synced" would
         // hide that a login never left the device.
-        let remote = self.fetch_remote(relays, pubkey).await?;
+        let (events, _) = self
+            .fetch_remote_report(self.identity.clone(), relays, pubkey)
+            .await?;
 
-        // A save that no relay accepted is retried here, whatever the relays hold.
-        let (local, was_pending, cached_id) = {
-            let state = self.secure();
-            (
-                state.vault.clone().unwrap_or_default(),
-                state.cached.as_ref().is_some_and(|cached| cached.pending),
-                state.cached.as_ref().map(|cached| cached.event.id),
-            )
-        };
-
-        let Some(remote) = remote else {
-            // The relays have no vault yet: send ours if there is anything in it.
-            if publish_merged && (was_pending || !local.entries.is_empty()) {
-                let (_, error) = self.publish(pubkey, local).await?;
-                if let Some(error) = error {
-                    return Err(error);
-                }
-            }
-            return Ok(());
-        };
-
-        if cached_id == Some(remote.id) && !was_pending {
-            return Ok(());
-        }
-
-        let remote_vault = decrypt(&self.identity, pubkey, &remote)?;
-        let (merged, changed) = merge_vaults(&local, &remote_vault);
-
+        let mut adopted = Vec::new();
+        let mut outgoing = Vec::new();
         {
             let mut state = self.secure();
-            state.vault = Some(merged.clone());
-            state.last_created_at = state.last_created_at.max(remote.created_at.as_secs());
-            if !changed && !was_pending {
-                state.cached = Some(CachedVault {
-                    event: remote,
-                    pending: false,
-                    synced_at: Some(self.now()),
+            // Locked or switched while the relays were answering: leave it that way.
+            if !is_session(&state, pubkey) {
+                return Ok(());
+            }
+
+            // Parts the relays hold that differ from what is saved here.
+            let mut changed: BTreeMap<usize, (nostr::Event, PasswordVault)> = BTreeMap::new();
+            let mut merged = state.vault.clone().unwrap_or_default();
+            for (index, event) in &events {
+                let unchanged = state.parts.get(index).is_some_and(|part| {
+                    part.base.is_some()
+                        && part
+                            .cached
+                            .as_ref()
+                            .is_some_and(|cached| cached.event.id == event.id && !cached.pending)
                 });
+                if unchanged {
+                    continue;
+                }
+                let (read, declared) = decrypt(&self.identity, pubkey, event)?;
+                state.register(*index, &read, declared);
+                merged = merge_vaults(&merged, &read).0;
+                changed.insert(*index, (event.clone(), read));
+            }
+            let split = split_vault(&merged, &state.layout);
+            state.vault = Some(merged);
+
+            for (index, content) in split {
+                let part = state.parts.entry(index).or_default();
+                // A save that no relay accepted is retried here, whatever they hold.
+                let mut needs_publish = part.is_pending();
+                if let Some((event, read)) = changed.remove(&index) {
+                    needs_publish |= has_local_changes(&content, &read);
+                    part.last_created_at = part.last_created_at.max(event.created_at.as_secs());
+                    part.base = Some(read);
+                    if !needs_publish {
+                        let cached = self.synced_copy(event);
+                        part.cached = Some(cached.clone());
+                        adopted.push((index, cached));
+                    }
+                } else if events.contains_key(&index) {
+                    needs_publish |= !part
+                        .base
+                        .as_ref()
+                        .is_some_and(|base| !has_local_changes(&content, base));
+                } else {
+                    // The relays do not have this part: send ours if there is anything.
+                    needs_publish |= !content.entries.is_empty();
+                }
+                if needs_publish {
+                    outgoing.push((index, content));
+                }
             }
         }
+        self.save_parts(pubkey, adopted);
 
-        if (changed || was_pending) && publish_merged {
-            // Either the remote copy won something, so the union has to go back out or
-            // the other device would keep offering its older entry, or an earlier
-            // publish never reached a relay.
-            let (_, error) = self.publish(pubkey, merged).await?;
-            if let Some(error) = error {
-                return Err(error);
-            }
+        if !publish_merged {
+            return Ok(());
         }
-
-        Ok(())
+        let mut failure = None;
+        for (index, content) in outgoing {
+            let (_, error) = self.publish_part(pubkey, index, content, relays).await?;
+            failure = failure.or(error);
+        }
+        failure.map_or(Ok(()), Err)
     }
 
-    /// The newest vault event any relay holds. `Err` only when no relay answered at all;
-    /// `Ok(None)` means they answered and have none.
-    async fn fetch_remote(
-        &self,
-        relays: &[String],
-        pubkey: &str,
-    ) -> Result<Option<nostr::Event>, String> {
-        self.fetch_remote_report(self.identity.clone(), relays, pubkey)
-            .await
-            .map(|(event, _)| event)
-    }
-
+    /// The newest event for each part. `Err` only when no relay answered at all; an
+    /// empty map means they answered and have none.
     async fn fetch_remote_report(
         &self,
         identity: Arc<IdentityStore>,
         relays: &[String],
         pubkey: &str,
-    ) -> Result<(Option<nostr::Event>, usize), String> {
+    ) -> Result<(BTreeMap<usize, nostr::Event>, usize), String> {
         let signer = Self::signer_for(identity);
         let filter = vault_filter(pubkey);
         let attempts = relays
@@ -1094,10 +1217,7 @@ impl VaultService {
                         event.kind.as_u16() as u64 == VAULT_KIND
                             && event.pubkey.to_hex() == pubkey
                             && event.content.len() <= 1_000_000
-                            && event.tags.iter().any(|tag| {
-                                let parts = tag.as_slice();
-                                parts.len() >= 2 && parts[0] == "d" && parts[1] == VAULT_D
-                            })
+                            && part_of(event).is_some()
                             && event.verify().is_ok()
                     }))
                 }
@@ -1117,7 +1237,13 @@ impl VaultService {
                 .cmp(&a.created_at.as_secs())
                 .then_with(|| a.id.to_hex().cmp(&b.id.to_hex()))
         });
-        Ok((valid.into_iter().next(), answered))
+        let mut newest = BTreeMap::new();
+        for event in valid {
+            if let Some(index) = part_of(&event) {
+                newest.entry(index).or_insert(event);
+            }
+        }
+        Ok((newest, answered))
     }
 
     fn signer(&self) -> Signer {
@@ -1132,55 +1258,115 @@ impl VaultService {
         })
     }
 
-    async fn publish(
+    /// Save a change: publish each part it touches.
+    async fn commit(
         &self,
         pubkey: &str,
-        vault: PasswordVault,
+        next: PasswordVault,
     ) -> Result<(bool, Option<String>), String> {
-        if !is_vault_within_limit(&vault) {
-            return Err(format!(
-                "The vault would exceed {} KB. Remove entries or shorten notes.",
-                vault_byte_length(&vault) / 1024
-            ));
-        }
+        let dirty: Vec<(usize, PasswordVault)> = {
+            let state = self.secure();
+            if !is_session(&state, pubkey) {
+                return Err(LOCKED.to_string());
+            }
+            let before = split_vault(&state.vault.clone().unwrap_or_default(), &state.layout);
+            let mut after = split_vault(&next, &state.layout);
+            // A vault that was never saved still needs an event, if only an empty one.
+            if !state.parts.is_empty() {
+                after.retain(|index, content| match state.parts.get(index) {
+                    Some(part) if part.is_pending() => true,
+                    Some(PartState {
+                        base: Some(base), ..
+                    }) => content.entries != base.entries,
+                    _ => !content.entries.is_empty(),
+                });
+            }
+            // Checked for every part before any is sent, so a change is not half saved.
+            if after
+                .iter()
+                .any(|(index, content)| !is_part_change_allowed(before.get(index), content))
+            {
+                return Err(
+                    "The password vault is full. Delete some logins or shorten notes.".to_string(),
+                );
+            }
+            after.into_iter().collect()
+        };
 
         let relays = self.network_relays(pubkey).await;
+        let mut failure = None;
+        for (index, content) in dirty {
+            let (_, error) = self.publish_part(pubkey, index, content, &relays).await?;
+            failure = failure.or(error);
+        }
+
+        let mut state = self.secure();
+        let pending = state.parts.values().any(PartState::is_pending);
+        if is_session(&state, pubkey) {
+            state.vault = Some(next);
+            state.last_synced_at = Some(self.now());
+            state.error = failure.clone();
+        }
+        Ok((pending, failure))
+    }
+
+    async fn publish_part(
+        &self,
+        pubkey: &str,
+        index: usize,
+        content: PasswordVault,
+        relays: &[String],
+    ) -> Result<(bool, Option<String>), String> {
+        if vault_byte_length(&content) > MAX_VAULT_PLAINTEXT_BYTES {
+            return Err("The password vault is too large to encrypt. Delete some logins.".to_string());
+        }
         if relays.is_empty() {
             return Err("No vault relay is configured".to_string());
         }
+        let (count, previous) = {
+            let state = self.secure();
+            if !is_session(&state, pubkey) {
+                return Err(LOCKED.to_string());
+            }
+            let known = state.parts.keys().next_back().map_or(0, |highest| highest + 1);
+            let previous = state
+                .parts
+                .get(&index)
+                .map_or(0, |part| part.last_created_at);
+            (state.declared.max(known), previous)
+        };
 
-        let plaintext = serde_json::to_string(&vault).map_err(|error| error.to_string())?;
-        let content = self
+        let plaintext = part_payload(&content, count)
+            .map_err(|error| error.to_string())?
+            .to_string();
+        let ciphertext = self
             .identity
             .nip44_encrypt(pubkey, &plaintext)
             .map_err(|_| NO_IDENTITY.to_string())?;
 
-        let created_at = {
-            let previous = self.secure().last_created_at;
-            self.now().max(previous.saturating_add(1))
-        };
+        let created_at = self.now().max(previous.saturating_add(1));
 
         let template = json!({
             "kind": VAULT_KIND,
             "created_at": created_at,
             "tags": [
-                ["d", VAULT_D],
+                ["d", vault_part_d(index)],
                 ["t", VAULT_TAG],
                 ["client", VAULT_CLIENT],
             ],
-            "content": content,
+            "content": ciphertext,
         });
         let event = self
             .identity
             .sign_event(&template)
             .map_err(|error| format!("The vault could not be signed: {error}"))?;
-        if event.verify().is_err() {
+        if event.verify().is_err() || event.pubkey.to_hex() != pubkey {
             return Err("The signed vault event is invalid".to_string());
         }
 
         let signer = self.signer();
         let (accepted, first_error) =
-            relay::publish_all(&relays, &event, &signer, RELAY_WAIT).await;
+            relay::publish_all(relays, &event, &signer, RELAY_WAIT).await;
         let pending = accepted < relays.len();
 
         let cached = CachedVault {
@@ -1188,7 +1374,7 @@ impl VaultService {
             pending,
             synced_at: Some(self.now()),
         };
-        self.cache().set(pubkey, cached.clone());
+        self.cache().set_part(pubkey, index, cached.clone());
 
         let error = if pending {
             Some(match accepted {
@@ -1212,11 +1398,15 @@ impl VaultService {
         };
 
         let mut state = self.secure();
-        state.cached = Some(cached);
-        state.last_created_at = created_at;
-        state.last_synced_at = Some(self.now());
-        state.vault = Some(vault);
-        state.error = error.clone();
+        // The vault may have been locked while relays were answering. The saved copy
+        // above is ciphertext; nothing decrypted may come back.
+        if is_session(&state, pubkey) {
+            state.register(index, &content, 0);
+            let part = state.parts.entry(index).or_default();
+            part.cached = Some(cached);
+            part.last_created_at = created_at;
+            part.base = Some(content);
+        }
 
         Ok((pending, error))
     }
@@ -1240,10 +1430,36 @@ impl VaultService {
     }
 }
 
+fn is_session(state: &State, pubkey: &str) -> bool {
+    state.unlocked && state.pubkey.as_deref() == Some(pubkey)
+}
+
+/// Does `local` hold an entry the other copy lacks, or a newer version of one?
+fn has_local_changes(local: &PasswordVault, remote: &PasswordVault) -> bool {
+    local.entries.iter().any(|entry| {
+        !find_entry(remote, &entry.id).is_some_and(|other| {
+            entry.updated_at <= other.updated_at
+                && entry.favorite_updated_at <= other.favorite_updated_at
+        })
+    })
+}
+
+/// The part a signed vault event holds.
+fn part_of(event: &nostr::Event) -> Option<usize> {
+    event.tags.iter().find_map(|tag| match tag.as_slice() {
+        [name, d, ..] if name == "d" => vault_part_index(d),
+        _ => None,
+    })
+}
+
+/// Everything decrypted goes, including each part's copy of its entries.
 fn clear_vault(state: &mut State) {
     state.unlocked = false;
     state.pubkey = None;
     state.vault = None;
+    state.parts.clear();
+    state.layout.clear();
+    state.declared = 0;
     state.last_activity = 0;
 }
 
@@ -1251,7 +1467,7 @@ fn decrypt(
     identity: &IdentityStore,
     pubkey: &str,
     event: &nostr::Event,
-) -> Result<PasswordVault, String> {
+) -> Result<(PasswordVault, usize), String> {
     let plaintext = identity
         .nip44_decrypt(pubkey, &event.content)
         .map_err(|_| VAULT_ERROR.to_string())?;
@@ -1261,7 +1477,7 @@ fn decrypt(
     if version != u64::from(VAULT_VERSION) {
         return Err("This vault was created by a newer version".to_string());
     }
-    Ok(normalize_vault(&parsed))
+    Ok((normalize_vault(&parsed), declared_parts(&parsed)))
 }
 
 fn clip(value: &str, max: usize) -> String {
@@ -1513,6 +1729,119 @@ mod tests {
         assert!(vault.list().is_empty());
     }
 
+    #[tokio::test]
+    async fn changes_are_stamped_in_milliseconds_and_beat_a_desktop_copy() {
+        let vault = service(1_700_000_000);
+        vault.unlock().await;
+        vault
+            .save(Draft {
+                id: None,
+                origin: "https://example.com".into(),
+                title: "Example".into(),
+                username: "alice".into(),
+                password: "hunter2".into(),
+                notes: String::new(),
+                totp: String::new(),
+                passkey: None,
+            })
+            .await;
+        let id = vault.list()[0].id.clone();
+        assert_eq!(vault.entry(&id).unwrap().updated_at, 1_700_000_000_000);
+
+        // As if the desktop had saved this login a little ahead of this device's clock.
+        let desktop_stamp = 1_700_000_000_500;
+        let desktop = {
+            let mut state = vault.secure();
+            let current = state.vault.as_mut().unwrap();
+            current.entries[0].updated_at = desktop_stamp;
+            current.clone()
+        };
+
+        assert!(vault.remove(&id).await.ok);
+        let removed = vault.secure().vault.clone().unwrap();
+        let (merged, _) = ncc_vault::merge_vaults(&removed, &desktop);
+        assert!(merged.entries[0].deleted);
+        assert!(merged.entries[0].password.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_full_vault_still_accepts_deletions() {
+        let vault = service(7000);
+        vault.unlock().await;
+        let draft = |index: usize| Draft {
+            id: None,
+            origin: "https://example.com".into(),
+            title: "Example".into(),
+            username: format!("user{index}"),
+            password: "hunter2".into(),
+            notes: "x".repeat(4000),
+            totp: String::new(),
+            passkey: None,
+        };
+        let mut saved = 0;
+        while vault.save(draft(saved)).await.ok {
+            saved += 1;
+        }
+        assert!(saved > 5);
+
+        let id = vault.list()[0].id.clone();
+        let outcome = vault.remove(&id).await;
+        assert!(outcome.ok, "{:?}", outcome.error);
+        assert_eq!(vault.list().len(), saved - 1);
+        assert!(vault.save(draft(saved + 1)).await.ok);
+    }
+
+    #[tokio::test]
+    async fn the_saved_copy_opens_without_waiting_for_a_relay() {
+        let dir = std::env::temp_dir().join(format!("ncc-vault-reopen-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (identity, settings) = (identity(), settings());
+        let open = || {
+            VaultService::with_clock(
+                identity.clone(),
+                settings.clone(),
+                dir.join("cache.json"),
+                Arc::new(|| 8000),
+            )
+        };
+
+        let first = open();
+        assert_eq!(first.open_local(), LocalOpen::Empty);
+        let outcome = first
+            .save(Draft {
+                id: None,
+                origin: "https://example.com".into(),
+                title: "Example".into(),
+                username: "alice".into(),
+                password: "hunter2".into(),
+                notes: String::new(),
+                totp: String::new(),
+                passkey: None,
+            })
+            .await;
+        assert!(outcome.ok, "{:?}", outcome.error);
+
+        let restarted = open();
+        assert_eq!(restarted.open_local(), LocalOpen::Cached);
+        assert_eq!(restarted.list().len(), 1);
+        assert_eq!(restarted.open_local(), LocalOpen::AlreadyOpen);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_sync_that_finishes_after_a_lock_leaves_the_vault_locked() {
+        let vault = service(9000);
+        vault.unlock().await;
+        let pubkey = vault.require_pubkey().unwrap();
+        let open = vault.secure().vault.clone().unwrap();
+        vault.lock();
+        let relays = vault.network_relays(&pubkey).await;
+        assert!(vault.publish_part(&pubkey, 0, open.clone(), &relays).await.is_err());
+        assert!(vault.commit(&pubkey, open).await.is_err());
+        assert!(vault.secure().vault.is_none());
+        assert!(!vault.status().unlocked);
+    }
+
     /// The shell's command layer requires every future to be `Send`; a guard held
     /// across an await would show up here instead of as a build failure three crates
     /// away.
@@ -1668,6 +1997,78 @@ mod tests {
             1,
             "a pending save has to be published once a relay is reachable"
         );
+    }
+
+    #[tokio::test]
+    async fn a_vault_in_two_parts_reads_as_one_and_each_is_kept_up_to_date() {
+        let (url, store) = memory_relay().await;
+        let identity = identity();
+        let pubkey = identity.public_key().unwrap().to_hex();
+        for (index, number) in [(0usize, 1u64), (1, 2)] {
+            let payload = json!({"v": 1, "updatedAt": number, "parts": 2, "entries": [{
+                "id": format!("{number:016x}"), "origin": "https://example.com",
+                "username": format!("user{number}"), "password": "secret",
+                "createdAt": number, "updatedAt": number,
+            }]});
+            let content = identity.nip44_encrypt(&pubkey, &payload.to_string()).unwrap();
+            let event = identity
+                .sign_event(&json!({
+                    "kind": VAULT_KIND, "created_at": 100,
+                    "tags": [["d", vault_part_d(index)]], "content": content,
+                }))
+                .unwrap();
+            store
+                .lock()
+                .unwrap()
+                .insert(format!("\"{}\"", vault_part_d(index)), json!(event));
+        }
+        let dir = std::env::temp_dir().join(format!("ncc-vault-parts-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let settings = settings();
+        settings.set_relays(vec![url]).unwrap();
+        let open = || {
+            VaultService::with_clock(
+                identity.clone(),
+                settings.clone(),
+                dir.join("cache.json"),
+                Arc::new(|| 11_000),
+            )
+        };
+        let part_id = |index: usize| {
+            store.lock().unwrap()[&format!("\"{}\"", vault_part_d(index))]["id"].clone()
+        };
+
+        let vault = open();
+        let status = vault.unlock().await;
+        assert_eq!((status.entry_count, status.error), (2, None));
+
+        // Both parts are saved on the device, so a restart needs no relay.
+        let restarted = open();
+        assert_eq!(restarted.open_local(), LocalOpen::Cached);
+        assert_eq!(restarted.list().len(), 2);
+
+        let (first, second) = (part_id(0), part_id(1));
+        let outcome = vault.remove(&format!("{:016x}", 2)).await;
+        assert!(outcome.ok && !outcome.pending, "{outcome:?}");
+        assert_eq!(part_id(0), first);
+        assert_ne!(part_id(1), second);
+
+        assert!(vault.save(draft("https://new.example", "alice")).await.ok);
+        assert_eq!(store.lock().unwrap().len(), 2, "no part is ever created");
+        assert_eq!(vault.list().len(), 2);
+
+        // A second part that cannot be fetched is reported, and nothing is deleted.
+        store
+            .lock()
+            .unwrap()
+            .remove(&format!("\"{}\"", vault_part_d(1)));
+        let _ = std::fs::remove_dir_all(&dir);
+        let fresh = open();
+        let status = fresh.unlock().await;
+        assert_eq!(status.error.as_deref(), Some(VAULT_INCOMPLETE));
+        assert!(fresh.save(draft("https://later.example", "bob")).await.ok);
+        assert_eq!(store.lock().unwrap().len(), 1, "a missing part is not written");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Cross-implementation check against a real relay, with `test/password-live.test.ts`:

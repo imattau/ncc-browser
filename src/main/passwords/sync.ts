@@ -1,11 +1,22 @@
+import { isDeepStrictEqual } from 'node:util'
 import { verifyEvent, type Event, type EventTemplate } from 'nostr-tools'
 import {
+  VAULT_PART_DS,
+  declaredParts,
+  isPartChangeAllowed,
+  isVaultIncomplete,
+  partPayload,
+  splitVault,
+  vaultPartD,
+  vaultPartIndex,
+  type VaultLayout
+} from '@shared/password-parts'
+import {
   PASSWORD_VAULT_CLIENT,
-  PASSWORD_VAULT_D,
   PASSWORD_VAULT_KIND,
   PASSWORD_VAULT_TAG,
   PASSWORD_VAULT_VERSION,
-  isVaultWithinLimit,
+  MAX_VAULT_PLAINTEXT_BYTES,
   mergeVaults,
   normalizeVault,
   passwordVaultFilter,
@@ -32,6 +43,21 @@ import {
 } from './vault-ops'
 
 const LOCKED = 'Unlock the password manager first'
+
+/** What this device knows about one encrypted part of the vault. */
+interface PartState {
+  /** The ciphertext saved on disk. */
+  cached: CachedVault | null
+  /** The newest decrypted copy seen from a relay or saved here. */
+  base: PasswordVault | null
+  /** So a replacement event is always newer than the one it replaces. */
+  lastCreatedAt: number
+}
+
+interface PublishOutcome {
+  pending: boolean
+  error?: string
+}
 
 /** The state `status()` and the background-focus throttle read. */
 export interface PasswordSyncState {
@@ -61,8 +87,9 @@ export interface PasswordSyncContext {
  * service passes the current vault and pubkey through closures.
  */
 export class PasswordSync {
-  private cached: CachedVault | null = null
-  private lastCreatedAt = 0
+  private parts = new Map<number, PartState>()
+  private layout: VaultLayout = new Map()
+  private declared = 0
   private lastSyncedAt: number | null = null
   private pending = false
   private syncing = false
@@ -79,16 +106,55 @@ export class PasswordSync {
     }
   }
 
+  /** The saved first part. */
   cachedVault(): CachedVault | null {
-    return this.cached
+    return this.parts.get(0)?.cached ?? null
+  }
+
+  /** True when a part known to exist has not been fetched or could not be read. */
+  incomplete(): boolean {
+    return isVaultIncomplete(this.layout, this.declared)
+  }
+
+  /** The saved events for every part, or null when any loaded part has none. */
+  savedEvents(): Event[] | null {
+    const indexes = [...this.layout.keys()].sort((a, b) => a - b)
+    const events = indexes.map((index) => this.parts.get(index)?.cached?.event)
+    return indexes.length > 0 && events.every((event) => event !== undefined)
+      ? (events as Event[])
+      : null
   }
 
   /** Adopt the ciphertext cache for a newly unlocked identity. */
   load(pubkey: string): void {
-    this.cached = this.ctx.cache.get(pubkey)
-    this.lastCreatedAt = this.cached?.event.created_at ?? 0
-    this.lastSyncedAt = this.cached?.syncedAt ?? null
-    this.pending = this.cached?.pending ?? false
+    this.parts = new Map()
+    this.layout = new Map()
+    this.declared = 0
+    for (const [index, cached] of this.ctx.cache.getParts(pubkey)) {
+      this.parts.set(index, { cached, base: null, lastCreatedAt: cached.event.created_at })
+    }
+    const saved = [...this.parts.values()].map((part) => part.cached!)
+    const synced = saved.map((cached) => cached.syncedAt).filter((at): at is number => at !== null)
+    this.lastSyncedAt = synced.length > 0 ? Math.min(...synced) : null
+    this.pending = saved.some((cached) => cached.pending)
+  }
+
+  /** Decrypt the saved parts. Null when nothing is saved on this device. */
+  async openCached(provider: ProviderLike): Promise<{ vault: PasswordVault; failed: boolean } | null> {
+    if (this.parts.size === 0) return null
+    let vault = emptyVault()
+    let failed = false
+    for (const [index, part] of [...this.parts].sort(([a], [b]) => a - b)) {
+      try {
+        const read = await this.decryptPart(provider, this.requirePubkey(), part.cached!.event)
+        this.register(index, read)
+        part.base = read.vault
+        vault = mergeVaults(vault, read.vault).vault
+      } catch {
+        failed = true
+      }
+    }
+    return { vault, failed }
   }
 
   /** Forget relay resolution after a config or identity change. */
@@ -114,55 +180,47 @@ export class PasswordSync {
     this.ctx.sendStatus()
     try {
       const relays = await this.resolveRelays(pubkey, refreshRelays)
-      const remote = await this.fetchRemote(provider, pubkey, relays)
+      const { events } = await this.fetchRemoteReport(provider, pubkey, relays)
+
+      // Parts the relays hold that differ from what is saved here.
+      const changed = new Map<number, { event: Event; vault: PasswordVault }>()
       let next = this.ctx.vault()!
+      for (const [index, event] of events) {
+        const part = this.parts.get(index)
+        if (part?.base && part.cached?.event.id === event.id && !part.cached.pending) continue
+        const read = await this.decryptPart(provider, pubkey, event)
+        this.register(index, read)
+        next = mergeVaults(next, read.vault).vault
+        changed.set(index, { event, vault: read.vault })
+      }
+      this.ctx.setVault(next)
 
-      if (remote) {
-        const cachedId = this.cached?.event.id
-        if (remote.id !== cachedId || this.cached?.pending) {
-          const remoteVault = await this.decryptEvent(provider, remote)
-          const merged = mergeVaults(this.ctx.vault()!, remoteVault)
-          next = merged.vault
-          if (hasLocalChanges(this.ctx.vault()!, remoteVault) || this.cached?.pending) {
-            const published = await this.publish(provider, pubkey, next, relays)
-            this.ctx.setVault(next)
-            this.pending = published.pending
-            this.lastSyncedAt = this.ctx.now()
-            this.ctx.setError(
-              published.pending
-                ? (published.error ?? 'The vault is saved locally but relay sync failed.')
-                : null
-            )
-            this.ctx.sendStatus()
-            return
-          }
-          this.cached = { event: remote, pending: false, syncedAt: this.ctx.now() }
-          this.ctx.cache.set(pubkey, this.cached)
-          this.lastCreatedAt = Math.max(this.lastCreatedAt, remote.created_at)
+      const failures: string[] = []
+      for (const [index, content] of splitVault(next, this.layout)) {
+        const part = this.part(index)
+        const remote = changed.get(index)
+        let needsPublish = part.cached?.pending === true
+        if (remote) {
+          part.base = remote.vault
+          part.lastCreatedAt = Math.max(part.lastCreatedAt, remote.event.created_at)
+          needsPublish ||= hasLocalChanges(content, remote.vault)
+          if (!needsPublish) this.adopt(pubkey, index, remote.event)
+        } else if (events.has(index)) {
+          needsPublish ||= !part.base || hasLocalChanges(content, part.base)
+        } else {
+          // The relays do not have this part: send ours if there is anything in it.
+          needsPublish ||= content.entries.length > 0
         }
-        this.ctx.setVault(next)
-        this.lastSyncedAt = this.ctx.now()
-        this.pending = false
-        this.ctx.setError(null)
-        this.ctx.sendStatus()
-        return
+        if (!needsPublish) continue
+        const outcome = await this.publishPart(provider, pubkey, index, content, relays)
+        if (outcome.pending) {
+          failures.push(outcome.error ?? 'The vault is saved locally but relay sync failed.')
+        }
       }
 
-      const current = this.ctx.vault()!
-      if (current.entries.length > 0 || this.cached?.pending) {
-        const published = await this.publish(provider, pubkey, current, relays)
-        this.pending = published.pending
-        this.lastSyncedAt = this.ctx.now()
-        this.ctx.setError(
-          published.pending
-            ? (published.error ?? 'The vault is saved locally but relay sync failed.')
-            : null
-        )
-      } else {
-        this.lastSyncedAt = this.ctx.now()
-        this.pending = false
-        this.ctx.setError(null)
-      }
+      this.lastSyncedAt = this.ctx.now()
+      this.pending = this.anyPending()
+      this.ctx.setError(failures[0] ?? null)
       this.ctx.sendStatus()
     } finally {
       this.syncing = false
@@ -175,92 +233,150 @@ export class PasswordSync {
     pubkey: string,
     next: PasswordVault
   ): Promise<PasswordSaveResult> {
-    if (!isVaultWithinLimit(next)) {
-      const kb = Math.round(vaultByteLength(next) / 1024)
-      throw new Error(
-        `The vault would exceed ${kb} KB. Remove entries or shorten notes.`
-      )
+    const before = splitVault(this.ctx.vault() ?? emptyVault(), this.layout)
+    const after = splitVault(next, this.layout)
+    const dirty = [...after].filter(([index, content]) => {
+      const part = this.parts.get(index)
+      if (part?.cached?.pending) return true
+      if (!part?.base) return content.entries.length > 0
+      return !isDeepStrictEqual(content.entries, part.base.entries)
+    })
+    // A vault that was never saved still needs an event, if only an empty one.
+    if (this.parts.size === 0 && dirty.length === 0) dirty.push(...after)
+    // Checked for every part before any is sent, so a change is not half saved.
+    if (dirty.some(([index, content]) => !isPartChangeAllowed(before.get(index) ?? null, content))) {
+      throw new Error('The password vault is full. Delete some logins or shorten notes.')
     }
+
     const relays = await this.resolveRelays(pubkey, false)
-    const published = await this.publish(provider, pubkey, next, relays)
+    let failure: string | undefined
+    for (const [index, content] of dirty) {
+      const outcome = await this.publishPart(provider, pubkey, index, content, relays)
+      if (outcome.pending) failure ??= outcome.error
+    }
     this.ctx.setVault(next)
-    this.pending = published.pending
+    const pending = this.anyPending()
+    this.pending = pending
     this.lastSyncedAt = this.ctx.now()
-    this.ctx.setError(
-      published.pending ? 'The vault is saved locally but no relay accepted it.' : null
-    )
+    this.ctx.setError(pending ? 'The vault is saved locally but no relay accepted it.' : null)
     this.ctx.sendStatus()
     this.ctx.sendContext()
     return {
       ok: true,
-      ...(published.pending ? { pending: true } : {}),
-      ...(published.pending ? { error: published.error } : {}),
+      ...(pending ? { pending: true } : {}),
+      ...(pending ? { error: failure } : {}),
       status: this.ctx.status()
     }
   }
 
   async ensureLatest(provider: ProviderLike, pubkey: string): Promise<void> {
     const relays = await this.resolveRelays(pubkey, false)
-    const remote = await this.fetchRemote(provider, pubkey, relays).catch(() => null)
-    if (!remote) return
-    const cachedId = this.cached?.event.id
-    if (remote.id === cachedId) return
-    if (this.cached && remote.created_at < this.cached.event.created_at) return
-    const local = this.ctx.vault() ?? emptyVault()
-    const remoteVault = await this.decryptEvent(provider, remote)
-    const merged = mergeVaults(local, remoteVault)
-    this.ctx.setVault(merged.vault)
-    this.lastCreatedAt = Math.max(this.lastCreatedAt, remote.created_at)
-    if (hasLocalChanges(local, remoteVault)) return
-    this.cached = { event: remote, pending: false, syncedAt: this.ctx.now() }
-    this.ctx.cache.set(pubkey, this.cached)
+    const report = await this.fetchRemoteReport(provider, pubkey, relays).catch(() => null)
+    if (!report) return
+    for (const [index, event] of report.events) {
+      const cached = this.parts.get(index)?.cached
+      if (cached && (event.id === cached.event.id || event.created_at < cached.event.created_at)) {
+        continue
+      }
+      const read = await this.decryptPart(provider, pubkey, event)
+      this.register(index, read)
+      const merged = mergeVaults(this.ctx.vault() ?? emptyVault(), read.vault).vault
+      this.ctx.setVault(merged)
+      const part = this.part(index)
+      part.base = read.vault
+      part.lastCreatedAt = Math.max(part.lastCreatedAt, event.created_at)
+      const content = splitVault(merged, this.layout).get(index)!
+      if (!hasLocalChanges(content, read.vault)) this.adopt(pubkey, index, event)
+    }
   }
 
   /** Read another identity's prior vault without changing the active sync state. */
   async readVault(provider: ProviderLike, pubkey: string): Promise<{ vault: PasswordVault | null; complete: boolean }> {
-    const cached = this.ctx.cache.get(pubkey)
-    let local: PasswordVault | null = null
-    if (cached) local = await this.decryptEventFor(provider, pubkey, cached.event)
+    const layout: VaultLayout = new Map()
+    let declared = 0
+    let vault: PasswordVault | null = null
+    const absorb = async (index: number, event: Event): Promise<void> => {
+      const read = await this.decryptPart(provider, pubkey, event)
+      declared = Math.max(declared, read.declared)
+      layout.set(index, new Set())
+      vault = mergeVaults(vault ?? emptyVault(), read.vault).vault
+    }
+    for (const [index, cached] of this.ctx.cache.getParts(pubkey)) await absorb(index, cached.event)
 
     const relays = await this.resolveRelays(pubkey, true)
-    if (relays.length === 0) return { vault: local, complete: false }
-    let remote: { event: Event | null; answered: number }
+    if (relays.length === 0) return { vault, complete: false }
+    let remote: { events: Map<number, Event>; answered: number }
     try {
       remote = await this.fetchRemoteReport(provider, pubkey, relays)
     } catch {
-      return { vault: local, complete: false }
+      return { vault, complete: false }
     }
-    const vault = remote.event
-      ? mergeVaults(local ?? emptyVault(), await this.decryptEventFor(provider, pubkey, remote.event)).vault
-      : local
-    return { vault, complete: remote.answered >= relays.length }
+    for (const [index, event] of remote.events) await absorb(index, event)
+    return {
+      vault,
+      complete: remote.answered >= relays.length && !isVaultIncomplete(layout, declared)
+    }
   }
 
-  private async publish(
+  private part(index: number): PartState {
+    let part = this.parts.get(index)
+    if (!part) {
+      part = { cached: null, base: null, lastCreatedAt: 0 }
+      this.parts.set(index, part)
+    }
+    return part
+  }
+
+  /** Note which entries a part holds. Ids are only ever added: absence deletes nothing. */
+  private register(index: number, read: { vault: PasswordVault; declared: number }): void {
+    const ids = this.layout.get(index) ?? new Set<string>()
+    for (const entry of read.vault.entries) ids.add(entry.id)
+    this.layout.set(index, ids)
+    this.declared = Math.max(this.declared, read.declared)
+  }
+
+  /** Save a relay copy that has everything this device has for that part. */
+  private adopt(pubkey: string, index: number, event: Event): void {
+    const cached = { event, pending: false, syncedAt: this.ctx.now() }
+    this.part(index).cached = cached
+    this.ctx.cache.setPart(pubkey, index, cached)
+  }
+
+  private anyPending(): boolean {
+    return [...this.parts.values()].some((part) => part.cached?.pending === true)
+  }
+
+  private requirePubkey(): string {
+    const pubkey = this.ctx.pubkey()
+    if (!pubkey) throw new Error(VAULT_ERROR)
+    return pubkey
+  }
+
+  private async publishPart(
     provider: ProviderLike,
     pubkey: string,
-    vault: PasswordVault,
+    index: number,
+    content: PasswordVault,
     relays: string[]
-  ): Promise<{ pending: boolean; error?: string; event: Event }> {
+  ): Promise<PublishOutcome> {
     if (relays.length === 0) throw new Error('No vault relay is configured')
-    if (!isVaultWithinLimit(vault)) {
-      const kb = Math.round(vaultByteLength(vault) / 1024)
-      throw new Error(
-        `The vault would exceed ${kb} KB. Remove entries or shorten notes.`
-      )
+    const part = this.part(index)
+    const count = Math.max(this.declared, ...[...this.parts.keys()].map((known) => known + 1))
+    const payload = partPayload(content, count)
+    if (vaultByteLength(payload) > MAX_VAULT_PLAINTEXT_BYTES) {
+      throw new Error('The password vault is too large to encrypt. Delete some logins.')
     }
-    const plaintext = JSON.stringify(vault)
-    const content = await provider.nip44Encrypt(pubkey, plaintext)
-    const created_at = Math.max(Math.floor(this.ctx.now() / 1000), this.lastCreatedAt + 1)
+    const ciphertext = await provider.nip44Encrypt(pubkey, JSON.stringify(payload))
+    const created_at = Math.max(Math.floor(this.ctx.now() / 1000), part.lastCreatedAt + 1)
     const event = await provider.signEvent({
       kind: PASSWORD_VAULT_KIND,
       created_at,
       tags: [
-        ['d', PASSWORD_VAULT_D],
+        ['d', vaultPartD(index)],
         ['t', PASSWORD_VAULT_TAG],
         ['client', PASSWORD_VAULT_CLIENT]
       ],
-      content
+      content: ciphertext
     })
     if (!verifyEvent(event)) throw new Error('The signer returned an invalid vault event')
     const onauth = (template: EventTemplate): Promise<Event> => this.signAuth(provider, template)
@@ -269,17 +385,13 @@ export class PasswordSync {
     )
     const accepted = results.filter((result) => result.status === 'fulfilled').length
     const pending = accepted < relays.length
-    this.lastCreatedAt = event.created_at
-    this.cached = {
-      event,
-      pending,
-      syncedAt: this.ctx.now()
-    }
-    this.ctx.cache.set(pubkey, this.cached)
-    this.pending = pending
+    part.lastCreatedAt = event.created_at
+    part.base = content
+    part.cached = { event, pending, syncedAt: this.ctx.now() }
+    this.register(index, { vault: content, declared: 0 })
+    this.ctx.cache.setPart(pubkey, index, part.cached)
     return {
       pending,
-      event,
       ...(pending
         ? {
             error:
@@ -292,33 +404,22 @@ export class PasswordSync {
   }
 
   /**
-   * New vault events replace the previous addressable event, but relays that were
-   * offline during a save keep the old copy; the next sync republishes the merged
-   * vault once those relays are reachable.
+   * The newest event for each part. New vault events replace the previous addressable
+   * event, but relays that were offline during a save keep the old copy; the next sync
+   * republishes the merged part once those relays are reachable.
    */
-  private async fetchRemote(
-    provider: ProviderLike,
-    pubkey: string,
-    relays: string[]
-  ): Promise<Event | null> {
-    return (await this.fetchRemoteReport(provider, pubkey, relays)).event
-  }
-
   private async fetchRemoteReport(
     provider: ProviderLike,
     pubkey: string,
     relays: string[]
-  ): Promise<{ event: Event | null; answered: number }> {
-    if (relays.length === 0) return { event: null, answered: 0 }
+  ): Promise<{ events: Map<number, Event>; answered: number }> {
+    if (relays.length === 0) return { events: new Map(), answered: 0 }
     const onauth = (template: EventTemplate): Promise<Event> => this.signAuth(provider, template)
+    const filter = passwordVaultFilter(pubkey, VAULT_PART_DS)
     let events: Event[]
     let answered = relays.length
     if (this.ctx.relays.queryAuthReport) {
-      const report = await this.ctx.relays.queryAuthReport(
-        relays,
-        passwordVaultFilter(pubkey),
-        onauth
-      )
+      const report = await this.ctx.relays.queryAuthReport(relays, filter, onauth)
       // Nothing answered: say so, rather than treating it as a relay with no vault.
       if (report.answered === 0 && report.events.length === 0) {
         throw new Error(`No relay answered (${relays.length} tried)`)
@@ -326,28 +427,36 @@ export class PasswordSync {
       events = report.events
       answered = report.answered
     } else {
-      events = await this.ctx.relays.queryAuth(relays, passwordVaultFilter(pubkey), onauth)
+      events = await this.ctx.relays.queryAuth(relays, filter, onauth)
     }
-    const valid = events
-      .filter(
-        (event) =>
-          event.kind === PASSWORD_VAULT_KIND &&
-          event.pubkey === pubkey &&
-          event.content.length <= MAX_EVENT_CONTENT &&
-          event.tags.some((tag) => tag[0] === 'd' && tag[1] === PASSWORD_VAULT_D) &&
-          verifyEvent(event)
-      )
-      .sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id))
-    return { event: valid[0] ?? null, answered }
+    const newest = new Map<number, Event>()
+    for (const event of events.sort(
+      (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id)
+    )) {
+      const index = vaultPartIndex(event.tags)
+      if (
+        index !== null &&
+        !newest.has(index) &&
+        event.kind === PASSWORD_VAULT_KIND &&
+        event.pubkey === pubkey &&
+        event.content.length <= MAX_EVENT_CONTENT &&
+        verifyEvent(event)
+      ) {
+        newest.set(index, event)
+      }
+    }
+    return { events: new Map([...newest].sort(([a], [b]) => a - b)), answered }
   }
 
   async decryptEvent(provider: ProviderLike, event: Event): Promise<PasswordVault> {
-    const pubkey = this.ctx.pubkey()
-    if (!pubkey) throw new Error(VAULT_ERROR)
-    return this.decryptEventFor(provider, pubkey, event)
+    return (await this.decryptPart(provider, this.requirePubkey(), event)).vault
   }
 
-  private async decryptEventFor(provider: ProviderLike, pubkey: string, event: Event): Promise<PasswordVault> {
+  private async decryptPart(
+    provider: ProviderLike,
+    pubkey: string,
+    event: Event
+  ): Promise<{ vault: PasswordVault; declared: number }> {
     const plaintext = await provider.nip44Decrypt(pubkey, event.content)
     let parsed: unknown
     try {
@@ -360,7 +469,7 @@ export class PasswordSync {
     if (version !== PASSWORD_VAULT_VERSION) {
       throw new Error('This vault was created by a newer version of Nostr Navigator')
     }
-    return normalizeVault(parsed)
+    return { vault: normalizeVault(parsed), declared: declaredParts(parsed) }
   }
 
   private signAuth(provider: ProviderLike, template: EventTemplate): Promise<Event> {

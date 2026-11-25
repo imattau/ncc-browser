@@ -108,9 +108,7 @@ function harness(options: { page?: PasswordPage | null; relayStore?: Map<string,
   let publishCount = 0
   const cfg = config()
   const query = async (_relays: string[], filter: Filter): Promise<Event[]> => {
-    const d = filter['#d']?.[0]
-    const event = d ? relayStore.get(d) : undefined
-    return event ? [event] : []
+    return (filter['#d'] ?? []).flatMap((d) => relayStore.get(d) ?? [])
   }
   const relays = {
     query,
@@ -244,6 +242,20 @@ describe('PasswordService', () => {
     expect(event.content).not.toContain('secret')
     expect(event.tags).toContainEqual(['d', 'ncc-browser/passwords/v1'])
     expect(readFileSync(h.cachePath, 'utf8')).not.toContain('secret')
+  })
+
+  it('deletes from a full vault, which frees room for a new login', async () => {
+    const h = harness()
+    await h.service.unlock()
+    const filler = (index: number) => ({ ...draft, username: `user${index}`, notes: 'x'.repeat(4000) })
+    let saved = 0
+    while ((await h.service.saveEntry(filler(saved))).ok) saved += 1
+    expect(saved).toBeGreaterThan(5)
+
+    const removed = await h.service.removeEntry(h.service.list()[0].id)
+    expect(removed.ok).toBe(true)
+    expect(h.service.list()).toHaveLength(saved - 1)
+    expect((await h.service.saveEntry(filler(saved + 1))).ok).toBe(true)
   })
 
   it('refuses reads and saves while locked', async () => {
@@ -427,5 +439,132 @@ describe('PasswordService', () => {
     await withInjectedIdentitySecrets(h, [{ npub, nsec }])
 
     expect(h.service.list().filter((entry) => entry.title === 'Nostr identity')).toHaveLength(0)
+  })
+})
+
+describe('PasswordService with a vault in two parts', () => {
+  const stored = (n: number) => ({
+    id: n.toString(16).padStart(16, '0'),
+    origin: 'https://example.com',
+    title: `Login ${n}`,
+    username: `user${n}`,
+    password: `secret${n}`,
+    notes: '',
+    totp: '',
+    createdAt: n,
+    updatedAt: n
+  })
+  const SECOND = 'ncc-browser/passwords/v1/1'
+  const FIRST = 'ncc-browser/passwords/v1'
+
+  function partEvent(d: string, entries: unknown[]): Event {
+    return finalizeEvent(
+      {
+        kind: 30078,
+        created_at: 1_600_000_000,
+        tags: [['d', d]],
+        content: nip44.encrypt(JSON.stringify({ v: 1, updatedAt: 2, entries, parts: 2 }), key)
+      },
+      sk
+    )
+  }
+
+  function twoParts(): Map<string, Event> {
+    return new Map([
+      [FIRST, partEvent(FIRST, [stored(1)])],
+      [SECOND, partEvent(SECOND, [stored(2)])]
+    ])
+  }
+
+  const read = (store: Map<string, Event>, d: string) =>
+    JSON.parse(nip44.decrypt(store.get(d)!.content, key)) as {
+      parts: number
+      entries: Array<{ username: string; deleted?: boolean }>
+    }
+
+  const names = (h: ReturnType<typeof harness>) => h.service.list().map((entry) => entry.username).sort()
+  const idOf = (h: ReturnType<typeof harness>, username: string) =>
+    h.service.list().find((entry) => entry.username === username)!.id
+
+  it('lists both parts as one vault without republishing either', async () => {
+    const h = harness({ relayStore: twoParts() })
+    const status = await h.service.unlock()
+    expect(status.error).toBeNull()
+    expect(names(h)).toEqual(['user1', 'user2'])
+    expect(h.publishCount()).toBe(0)
+  })
+
+  it('rewrites only the part that holds a deleted entry', async () => {
+    const h = harness({ relayStore: twoParts() })
+    await h.service.unlock()
+    const first = h.relayStore.get(FIRST)!.id
+
+    expect((await h.service.removeEntry(idOf(h, 'user2'))).ok).toBe(true)
+
+    expect(h.publishCount()).toBe(1)
+    expect(h.relayStore.get(FIRST)!.id).toBe(first)
+    expect(read(h.relayStore, SECOND)).toMatchObject({ parts: 2, entries: [{ deleted: true }] })
+    expect(names(h)).toEqual(['user1'])
+  })
+
+  it('adds a new login to an existing part and never creates one', async () => {
+    const h = harness({ relayStore: twoParts() })
+    await h.service.unlock()
+    expect((await h.service.saveEntry(draft)).ok).toBe(true)
+    expect([...h.relayStore.keys()].sort()).toEqual([FIRST, SECOND])
+    expect(read(h.relayStore, FIRST).entries.map((e) => e.username)).toEqual(['user1', 'alice'])
+  })
+
+  it('treats a part the relay withholds as unsynced, not deleted or writable', async () => {
+    const store = twoParts()
+    const second = store.get(SECOND)!
+    store.delete(SECOND)
+    const h = harness({ relayStore: store })
+
+    await h.service.unlock()
+    expect(h.service.status().error).toBe('Some passwords haven’t synced yet')
+    expect((await h.service.export('encrypted')).error).toBe('Some passwords haven’t synced yet')
+    expect((await h.service.saveEntry(draft)).ok).toBe(true)
+    expect(store.has(SECOND)).toBe(false)
+
+    store.set(SECOND, second)
+    await h.service.syncNow()
+    expect(names(h)).toEqual(['alice', 'user1', 'user2'])
+    expect(h.service.status().error).toBeNull()
+  })
+
+  it('opens every part from this device when no relay has them', async () => {
+    const store = twoParts()
+    const first = harness({ relayStore: store })
+    await first.service.unlock()
+    const cachePath = first.cachePath
+
+    const offline = harness({ cache: new PasswordCache(cachePath) } as never)
+    await offline.service.unlock()
+    expect(names(offline)).toEqual(['user1', 'user2'])
+    // The empty relay gets both parts back, each under its own tag.
+    expect([...offline.relayStore.keys()].sort()).toEqual([FIRST, SECOND])
+  })
+
+  it('backs up every part and restores them from one file', async () => {
+    let file = ''
+    const dialogs = {
+      open: async () => ({ path: '/backup.json', text: file }),
+      save: async (_name: string, data: string) => {
+        file = data
+        return '/backup.json'
+      }
+    }
+    const source = harness({ relayStore: twoParts(), dialogs } as never)
+    await source.service.unlock()
+    expect((await source.service.export('encrypted')).ok).toBe(true)
+    expect(JSON.parse(file).events).toHaveLength(2)
+
+    const target = harness({ dialogs } as never)
+    await target.service.unlock()
+    const preview = await target.service.importOpen()
+    expect(preview.count).toBe(2)
+    expect((await target.service.importCommit(preview.id, 'merge')).ok).toBe(true)
+    expect(names(target)).toEqual(['user1', 'user2'])
   })
 })

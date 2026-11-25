@@ -85,6 +85,7 @@ export function PasswordSettings({
 
   const [revealed, setRevealed] = useState<{ id: string; password: string } | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
+  const [deleteError, setDeleteError] = useState<{ id: string; message: string } | null>(null)
 
   const [relayDraft, setRelayDraft] = useState('')
   const [importPreview, setImportPreview] = useState<PasswordImportPreview | null>(null)
@@ -231,12 +232,14 @@ export function PasswordSettings({
       return
     }
     setConfirmDelete(null)
+    setDeleteError(null)
     setBusy(true)
     setError(null)
     try {
       const result = await window.ncc.passwordsRemove(id)
       if (!result.ok) {
-        setError(result.error ?? 'Could not delete the login')
+        // Shown on the row: the status card is out of view in a long list.
+        setDeleteError({ id, message: result.error ?? 'Could not delete the login' })
         return
       }
       setEntries(await window.ncc.passwordsList())
@@ -603,6 +606,11 @@ export function PasswordSettings({
                       </button>
                     </div>
                   </div>
+                  {deleteError?.id === entry.id ? (
+                    <p role="alert" className="mt-2 text-ui-11 text-[color:var(--color-danger)]">
+                      {deleteError.message}
+                    </p>
+                  ) : null}
                   {revealed?.id === entry.id ? (
                     <code className="mt-2 block break-all rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-field)] px-2.5 py-1.5 font-mono text-ui-11 text-[color:var(--color-text)]">
                       {revealed.password}

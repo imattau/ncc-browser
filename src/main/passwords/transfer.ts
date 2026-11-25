@@ -1,10 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import type { Event } from 'nostr-tools'
 import {
-  PASSWORD_VAULT_D,
-  PASSWORD_VAULT_KIND,
   activeEntries,
-  isVaultWithinLimit,
+  mergeVaults,
   vaultByteLength,
   type PasswordExportResult,
   type PasswordImportPreview,
@@ -12,7 +10,7 @@ import {
   type PasswordVault,
   type PasswordVaultStatus
 } from '@shared/passwords'
-import type { PasswordCache, CachedVault } from './cache'
+import { VAULT_INCOMPLETE } from '@shared/password-parts'
 import { messageOf } from './errors'
 import { exportPasswordCsv, parsePasswordCsv, previewRows, type ImportedRow } from './import-export'
 import type { PasswordFileDialogs, ProviderLike } from './service'
@@ -21,7 +19,8 @@ import {
   applyRows,
   applyVaultImport,
   emptyVault,
-  parseEvent,
+  VAULT_EXPORT_FORMAT,
+  parseExport,
   toRow
 } from './vault-ops'
 
@@ -38,7 +37,8 @@ export interface TransferContext {
   pubkey: () => string | null
   now: () => number
   dialogs: PasswordFileDialogs
-  cache: PasswordCache
+  savedEvents: () => Event[] | null
+  incomplete: () => boolean
   requireProvider: () => ProviderLike
   decryptEvent: (provider: ProviderLike, event: Event) => Promise<PasswordVault>
   ensureLatest: (provider: ProviderLike, pubkey: string) => Promise<void>
@@ -83,11 +83,14 @@ export class PasswordTransfer {
     try {
       const format = file.path.toLowerCase().endsWith('.json') ? 'encrypted' : 'csv'
       if (format === 'encrypted') {
-        const event = parseEvent(file.text)
-        if (event.pubkey !== this.ctx.pubkey()) {
-          throw new Error('That vault belongs to a different identity')
+        let imported = emptyVault()
+        for (const event of parseExport(file.text)) {
+          if (event.pubkey !== this.ctx.pubkey()) {
+            throw new Error('That vault belongs to a different identity')
+          }
+          const part = await this.ctx.decryptEvent(this.ctx.requireProvider(), event)
+          imported = mergeVaults(imported, part).vault
         }
-        const imported = await this.ctx.decryptEvent(this.ctx.requireProvider(), event)
         const current = this.ctx.vault()
         if (!current) throw new Error(VAULT_ERROR)
         const rows = activeEntries(imported).map(toRow)
@@ -154,13 +157,6 @@ export class PasswordTransfer {
       } else {
         next = applyRows(current, pending.rows ?? [], this.ctx.now(), mode)
       }
-      if (!isVaultWithinLimit(next)) {
-        return {
-          ok: false,
-          error: `The imported vault would exceed ${Math.round(vaultByteLength(next) / 1024)} KB; remove entries or import in smaller batches.`,
-          status: this.ctx.status()
-        }
-      }
       const result = await this.ctx.commit(provider, pubkey, next)
       if (result.ok) this.ctx.sendToast({ tone: 'ok', message: 'Password vault imported.' })
       return result
@@ -180,18 +176,20 @@ export class PasswordTransfer {
         const path = await this.ctx.dialogs.save(`ncc-passwords-${stamp}.csv`, data)
         return path ? { ok: true, path } : { ok: false, error: 'Export cancelled' }
       }
+      // A backup that silently lacked some logins would be worse than none.
+      if (this.ctx.incomplete()) return { ok: false, error: VAULT_INCOMPLETE }
       const provider = this.ctx.requireProvider()
-      const cached: CachedVault | null = this.ctx.cache.get(pubkey)
-      let event = cached?.event
-      if (!event) {
+      let events = this.ctx.savedEvents()
+      if (!events) {
         const result = await this.ctx.commit(provider, pubkey, vault)
         if (!result.ok) return { ok: false, error: result.error }
-        event = this.ctx.cache.get(pubkey)?.event
+        events = this.ctx.savedEvents()
       }
-      if (!event) return { ok: false, error: 'The vault has not been published yet' }
+      if (!events) return { ok: false, error: 'The vault has not been published yet' }
+      const data = events.length === 1 ? events[0] : { format: VAULT_EXPORT_FORMAT, events }
       const path = await this.ctx.dialogs.save(
         `ncc-passwords-${stamp}.json`,
-        `${JSON.stringify(event, null, 2)}\n`
+        `${JSON.stringify(data, null, 2)}\n`
       )
       return path ? { ok: true, path } : { ok: false, error: 'Export cancelled' }
     } catch (error) {

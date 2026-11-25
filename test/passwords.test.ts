@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   entriesForOrigin,
   findEntryFor,
+  isVaultChangeAllowed,
+  isVaultWithinLimit,
   mergeVaults,
   normalizeEntry,
   normalizeImportedOrigin,
@@ -111,6 +113,40 @@ describe('mergeVaults', () => {
     expect(merged.vault.entries[0].password).toBe('newer-password')
     expect(merged.vault.entries[0].favorite).toBe(false)
     expect(merged.vault.entries[0].updatedAt).toBe(200)
+  })
+})
+
+describe('deleted entries and the size limit', () => {
+  const big = (count: number): PasswordVault =>
+    normalizeVault({
+      v: 1,
+      updatedAt: 1000,
+      entries: Array.from({ length: count }, (_, index) =>
+        entry({ id: index.toString(16).padStart(16, '0'), notes: 'x'.repeat(1000) })
+      )
+    })
+
+  it('strips the contents of tombstones written by older builds', () => {
+    const [gone] = normalizeVault({
+      entries: [entry({ deleted: true, notes: 'private', totp: 'ABC', favorite: true })]
+    }).entries
+    expect(gone).toEqual({
+      id: '0123456789abcdef', origin: 'https://example.com', title: '', username: '',
+      password: '', notes: '', totp: '', createdAt: 1000, updatedAt: 1000, deleted: true
+    })
+  })
+
+  it('keeps the username of a deleted identity entry', () => {
+    const gone = normalizeEntry(entry({ origin: 'ncc://' + 'a'.repeat(64) + '/identity', deleted: true }))
+    expect(gone?.username).toBe('alice')
+  })
+
+  it('lets an over-limit vault shrink but not grow', () => {
+    const current = big(50)
+    const smaller = { ...current, entries: current.entries.slice(1) }
+    expect(isVaultWithinLimit(smaller)).toBe(false)
+    expect(isVaultChangeAllowed(current, smaller)).toBe(true)
+    expect(isVaultChangeAllowed(current, big(51))).toBe(false)
   })
 })
 

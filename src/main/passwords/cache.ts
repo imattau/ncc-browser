@@ -13,6 +13,8 @@ interface CacheFile {
   version: 1
   vaults: Record<string, CachedVault>
   migratedFrom?: Record<string, string[]>
+  /** Parts after the first, by pubkey then part index. The first stays in `vaults`. */
+  parts?: Record<string, Record<string, CachedVault>>
 }
 
 /**
@@ -31,15 +33,32 @@ export class PasswordCache {
   }
 
   set(pubkey: string, value: CachedVault): void {
+    this.setPart(pubkey, 0, value)
+  }
+
+  /** Every saved part of a vault, keyed by part index. */
+  getParts(pubkey: string): Map<number, CachedVault> {
+    const parts = new Map<number, CachedVault>()
+    const first = this.get(pubkey)
+    if (first) parts.set(0, first)
+    for (const [key, value] of Object.entries(this.load().parts?.[pubkey] ?? {})) {
+      if (value && isEvent(value.event)) parts.set(Number(key), value)
+    }
+    return parts
+  }
+
+  setPart(pubkey: string, index: number, value: CachedVault): void {
     const data = this.load()
-    data.vaults[pubkey] = value
+    if (index === 0) data.vaults[pubkey] = value
+    else ((data.parts ??= {})[pubkey] ??= {})[index] = value
     this.write(data)
   }
 
   clear(pubkey: string): void {
     const data = this.load()
-    if (!data.vaults[pubkey]) return
+    if (!data.vaults[pubkey] && !data.parts?.[pubkey]) return
     delete data.vaults[pubkey]
+    delete data.parts?.[pubkey]
     this.write(data)
   }
 
@@ -68,6 +87,9 @@ export class PasswordCache {
             vaults: parsed.vaults as Record<string, CachedVault>,
             ...(parsed.migratedFrom && typeof parsed.migratedFrom === 'object'
               ? { migratedFrom: parsed.migratedFrom as Record<string, string[]> }
+              : {}),
+            ...(parsed.parts && typeof parsed.parts === 'object'
+              ? { parts: parsed.parts as Record<string, Record<string, CachedVault>> }
               : {})
           }
           return this.data

@@ -299,6 +299,8 @@ export const PASSWORD_VAULT_TAG = 'ncc-browser/passwords'
 export const PASSWORD_VAULT_CLIENT = 'ncc-browser'
 /** Keep the plaintext under typical 64 KB relay event limits after NIP-44/base64. */
 export const MAX_VAULT_BYTES = 40_000
+/** The most NIP-44 v2 can encrypt. A merged or shrinking vault may sit between the two. */
+export const MAX_VAULT_PLAINTEXT_BYTES = 65_535
 
 export const MAX_TITLE = 200
 export const MAX_USERNAME = 320
@@ -422,7 +424,7 @@ export function normalizeEntry(input: unknown): PasswordEntry | null {
       ? value.updatedAt
       : createdAt
   const passkey = normalizePasskey(value.passkey)
-  return {
+  const entry: PasswordEntry = {
     id: value.id.toLowerCase(),
     origin,
     title: clampText(value.title, MAX_TITLE, origin),
@@ -436,6 +438,27 @@ export function normalizeEntry(input: unknown): PasswordEntry | null {
     ...(typeof value.favoriteUpdatedAt === 'number' && Number.isFinite(value.favoriteUpdatedAt) ? { favoriteUpdatedAt: value.favoriteUpdatedAt } : {}),
     ...(value.deleted === true ? { deleted: true } : {}),
     ...(passkey ? { passkey } : {})
+  }
+  return entry.deleted ? toTombstone(entry) : entry
+}
+
+/**
+ * What is left of a deleted entry: enough to win a merge, and none of its secrets. The
+ * username stays only for identity entries, so a deleted one is not backfilled again.
+ */
+export function toTombstone(entry: PasswordEntry): PasswordEntry {
+  const isIdentity = entry.origin.startsWith('ncc://') && entry.origin.endsWith('/identity')
+  return {
+    id: entry.id,
+    origin: entry.origin,
+    title: '',
+    username: isIdentity ? entry.username : '',
+    password: '',
+    notes: '',
+    totp: '',
+    createdAt: entry.createdAt,
+    updatedAt: entry.updatedAt,
+    deleted: true
   }
 }
 
@@ -517,8 +540,10 @@ export function mergeVaults(
       ? entry
       : (entry.favoriteUpdatedAt ?? 0) < (existing.favoriteUpdatedAt ?? 0) ? existing : winner
     const favoriteUpdatedAt = Math.max(entry.favoriteUpdatedAt ?? 0, existing.favoriteUpdatedAt ?? 0)
-    const merged = { ...winner, favorite: favoriteWinner.favorite === true, ...(favoriteUpdatedAt ? { favoriteUpdatedAt } : {}) }
-    if (merged.updatedAt !== existing.updatedAt || merged.favorite !== (existing.favorite === true) || favoriteUpdatedAt !== (existing.favoriteUpdatedAt ?? 0)) {
+    const merged = winner.deleted
+      ? toTombstone(winner)
+      : { ...winner, favorite: favoriteWinner.favorite === true, ...(favoriteUpdatedAt ? { favoriteUpdatedAt } : {}) }
+    if (merged.updatedAt !== existing.updatedAt || (merged.favorite === true) !== (existing.favorite === true) || (merged.favoriteUpdatedAt ?? 0) !== (existing.favoriteUpdatedAt ?? 0)) {
       byId.set(entry.id, merged)
       changed = true
     }
@@ -562,7 +587,10 @@ export function isVaultWithinLimit(vault: PasswordVault): boolean {
   return vaultByteLength(vault) <= MAX_VAULT_BYTES
 }
 
-export function passwordVaultFilter(pubkey: string): {
+export function passwordVaultFilter(
+  pubkey: string,
+  dTags: string[] = [PASSWORD_VAULT_D]
+): {
   kinds: number[]
   authors: string[]
   '#d': string[]
@@ -571,9 +599,21 @@ export function passwordVaultFilter(pubkey: string): {
   return {
     kinds: [PASSWORD_VAULT_KIND],
     authors: [pubkey],
-    '#d': [PASSWORD_VAULT_D],
-    limit: 10
+    '#d': dTags,
+    limit: 64
   }
+}
+
+/**
+ * Whether a local change may be saved. The size limit only stops growth: a vault that a
+ * merge pushed over it must still accept deletions and edits that make it smaller.
+ */
+export function isVaultChangeAllowed(current: PasswordVault, next: PasswordVault): boolean {
+  return (
+    isVaultWithinLimit(next) ||
+    activeEntries(next).length < activeEntries(current).length ||
+    vaultByteLength(next) <= vaultByteLength(current)
+  )
 }
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000

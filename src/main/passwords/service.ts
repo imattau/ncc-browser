@@ -11,8 +11,10 @@ import {
   pageOriginFromUrl,
   scanVaultHealth,
   summarizeVault,
+  toTombstone,
   type PasswordVault
 } from '@shared/passwords'
+import { VAULT_INCOMPLETE } from '@shared/password-parts'
 import type { AppConfig, IdentityStatus } from '@shared/types'
 import type {
   PasswordConfig,
@@ -184,11 +186,12 @@ export class PasswordService {
       pubkey: () => this.pubkey,
       now: () => this.now(),
       dialogs: deps.dialogs,
-      cache: deps.cache,
       requireProvider: () => this.requireProvider(),
       decryptEvent: (provider, event) => this.syncEngine.decryptEvent(provider, event),
       ensureLatest: (provider, pubkey) => this.syncEngine.ensureLatest(provider, pubkey),
       commit: (provider, pubkey, next) => this.syncEngine.commit(provider, pubkey, next),
+      savedEvents: () => this.syncEngine.savedEvents(),
+      incomplete: () => this.syncEngine.incomplete(),
       status: () => this.status(),
       sendToast: (toast) => this.sendToast(toast)
     })
@@ -221,7 +224,7 @@ export class PasswordService {
       relays: relays.urls,
       relaySource: relays.source,
       mode: identity.mode,
-      error: this.error,
+      error: this.error ?? (this.unlocked && this.syncEngine.incomplete() ? VAULT_INCOMPLETE : null),
       autoLockMinutes: config.autoLockMinutes,
       offerSave: config.offerSave,
       useNip65: config.useNip65,
@@ -343,16 +346,10 @@ export class PasswordService {
     this.syncEngine.load(pubkey)
     this.error = null
 
-    const cached = this.syncEngine.cachedVault()
-    if (cached) {
-      try {
-        this.vault = await this.syncEngine.decryptEvent(provider, cached.event)
-      } catch {
-        this.vault = emptyVault()
-        this.error = 'The local vault could not be decrypted. Fetching the relay copy.'
-      }
-    } else {
-      this.vault = emptyVault()
+    const cached = await this.syncEngine.openCached(provider)
+    this.vault = cached?.vault ?? emptyVault()
+    if (cached?.failed) {
+      this.error = 'The local vault could not be decrypted. Fetching the relay copy.'
     }
 
     this.unlocked = true
@@ -626,7 +623,10 @@ export class PasswordService {
       const provider = this.requireProvider()
       await this.syncEngine.ensureLatest(provider, this.pubkey)
       const current = this.vault ?? emptyVault()
-      const next = applyEntry(current, { ...entry, deleted: true, updatedAt: this.now() })
+      const next = applyEntry(
+        current,
+        toTombstone({ ...entry, updatedAt: Math.max(this.now(), entry.updatedAt + 1) })
+      )
       return await this.syncEngine.commit(provider, this.pubkey, next)
     } catch (error) {
       this.error = messageOf(error)
