@@ -18,6 +18,7 @@ import type {
 } from '@shared/hosting'
 import {
   DEFAULT_SHARE_DAYS,
+  SHARE_PREFIX,
   MAX_SHARE_DAYS,
   MIN_SHARE_DAYS,
   isLoopbackEndpoint,
@@ -26,11 +27,11 @@ import {
   recipientNpub,
   secureEndpoints,
   serviceAddress,
-  shareDTag,
   shareExpiry,
   shareStatus
 } from '@shared/hosting'
 import {
+  ANCHOR_KIND,
   buildAnchorTemplate,
   buildLocatorPayload,
   buildLocatorTemplate,
@@ -77,6 +78,8 @@ export type PublishReport = HostingPublishReport
 export interface HostingPublisher {
   relaysFor(ownerHex: string): Promise<string[]>
   publish(event: Event, relays: string[]): Promise<PublishReport>
+  /** The owner's NCC-02 records already on relays for these `d` tags. */
+  anchors(ownerHex: string, dTags: string[], relays: string[]): Promise<Event[]>
 }
 
 export type { HostingPublishResult, HostingShareResult }
@@ -100,6 +103,8 @@ export interface HostingServiceOptions {
 }
 
 const ANCHOR_DAYS = 14
+/** A record that only replaces an old fingerprint does not need to live long. */
+const RETIRED_ANCHOR_DAYS = 1
 
 function stripHost(value: string): string {
   return value.trim().replace(/^\[|\]$/g, '').toLowerCase()
@@ -320,8 +325,25 @@ export class HostingService {
     const event = await this.sign(provider, template)
     const relays = await this.relays(hex)
     const strict = this.options.anchorRequired?.() === true
-    const needsAnchor = strict || service.anchor
+    const serviceShares = this.options.store.sharesFor(id)
+    const onRelays = await this.currentAnchors(
+      hex,
+      [service.service, ...serviceShares.map((share) => share.dTag)],
+      relays
+    )
+    const previous = onRelays.get(service.service)
+    // An old record with a fingerprint must be replaced even when anchoring is off:
+    // it exposes the fingerprint, and a changed one would make the browser refuse
+    // every endpoint.
+    const stale = hasFingerprint(previous)
+    const needsAnchor = strict || service.anchor || stale
     let anchorReport: PublishReport | null = null
+
+    // Inactive shares are not published again, so their old records are replaced here.
+    for (const share of serviceShares) {
+      if (shareStatus(share, now) === 'active') continue
+      await this.retireAnchor(share.dTag, onRelays.get(share.dTag), provider, relays, now)
+    }
 
     if (needsAnchor) {
       const anchor = buildAnchorTemplate({
@@ -329,7 +351,7 @@ export class HostingService {
         endpoint:
           endpoints.find((endpoint) => endpoint.url.startsWith('https://')) ?? endpoints[0],
         days: ANCHOR_DAYS,
-        now: createdAt,
+        now: Math.max(createdAt, (previous?.created_at ?? 0) + 1),
         privateMode: service.visibility === 'private'
       })
       if (!anchor) {
@@ -343,14 +365,14 @@ export class HostingService {
         try {
           const anchorEvent = await this.sign(provider, anchor)
           anchorReport = await this.options.publisher.publish(anchorEvent, relays)
-          if (strict && !anchorReport.ok) {
+          if ((strict || stale) && !anchorReport.ok) {
             const message = `NCC-02 anchor was rejected: ${reportError(anchorReport)}`
             this.options.store.markPublishError(id, message)
             this.changed()
             throw new HostingError('publish-failed', message)
           }
         } catch (error) {
-          if (strict) {
+          if (strict || stale) {
             const message = `NCC-02 anchor failed: ${messageOf(error)}`
             this.options.store.markPublishError(id, message)
             this.changed()
@@ -433,8 +455,17 @@ export class HostingService {
     const now = this.now()
     const safeDays = Math.min(MAX_SHARE_DAYS, Math.max(MIN_SHARE_DAYS, Math.round(Number(days) || DEFAULT_SHARE_DAYS)))
     const expiresAt = shareExpiry(safeDays, now)
-    const dTag = shareDTag(service.service, recipient)
     const existing = this.options.store.findShareFor(id, recipient)
+    // Renewing a live share keeps its link. Anything else gets a new random id, so
+    // the id says nothing about the service or the recipient.
+    const keepLink = existing !== null && shareStatus(existing, now) === 'active'
+    const dTag = keepLink ? existing.dTag : `${SHARE_PREFIX}${randomBytes(6).toString('hex')}`
+    if (existing && !keepLink) {
+      // This record is about to forget the old id, so clean it up now.
+      const relays = await this.relays(hex)
+      const old = await this.currentAnchors(hex, [existing.dTag], relays)
+      await this.retireAnchor(existing.dTag, old.get(existing.dTag), provider, relays, now)
+    }
     const share: ServiceShare = {
       id: existing?.id ?? randomBytes(8).toString('hex'),
       serviceId: id,
@@ -444,7 +475,9 @@ export class HostingService {
       ...(label?.trim() ? { label: label.trim().slice(0, 80) } : {}),
       expiresAt,
       createdAt: existing?.createdAt ?? now,
-      ...(existing?.lastPublishedAt ? { lastPublishedAt: existing.lastPublishedAt } : {}),
+      ...(keepLink && existing.lastPublishedAt
+        ? { lastPublishedAt: existing.lastPublishedAt }
+        : {}),
       status: 'active'
     }
 
@@ -503,8 +536,11 @@ export class HostingService {
     const now = this.now()
     const createdAt = Math.max(now, (share.lastPublishedAt ?? share.createdAt) + 1)
     const event = await this.sign(provider, buildTombstoneTemplate(share.dTag, createdAt, now - 1))
-    const report = await this.options.publisher.publish(event, await this.relays(hex))
+    const relays = await this.relays(hex)
+    const report = await this.options.publisher.publish(event, relays)
     if (!report.ok) throw new HostingError('publish-failed', reportError(report))
+    const anchors = await this.currentAnchors(hex, [share.dTag], relays)
+    await this.retireAnchor(share.dTag, anchors.get(share.dTag), provider, relays, now)
     this.options.store.markShareRevoked(shareId, createdAt)
     this.changed()
     return {
@@ -649,6 +685,51 @@ export class HostingService {
     return report
   }
 
+  /** The newest NCC-02 record on relays for each `d` tag. */
+  private async currentAnchors(
+    ownerHex: string,
+    dTags: string[],
+    relays: string[]
+  ): Promise<Map<string, Event>> {
+    let events: Event[]
+    try {
+      events = await this.options.publisher.anchors(ownerHex, dTags, relays)
+    } catch (error) {
+      throw new HostingError(
+        'publish-failed',
+        `Could not check relays for old service records: ${messageOf(error)}`
+      )
+    }
+    const newest = new Map<string, Event>()
+    for (const event of events) {
+      if (event.kind !== ANCHOR_KIND || event.pubkey !== ownerHex || !verifyEvent(event)) continue
+      const dTag = event.tags.find((tag) => tag[0] === 'd')?.[1]
+      if (!dTag || !dTags.includes(dTag)) continue
+      if ((newest.get(dTag)?.created_at ?? -1) < event.created_at) newest.set(dTag, event)
+    }
+    return newest
+  }
+
+  /** Replace a record that still shows a fingerprint with one that shows nothing. */
+  private async retireAnchor(
+    dTag: string,
+    previous: Event | undefined,
+    provider: HostingProvider,
+    relays: string[],
+    now: number
+  ): Promise<void> {
+    if (!hasFingerprint(previous)) return
+    const template = buildAnchorTemplate({
+      service: dTag,
+      endpoint: undefined,
+      days: RETIRED_ANCHOR_DAYS,
+      now: Math.max(now, previous!.created_at + 1),
+      privateMode: true
+    })!
+    const report = await this.options.publisher.publish(await this.sign(provider, template), relays)
+    if (!report.ok) throw new HostingError('publish-failed', reportError(report))
+  }
+
   private async requireIdentity(): Promise<{
     provider: HostingProvider
     hex: string
@@ -695,6 +776,10 @@ export class HostingService {
   private changed(): void {
     this.options.onChange?.(this.state())
   }
+}
+
+function hasFingerprint(event: Event | undefined): boolean {
+  return Boolean(event?.tags.some((tag) => tag[0] === 'k'))
 }
 
 function reportError(report: PublishReport): string {

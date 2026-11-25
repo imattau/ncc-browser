@@ -69,7 +69,7 @@ export interface AnchorTemplateInput {
   endpoint: ServiceEndpoint | undefined
   days: number
   now: number
-  /** NCC-02 private mode: publish d/exp/k but never the endpoint `u`. */
+  /** NCC-02 private mode: publish only d/exp, never the endpoint `u` or its key `k`. */
   privateMode?: boolean
 }
 
@@ -82,16 +82,14 @@ export function buildAnchorTemplate(input: AnchorTemplateInput): NccEventTemplat
   const expiresAt = String(Math.floor(input.now + Math.max(1, input.days) * 86_400))
 
   // NCC-02 private/invite-only mode: a valid Service Record may omit `u`; NCC-05 is
-  // then the exclusive endpoint source. A comparable `k` may still bind the transport
-  // key without revealing where the service is.
+  // then the exclusive endpoint source. `k` is left out too: it is readable by anyone,
+  // so it would link records together and could be matched against servers found by
+  // scanning the internet. The encrypted locator carries it instead.
   if (input.privateMode) {
     const tags: string[][] = [
       ['d', input.service],
       ['exp', expiresAt]
     ]
-    if (endpoint?.url.startsWith('https://') && endpoint.family !== 'onion' && endpoint.k) {
-      tags.push(['k', endpoint.k])
-    }
     return { kind: ANCHOR_KIND, created_at: input.now, tags, content: '' }
   }
 

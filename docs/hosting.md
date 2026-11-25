@@ -37,15 +37,17 @@ Settings → **Services** → **Add service**.
 | Endpoints | Optional until publishing: one or more `http://`, `https://` or `.onion` URLs. A bare `IP:port` or `[IPv6]:port` is accepted and defaults to `http://`; an explicit `https://` keeps TLS (use it for a `k`-pinned endpoint). The first is preferred; the resolver falls back in order. **Find endpoints** proposes candidates from this machine, the current page and the router. |
 | Visibility | **Private** encrypts the locator to you. **Public** publishes plaintext, so anyone with the address can resolve it. |
 | Locator lifetime | How long the signed hint is valid. Default 7 days, maximum 30. |
-| Anchor | Optional NCC-02 service record. A public service includes the endpoint; a private service omits `u` and anchors only the identity, expiry and optional `k`. |
+| Anchor | Optional NCC-02 service record. A public service includes the endpoint; a private service omits `u` and `k` and anchors only the identity and expiry. |
 | Note | Optional text, encrypted with the payload, shown to people you share with. |
 
 NCC-02 anchoring is recommended but not mandatory. NCC-02 is the identity, intent and
 trust context; NCC-05 supplies reachability. The browser's default is optional anchoring;
 **Settings → General → Require NCC-02 service records** makes a fresh anchor mandatory.
-For a private service the anchor has no `u`: it cannot leak the endpoint, and NCC-05
-remains the only source of reachability. The resolver already accepts an anchor without
-`u` and applies its `k` to the NCC-05 endpoints.
+For a private service the anchor has no `u` and no `k`: anyone can read an anchor, and
+a fingerprint could be matched against servers found by scanning the internet. NCC-05
+remains the only source of endpoints and pins. Publishing replaces an older anchor that
+still has a `k`, even when anchoring is off, as far as the queried relays return it.
+Relays and others may keep old copies.
 
 The **address** (`ncc://<npub>/<service>`) is derived from the identity and service id,
 not from the endpoints. The form shows it and lets you copy it before adding any
@@ -119,8 +121,7 @@ unpinned and the form reports it.
 When **Require NCC-02 service records** is on, publishing becomes a two-part operation:
 
 1. Publish the anchor (`kind 30059`) under the same `d` tag as the locator. A private
-   service or share uses an anchor with `d` and `exp` (and an optional `k`) but **no
-   `u`**.
+   service or share uses an anchor with only `d` and `exp`: **no `u` or `k`**.
 2. Only if the anchor was accepted, publish the NCC-05 locator (`kind 30058`).
 
 If no relay accepts the anchor, the locator is not published and the service/share is
@@ -156,8 +157,10 @@ The resolver also reads the multi-recipient wrapped form used by ncc-server's
 sidecar for a private service: one `kind 30058` event with a per-recipient
 encrypted session key. No separate link is needed for each reader in that form.
 
-The suffix is a stable hash of the service id and the recipient, so the same pair
-reuses one share instead of piling up records. `share-` is reserved; service ids cannot
+The suffix is random. Renewing an active share keeps its link; sharing again after it
+was revoked or expired creates a new link. Links made up to v0.47.6 used an id that
+anyone could recompute from the service id and a candidate recipient's public key. The
+service card marks them: revoke, renew and send the new link. `share-` is reserved; service ids cannot
 start with it. The resolver treats a `share-` service as exact-only: a missing or
 expired share never falls back to the owner's generic `addr` record.
 
@@ -356,9 +359,15 @@ The recipient's resolver queries its configured relays plus the author's NIP-65
 read-marked relays, so a share is discoverable without out-of-band relay hints. A
 private relay only works if both sides know about it.
 
-Encryption hides the payload, not the metadata: relays can see that a locator exists,
-who signed it, which `d` tag it uses and when it changed. For sensitive services, use
-your own relay and prefer a full Tor tab.
+Encryption hides the payload, not the metadata: anyone reading the relays can see that
+a locator exists, who signed it, its service id or share id, its expiry and size, and
+when it changed. For sensitive services, use a neutral service id and an identity that
+is not linked to you, use your own relay and prefer a full Tor tab. Visitors to a
+direct endpoint see its IP address; to avoid that, publish only an onion endpoint.
+
+Private is not access control. It limits who can read the address from relays. Anyone
+who finds an open port can use the service, including after a share is revoked, so a
+service that is not meant for everyone needs its own login.
 
 ## Security model
 

@@ -11,7 +11,7 @@ import {
   type EventTemplate
 } from 'nostr-tools'
 import { HostingStore } from '../src/main/hosting/store'
-import { shareDTag } from '../src/shared/hosting'
+import { legacyShareDTag } from '../src/shared/hosting'
 import {
   HostingError,
   HostingService,
@@ -40,6 +40,17 @@ class FakePublisher implements HostingPublisher {
   events: Array<{ event: Event; relays: string[] }> = []
   report: PublishReport = { ok: true, accepted: 1, relays: 1, errors: [] }
   handler?: (event: Event) => PublishReport
+  /** Records already on relays before this run. */
+  existing: Event[] = []
+
+  async anchors(ownerHex: string, dTags: string[]): Promise<Event[]> {
+    return [...this.existing, ...this.events.map((entry) => entry.event)].filter(
+      (event) =>
+        event.kind === 30059 &&
+        event.pubkey === ownerHex &&
+        event.tags.some(([name, value]) => name === 'd' && dTags.includes(value))
+    )
+  }
 
   async relaysFor(): Promise<string[]> {
     return ['wss://relay.test']
@@ -111,6 +122,65 @@ function setup(
     }
   }
 }
+
+describe('HostingService old records with fingerprints', () => {
+  const oldAnchor = (owner: Uint8Array, dTag: string, createdAt: number): Event =>
+    finalizeEvent(
+      {
+        kind: 30059,
+        created_at: createdAt,
+        tags: [['d', dTag], ['exp', String(createdAt + 86_400)], ['k', 'OLDPIN']],
+        content: ''
+      },
+      owner
+    )
+  const hasKey = (event: Event | undefined): boolean =>
+    Boolean(event?.tags.some(([name]) => name === 'k'))
+
+  it('replaces one even when anchoring is off, with a newer record', async () => {
+    const { owner, publisher, hosting } = setup()
+    publisher.existing = [oldAnchor(owner, 'photos', NOW + 100)]
+    const service = hosting.create({
+      title: 'Photos',
+      anchor: false,
+      endpoints: [{ url: 'https://photos.example', priority: 1, k: 'NEWPIN' }]
+    })
+    await hosting.publish(service.id)
+    const replacement = publisher.byTag('photos', 30059)!
+    expect(hasKey(replacement)).toBe(false)
+    expect(replacement.created_at).toBeGreaterThan(NOW + 100)
+  })
+
+  it('adds none when anchoring is off and nothing needs replacing', async () => {
+    const { publisher, hosting } = setup()
+    const service = hosting.create({ title: 'Photos', anchor: false, endpoints: ['https://photos.example'] })
+    await hosting.publish(service.id)
+    expect(publisher.byTag('photos', 30059)).toBeUndefined()
+  })
+
+  it('does not publish the locator when the replacement is rejected', async () => {
+    const { owner, publisher, hosting } = setup()
+    publisher.existing = [oldAnchor(owner, 'photos', NOW - 100)]
+    publisher.handler = (event) =>
+      event.kind === 30059
+        ? { ok: false, accepted: 0, relays: 1, errors: [{ relay: 'wss://relay.test', error: 'blocked' }] }
+        : { ok: true, accepted: 1, relays: 1, errors: [] }
+    const service = hosting.create({ title: 'Photos', anchor: false, endpoints: ['https://photos.example'] })
+    await expect(hosting.publish(service.id)).rejects.toMatchObject({ code: 'publish-failed' })
+    expect(publisher.byTag('photos', 30058)).toBeUndefined()
+  })
+
+  it('replaces the record of a revoked share on the next publish', async () => {
+    const { owner, publisher, hosting } = setup()
+    const service = hosting.create({ title: 'Photos', endpoints: ['https://photos.example'] })
+    const { share } = await hosting.share(service.id, getPublicKey(generateSecretKey()), 7)
+    await hosting.revokeShare(share.id)
+    publisher.existing = [oldAnchor(owner, share.dTag, NOW + 100)]
+    await hosting.publish(service.id)
+    expect(hasKey(publisher.byTag(share.dTag, 30059))).toBe(false)
+    expect(publisher.byTag(share.dTag, 30059)!.created_at).toBeGreaterThan(NOW + 100)
+  })
+})
 
 describe('HostingService publishing', () => {
   it('publishes secured addresses and keeps the saved ones as typed', async () => {
@@ -341,8 +411,10 @@ describe('HostingService shares', () => {
     expect(result.failures).toHaveLength(0)
     expect(hosting.state().shares).toHaveLength(2)
 
-    const eventA = publisher.byTag(shareDTag('photos', pubA), 30058)
-    const eventB = publisher.byTag(shareDTag('photos', pubB), 30058)
+    const dTagFor = (recipient: string): string =>
+      result.shares.find((entry) => entry.recipient === recipient)!.share.dTag
+    const eventA = publisher.byTag(dTagFor(pubA), 30058)
+    const eventB = publisher.byTag(dTagFor(pubB), 30058)
     expect(eventA).toBeDefined()
     expect(eventB).toBeDefined()
     expect(
@@ -360,10 +432,15 @@ describe('HostingService shares', () => {
     const pubA = getPublicKey(recipientA)
     const pubB = getPublicKey(recipientB)
     const service = hosting.create({ title: 'Photos', endpoints: ['https://photos.example'] })
-    publisher.handler = (event) =>
-      event.tags.some(([name, value]) => name === 'd' && value === shareDTag('photos', pubB))
-        ? { ok: false, accepted: 0, relays: 1, errors: [{ relay: 'wss://relay.test', error: 'blocked' }] }
-        : { ok: true, accepted: 1, relays: 1, errors: [] }
+    // Reject every record of the second share, whatever random id it gets.
+    let firstShare: string | undefined
+    publisher.handler = (event) => {
+      const dTag = event.tags.find(([name]) => name === 'd')?.[1]
+      firstShare ??= dTag
+      return dTag === firstShare
+        ? { ok: true, accepted: 1, relays: 1, errors: [] }
+        : { ok: false, accepted: 0, relays: 1, errors: [{ relay: 'wss://relay.test', error: 'blocked' }] }
+    }
 
     const result = await hosting.shareMany(service.id, [pubA, pubB], 7)
     expect(result.shares).toHaveLength(1)
@@ -383,23 +460,20 @@ describe('HostingService shares', () => {
     expect(hosting.state().shares).toHaveLength(1)
   })
 
-  it('re-sharing after a revoke beats the tombstone', async () => {
-    const { publisher, hosting } = setup()
+  it('gives a new random link after a revoke and keeps it while renewing', async () => {
+    const { hosting } = setup()
     const recipient = getPublicKey(generateSecretKey())
     const service = hosting.create({ title: 'Photos', endpoints: ['https://photos.example'] })
     const first = await hosting.share(service.id, recipient, 7)
+    expect(first.share.dTag).toMatch(/^share-[0-9a-f]{12}$/)
+    expect(first.share.dTag).not.toBe(legacyShareDTag('photos', recipient))
+    expect((await hosting.share(service.id, recipient, 7)).share.dTag).toBe(first.share.dTag)
+
     await hosting.revokeShare(first.share.id)
-    const tombstone = publisher.events
-      .map((entry) => entry.event)
-      .filter((event) => event.tags.some(([name, value]) => name === 'd' && value === first.share.dTag))
-      .at(-1)
     const second = await hosting.share(service.id, recipient, 7)
+    expect(second.share.dTag).not.toBe(first.share.dTag)
     expect(second.share.id).toBe(first.share.id)
-    const latest = publisher.events
-      .map((entry) => entry.event)
-      .filter((event) => event.tags.some(([name, value]) => name === 'd' && value === first.share.dTag))
-      .at(-1)
-    expect(latest?.created_at ?? 0).toBeGreaterThan(tombstone?.created_at ?? 0)
+    expect(hosting.state().shares).toHaveLength(1)
     expect(hosting.state().shares[0]?.status).toBe('active')
   })
 

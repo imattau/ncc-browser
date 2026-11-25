@@ -15,7 +15,7 @@
  * stable across restarts, the same way the onion manager reuses its stored key.
  */
 
-import { randomBytes } from 'node:crypto'
+import { randomBytes, X509Certificate } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { connect as connectTcp } from 'node:net'
 import { dirname } from 'node:path'
@@ -41,6 +41,8 @@ interface TlsProxyFile {
   version: 1
   services: TlsProxyRecord[]
 }
+
+const CERTIFICATE_NAME = 'localhost'
 
 /** Tried first, so the router rule is easy to recognise. */
 export const DEFAULT_HTTPS_PORT = 8443
@@ -182,11 +184,13 @@ export class TlsProxyManager {
     let cert: string
     let key: string
     let pin: string
-    if (existing) {
+    // v0.47.0 to v0.47.6 put the server's address, often a LAN IP, in the certificate
+    // every visitor sees. Those certificates are replaced, which also changes the pin.
+    if (existing && new X509Certificate(existing.cert).subject === `CN=${CERTIFICATE_NAME}`) {
       ;({ cert, key, pin } = existing)
     } else {
       const generated = await generateSelfSignedCertificate({
-        commonName: parsed.host,
+        commonName: CERTIFICATE_NAME,
         altNames: ['127.0.0.1', '::1', 'localhost']
       })
       cert = generated.cert

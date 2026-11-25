@@ -276,7 +276,7 @@ function normalizeState(parsed: Partial<HostingState>, now: number): HostingStat
         ? Math.min(MAX_HOSTED_TTL_SECONDS, Math.max(MIN_HOSTED_TTL_SECONDS, Math.round(ttl)))
         : 7 * 86_400,
       visibility,
-      anchor: visibility === 'public' && candidate.anchor === true,
+      anchor: candidate.anchor === true,
       ...(typeof candidate.notes === 'string' && candidate.notes.trim()
         ? { notes: candidate.notes.trim().slice(0, 280) }
         : {}),

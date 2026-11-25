@@ -7,7 +7,7 @@ import {
   parseRecipient,
   recipientNpub,
   serviceAddress,
-  shareDTag,
+  legacyShareDTag,
   shareExpiry,
   shareStatus,
   slugifyService,
@@ -110,9 +110,9 @@ describe('hosting validation', () => {
 
   it('builds a stable, reserved share d tag', () => {
     const recipient = 'a'.repeat(64)
-    const tag = shareDTag('photos', recipient)
-    expect(tag).toBe(shareDTag('photos', recipient))
-    expect(tag).not.toBe(shareDTag('photos', 'b'.repeat(64)))
+    const tag = legacyShareDTag('photos', recipient)
+    expect(tag).toBe(legacyShareDTag('photos', recipient))
+    expect(tag).not.toBe(legacyShareDTag('photos', 'b'.repeat(64)))
     expect(tag.startsWith('share-')).toBe(true)
     expect(tag.slice('share-'.length)).toMatch(/^[0-9a-f]{12}$/)
     expect(isShareService(tag)).toBe(true)
@@ -123,7 +123,7 @@ describe('hosting validation', () => {
     const share: ServiceShare = {
       id: 's',
       serviceId: 'service-1',
-      dTag: shareDTag('photos', 'a'.repeat(64)),
+      dTag: legacyShareDTag('photos', 'a'.repeat(64)),
       recipient: 'a'.repeat(64),
       recipientNpub: recipientNpub('a'.repeat(64)),
       expiresAt: NOW,
@@ -217,7 +217,7 @@ describe('hosting events', () => {
     ).toBeNull()
   })
 
-  it('omits the endpoint from a private NCC-02 anchor', () => {
+  it('omits the endpoint and fingerprint from a private NCC-02 anchor', () => {
     const anchor = buildAnchorTemplate({
       service: 'photos',
       endpoint: { url: 'https://photos.example/', priority: 1, k: 'SPKI' },
@@ -228,7 +228,7 @@ describe('hosting events', () => {
     expect(anchor?.kind).toBe(30059)
     expect(anchor?.tags).toContainEqual(['d', 'photos'])
     expect(anchor?.tags).toContainEqual(['exp', String(NOW + 7 * 86_400)])
-    expect(anchor?.tags).toContainEqual(['k', 'SPKI'])
+    expect(anchor?.tags.some(([name]) => name === 'k')).toBe(false)
     expect(anchor?.tags.some(([name]) => name === 'u')).toBe(false)
   })
 

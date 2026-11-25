@@ -1,4 +1,5 @@
-import { mkdtempSync } from 'node:fs'
+import { X509Certificate } from 'node:crypto'
+import { mkdtempSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { createServer as createHttpsServer } from 'node:https'
 import { tmpdir } from 'node:os'
@@ -168,6 +169,35 @@ describe('HttpsSetup', () => {
       proxies.shutdown()
       first.close()
       second.close()
+    }
+  })
+
+  it('uses a certificate that names no network address, replacing old ones', async () => {
+    const backend = createServer((_req, res) => res.end('ok'))
+    const port = await listen(backend)
+    const filePath = join(mkdtempSync(join(tmpdir(), 'ncc-https-')), 'tls-proxies.json')
+    const old = await generateSelfSignedCertificate({ commonName: '192.168.1.20' })
+    writeFileSync(
+      filePath,
+      JSON.stringify({
+        version: 1,
+        services: [
+          { serviceId: 'svc', targetHost: '127.0.0.1', targetPort: port, listenPort: 0, cert: old.cert, key: old.key, pin: old.info.pin, createdAt: 1 }
+        ]
+      })
+    )
+    const proxies = new TlsProxyManager({ filePath, defaultPort: 0 })
+    try {
+      await proxies.restoreAll()
+      const record = proxies.record('svc')!
+      expect(record.pin).not.toBe(old.info.pin)
+      expect(new X509Certificate(record.cert).subject).toBe('CN=localhost')
+      expect(record.cert + new X509Certificate(record.cert).subjectAltName).not.toContain('192.168')
+      await proxies.ensure('svc', { url: `http://127.0.0.1:${port}` })
+      expect(proxies.record('svc')!.pin).toBe(record.pin)
+    } finally {
+      proxies.shutdown()
+      backend.close()
     }
   })
 

@@ -8,6 +8,7 @@
  */
 
 import { verifyEvent, type Event, type Filter } from 'nostr-tools'
+import { ANCHOR_KIND } from '@shared/hosting-events'
 import type { ConfigStore } from '../config'
 import type { RelayPool } from '../relay/pool'
 import type { HostingPublisher, PublishReport } from './service'
@@ -28,6 +29,13 @@ export class RelayHostingPublisher implements HostingPublisher {
     } catch {
       return configured
     }
+  }
+
+  async anchors(ownerHex: string, dTags: string[], relays: string[]): Promise<Event[]> {
+    return withTimeout(
+      this.pool.query(relays, { kinds: [ANCHOR_KIND], authors: [ownerHex], '#d': dTags }),
+      PUBLISH_TIMEOUT_MS
+    )
   }
 
   async publish(event: Event, relays: string[]): Promise<PublishReport> {

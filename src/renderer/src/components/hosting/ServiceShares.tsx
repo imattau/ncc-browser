@@ -1,5 +1,11 @@
 import { Check, Copy, RefreshCw } from 'lucide-react'
-import { serviceAddress, shareStatus, type HostedService, type ServiceShare } from '@shared/hosting'
+import {
+  legacyShareDTag,
+  serviceAddress,
+  shareStatus,
+  type HostedService,
+  type ServiceShare
+} from '@shared/hosting'
 import { shortIdentity, untilSeconds } from '../../lib/format'
 
 interface ServiceSharesProps {
@@ -67,6 +73,13 @@ export function ServiceShares({
                 <RefreshCw className="h-3 w-3" /> Renew
               </button>
             )}
+            {status === 'active' &&
+            share.dTag === legacyShareDTag(service.service, share.recipient) ? (
+              <p data-legacy-share className="w-full text-[color:var(--color-danger)]">
+                This older link’s ID can be matched to this person. To replace it, revoke it,
+                renew it, then send the new link.
+              </p>
+            ) : null}
           </div>
         )
       })}

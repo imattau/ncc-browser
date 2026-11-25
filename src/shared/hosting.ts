@@ -490,8 +490,12 @@ export function validateHostingDraft(input: HostingDraft): Validation<Normalized
   }
 }
 
-/** Stable per-service, per-recipient share id. The hash keeps the service name private. */
-export function shareDTag(service: string, recipientHex: string): string {
+/**
+ * The share id used up to v0.47.6. Anyone can recompute it from the public service id
+ * and a candidate recipient's public key, so it is only used to recognise old links.
+ * New shares get a random id.
+ */
+export function legacyShareDTag(service: string, recipientHex: string): string {
   const input = `${service}:${recipientHex.toLowerCase()}`
   const a = fnv1a(input, 0x811c9dc5)
   const b = fnv1a(input, 0x9e3779b9)

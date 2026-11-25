@@ -16,7 +16,7 @@ import {
   type EventTemplate
 } from 'nostr-tools'
 import { buildLocatorPayload, buildLocatorTemplate, buildTombstoneTemplate, locatorContent } from '../src/shared/hosting-events'
-import { shareDTag } from '../src/shared/hosting'
+import { legacyShareDTag } from '../src/shared/hosting'
 import { NccResolver, signerFromSecret } from '../src/main/ncc/resolver'
 
 const relay = process.env.NCC_HOSTING_RELAY
@@ -56,7 +56,7 @@ describe.skipIf(!relay)('hosted services against a live relay', () => {
       owner
     )
 
-    const dTag = shareDTag('photos', recipientHex)
+    const dTag = legacyShareDTag('photos', recipientHex)
     await publish(
       buildLocatorTemplate({
         dTag,

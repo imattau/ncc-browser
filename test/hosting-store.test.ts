@@ -19,6 +19,17 @@ function draft(overrides: Record<string, unknown> = {}) {
 }
 
 describe('HostingStore', () => {
+  it('keeps the anchor setting of a private service after a reload', () => {
+    const path = tempFile()
+    const created = new HostingStore(path).create({
+      title: 'Photos',
+      endpoints: ['https://photos.example'],
+      visibility: 'private',
+      anchor: true
+    })
+    expect(new HostingStore(path).find(created.id)?.anchor).toBe(true)
+  })
+
   it('creates, updates and removes a service', () => {
     let now = NOW
     const store = new HostingStore(tempFile(), () => now)
