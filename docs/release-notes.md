@@ -1,5 +1,12 @@
 # Release notes
 
+## 0.47.4 — editing hosted services
+
+### Fixed
+
+- On desktop, saving changes to an existing service under Your services no longer fails
+  with "A service id is required".
+
 ## 0.47.3 — Android swipe gestures
 
 ### Added

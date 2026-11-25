@@ -1,5 +1,9 @@
 # Nostr Navigator for Android
 
+## 0.47.4
+
+- Maintenance release with no Android-specific changes.
+
 ## New in 0.47.3
 
 - Swipe down on a page or in the tab switcher to reload the active page. Swipe a tab
