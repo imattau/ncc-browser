@@ -16,6 +16,7 @@ import android.util.Base64
 import android.view.PixelCopy
 import android.view.View
 import android.view.ViewGroup
+import android.view.MotionEvent
 import android.widget.FrameLayout
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -1100,6 +1101,32 @@ class ContentSurface(
   @SuppressLint("SetJavaScriptEnabled")
   private fun create(): WebView {
     val web = WebView(container.context)
+    var pullStart: Pair<Float, Float>? = null
+    web.setOnTouchListener { view, event ->
+      when (event.actionMasked) {
+        MotionEvent.ACTION_DOWN -> {
+          pullStart = if (!view.canScrollVertically(-1)) event.x to event.y else null
+        }
+        MotionEvent.ACTION_MOVE -> {
+          val start = pullStart
+          if (start != null && (event.y - start.second < -12f ||
+              kotlin.math.abs(event.x - start.first) > kotlin.math.abs(event.y - start.second))) {
+            pullStart = null
+          }
+        }
+        MotionEvent.ACTION_UP -> {
+          val start = pullStart
+          pullStart = null
+          if (start != null && event.y - start.second > 120f &&
+              event.y - start.second > kotlin.math.abs(event.x - start.first) &&
+              !view.canScrollVertically(-1) && web.progress >= 100) {
+            reload()
+          }
+        }
+        MotionEvent.ACTION_CANCEL -> pullStart = null
+      }
+      false
+    }
 
     // Before anything else touches it: a profile cannot be chosen once a WebView is in
     // use. Normal tabs stay on the default profile.

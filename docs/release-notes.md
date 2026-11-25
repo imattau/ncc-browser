@@ -1,5 +1,12 @@
 # Release notes
 
+## 0.47.3 — Android swipe gestures
+
+### Added
+
+- On Android, swipe down on a page or the tab switcher to reload the active page. Swipe
+  a tab card left or right in the switcher to close that tab.
+
 ## 0.47.2 — Android external links
 
 ### Fixed

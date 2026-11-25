@@ -90,6 +90,8 @@ const kindOf = (tab) => (tab && KINDS.includes(tab.kind) ? tab.kind : 'normal')
 
 /** Which kind the tab switcher is showing. */
 let switcherKind = 'normal'
+let switcherTouch = null
+let suppressSwitcherClick = false
 
 let tabs = []
 let activeTabId = ''
@@ -1288,6 +1290,7 @@ function renderTabGrid() {
     card.setAttribute('role', 'button')
     card.setAttribute('aria-label', kind === 'normal' ? label : `${label} — ${KIND_INFO[kind].label} tab`)
     card.tabIndex = 0
+    card.dataset.tabId = tab.id
 
     const head = document.createElement('div')
     head.className = 'tab-head'
@@ -1310,8 +1313,7 @@ function renderTabGrid() {
     close.appendChild(icon('close'))
     close.addEventListener('click', (event) => {
       event.stopPropagation()
-      closeTabLocally(tab.id)
-      content?.closeTab(tab.id)
+      closeSwitcherTab(tab.id)
     })
     head.appendChild(close)
     card.appendChild(head)
@@ -1332,6 +1334,10 @@ function renderTabGrid() {
     }
 
     const open = () => {
+      if (suppressSwitcherClick) {
+        suppressSwitcherClick = false
+        return
+      }
       panel = 'home'
       content?.select(tab.id)
       // `select` on the active tab is a no-op natively, so collapse explicitly.
@@ -1363,6 +1369,50 @@ function renderTabGrid() {
   }
 
   syncFeature.renderDeviceTabs(grid)
+}
+
+function closeSwitcherTab(id) {
+  closeTabLocally(id)
+  content?.closeTab(id)
+}
+
+function wireSwitcherGestures() {
+  const grid = byId('tab-grid')
+  grid.addEventListener('touchstart', (event) => {
+    if (event.touches.length !== 1) {
+      switcherTouch = null
+      return
+    }
+    const touch = event.touches[0]
+    const card = event.target instanceof Element ? event.target.closest('.tab-card') : null
+    switcherTouch = {
+      x: touch.clientX,
+      y: touch.clientY,
+      id: card?.dataset.tabId ?? '',
+      scrollTop: grid.scrollTop
+    }
+    suppressSwitcherClick = false
+  }, { passive: true })
+
+  grid.addEventListener('touchend', (event) => {
+    const start = switcherTouch
+    switcherTouch = null
+    if (!start || event.changedTouches.length !== 1) return
+    const touch = event.changedTouches[0]
+    const dx = touch.clientX - start.x
+    const dy = touch.clientY - start.y
+    if (Math.abs(dx) > 70 && Math.abs(dx) > Math.abs(dy) * 1.25 && start.id) {
+      suppressSwitcherClick = true
+      event.preventDefault()
+      closeSwitcherTab(start.id)
+      setTimeout(() => { suppressSwitcherClick = false }, 500)
+    } else if (dy > 100 && dy > Math.abs(dx) * 1.25 && start.scrollTop <= 0 && grid.scrollTop <= 0 && activeUrl && progressByTab[activeTabId] === undefined) {
+      event.preventDefault()
+      content?.reload()
+    }
+  }, { passive: false })
+
+  grid.addEventListener('touchcancel', () => { switcherTouch = null }, { passive: true })
 }
 
 /* ───────────────────────────── Menu ───────────────────────────── */
@@ -2247,6 +2297,7 @@ function wireChrome() {
   byId('switcher-new').addEventListener('click', () =>
     openOmnibox({ newTab: true, private: switcherKind === 'private', tor: switcherKind === 'tor' })
   )
+  wireSwitcherGestures()
   byId('switcher-close-all').addEventListener('click', () => {
     // Only the tabs of the kind on screen: closing private tabs must never take
     // normal ones with them, or the other way round.

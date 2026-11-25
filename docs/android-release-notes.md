@@ -1,5 +1,10 @@
 # Nostr Navigator for Android
 
+## New in 0.47.3
+
+- Swipe down on a page or in the tab switcher to reload the active page. Swipe a tab
+  card left or right to close it.
+
 ## Fixes in 0.47.2
 
 - Fixed links from other apps being lost while the browser starts or resumes.
