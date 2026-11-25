@@ -1,5 +1,25 @@
 # Release notes
 
+## 0.47.9 — managing people and duplicate services
+
+These changes are to the desktop app.
+
+### Fixed
+
+- **Publish this page…** no longer starts a second service when one of yours already
+  uses that port on this computer. It names the existing service instead; **Add
+  service** still creates a separate one. If you already have two for one server, keep
+  one, because their router instructions conflict.
+- People ticked for one service no longer stay ticked when you open another.
+
+### Changed
+
+- **Share** is now **People**, with a count of working links. It opens after you add or
+  edit a private service.
+- The picker marks who already has access. The list below uses contact names, **Revoke**
+  is now **Remove access**, and a removed person can be added again or deleted from the
+  list.
+
 ## 0.47.8 — sharing contacts
 
 ### Fixed
