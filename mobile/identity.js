@@ -1,3 +1,5 @@
+import { npubToHex } from './profile.js'
+
 export function createIdentity(deps) {
   const {
     byId, set, shortId, invoke, emptyState, confirm, content, applyLayout,

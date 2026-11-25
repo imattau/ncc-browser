@@ -1,5 +1,12 @@
 # Release notes
 
+## 0.47.1 — restore Android signer profiles
+
+### Fixed
+
+- Android identity settings now import the npub decoder used to label saved signers,
+  preventing the profile list from failing to render after an identity import or refresh.
+
 ## 0.47.0 — local TLS proxy for hosted services
 
 ### Added

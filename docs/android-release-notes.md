@@ -1,5 +1,10 @@
 # Nostr Navigator for Android
 
+## Fixes in 0.47.1
+
+- Fixed identity settings failing to show saved additional signers, including after
+  importing an nsec.
+
 ## New in 0.46.0
 
 - Signer selection shows profile images and usernames when available, with a shortened
