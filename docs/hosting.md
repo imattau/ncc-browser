@@ -160,16 +160,17 @@ encrypted session key. No separate link is needed for each reader in that form.
 The suffix is random. Renewing an active share keeps its link; sharing again after it
 was revoked or expired creates a new link. Links made up to v0.47.6 used an id that
 anyone could recompute from the service id and a candidate recipient's public key. The
-service card marks them: revoke, renew and send the new link. `share-` is reserved; service ids cannot
+service card marks them: remove access, add the person again and send the new link. `share-` is reserved; service ids cannot
 start with it. The resolver treats a `share-` service as exact-only: a missing or
 expired share never falls back to the owner's generic `addr` record.
 
-Adding a private service opens **Share** automatically so the contact list is right
-there. You can also open it later from the service card.
+Adding or editing a private service opens **People** automatically so the contact list
+is right there. You can also open it later from the service card; the button shows how
+many people currently have a link.
 
-To share:
+To add people:
 
-1. Open **Services**, choose a private service, and click **Share**.
+1. Open **Services**, choose a private service, and click **People**.
 2. Choose one or more people from your Nostr follow list (kind 3), search by name,
    NIP-05 or npub, or paste an npub manually.
 3. Pick an expiry and click **Create links**. Each recipient gets their own
@@ -181,6 +182,15 @@ key per recipient, so a single ciphertext cannot address a group. The action is 
 in the UI; each recipient's link is independent and can be revoked or renewed on its
 own.
 
+**People with a link** on the card lists everyone added. **Remove access** revokes that
+person's link. A removed entry offers **Add again**, which makes a new link, or
+**Delete from list**. In the picker, **Has access** marks people with a working link;
+selecting one again renews it.
+
+**Publish this page…** does not create a second service when one of yours already uses
+that port on this machine; it points you to the existing card. **Add service** still
+creates another one if you want it.
+
 The contact list is cached in `userData/contacts.json` for instant opening and refreshed
 from kind-3 and kind-0 events when it is older than six hours or when you press
 **Refresh**. Profiles provide display names, NIP-05 identifiers and pictures; a contact
@@ -191,7 +201,7 @@ payload, the page loads, and the link appears under **Shared with me**. A differ
 identity gets an `undecryptable` page explaining which identity the share needs.
 
 A share is a capability, not DRM: the recipient can read the endpoint and may pass it
-on. **Revoke** publishes an expired, endpoint-less tombstone so the link stops
+on. **Remove access** (revoke) publishes an expired, endpoint-less tombstone so the link stops
 resolving, but a recipient who already saved the endpoint can still reach it until the
 service rotates or enforces its own authentication. Rotate the published endpoint (or
 stop the old one) for a hard cut-off.

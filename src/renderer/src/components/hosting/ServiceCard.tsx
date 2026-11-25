@@ -1,4 +1,4 @@
-import { ExternalLink, Globe, Lock, Pencil, Radar, RefreshCw, Share2, ShieldCheck, Trash2 } from 'lucide-react'
+import { ExternalLink, Globe, Lock, Pencil, Radar, RefreshCw, ShieldCheck, Trash2, Users } from 'lucide-react'
 import {
   isLoopbackEndpoint,
   isTlsProxyEndpoint,
@@ -6,6 +6,7 @@ import {
   type HttpsPlan,
   serviceAddress,
   type HostedService,
+  shareStatus,
   type OnionStatus,
   type ServiceShare
 } from '@shared/hosting'
@@ -61,6 +62,9 @@ export function ServiceCard({
   const address = serviceNpub ? serviceAddress(serviceNpub, service.service) : ''
   const serviceShares = shares.filter((share) => share.serviceId === service.id)
   const onion = (onions ?? []).find((entry) => entry.serviceId === service.id)
+  const peopleWithAccess = serviceShares.filter(
+    (share) => shareStatus(share, Math.floor(Date.now() / 1000)) === 'active'
+  )
   const canOnion = service.endpoints.some((endpoint) => isLoopbackEndpoint(endpoint))
   const canShare = service.endpoints.some((endpoint) => !isLoopbackEndpoint(endpoint))
   const canHttps = service.endpoints.some(
@@ -261,9 +265,13 @@ export function ServiceCard({
             type="button"
             onClick={() => sharesApi.toggleShare(service.id)}
             disabled={service.visibility !== 'private'}
+            data-service-people
+            aria-expanded={sharesApi.sharing === service.id}
+            title="Add or remove the people who can open this service"
             className="inline-flex items-center gap-1 rounded-lg border border-[color:var(--color-line)] px-2 py-1 text-ui-10 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)] disabled:opacity-40"
           >
-            <Share2 className="h-3 w-3" /> Share
+            <Users className="h-3 w-3" /> People
+            {peopleWithAccess.length > 0 ? ` (${peopleWithAccess.length})` : ''}
           </button>
           <button
             type="button"
@@ -284,6 +292,7 @@ export function ServiceCard({
           busy={busy}
           copied={copied}
           copy={copy}
+          existing={peopleWithAccess}
           shares={sharesApi}
         />
       ) : null}
@@ -295,7 +304,9 @@ export function ServiceCard({
         busy={busy}
         copied={copied}
         copy={copy}
+        contacts={sharesApi.contacts?.contacts ?? []}
         onRevoke={(share) => void sharesApi.revoke(share)}
+        onForget={(share) => void sharesApi.forget(share)}
         onRenew={(target, share) => void sharesApi.renewShare(target, share)}
       />
 

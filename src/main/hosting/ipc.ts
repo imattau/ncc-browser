@@ -124,6 +124,12 @@ export function registerHostingIpc(deps: HostingIpcDeps): void {
     if (typeof shareId !== 'string') throw new Error('A share id is required')
     return deps.hosting.revokeShare(shareId)
   })
+  ipcMain.handle('ncc:hosting-forget-share', (event, shareId: unknown) => {
+    chromeOnly(event)
+    if (typeof shareId !== 'string') throw new Error('A share id is required')
+    deps.hosting.forgetShare(shareId)
+    return deps.hosting.state()
+  })
   ipcMain.handle('ncc:hosting-forget-received', (event, id: unknown) => {
     chromeOnly(event)
     if (typeof id !== 'string') throw new Error('A share id is required')

@@ -2,9 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   DEFAULT_HOSTED_TTL_SECONDS,
   certificateCoversHost,
+  servicesForLocalUrl,
   type CertificateInfo,
   type HostedService,
-  type HostingDraft
+  type HostingDraft,
+  type HostingState
 } from '@shared/hosting'
 import {
   normalizeEndpointSeed,
@@ -20,7 +22,9 @@ type Feedback = Pick<HostingFeedback, 'apply' | 'busy' | 'setBusy' | 'setError'>
 interface Options {
   feedback: Feedback
   strictAnchors: boolean
-  services: HostedService[]
+  state: HostingState | null
+  /** The active identity's pubkey; `undefined` until the identity has loaded. */
+  owner: string | null | undefined
   openShare: (serviceId: string) => void
   resetShares: () => void
   dismissPortAlert: (localPort: number) => void
@@ -30,6 +34,8 @@ interface Options {
 
 export interface HostingDraftApi {
   draft: DraftState | null
+  /** Set when "Publish this page" found services that already use that server. */
+  existing: HostedService[]
   patchDraft: (patch: Partial<DraftState>) => void
   cancelDraft: () => void
   startCreate: () => void
@@ -73,7 +79,8 @@ export function useHostingDraft(options: Options): HostingDraftApi {
   const {
     feedback,
     strictAnchors,
-    services,
+    state,
+    owner,
     openShare,
     resetShares,
     dismissPortAlert,
@@ -83,6 +90,7 @@ export function useHostingDraft(options: Options): HostingDraftApi {
   const { apply, setBusy, setError } = feedback
 
   const [draft, setDraft] = useState<DraftState | null>(null)
+  const [existingIds, setExistingIds] = useState<string[]>([])
   const [discovery, setDiscovery] = useState<ReachabilityReport | null>(null)
   const [discoveryBusy, setDiscoveryBusy] = useState(false)
   const [discoveryError, setDiscoveryError] = useState<string | null>(null)
@@ -396,8 +404,22 @@ export function useHostingDraft(options: Options): HostingDraftApi {
   }
 
   useEffect(() => {
-    if (!initialDraft) return
+    // Wait for the saved services and the identity, or the check below would miss a
+    // service and a second one would be started for the same server.
+    if (!initialDraft || !state || owner === undefined) return
     const draftEndpoints = initialDraft.endpoints ?? []
+    const urls = draftEndpoints.map((endpoint) =>
+      typeof endpoint === 'string' ? endpoint : endpoint.url
+    )
+    const matches = [
+      ...new Set(urls.flatMap((url) => servicesForLocalUrl(state, url, owner).map(({ id }) => id)))
+    ]
+    setExistingIds(matches)
+    if (matches.length > 0) {
+      setDraft(null)
+      onDraftUsed?.()
+      return
+    }
     setDraft({
       ...EMPTY_DRAFT,
       title: initialDraft.title,
@@ -417,15 +439,14 @@ export function useHostingDraft(options: Options): HostingDraftApi {
       anchor: initialDraft.anchor === true,
       notes: initialDraft.notes ?? ''
     })
-    const seed = draftEndpoints
-      .map((endpoint) => (typeof endpoint === 'string' ? endpoint : endpoint.url))
-      .find(Boolean)
+    const seed = urls.find(Boolean)
     if (seed && normalizeEndpointSeed(seed)) void discover(seed)
     onDraftUsed?.()
-  }, [initialDraft, onDraftUsed, discover])
+  }, [initialDraft, state, owner, onDraftUsed, discover])
 
   const startCreate = (): void => {
     setDraft({ ...EMPTY_DRAFT })
+    setExistingIds([])
     setError(null)
     resetShares()
     setDiscovery(null)
@@ -481,13 +502,15 @@ export function useHostingDraft(options: Options): HostingDraftApi {
         : await window.ncc.hostingCreate(payload)
       apply(next)
       setDraft(null)
-      if (creating && payload.visibility === 'private') {
-        // A new private service has no Share panel yet. Open it immediately so the
-        // contact list is visible without a second trip to the card.
-        const created = next.services.find(
-          (service) => !services.some((existing) => existing.id === service.id)
-        )
-        if (created) openShare(created.id)
+      if (payload.visibility === 'private') {
+        // Show who has access after both adding and editing, so the contact list is
+        // there without a second trip to the card.
+        const saved = creating
+          ? next.services.find(
+              (service) => !state?.services.some((before) => before.id === service.id)
+            )?.id
+          : draft.id
+        if (saved) openShare(saved)
       }
     } catch (submitError) {
       setError(messageOf(submitError))
@@ -498,6 +521,7 @@ export function useHostingDraft(options: Options): HostingDraftApi {
 
   return {
     draft,
+    existing: state?.services.filter((service) => existingIds.includes(service.id)) ?? [],
     patchDraft,
     cancelDraft: () => setDraft(null),
     startCreate,

@@ -477,6 +477,18 @@ describe('HostingService shares', () => {
     expect(hosting.state().shares[0]?.status).toBe('active')
   })
 
+  it('deletes a link from the list only after access is removed', async () => {
+    const { hosting } = setup()
+    const service = hosting.create({ title: 'Photos', endpoints: ['https://photos.example'] })
+    const { share } = await hosting.share(service.id, getPublicKey(generateSecretKey()))
+
+    expect(() => hosting.forgetShare(share.id)).toThrow('Remove this person’s access first')
+    await hosting.revokeShare(share.id)
+    hosting.forgetShare(share.id)
+
+    expect(hosting.state().shares).toEqual([])
+  })
+
   it('revokes a share with an expired tombstone', async () => {
     const { publisher, hosting } = setup()
     const service = hosting.create({ title: 'Photos', endpoints: ['https://photos.example'] })

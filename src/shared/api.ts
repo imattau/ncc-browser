@@ -193,6 +193,8 @@ export interface NccApi {
   hostingShare(id: string, recipient: string, days: number, label?: string): Promise<HostingShareResult>
   hostingShareMany(id: string, recipients: string[], days: number, label?: string): Promise<HostingShareBatchResult>
   hostingRevokeShare(shareId: string): Promise<HostingShareResult>
+  /** Drop a revoked link from a service's list of people. */
+  hostingForgetShare(shareId: string): Promise<HostingState>
   hostingForgetReceived(id: string): Promise<HostingState>
   hostingDiscoverEndpoints(
     seedUrl: string,

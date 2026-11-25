@@ -352,7 +352,7 @@ try {
     const card = document.querySelector('[data-hosting-service="photos"]')
     // Adding a private service opens Share automatically; only click if it is closed.
     if (card.querySelector('[data-contact]')) return true
-    const button = [...card.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Share')
+    const button = [...card.querySelectorAll('button')].find((b) => b.textContent.trim().startsWith('People'))
     button?.click()
     return Boolean(button)
   })()`)

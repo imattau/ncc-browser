@@ -35,7 +35,8 @@ export function HostingSettings({
   const form = useHostingDraft({
     feedback: data,
     strictAnchors: data.strictAnchors,
-    services: data.state?.services ?? [],
+    state: data.state,
+    owner: identity ? (identity.hexPubkey ?? null) : undefined,
     openShare: shares.openShare,
     resetShares: shares.resetShares,
     dismissPortAlert: data.dismissPortAlert,
@@ -126,6 +127,18 @@ export function HostingSettings({
           <p role="alert" className="flex items-start gap-2 rounded-lg border border-[color:var(--color-danger)]/30 bg-[color:var(--color-danger)]/10 px-3 py-2 text-ui-11 text-[color:var(--color-danger)]">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             {data.error}
+          </p>
+        ) : null}
+
+        {form.existing.length > 0 ? (
+          <p
+            role="status"
+            data-existing-service
+            className="rounded-lg border border-[color:var(--color-warn)]/30 bg-[color:var(--color-warn)]/10 px-3 py-2 text-ui-11 text-[color:var(--color-text)]"
+          >
+            This page’s server is already set up as{' '}
+            {form.existing.map((service) => `“${service.title}”`).join(' and ')}. Manage it below
+            with Edit or People. Use Add service only if you want a separate one.
           </p>
         ) : null}
 

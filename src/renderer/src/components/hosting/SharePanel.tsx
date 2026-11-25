@@ -1,6 +1,6 @@
 import { Check, Copy, Link2, RefreshCw, X } from 'lucide-react'
 import { contactLabel, type ContactProfile } from '@shared/contacts'
-import { recipientNpub, type HostedService } from '@shared/hosting'
+import { recipientNpub, type HostedService, type ServiceShare } from '@shared/hosting'
 import { cn } from '../../lib/cn'
 import { shortIdentity } from '../../lib/format'
 import type { HostingSharesApi } from './useHostingShares'
@@ -11,11 +11,21 @@ interface SharePanelProps {
   busy: boolean
   copied: string | null
   copy: (id: string, text: string) => Promise<void>
+  /** Links to this service that still work. */
+  existing: ServiceShare[]
   shares: HostingSharesApi
 }
 
 /** Contact picker and result list for one private service. */
-export function SharePanel({ service, canShare, busy, copied, copy, shares }: SharePanelProps) {
+export function SharePanel({
+  service,
+  canShare,
+  busy,
+  copied,
+  copy,
+  existing,
+  shares
+}: SharePanelProps) {
   const {
     contacts,
     contactsLoading,
@@ -43,6 +53,9 @@ export function SharePanel({ service, canShare, busy, copied, copy, shares }: Sh
       <p className="text-ui-10 text-[color:var(--color-muted)]">
         Only this identity can decrypt the endpoint. The recipient can still reach it until
         the share expires; rotate the endpoint to cut access.
+        {existing.length > 0
+          ? ' To remove someone, use Remove access in the list below. Selecting them here again renews their link.'
+          : ''}
       </p>
       {!canShare ? (
         <p className="rounded border border-[color:var(--color-warn)]/30 bg-[color:var(--color-warn)]/10 px-2 py-1 text-ui-10 text-[color:var(--color-muted)]">
@@ -97,6 +110,11 @@ export function SharePanel({ service, canShare, busy, copied, copy, shares }: Sh
                 className="h-3.5 w-3.5 accent-[color:var(--color-accent)]"
               />
               <span className="min-w-0 flex-1 truncate">{contactLabel(contact)}</span>
+              {existing.some((share) => share.recipient === contact.pubkey) ? (
+                <span data-has-access className="shrink-0 text-ui-95 text-[color:var(--color-ok)]">
+                  Has access
+                </span>
+              ) : null}
               <span className="shrink-0 font-mono text-ui-95 text-[color:var(--color-faint)]">
                 {contact.nip05 || shortIdentity(recipientNpub(contact.pubkey))}
               </span>

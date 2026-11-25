@@ -102,6 +102,7 @@ const api: NccApi = {
   hostingShareMany: (id, recipients, days, label) =>
     ipcRenderer.invoke('ncc:hosting-share-many', { id, recipients, days, label }),
   hostingRevokeShare: (shareId) => ipcRenderer.invoke('ncc:hosting-revoke-share', shareId),
+  hostingForgetShare: (shareId) => ipcRenderer.invoke('ncc:hosting-forget-share', shareId),
   hostingForgetReceived: (id) => ipcRenderer.invoke('ncc:hosting-forget-received', id),
   hostingDiscoverEndpoints: (seedUrl, options) =>
     ipcRenderer.invoke('ncc:hosting-discover-endpoints', seedUrl, options),

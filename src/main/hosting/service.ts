@@ -550,6 +550,17 @@ export class HostingService {
     }
   }
 
+  /** Drop a revoked link from the list. Its relay records were replaced on revoke. */
+  forgetShare(shareId: string): void {
+    const share = this.options.store.findShare(shareId)
+    if (!share) return
+    if (share.status !== 'revoked') {
+      throw new HostingError('publish-failed', 'Remove this person’s access first')
+    }
+    this.options.store.removeShare(shareId)
+    this.changed()
+  }
+
   /**
    * Renew locators that are halfway through their lifetime. Only a local identity is
    * renewed automatically; a remote signer would otherwise prompt every few hours.

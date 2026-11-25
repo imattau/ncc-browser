@@ -45,6 +45,7 @@ export interface HostingSharesApi {
   filteredContacts: ContactProfile[]
   createShare: (service: HostedService) => Promise<void>
   revoke: (share: ServiceShare) => Promise<void>
+  forget: (share: ServiceShare) => Promise<void>
   renewShare: (service: HostedService, share: ServiceShare) => Promise<void>
 }
 
@@ -95,17 +96,24 @@ export function useHostingShares(feedback: Feedback, owner: string | null): Host
     }
   }, [owner])
 
-  const toggleShare = (serviceId: string): void => {
-    setSharing((current) => (current === serviceId ? null : serviceId))
+  /** People picked for one service must not carry over to another. */
+  const clearSelection = (): void => {
+    setShareRecipients([])
+    setShareQuery('')
+    setManualRecipient('')
+    setShareLabel('')
     setShareResults([])
     setShareFailures([])
   }
 
+  const toggleShare = (serviceId: string): void => {
+    setSharing((current) => (current === serviceId ? null : serviceId))
+    clearSelection()
+  }
+
   const openShare = (serviceId: string): void => {
     setSharing(serviceId)
-    setShareRecipients([])
-    setShareResults([])
-    setShareFailures([])
+    clearSelection()
   }
 
   const resetShares = (): void => {
@@ -186,7 +194,7 @@ export function useHostingShares(feedback: Feedback, owner: string | null): Host
   }
 
   const revoke = async (share: ServiceShare): Promise<void> => {
-    if (!window.confirm('Revoke this share? The recipient may still have the endpoint until it rotates.')) return
+    if (!window.confirm('Remove this person’s access? Their link stops working, but they may still have the endpoint until it changes.')) return
     setBusy(true)
     try {
       await window.ncc.hostingRevokeShare(share.id)
@@ -195,6 +203,15 @@ export function useHostingShares(feedback: Feedback, owner: string | null): Host
       setError(messageOf(revokeError))
     } finally {
       setBusy(false)
+    }
+  }
+
+  const forget = async (share: ServiceShare): Promise<void> => {
+    setError(null)
+    try {
+      apply(await window.ncc.hostingForgetShare(share.id))
+    } catch (forgetError) {
+      setError(messageOf(forgetError))
     }
   }
 
@@ -243,6 +260,7 @@ export function useHostingShares(feedback: Feedback, owner: string | null): Host
     filteredContacts,
     createShare,
     revoke,
+    forget,
     renewShare
   }
 }

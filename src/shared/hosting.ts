@@ -440,6 +440,33 @@ export function secureEndpoints(
   return { endpoints: out, routerPorts: [...routerPorts] }
 }
 
+/**
+ * Services of `owner` that already serve the program on this machine's `url`, either
+ * directly or through their HTTPS front. Only a loopback `url` can match.
+ */
+export function servicesForLocalUrl(
+  state: Pick<HostingState, 'services' | 'https'>,
+  url: string,
+  owner: string | null
+): HostedService[] {
+  let target: URL
+  try {
+    target = new URL(url)
+  } catch {
+    return []
+  }
+  if (!isLoopbackHost(target.hostname)) return []
+  const port = endpointPort(target)
+  return state.services.filter(
+    (service) =>
+      (!service.owner || service.owner === owner?.toLowerCase()) &&
+      (state.https?.some((plan) => plan.serviceId === service.id && plan.listenPort === port) ||
+        service.endpoints.some(
+          (endpoint) => isLoopbackEndpoint(endpoint) && endpointPort(new URL(endpoint.url)) === port
+        ))
+  )
+}
+
 export function endpointPort(url: URL): number {
   if (url.port) return Number(url.port)
   return url.protocol === 'https:' ? 443 : 80
