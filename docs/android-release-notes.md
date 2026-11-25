@@ -1,5 +1,15 @@
 # Nostr Navigator for Android
 
+## 0.47.12
+
+- Password lists can now grow past the old storage limit. The app adds more encrypted
+  storage as needed, and you still see one list.
+- **Update all your devices to 0.47.12.** Versions before 0.47.11 do not show logins
+  stored in the added space. 0.47.11 shows them, but can undo how a login was moved,
+  which may stop that part of the list syncing to some relays.
+- If "pending relay sync" never clears, check your relays. A login that is being moved
+  keeps its old copy until every relay accepts the new one.
+
 ## 0.47.11
 
 - Fixed importing an nsec into a local identity. Import now responds immediately and

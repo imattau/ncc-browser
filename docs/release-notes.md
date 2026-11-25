@@ -1,5 +1,27 @@
 # Release notes
 
+## 0.47.12 — longer password lists
+
+### Added
+
+- Password lists can grow past the old 40,000-byte limit. The browser adds up to 16
+  encrypted parts as needed, and you still see one list. There is nothing to set up or
+  migrate.
+- A login that outgrows its part is moved safely: the old copy stays until every relay
+  has accepted the new one.
+- If part of the list has not synced, the browser says so, and creates no new part until
+  it has.
+
+### Before the list grows
+
+- **Update every device to 0.47.12.** Versions before 0.47.11 show only the first part.
+  0.47.11 shows every part, but can put a moved login back in its old part, which may
+  become too large for a relay to accept.
+- Once the list has more than one part, an encrypted export holds all of them, and
+  versions before 0.47.11 cannot import it.
+- If "pending relay sync" never clears, check your relays. A relay that always refuses
+  saves leaves moves unfinished, with both copies taking space.
+
 ## 0.47.11 — password deletion
 
 ### Fixed
