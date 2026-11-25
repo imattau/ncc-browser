@@ -168,7 +168,9 @@ class MainActivity : TauriActivity() {
     if (intent?.action != Intent.ACTION_VIEW) return
     val uri = intent.data ?: return
     if (uri.scheme?.lowercase() !in setOf("http", "https", "ncc", "nsite")) return
-    pendingLink = uri.toString()
+    synchronized(this) {
+      pendingLink = uri.toString()
+    }
     // Handled: a later configuration change must not replay it.
     intent.data = null
   }
@@ -176,8 +178,19 @@ class MainActivity : TauriActivity() {
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
     captureLink(intent)
-    if (pendingLink != null) {
-      shell?.evaluateJavascript("window.__nccOpenLink && window.__nccOpenLink()", null)
+    deliverPendingLink()
+  }
+
+  /** Deliver once the shell has installed its JavaScript handler. */
+  private fun deliverPendingLink() {
+    if (pendingLink == null) return
+    val view = shell ?: return
+    view.evaluateJavascript(
+      "window.__nccOpenLink ? (window.__nccOpenLink(), 'ready') : 'waiting'",
+    ) { result ->
+      if (result == "\"waiting\"") {
+        view.postDelayed({ deliverPendingLink() }, 100)
+      }
     }
   }
 
@@ -285,6 +298,8 @@ class MainActivity : TauriActivity() {
     chromeView.addJavascriptInterface(Bridge(), "NccContent")
 
     chromeView.evaluateJavascript("window.__nccContentReady && window.__nccContentReady()", null)
+    // Cold-start intents are captured before the WebView and its JS handler exist.
+    chromeView.post { deliverPendingLink() }
     root.postDelayed({ maybePromptBackgroundWork() }, 700)
   }
 
@@ -937,9 +952,11 @@ class MainActivity : TauriActivity() {
     /** The link another app asked us to open, once. */
     @JavascriptInterface
     fun takeLink(): String? {
-      val link = pendingLink
-      pendingLink = null
-      return link
+      return synchronized(this@MainActivity) {
+        val link = pendingLink
+        pendingLink = null
+        link
+      }
     }
 
     @JavascriptInterface

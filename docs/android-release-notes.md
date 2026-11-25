@@ -1,5 +1,9 @@
 # Nostr Navigator for Android
 
+## Fixes in 0.47.2
+
+- Fixed links from other apps being lost while the browser starts or resumes.
+
 ## Fixes in 0.47.1
 
 - Fixed identity settings failing to show saved additional signers, including after

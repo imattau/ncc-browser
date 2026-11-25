@@ -1,5 +1,11 @@
 # Release notes
 
+## 0.47.2 — Android external links
+
+### Fixed
+
+- Android now reliably opens links shared by other apps on cold and warm starts.
+
 ## 0.47.1 — restore Android signer profiles
 
 ### Fixed
