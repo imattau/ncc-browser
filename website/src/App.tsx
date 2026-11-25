@@ -39,7 +39,7 @@ const SITE_NPUB = 'npub1khf5amw8mrupe649a5mhkk3d2d8wjj06urz6kwawpftk4f68tjlstdmd
 const CONTACT_NPUB = 'npub15d7l6vky77x34wu2rl2jdlafmpuycjsca06sjpmqgc7ggnd0zazsja3gma'
 const WHITE_NOISE_CONTACT = `whitenoise://user/${CONTACT_NPUB}`
 const PUBLISHER_HEX = '4458d45742078c1b6d6d9afbef9f85d1ea26a835c95c30c4cdf399535bcc03e3'
-const FALLBACK_VERSION = '0.41.0'
+const FALLBACK_VERSION = '0.47.10'
 const NPACK_COMMAND = `npack install ${PUBLISHER_NPUB}/ncc-browser`
 
 interface Release {
@@ -221,7 +221,7 @@ const FEATURES = [
   {
     icon: <Sparkles className="h-4 w-4" />,
     title: 'Publish from the browser',
-    body: 'Turn a local service into ncc://…, share it privately with one npub, or publish a static site to nsite://… — all from Settings.'
+    body: 'Turn a local service into ncc://…, share it privately with the people you choose, or publish a static site to nsite://… — all from Settings.'
   },
   {
     icon: <MonitorSmartphone className="h-4 w-4" />,
@@ -457,8 +457,9 @@ export function App() {
               </div>
               <p className="mt-3 text-[13px] leading-relaxed text-muted">
                 Point at a service you run — a home lab, a dashboard, a media server. Publish
-                a signed locator and share it privately with one person&apos;s npub, without an
-                account or a public port-forward.
+                a signed locator and share it privately with the people you choose, without a
+                domain or an account. Direct internet access needs a port forward; an onion
+                address does not.
               </p>
               <div className="mt-4 rounded-lg border border-line bg-ink px-3 py-2 font-mono text-[11px] text-accent-2">
                 ncc://npub…/photos
