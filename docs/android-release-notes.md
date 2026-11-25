@@ -1,5 +1,11 @@
 # Nostr Navigator for Android
 
+## 0.47.10
+
+- Private NCC-05 records can now be opened with the active local identity. Android also
+  reads NCC-02 anchors without requiring a public `k` tag; private transport pins stay
+  inside the encrypted locator.
+
 ## 0.47.9
 
 - Maintenance release with no Android-specific changes.

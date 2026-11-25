@@ -201,7 +201,8 @@ impl ProxyState {
 
         Self {
             resolver: Resolver::new(settings.clone())
-                .with_directory(pointer_directory(&config.cache_directory, "records")),
+                .with_directory(pointer_directory(&config.cache_directory, "records"))
+                .with_anchor_required(settings.get().anchor_required),
             client,
             pinned_client,
             tor_client,
@@ -228,6 +229,12 @@ impl ProxyState {
 
     /// Attach a signer. Without this, the NIP-07 routes answer 501.
     pub fn with_signer(mut self, identity: Arc<IdentityStore>, approvals: Arc<Approvals>) -> Self {
+        let decrypt_identity = identity.clone();
+        self.resolver = self
+            .resolver
+            .with_decryptor(Arc::new(move |peer, ciphertext| {
+                decrypt_identity.nip44_decrypt(peer, ciphertext).ok()
+            }));
         self.identity = Some(identity);
         self.approvals = Some(approvals);
         self
@@ -508,25 +515,44 @@ async fn handle_inner(state: &ProxyState, request: Request) -> Response {
     if authority_host(&authority).eq_ignore_ascii_case("nccsearch.localhost") {
         if let Some(signer_method) = path.strip_prefix("/__ncc/nip07/") {
             if request.method() != axum::http::Method::POST {
-                return text(StatusCode::METHOD_NOT_ALLOWED, "NIP-07 requests must use POST");
+                return text(
+                    StatusCode::METHOD_NOT_ALLOWED,
+                    "NIP-07 requests must use POST",
+                );
             }
             let body = match axum::body::to_bytes(request.into_body(), state.max_body_bytes).await {
                 Ok(body) => body,
                 Err(_) => return text(StatusCode::PAYLOAD_TOO_LARGE, "Request body too large"),
             };
             let origin = match Url::parse(&format!("http://{authority}")) {
-                Ok(url) if url.host_str().is_some_and(|host| host.eq_ignore_ascii_case("nccsearch.localhost")) => {
+                Ok(url)
+                    if url
+                        .host_str()
+                        .is_some_and(|host| host.eq_ignore_ascii_case("nccsearch.localhost")) =>
+                {
                     url.origin().ascii_serialization()
                 }
-                _ => return json_error(StatusCode::BAD_REQUEST, "bad-origin", "Unknown nccsearch origin."),
+                _ => {
+                    return json_error(
+                        StatusCode::BAD_REQUEST,
+                        "bad-origin",
+                        "Unknown nccsearch origin.",
+                    );
+                }
             };
-            let (status, body) = crate::signer::handle_web(state, &origin, signer_method, &body).await;
+            let (status, body) =
+                crate::signer::handle_web(state, &origin, signer_method, &body).await;
             return Response::builder()
                 .status(StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR))
                 .header(header::CONTENT_TYPE, "application/json; charset=utf-8")
                 .header(header::CACHE_CONTROL, "no-store")
                 .body(Body::from(body))
-                .unwrap_or_else(|_| text(StatusCode::INTERNAL_SERVER_ERROR, "Could not answer NIP-07 request"));
+                .unwrap_or_else(|_| {
+                    text(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "Could not answer NIP-07 request",
+                    )
+                });
         }
         return serve_nccsearch(state, &path, request.method());
     }
@@ -786,11 +812,7 @@ fn serve_nccsearch_embedded(request_path: &str, method: &axum::http::Method) -> 
     nccsearch_response(method, bytes, content_type)
 }
 
-fn nccsearch_response(
-    method: &axum::http::Method,
-    bytes: &[u8],
-    content_type: &str,
-) -> Response {
+fn nccsearch_response(method: &axum::http::Method, bytes: &[u8], content_type: &str) -> Response {
     const POLICY: &str = "default-src 'self' data: blob:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src https:; connect-src 'self' wss: ws: https:; worker-src 'self' blob:; base-uri 'self'";
     let (body_bytes, policy) = if content_type.starts_with("text/html") {
         let injection = Injection::new("nccsearch");
@@ -814,7 +836,12 @@ fn nccsearch_response(
         .header(header::REFERRER_POLICY, "no-referrer")
         .header("content-security-policy", policy)
         .body(body)
-        .unwrap_or_else(|_| text(StatusCode::INTERNAL_SERVER_ERROR, "Could not serve nccsearch"))
+        .unwrap_or_else(|_| {
+            text(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Could not serve nccsearch",
+            )
+        })
 }
 
 enum ForwardError {
@@ -1564,6 +1591,8 @@ fn error_page(error: &ResolveError, vhost: &Vhost) -> Response {
         ResolveError::Expired => StatusCode::GONE,
         ResolveError::NoEndpoint => StatusCode::BAD_GATEWAY,
         ResolveError::InvalidPayload => StatusCode::BAD_GATEWAY,
+        ResolveError::NoAnchor => StatusCode::FORBIDDEN,
+        ResolveError::KeyMismatch => StatusCode::BAD_GATEWAY,
         ResolveError::RelayError(_) => StatusCode::SERVICE_UNAVAILABLE,
     };
     failure_page(status, &error.to_string(), "", vhost)

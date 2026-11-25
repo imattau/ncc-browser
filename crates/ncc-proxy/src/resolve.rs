@@ -9,11 +9,12 @@ use nostr::{Alphabet, Event, Filter, Kind, PublicKey, SingleLetterTag};
 use serde_json::Value;
 
 use ncc_core::{
-    candidate_d_tags, d_tag_source, normalize_endpoints, parse_payload, payload_expiry,
-    sort_endpoints, DTagSource, Endpoint,
+    DTagSource, Endpoint, candidate_d_tags, d_tag_source, normalize_endpoints, parse_payload,
+    payload_expiry, sort_endpoints,
 };
 
 const LOCATOR_KIND: u16 = 30058;
+const ANCHOR_KIND: u16 = 30059;
 /// How many records to try under one `d` tag before falling through to the
 /// next candidate.
 const MAX_EVENTS_PER_D: usize = 10;
@@ -25,6 +26,8 @@ pub enum ResolveError {
     Expired,
     NoEndpoint,
     InvalidPayload,
+    NoAnchor,
+    KeyMismatch,
     RelayError(String),
 }
 
@@ -36,6 +39,8 @@ impl std::fmt::Display for ResolveError {
             Self::Expired => f.write_str("The locator record has expired"),
             Self::NoEndpoint => f.write_str("The locator has no fetchable endpoints"),
             Self::InvalidPayload => f.write_str("The locator payload could not be read"),
+            Self::NoAnchor => f.write_str("This service has no fresh NCC-02 identity anchor"),
+            Self::KeyMismatch => f.write_str("The NCC-02 and NCC-05 transport keys conflict"),
             Self::RelayError(detail) => write!(f, "No relay answered: {detail}"),
         }
     }
@@ -64,6 +69,17 @@ pub struct ResolvedService {
     pub updated_at: i64,
     pub expires_at: i64,
     pub endpoints: Vec<Endpoint>,
+    #[serde(default)]
+    pub anchor: Option<ServiceAnchor>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ServiceAnchor {
+    pub event_id: String,
+    pub d_tag: String,
+    pub endpoint: Option<String>,
+    pub k: Option<String>,
+    pub expires_at: i64,
 }
 
 #[derive(Clone)]
@@ -88,6 +104,8 @@ pub struct Resolver {
     flights: Arc<crate::cache::Flights>,
     /// Where records survive a restart; `None` keeps them in memory only.
     directory: Option<PathBuf>,
+    decrypt: Option<Arc<dyn Fn(&str, &str) -> Option<String> + Send + Sync>>,
+    anchor_required: bool,
 }
 
 impl Resolver {
@@ -100,11 +118,26 @@ impl Resolver {
             cache: Mutex::new(HashMap::new()),
             flights: Arc::default(),
             directory: None,
+            decrypt: None,
+            anchor_required: false,
         }
     }
 
     pub fn with_directory(mut self, directory: Option<PathBuf>) -> Self {
         self.directory = directory;
+        self
+    }
+
+    pub fn with_decryptor(
+        mut self,
+        decrypt: Arc<dyn Fn(&str, &str) -> Option<String> + Send + Sync>,
+    ) -> Self {
+        self.decrypt = Some(decrypt);
+        self
+    }
+
+    pub fn with_anchor_required(mut self, required: bool) -> Self {
+        self.anchor_required = required;
         self
     }
 
@@ -122,7 +155,8 @@ impl Resolver {
         pubkey_input: &str,
         service: &str,
     ) -> Result<ResolvedService, ResolveError> {
-        self.resolve_with_transport(pubkey_input, service, false).await
+        self.resolve_with_transport(pubkey_input, service, false)
+            .await
     }
 
     /// Resolve a relay locator, allowing ws(s) endpoints in the NCC-05 record.
@@ -131,7 +165,8 @@ impl Resolver {
         pubkey_input: &str,
         service: &str,
     ) -> Result<ResolvedService, ResolveError> {
-        self.resolve_with_transport(pubkey_input, service, true).await
+        self.resolve_with_transport(pubkey_input, service, true)
+            .await
     }
 
     async fn resolve_with_transport(
@@ -260,7 +295,7 @@ impl Resolver {
             return Vec::new();
         };
         let filter = Filter::new()
-            .kinds([Kind::Custom(LOCATOR_KIND)])
+            .kinds([Kind::Custom(LOCATOR_KIND), Kind::Custom(ANCHOR_KIND)])
             .author(key)
             .limit(50);
         let Ok(filter) = serde_json::to_value(&filter) else {
@@ -374,6 +409,8 @@ impl Resolver {
             &candidates,
             now,
             allow_ws,
+            self.decrypt.as_deref(),
+            self.anchor_required,
         )
     }
 }
@@ -401,7 +438,13 @@ fn select_locator(
     candidates: &[String],
     now: i64,
     allow_ws: bool,
+    decrypt: Option<&(dyn Fn(&str, &str) -> Option<String> + Send + Sync)>,
+    anchor_required: bool,
 ) -> Result<ResolvedService, ResolveError> {
+    let anchor = select_anchor(events, hex, candidates, now);
+    if anchor_required && anchor.is_none() {
+        return Err(ResolveError::NoAnchor);
+    }
     let mut by_tag: HashMap<&str, Vec<&Event>> = HashMap::new();
     for event in events {
         let Some(d_tag) = identifier(event) else {
@@ -431,7 +474,16 @@ fn select_locator(
         };
 
         for event in bucket.iter().take(MAX_EVENTS_PER_D) {
-            let payload: Value = match serde_json::from_str(&event.content) {
+            let plaintext = if event.content.trim_start().starts_with('{') {
+                Some(event.content.clone())
+            } else {
+                decrypt.and_then(|decrypt| decrypt(hex, &event.content))
+            };
+            let Some(plaintext) = plaintext else {
+                saw_invalid = true;
+                continue;
+            };
+            let payload: Value = match serde_json::from_str(&plaintext) {
                 Ok(payload) => payload,
                 Err(_) => {
                     saw_invalid = true;
@@ -449,11 +501,52 @@ fn select_locator(
                 continue;
             }
 
-            let endpoints = normalize_endpoints(
+            let mut endpoints = normalize_endpoints(
                 payload.fields.get("endpoints").unwrap_or(&Value::Null),
                 allow_ws,
             );
+            if let Some(anchor) = &anchor {
+                if let Some(k) = &anchor.k {
+                    let has_conflict = endpoints.iter().any(|endpoint| {
+                        endpoint.protocol == "https"
+                            && endpoint.k.as_ref().is_some_and(|found| found != k)
+                    });
+                    if has_conflict {
+                        return Err(ResolveError::KeyMismatch);
+                    }
+                    for endpoint in &mut endpoints {
+                        if endpoint.k.is_none() && endpoint.protocol == "https" {
+                            endpoint.k = Some(k.clone());
+                        }
+                    }
+                }
+            }
+            endpoints.retain(|endpoint| {
+                endpoint.url.starts_with("http://") || endpoint.url.starts_with("https://")
+            });
             if endpoints.is_empty() {
+                if let Some(anchor) = &anchor {
+                    if let Some(url) = &anchor.endpoint {
+                        let fallback = normalize_endpoints(
+                            &serde_json::json!([{"url":url,"k":anchor.k}]),
+                            allow_ws,
+                        );
+                        if !fallback.is_empty() {
+                            return Ok(ResolvedService {
+                                pubkey: pubkey_input.to_string(),
+                                hex_pubkey: hex.to_string(),
+                                service: service.to_string(),
+                                d_tag: (*candidate).clone(),
+                                d_tag_source: d_tag_source(candidate, service),
+                                event_id: event.id.to_hex(),
+                                updated_at: payload.updated_at,
+                                expires_at,
+                                endpoints: sort_endpoints(&fallback),
+                                anchor: Some(anchor.clone()),
+                            });
+                        }
+                    }
+                }
                 saw_no_endpoint = true;
                 continue;
             }
@@ -468,6 +561,7 @@ fn select_locator(
                 updated_at: payload.updated_at,
                 expires_at,
                 endpoints: sort_endpoints(&endpoints),
+                anchor: anchor.clone(),
             });
         }
     }
@@ -481,6 +575,61 @@ fn select_locator(
     } else {
         Err(ResolveError::NoRecord)
     }
+}
+
+fn select_anchor(
+    events: &[Event],
+    author: &str,
+    candidates: &[String],
+    now: i64,
+) -> Option<ServiceAnchor> {
+    for candidate in candidates {
+        let mut bucket: Vec<&Event> = events
+            .iter()
+            .filter(|event| {
+                event.kind.as_u16() == ANCHOR_KIND
+                    && event.pubkey.to_hex() == author
+                    && identifier(event).as_deref() == Some(candidate)
+                    && event.verify().is_ok()
+            })
+            .collect();
+        bucket.sort_by(|a, b| {
+            b.created_at
+                .cmp(&a.created_at)
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        for event in bucket.into_iter().take(10) {
+            let exp = event.tags.iter().find_map(|tag| {
+                let s = tag.as_slice();
+                (s.first().map(String::as_str) == Some("exp"))
+                    .then(|| s.get(1)?.parse::<i64>().ok())
+                    .flatten()
+            });
+            if exp.is_some_and(|value| value <= now) {
+                continue;
+            }
+            let endpoint = event.tags.iter().find_map(|tag| {
+                let s = tag.as_slice();
+                (s.first().map(String::as_str) == Some("u"))
+                    .then(|| s.get(1).cloned())
+                    .flatten()
+            });
+            let k = event.tags.iter().find_map(|tag| {
+                let s = tag.as_slice();
+                (s.first().map(String::as_str) == Some("k"))
+                    .then(|| s.get(1).cloned())
+                    .flatten()
+            });
+            return Some(ServiceAnchor {
+                event_id: event.id.to_hex(),
+                d_tag: candidate.clone(),
+                endpoint,
+                k,
+                expires_at: exp.unwrap_or(0),
+            });
+        }
+    }
+    None
 }
 
 fn identifier(event: &Event) -> Option<String> {
@@ -546,7 +695,56 @@ mod tests {
             &candidate_d_tags(Some(service)),
             now,
             false,
+            None,
+            false,
         )
+    }
+
+    #[test]
+    fn decrypts_private_locator_and_applies_private_anchor() {
+        use nostr::nips::nip44;
+        let keys = Keys::generate();
+        let now = unix_now();
+        let payload = serde_json::json!({"ttl":600,"updated_at":now,"endpoints":[{"url":"https://private.example/","protocol":"https"}]}).to_string();
+        let ciphertext = nip44::encrypt(
+            keys.secret_key(),
+            &keys.public_key(),
+            &payload,
+            nostr::nips::nip44::Version::V2,
+        )
+        .unwrap();
+        let locator = EventBuilder::new(Kind::Custom(LOCATOR_KIND), ciphertext)
+            .tags([Tag::parse(["d", "web"]).unwrap()])
+            .custom_created_at(Timestamp::from((now - 1) as u64))
+            .sign_with_keys(&keys)
+            .unwrap();
+        let anchor = EventBuilder::new(Kind::Custom(ANCHOR_KIND), "")
+            .tags([
+                Tag::parse(["d", "web"]).unwrap(),
+                Tag::parse(["exp", &(now + 600).to_string()]).unwrap(),
+                Tag::parse(["k", "pin"]).unwrap(),
+            ])
+            .custom_created_at(Timestamp::from((now - 1) as u64))
+            .sign_with_keys(&keys)
+            .unwrap();
+        let decrypt = |peer: &str, content: &str| {
+            let peer = PublicKey::parse(peer).ok()?;
+            nip44::decrypt(keys.secret_key(), &peer, content).ok()
+        };
+        let resolved = select_locator(
+            &[locator, anchor],
+            &keys.public_key().to_hex(),
+            &keys.public_key().to_hex(),
+            "web",
+            &["web".to_string()],
+            now,
+            false,
+            Some(&decrypt),
+            true,
+        )
+        .unwrap();
+        assert_eq!(resolved.anchor.unwrap().k.as_deref(), Some("pin"));
+        assert_eq!(resolved.endpoints[0].k.as_deref(), Some("pin"));
     }
 
     // ncc-server's provisioner creates named services first and `addr` last, so
@@ -744,6 +942,7 @@ mod tests {
                 family: ncc_core::EndpointFamily::Ipv4,
                 k: None,
             }],
+            anchor: None,
         }
     }
 

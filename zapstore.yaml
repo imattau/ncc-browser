@@ -21,7 +21,7 @@ description: |
   **Alpha software.** This build exists to test the Android port of Nostr Navigator,
   the browser that resolves services by Nostr identity instead of DNS.
 
-  What works: NCC-05 resolution from relays, SPKI pinning of endpoints, pages served
+  What works: public and private NCC-05 resolution from relays, SPKI pinning of endpoints, pages served
   over a loopback proxy so each service keeps its own origin, nsite:// sites, a NIP-07
   signer with an encrypted local identity and per-service approval prompts, tabs,
   history, bookmarks, downloads and settings.
