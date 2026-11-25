@@ -191,6 +191,7 @@ export function HostingSettings({
             service={service}
             shares={state.shares}
             onions={state.onions}
+            https={state.https?.find((plan) => plan.serviceId === service.id)}
             npub={identityAdmin.npub}
             identityConfigured={Boolean(identity?.configured)}
             busy={data.busy}

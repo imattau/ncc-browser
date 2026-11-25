@@ -304,6 +304,10 @@ export const ERROR_COPY: Record<string, { title: string; hint: string }> = {
     title: 'Endpoint unreachable',
     hint: 'The locator is valid, but the service did not accept a connection. The publisher may be offline or behind a firewall.'
   },
+  'tls-failed': {
+    title: 'HTTPS connection failed',
+    hint: 'The address did not complete an HTTPS connection. The server behind it may only speak plain HTTP. The publisher can turn on HTTPS for the service in this browser, then publish again.'
+  },
   'k-mismatch': {
     title: 'Transport identity mismatch',
     hint: 'The TLS certificate presented by the endpoint does not match the fingerprint signed into the locator. The connection was refused.'

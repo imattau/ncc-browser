@@ -1,6 +1,6 @@
 import { dialog, ipcMain } from 'electron'
 import { readFileSync } from 'node:fs'
-import { isLoopbackEndpoint, isTlsProxyEndpoint, type HostingDraft } from '@shared/hosting'
+import { endpointPort, isLoopbackEndpoint, type HostingDraft } from '@shared/hosting'
 import { normalizeEndpointSeed } from '@shared/reachability'
 import type { ConfigStore } from '../config'
 import { isChromeSender, shellForSender } from '../ipc/shared'
@@ -9,6 +9,7 @@ import type { TorManager } from '../tor/manager'
 import { verifyTcpThroughSocks, type OnionManager } from '../tor/onion'
 import { certificateInfo, generateSelfSignedCertificate, saveCertificateFiles } from './certificates'
 import { discoverReachability } from './discover'
+import { HttpsSetup, probeProtocol } from './https-setup'
 import type { NetworkWatch } from './network-watch'
 import type { PortMappingService } from './port-mapping'
 import type { PublicAddressService } from './public-address'
@@ -39,6 +40,13 @@ export function registerHostingIpc(deps: HostingIpcDeps): void {
     if (!isChromeSender(event)) throw new Error('Services are only available to the browser chrome')
   }
 
+  const https = new HttpsSetup(deps.tlsProxy)
+  /** Correct the HTTPS setup before anything is published for this service. */
+  const prepareHttps = async (id: string): Promise<void> => {
+    const service = deps.hosting.find(id)
+    if (service) await https.prepare(service)
+  }
+
   ipcMain.handle('ncc:hosting-state', () => deps.hosting.state())
   ipcMain.handle('ncc:hosting-create', (event, draft: unknown) => {
     chromeOnly(event)
@@ -56,6 +64,7 @@ export function registerHostingIpc(deps: HostingIpcDeps): void {
     chromeOnly(event)
     if (typeof id !== 'string') throw new Error('A service id is required')
     await deps.onion.remove(id)
+    await deps.tlsProxy.remove(id)
     deps.hosting.remove(id)
     return deps.hosting.state()
   })
@@ -67,9 +76,10 @@ export function registerHostingIpc(deps: HostingIpcDeps): void {
       // An onion endpoint is only real while Tor runs; re-attach before publishing it.
       await deps.onion.restoreAll().catch(() => undefined)
     }
+    await prepareHttps(id)
     return deps.hosting.publish(id)
   })
-  ipcMain.handle('ncc:hosting-share', (event, payload: unknown) => {
+  ipcMain.handle('ncc:hosting-share', async (event, payload: unknown) => {
     chromeOnly(event)
     const { id, recipient, days, label } = (payload ?? {}) as {
       id?: unknown
@@ -80,6 +90,7 @@ export function registerHostingIpc(deps: HostingIpcDeps): void {
     if (typeof id !== 'string' || typeof recipient !== 'string') {
       throw new Error('A service id and a recipient npub are required')
     }
+    await prepareHttps(id)
     return deps.hosting.share(
       id,
       recipient,
@@ -87,7 +98,7 @@ export function registerHostingIpc(deps: HostingIpcDeps): void {
       typeof label === 'string' ? label : undefined
     )
   })
-  ipcMain.handle('ncc:hosting-share-many', (event, payload: unknown) => {
+  ipcMain.handle('ncc:hosting-share-many', async (event, payload: unknown) => {
     chromeOnly(event)
     const { id, recipients, days, label } = (payload ?? {}) as {
       id?: unknown
@@ -99,6 +110,7 @@ export function registerHostingIpc(deps: HostingIpcDeps): void {
       throw new Error('A service id and at least one recipient are required')
     }
     const list = recipients.filter((recipient): recipient is string => typeof recipient === 'string')
+    await prepareHttps(id)
     return deps.hosting.shareMany(
       id,
       list,
@@ -303,7 +315,18 @@ export function registerHostingIpc(deps: HostingIpcDeps): void {
         'Tor forwarding needs a loopback endpoint such as http://127.0.0.1:8080. Add one to this service first.'
       )
     }
-    const onion = await deps.onion.publish(id, { url: local.url })
+    // Tor encrypts the onion route itself, so a plain HTTP server stays plain even if
+    // its address was saved as https://.
+    const target = new URL(local.url)
+    const protocol = await probeProtocol(
+      target.hostname.replace(/^\[|\]$/g, ''),
+      endpointPort(target)
+    )
+    if (protocol === 'http' && target.protocol === 'https:') {
+      target.port = String(endpointPort(target))
+      target.protocol = 'http:'
+    }
+    const onion = await deps.onion.publish(id, { url: target.toString() })
     deps.hosting.attachOnion(id, onion.url)
     return { state: deps.hosting.state(), onion }
   })
@@ -319,23 +342,18 @@ export function registerHostingIpc(deps: HostingIpcDeps): void {
     if (typeof id !== 'string') throw new Error('A service id is required')
     const service = deps.hosting.find(id)
     if (!service) throw new Error('That service no longer exists')
-    const local = service.endpoints.find(
-      (endpoint) => endpoint.url.startsWith('http://') && !isTlsProxyEndpoint(endpoint)
-    )
-    if (!local) {
-      throw new Error(
-        'A local TLS proxy needs a plain http:// endpoint, such as http://127.0.0.1:8080. Add one to this service first.'
-      )
-    }
-    const proxy = await deps.tlsProxy.ensure(id, { url: local.url })
-    deps.hosting.attachTlsProxy(id, proxy.url, proxy.pin)
+    await https.enable(service)
+    deps.hosting.dropGeneratedEndpoints(id)
+    deps.hosting.refresh()
+    const proxy = deps.tlsProxy.status(id)!
     return { state: deps.hosting.state(), proxy }
   })
   ipcMain.handle('ncc:hosting-remove-tls-proxy', async (event, id: unknown) => {
     chromeOnly(event)
     if (typeof id !== 'string') throw new Error('A service id is required')
     await deps.tlsProxy.remove(id)
-    deps.hosting.detachTlsProxy(id)
+    deps.hosting.dropGeneratedEndpoints(id)
+    deps.hosting.refresh()
     return deps.hosting.state()
   })
 }

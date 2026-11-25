@@ -157,7 +157,7 @@ export async function createBrowserStack(
       : {})
   })
   runtime.tlsProxyManager = tlsProxies
-  void tlsProxies.restoreAll().catch((error) => {
+  void tlsProxies.restoreAll((serviceId) => Boolean(foundation.hosting.find(serviceId))).catch((error) => {
     console.warn('[tls-proxy] could not restore proxies:', error)
   })
 

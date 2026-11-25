@@ -3,6 +3,7 @@ import {
   isLoopbackEndpoint,
   isTlsProxyEndpoint,
   recipientNpub,
+  type HttpsPlan,
   serviceAddress,
   type HostedService,
   type OnionStatus,
@@ -18,6 +19,7 @@ interface ServiceCardProps {
   service: HostedService
   shares: ServiceShare[]
   onions: OnionStatus[] | undefined
+  https: HttpsPlan | undefined
   npub: string
   identityConfigured: boolean
   busy: boolean
@@ -39,6 +41,7 @@ export function ServiceCard({
   service,
   shares,
   onions,
+  https,
   npub,
   identityConfigured,
   busy,
@@ -60,9 +63,8 @@ export function ServiceCard({
   const onion = (onions ?? []).find((entry) => entry.serviceId === service.id)
   const canOnion = service.endpoints.some((endpoint) => isLoopbackEndpoint(endpoint))
   const canShare = service.endpoints.some((endpoint) => !isLoopbackEndpoint(endpoint))
-  const tlsProxy = service.endpoints.find(isTlsProxyEndpoint)
-  const canTlsProxy = service.endpoints.some(
-    (endpoint) => endpoint.url.startsWith('http://') && !isTlsProxyEndpoint(endpoint)
+  const canHttps = service.endpoints.some(
+    (endpoint) => !endpoint.url.includes('.onion') && !isTlsProxyEndpoint(endpoint)
   )
   const expired = Boolean(
     service.lastPublishedAt &&
@@ -171,29 +173,36 @@ export function ServiceCard({
               )}
             </div>
           ) : null}
-          {tlsProxy ? (
+          {https ? (
             <div data-service-tls-proxy className="mt-1.5 rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-ink)]/40 px-2 py-1">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-ui-95 font-semibold text-[color:var(--color-text)]">Local TLS proxy</span>
-                <button
-                  type="button"
-                  onClick={() => void copy(`tls-proxy:${service.id}`, tlsProxy.url)}
-                  className="min-w-0 truncate font-mono text-ui-95 text-[color:var(--color-muted)] hover:text-[color:var(--color-text)]"
-                >
-                  {copied === `tls-proxy:${service.id}` ? 'copied' : tlsProxy.url}
-                </button>
+                <span className="text-ui-95 font-semibold text-[color:var(--color-text)]">
+                  HTTPS by this browser
+                </span>
                 <button
                   type="button"
                   onClick={() => onRemoveTlsProxy(service)}
                   className="ml-auto rounded border border-[color:var(--color-line)] px-1.5 py-0.5 text-ui-95 text-[color:var(--color-muted)] hover:bg-[color:var(--color-danger)]/10 hover:text-[color:var(--color-danger)]"
                 >
-                  Remove
+                  Turn off
                 </button>
               </div>
               <p className="mt-0.5 text-ui-95 text-[color:var(--color-faint)]">
-                The browser terminates TLS here with a self-generated certificate and forwards to the
-                plain http:// endpoint. The address and pin stay the same across restarts.
+                Publish sends these addresses. Keep the browser running; it passes visitors to your
+                HTTP server on port {https.targetPort}, which sees them as connections from this
+                computer.
               </p>
+              {https.endpoints.map((endpoint) => (
+                <div key={endpoint.url} className="truncate font-mono text-ui-95 text-[color:var(--color-muted)]">
+                  {endpoint.url}
+                </div>
+              ))}
+              {https.routerPorts.map((port) => (
+                <p key={port} data-router-forward className="mt-0.5 text-ui-95 font-semibold text-[color:var(--color-text)]">
+                  For internet visitors, set your router to forward TCP port {port} to{' '}
+                  {https.lanAddress ?? 'this computer'}, port {https.listenPort}.
+                </p>
+              ))}
             </div>
           ) : null}
           {service.lastPublishError ? (
@@ -229,13 +238,13 @@ export function ServiceCard({
               <Radar className="h-3 w-3" /> Onion
             </button>
           ) : null}
-          {canTlsProxy && !tlsProxy ? (
+          {canHttps && !https ? (
             <button
               type="button"
               data-publish-tls-proxy
               onClick={() => onPublishTlsProxy(service)}
               disabled={busy}
-              title="Terminate TLS locally in front of the http:// endpoint, with no server setup"
+              title="Let the browser add HTTPS in front of your HTTP server, with no server setup"
               className="inline-flex items-center gap-1 rounded-lg border border-[color:var(--color-line)] px-2 py-1 text-ui-10 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)] disabled:opacity-40"
             >
               <ShieldCheck className="h-3 w-3" /> HTTPS

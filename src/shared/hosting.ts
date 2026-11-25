@@ -80,6 +80,8 @@ export interface HostingState {
   received: ReceivedShare[]
   /** Runtime onion endpoints; not persisted with the locator state. */
   onions?: OnionStatus[]
+  /** Runtime view of the services the browser secures with HTTPS; not persisted. */
+  https?: HttpsPlan[]
 }
 
 export interface OnionStatus {
@@ -101,9 +103,37 @@ export interface HostingOnionResult {
   onion: OnionStatus
 }
 
-export interface TlsProxyStatus {
+/** The browser's HTTPS front for one service's plain HTTP server. */
+export interface HttpsFront {
+  /** The port the plain HTTP server listens on. */
+  targetPort: number
+  /** The port the browser serves HTTPS on. */
+  listenPort: number
+  /** base64url(sha256(SPKI)) of the browser's certificate. */
+  pin: string
+}
+
+/**
+ * How an endpoint host relates to this machine: one of its own addresses, another
+ * private address, or an address that reaches it through a router.
+ */
+export type EndpointHostKind = 'local' | 'private' | 'public'
+
+export interface HttpsPlan {
   serviceId: string
-  /** The `https://` address the local proxy listens on. */
+  listenPort: number
+  targetPort: number
+  /** The addresses that publishing and sharing send. */
+  endpoints: ServiceEndpoint[]
+  /** Public TCP ports the router has to forward to `listenPort` on this machine. */
+  routerPorts: number[]
+  /** This machine's LAN address, for the router rule. */
+  lanAddress?: string
+}
+
+export interface TlsProxyStatus extends HttpsFront {
+  serviceId: string
+  /** The loopback form of the `https://` address the browser listens on. */
   url: string
   /** base64url(sha256(SPKI)) of the generated certificate; published as the endpoint `k`. */
   pin: string
@@ -363,6 +393,56 @@ export function normalizeEndpoint(
 
 export function isTlsProxyEndpoint(endpoint: ServiceEndpoint): boolean {
   return endpoint.source === 'tls-proxy'
+}
+
+/**
+ * The endpoints to publish for a service the browser secures with HTTPS. The saved
+ * endpoints stay as the user typed them; every one that reaches the plain HTTP server
+ * becomes a pinned `https://` address:
+ *
+ * - this machine's own addresses use the HTTPS port;
+ * - public addresses keep their port, and the router forwards it to the HTTPS port.
+ *
+ * Onion addresses (already encrypted by Tor), other ports and other machines on the
+ * local network are left alone.
+ */
+export function secureEndpoints(
+  endpoints: readonly ServiceEndpoint[],
+  front: HttpsFront,
+  hostKind: (host: string) => EndpointHostKind
+): { endpoints: ServiceEndpoint[]; routerPorts: number[] } {
+  const out: ServiceEndpoint[] = []
+  const routerPorts = new Set<number>()
+  const add = (endpoint: ServiceEndpoint): void => {
+    if (!out.some((entry) => entry.url === endpoint.url)) out.push(endpoint)
+  }
+  for (const endpoint of endpoints) {
+    // Saved by v0.47, which published a loopback-only proxy address.
+    if (isTlsProxyEndpoint(endpoint)) continue
+    const url = new URL(endpoint.url)
+    const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase()
+    if (host.endsWith('.onion') || endpointPort(url) !== front.targetPort) {
+      add({ ...endpoint })
+      continue
+    }
+    const kind = isLoopbackHost(host) ? 'local' : hostKind(host)
+    if (kind === 'private') {
+      add({ ...endpoint })
+      continue
+    }
+    const port = kind === 'local' ? front.listenPort : front.targetPort
+    if (kind === 'public') routerPorts.add(port)
+    url.protocol = 'https:'
+    // Setting the protocol can drop a default port, so the port is set afterwards.
+    url.port = String(port)
+    add({ ...endpoint, url: url.toString(), k: front.pin })
+  }
+  return { endpoints: out, routerPorts: [...routerPorts] }
+}
+
+export function endpointPort(url: URL): number {
+  if (url.port) return Number(url.port)
+  return url.protocol === 'https:' ? 443 : 80
 }
 
 export function validateHostingDraft(input: HostingDraft): Validation<NormalizedHostingDraft> {

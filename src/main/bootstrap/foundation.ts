@@ -10,7 +10,8 @@ import { ExtensionStorage } from '../extensions/storage'
 import { HostingService } from '../hosting/service'
 import { HostingStore } from '../hosting/store'
 import { NetworkWatch } from '../hosting/network-watch'
-import { PortMappingService } from '../hosting/port-mapping'
+import { hostKind } from '../hosting/https-setup'
+import { PortMappingService, lanAddress } from '../hosting/port-mapping'
 import { PortMonitor } from '../hosting/port-monitor'
 import { PublicAddressService } from '../hosting/public-address'
 import { queryGateway } from '../net/gateway'
@@ -201,6 +202,11 @@ export async function createFoundation(runtime: Runtime): Promise<Foundation> {
     publisher: new RelayHostingPublisher(relayPool, config),
     anchorRequired: () => config.get().anchorRequired,
     onions: () => runtime.onionManager?.statuses() ?? [],
+    https: {
+      front: (serviceId) => runtime.tlsProxyManager?.status(serviceId) ?? null,
+      hostKind: (host) => hostKind(host),
+      lanAddress: () => lanAddress()
+    },
     onChange: (state) => broadcastToChrome(runtime, 'ncc:hosting-changed', state)
   })
 

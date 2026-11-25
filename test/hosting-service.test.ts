@@ -69,7 +69,12 @@ class FakePublisher implements HostingPublisher {
 }
 
 function setup(
-  options: { mode?: 'local' | 'nip46'; configured?: boolean; strictAnchors?: boolean } = {}
+  options: {
+    mode?: 'local' | 'nip46'
+    configured?: boolean
+    strictAnchors?: boolean
+    https?: ConstructorParameters<typeof HostingService>[0]['https']
+  } = {}
 ) {
   const owner = generateSecretKey()
   const ownerHex = getPublicKey(owner)
@@ -90,6 +95,7 @@ function setup(
     identity,
     publisher,
     ...(options.strictAnchors ? { anchorRequired: () => true } : {}),
+    ...(options.https ? { https: options.https } : {}),
     now: () => now,
     onChange: (state) => changes.push(state.services.length)
   })
@@ -107,6 +113,25 @@ function setup(
 }
 
 describe('HostingService publishing', () => {
+  it('publishes secured addresses and keeps the saved ones as typed', async () => {
+    const { owner, ownerHex, publisher, hosting, store } = setup({
+      https: {
+        front: () => ({ targetPort: 8080, listenPort: 8443, pin: 'PIN' }),
+        hostKind: () => 'public'
+      }
+    })
+    const service = hosting.create({ title: 'Photos', endpoints: ['http://203.0.113.7:8080'] })
+    await hosting.publish(service.id)
+
+    const key = nip44.getConversationKey(owner, ownerHex)
+    const payload = JSON.parse(nip44.decrypt(publisher.last().content, key))
+    expect(payload.endpoints).toEqual([
+      { url: 'https://203.0.113.7:8080/', priority: 1000, family: 'ipv4', k: 'PIN' }
+    ])
+    expect(store.find(service.id)?.endpoints[0]?.url).toBe('http://203.0.113.7:8080/')
+    expect(hosting.state().https?.[0]?.routerPorts).toEqual([8080])
+  })
+
   it('publishes a private locator encrypted to the owner', async () => {
     const { owner, ownerHex, publisher, hosting } = setup()
     const service = hosting.create({ title: 'Photos', endpoints: ['https://photos.example'] })

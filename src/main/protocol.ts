@@ -41,6 +41,7 @@ const FAILURE_STATUS: Record<string, number> = {
   'endpoint-unreachable': 502,
   'k-mismatch': 502,
   'certificate-expired': 502,
+  'tls-failed': 502,
   'no-anchor': 404,
   'anchor-expired': 410,
   'anchor-invalid': 502,
@@ -284,6 +285,7 @@ async function handleNccRequest(
 
   const failures: string[] = []
   let certificateFailure: 'k-mismatch' | 'certificate-expired' | null = null
+  let tlsFailed = false
 
   const httpsMode = deps.httpPolicy.mode()
   for (const endpoint of orderByHealth(
@@ -297,6 +299,9 @@ async function handleNccRequest(
       failures.push(`invalid endpoint URL: ${endpoint.url}`)
       continue
     }
+
+    // A failed handshake may try another HTTPS endpoint, never a plaintext one.
+    if (tlsFailed && endpoint.protocol !== 'https') continue
 
     const key = nccHttpKey(pubkey, service)
     if (nccEndpointNeedsWarning(endpoint) && !deps.httpPolicy.isAllowed(key)) {
@@ -368,10 +373,11 @@ async function handleNccRequest(
         certificateFailure = rejection.reason === 'expired-cert' ? 'certificate-expired' : 'k-mismatch'
         break
       }
-      if (/CERT|SSL|TLS/i.test(message)) {
+      if (/CERT/i.test(message)) {
         certificateFailure = 'k-mismatch'
         break
       }
+      if (/SSL|TLS/i.test(message)) tlsFailed = true
       continue
     }
 
@@ -411,7 +417,7 @@ async function handleNccRequest(
     )
   }
 
-  const code = certificateFailure ?? 'endpoint-unreachable'
+  const code = certificateFailure ?? (tlsFailed ? 'tls-failed' : 'endpoint-unreachable')
 
   // A publisher can rotate its endpoint at any time. When nothing in the record
   // accepts a connection, ask relays once more instead of retrying the same dead
@@ -445,7 +451,9 @@ async function handleNccRequest(
       ? 'The endpoint certificate does not match the locator fingerprint'
       : code === 'certificate-expired'
         ? 'The endpoint certificate has expired'
-        : 'Every endpoint in the locator refused the connection',
+        : code === 'tls-failed'
+          ? 'No endpoint completed an HTTPS connection. The server may only speak plain HTTP.'
+          : 'Every endpoint in the locator refused the connection',
     request.url,
     failures.join('\n')
   )

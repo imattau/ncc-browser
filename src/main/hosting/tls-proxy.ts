@@ -1,13 +1,15 @@
 /**
- * Local TLS termination for hosted services whose backend only speaks `http://`.
+ * HTTPS in front of hosted services whose server only speaks plain HTTP.
  *
  * Nostr Navigator never asks a publisher to install anything on their own server.
- * Instead, when a service endpoint is plain HTTP, this listens on a loopback TLS
- * socket with a locally generated self-signed certificate and forwards the raw TCP
- * stream to the real backend. The published locator gets the proxy's `https://`
- * address with `k` set to that certificate's SPKI pin, so a visiting NCC resolver
- * pins and accepts it exactly like any other endpoint; nothing about this is visible
- * to the backend or to the publisher beyond an endpoint that happens to be HTTPS.
+ * This listens on a TLS socket with a locally generated self-signed certificate and
+ * forwards the raw TCP stream to the real server. It listens on every interface so
+ * visitors on the LAN, or through a router forward, can reach it. The published
+ * endpoints carry the certificate's SPKI pin as `k` (see `secureEndpoints`), so a
+ * visiting NCC resolver accepts it like any other endpoint.
+ *
+ * The server sees every visitor as a connection from this machine, so it must not
+ * treat local connections as trusted.
  *
  * The certificate and key are persisted per service so the published pin stays
  * stable across restarts, the same way the onion manager reuses its stored key.
@@ -40,8 +42,13 @@ interface TlsProxyFile {
   services: TlsProxyRecord[]
 }
 
+/** Tried first, so the router rule is easy to recognise. */
+export const DEFAULT_HTTPS_PORT = 8443
+
 export interface TlsProxyManagerOptions {
   filePath: string
+  /** Override for tests. */
+  defaultPort?: number
   now?: () => number
   onChange?: () => void
   log?: (line: string) => void
@@ -83,34 +90,55 @@ export function statusFromRecord(record: TlsProxyRecord): TlsProxyStatus {
   return {
     serviceId: record.serviceId,
     url: `https://127.0.0.1:${record.listenPort}/`,
+    listenPort: record.listenPort,
+    targetPort: record.targetPort,
     pin: record.pin,
     target: `${record.targetHost}:${record.targetPort}`
   }
 }
 
-function listenOnFreePort(server: ReturnType<typeof createTlsServer>, preferred?: number): Promise<number> {
+function listen(
+  server: ReturnType<typeof createTlsServer>,
+  port: number,
+  host: string
+): Promise<number> {
   return new Promise((resolve, reject) => {
-    const tryListen = (port: number, fallbackToEphemeral: boolean): void => {
-      server.once('error', (error: NodeJS.ErrnoException) => {
-        if (fallbackToEphemeral && (error.code === 'EADDRINUSE' || error.code === 'EACCES')) {
-          server.removeAllListeners('error')
-          tryListen(0, false)
-          return
-        }
-        reject(error)
-      })
-      server.listen(port, '127.0.0.1', () => {
-        server.removeAllListeners('error')
-        const address = server.address()
-        if (!address || typeof address === 'string') {
-          reject(new TlsProxyUnavailableError('The TLS proxy has no local port'))
-          return
-        }
-        resolve(address.port)
-      })
-    }
-    tryListen(preferred && preferred > 0 ? preferred : 0, Boolean(preferred))
+    const onError = (error: Error): void => reject(error)
+    server.once('error', onError)
+    server.listen(port, host, () => {
+      server.removeListener('error', onError)
+      server.removeAllListeners('listening')
+      const address = server.address()
+      if (!address || typeof address === 'string') {
+        reject(new TlsProxyUnavailableError('The HTTPS front has no local port'))
+        return
+      }
+      resolve(address.port)
+    })
   })
+}
+
+/** Listen on the first free port, on IPv6 and IPv4 where the system allows both. */
+async function listenOnFreePort(
+  server: ReturnType<typeof createTlsServer>,
+  preferred: number[]
+): Promise<number> {
+  let host = '::'
+  const ports = [...preferred.filter((port) => port > 0), 0]
+  for (let index = 0; ; ) {
+    try {
+      return await listen(server, ports[index], host)
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      server.removeAllListeners('listening')
+      if (host === '::' && (code === 'EAFNOSUPPORT' || code === 'EADDRNOTAVAIL')) {
+        host = '0.0.0.0'
+        continue
+      }
+      index += 1
+      if (index >= ports.length || (code !== 'EADDRINUSE' && code !== 'EACCES')) throw error
+    }
+  }
 }
 
 export class TlsProxyManager {
@@ -137,10 +165,14 @@ export class TlsProxyManager {
     return record ? clone(record) : null
   }
 
+  isRunning(serviceId: string): boolean {
+    return this.servers.has(serviceId)
+  }
+
   /**
-   * Start, or restart, the local TLS terminator for a service's `http://` endpoint.
-   * Reuses the stored certificate and listen port when one already exists for this
-   * service, so the published address and pin stay stable.
+   * Start, or restart, the HTTPS front for a service's `http://` server. The stored
+   * certificate and listen port are reused, so published addresses and pins stay
+   * stable.
    */
   async ensure(serviceId: string, target: { url: string }): Promise<TlsProxyStatus> {
     const parsed = parseHttpTarget(target.url)
@@ -150,7 +182,7 @@ export class TlsProxyManager {
     let cert: string
     let key: string
     let pin: string
-    if (existing && existing.targetHost === parsed.host && existing.targetPort === parsed.port) {
+    if (existing) {
       ;({ cert, key, pin } = existing)
     } else {
       const generated = await generateSelfSignedCertificate({
@@ -186,15 +218,20 @@ export class TlsProxyManager {
     this.flush()
   }
 
-  /** Restart every persisted proxy. Called once at app startup. */
-  async restoreAll(): Promise<void> {
+  /**
+   * Restart persisted proxies at app startup. `wanted` skips any whose service no
+   * longer exists, so nothing keeps listening for a removed service.
+   */
+  async restoreAll(wanted: (serviceId: string) => boolean = () => true): Promise<void> {
     for (const record of [...this.records]) {
+      if (!wanted(record.serviceId)) continue
       try {
-        await this.ensure(record.serviceId, { url: `http://${record.targetHost}:${record.targetPort}` })
-        this.options.log?.(`restored tls proxy for ${record.serviceId} on :${record.listenPort}`)
+        const host = record.targetHost.includes(':') ? `[${record.targetHost}]` : record.targetHost
+        await this.ensure(record.serviceId, { url: `http://${host}:${record.targetPort}` })
+        this.options.log?.(`restored https for ${record.serviceId} on :${record.listenPort}`)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        this.options.log?.(`could not restore tls proxy for ${record.serviceId}: ${message}`)
+        this.options.log?.(`could not restore https for ${record.serviceId}: ${message}`)
       }
     }
   }
@@ -217,7 +254,9 @@ export class TlsProxyManager {
       socket.pipe(upstream)
       upstream.pipe(socket)
     })
-    const port = await listenOnFreePort(server, preferredPort)
+    const port = await listenOnFreePort(server, [
+      preferredPort || (this.options.defaultPort ?? DEFAULT_HTTPS_PORT)
+    ])
     this.servers.set(serviceId, server)
     return port
   }

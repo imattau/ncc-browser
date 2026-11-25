@@ -11,7 +11,10 @@ import type {
   OnionStatus,
   ReceivedShare,
   ServiceEndpoint,
-  ServiceShare
+  ServiceShare,
+  EndpointHostKind,
+  HttpsFront,
+  HttpsPlan
 } from '@shared/hosting'
 import {
   DEFAULT_SHARE_DAYS,
@@ -21,6 +24,7 @@ import {
   isTlsProxyEndpoint,
   parseRecipient,
   recipientNpub,
+  secureEndpoints,
   serviceAddress,
   shareDTag,
   shareExpiry,
@@ -85,6 +89,12 @@ export interface HostingServiceOptions {
   anchorRequired?: () => boolean
   /** Onion endpoints currently attached by the Tor manager. */
   onions?: () => OnionStatus[]
+  /** The browser's HTTPS front for a service, when it has one. */
+  https?: {
+    front(serviceId: string): HttpsFront | null
+    hostKind(host: string): EndpointHostKind
+    lanAddress?(): string | null
+  }
   now?: () => number
   onChange?: (state: HostingState) => void
 }
@@ -141,7 +151,29 @@ export class HostingService {
       status: shareStatus(share, now)
     }))
     state.onions = this.options.onions?.() ?? []
+    state.https = state.services.flatMap((service) => this.httpsPlan(service) ?? [])
     return state
+  }
+
+  private httpsPlan(service: HostedService): HttpsPlan | null {
+    const front = this.options.https?.front(service.id)
+    if (!front) return null
+    const secured = secureEndpoints(service.endpoints, front, (host) =>
+      this.options.https!.hostKind(host)
+    )
+    const lan = this.options.https?.lanAddress?.()
+    return {
+      serviceId: service.id,
+      listenPort: front.listenPort,
+      targetPort: front.targetPort,
+      ...secured,
+      ...(lan ? { lanAddress: lan } : {})
+    }
+  }
+
+  /** What publishing sends: the saved endpoints, secured when HTTPS is on. */
+  private publishedEndpoints(service: HostedService): ServiceEndpoint[] {
+    return this.httpsPlan(service)?.endpoints ?? service.endpoints
   }
 
   find(id: string): HostedService | null {
@@ -217,49 +249,25 @@ export class HostingService {
     return updated
   }
 
-  /**
-   * Add or replace the service's local TLS-proxy endpoint: an `https://` address the
-   * browser itself terminates in front of a plain `http://` backend, pinned with the
-   * generated certificate's SPKI hash. The underlying `http://` endpoint stays, so the
-   * backend is never required to speak TLS.
-   */
-  attachTlsProxy(id: string, url: string, pin: string): HostedService {
+  /** Drop the loopback proxy address that v0.47 saved with the user's endpoints. */
+  dropGeneratedEndpoints(id: string): void {
     const service = this.options.store.find(id)
-    if (!service) throw new HostingError('not-found', 'That service no longer exists')
-    const others = service.endpoints.filter((endpoint) => !isTlsProxyEndpoint(endpoint))
-    const priority = others.reduce((max, endpoint) => Math.max(max, endpoint.priority), 0) + 1
-    const updated = this.options.store.update(id, {
+    if (!service || !service.endpoints.some(isTlsProxyEndpoint)) return
+    this.options.store.update(id, {
       title: service.title,
       service: service.service,
-      endpoints: [
-        ...others.map((endpoint) => ({ ...endpoint })),
-        { url, priority, k: pin, source: 'tls-proxy' as const }
-      ],
+      endpoints: service.endpoints.filter((endpoint) => !isTlsProxyEndpoint(endpoint)),
       ttlSeconds: service.ttlSeconds,
       visibility: service.visibility,
       anchor: service.anchor,
       notes: service.notes
     })
     this.changed()
-    return updated
   }
 
-  detachTlsProxy(id: string): HostedService {
-    const service = this.options.store.find(id)
-    if (!service) throw new HostingError('not-found', 'That service no longer exists')
-    const endpoints = service.endpoints.filter((endpoint) => !isTlsProxyEndpoint(endpoint))
-    if (endpoints.length === service.endpoints.length) return service
-    const updated = this.options.store.update(id, {
-      title: service.title,
-      service: service.service,
-      endpoints,
-      ttlSeconds: service.ttlSeconds,
-      visibility: service.visibility,
-      anchor: service.anchor,
-      notes: service.notes
-    })
+  /** Push the current state again after the HTTPS front changed. */
+  refresh(): void {
     this.changed()
-    return updated
   }
 
   create(draft: HostingDraft): HostedService {
@@ -297,7 +305,8 @@ export class HostingService {
     // let a renewal or a revocation lose to the record it was meant to replace.
     const createdAt = Math.max(now, (service.lastPublishedAt ?? 0) + 1)
 
-    const payload = buildLocatorPayload(service.endpoints, service.ttlSeconds, createdAt, service.notes)
+    const endpoints = this.publishedEndpoints(service)
+    const payload = buildLocatorPayload(endpoints, service.ttlSeconds, createdAt, service.notes)
     const json = locatorContent(payload)
     const content =
       service.visibility === 'private' ? await provider.nip44Encrypt(hex, json) : json
@@ -318,8 +327,7 @@ export class HostingService {
       const anchor = buildAnchorTemplate({
         service: service.service,
         endpoint:
-          service.endpoints.find((endpoint) => endpoint.url.startsWith('https://')) ??
-          service.endpoints[0],
+          endpoints.find((endpoint) => endpoint.url.startsWith('https://')) ?? endpoints[0],
         days: ANCHOR_DAYS,
         now: createdAt,
         privateMode: service.visibility === 'private'
@@ -571,7 +579,9 @@ export class HostingService {
     ownerHex: string,
     now: number
   ): Promise<PublishReport> {
-    const endpoints = service.endpoints.filter((endpoint) => !isLoopbackEndpoint(endpoint))
+    const endpoints = this.publishedEndpoints(service).filter(
+      (endpoint) => !isLoopbackEndpoint(endpoint)
+    )
     if (endpoints.length === 0) {
       throw new HostingError(
         'loopback-share',

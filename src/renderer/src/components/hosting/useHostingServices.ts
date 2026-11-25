@@ -101,7 +101,7 @@ export function useHostingServices({
   const removeTlsProxy = async (service: HostedService): Promise<void> => {
     if (
       !window.confirm(
-        'Remove the local TLS proxy? Its https:// address stops working; the plain http:// endpoint stays.'
+        'Turn off HTTPS? Its https:// addresses stop working. Publish again to send your saved addresses.'
       )
     ) {
       return

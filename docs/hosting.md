@@ -13,7 +13,8 @@ no endpoint, no TTL, no renewal. See [`site-publishing.md`](./site-publishing.md
 
 The service can be a home server, a laptop app, a dashboard, or anything that speaks
 HTTP. The browser holds the identity and signs the locator; you do not need a domain,
-a certificate, a reverse proxy, or a port-forward on a public IP.
+a certificate or a reverse proxy. Reaching it directly from the internet still needs a
+router port-forward; an onion endpoint does not.
 
 The same mechanism shares a private service with exactly one person:
 
@@ -70,6 +71,32 @@ identity for this and later services.
 Publishing never creates a signer implicitly: without an identity the submit is
 disabled and the panel says one is needed.
 
+### HTTPS without server setup
+
+For a server that only speaks plain HTTP, the browser can add HTTPS in front of it. Type
+the endpoints as you know them; you do not have to work out a second port or a pin.
+
+- Press **HTTPS** on the saved service. If one of this machine's saved `https://`
+  addresses turns out to be a plain HTTP server, **Publish** and **Share** turn it on
+  for you.
+- The browser finds the server from the endpoint ports and listens for TLS on port 8443,
+  or another free port, on every network interface. The certificate and port are reused
+  after a restart.
+- Saved endpoints stay as typed. Publishing and sharing send these instead:
+
+| Saved endpoint on the server's port | Published as |
+| --- | --- |
+| This machine (loopback, LAN or its own IPv6) | `https://` on the browser's port, pinned with `k` |
+| Public address or domain | `https://` on the same port, pinned with `k` |
+| `.onion`, another port, or another LAN machine | unchanged |
+
+- Internet visitors need the router to forward the public port to this machine's
+  **browser** port, not to the server's port. The service card shows the exact rule.
+  The browser does not change the router for this.
+- Keep the browser running. After turning HTTPS on or off, publish again.
+- The server sees every visitor as a connection from this machine. Do not turn this on
+  for a server that trusts local connections, such as an admin page without a login.
+
 ### TLS certificate
 
 HTTPS endpoints can be pinned with `k`, a base64url SHA-256 of the certificate's SPKI.
@@ -82,16 +109,7 @@ The service form offers:
   folder you choose, and pins it.
 - **Remove pin** — clears `k`; existing `https://` endpoints then use normal CA
   validation.
-- **Local TLS proxy** — for a plain `http://` endpoint (the common case for a service
-  you run yourself), the browser can terminate TLS in front of it instead of asking
-  you to install anything. It listens on a loopback port with a self-signed
-  certificate it generates and keeps, forwards the raw connection to your `http://`
-  backend unchanged, and publishes that proxy's `https://` address pinned with the
-  certificate's SPKI hash. The certificate and the port are reused on every restart,
-  so the published address and pin stay stable; removing the proxy also removes that
-  endpoint from the service. The underlying `http://` endpoint is left in place.
-
-Outside that case, the browser does not terminate TLS for the tested service; install
+These certificate options are for a server that serves TLS itself. Install
 a generated certificate and key in whatever serves it, then start that server on the
 HTTPS port. A certificate that does not name an endpoint host leaves that endpoint
 unpinned and the form reports it.
