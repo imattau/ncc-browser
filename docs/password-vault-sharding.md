@@ -1,12 +1,12 @@
 # Design: password vaults larger than one event
 
-**Status:** stage 1 (read) is implemented on desktop and Android. Stage 2 (write) is
-not: no build creates a second part yet, so the 40,000-byte limit still applies.
+**Status:** implemented on desktop and Android. Stage 1 (read) shipped in 0.47.11.
+Stage 2 (write) creates parts and moves entries between them.
 
 ## Problem
 
-The vault is one NIP-44 encrypted event, limited to 40,000 bytes of plaintext so that
-relays accept it. That is roughly 150 ordinary logins, and fewer with notes or passkeys.
+A vault used to be one NIP-44 encrypted event, limited to 40,000 bytes of plaintext so
+that relays accept it. That is roughly 150 ordinary logins, and fewer with notes or passkeys.
 
 ## What the user sees
 
@@ -26,6 +26,7 @@ UI. The only new message is shown when a part could not be fetched:
   of parts the writer knew about. A reader that has fewer knows its copy is incomplete.
 - Query by author, kind and the 16 possible `d` tags, and accept nothing else. No
   separate index event is needed, so no index can disagree with the parts.
+- The first part records the count too, so a reader of only that part knows more exist.
 - Existing vaults need no migration. They are a vault with one part.
 - Limit: 16 parts. Relays can see how many exist, their approximate sizes and which one
   changed. They cannot see the contents.
@@ -47,12 +48,21 @@ some parts, or an old copy of one, must not remove anything from this device.
    secrets of a deleted login.
 3. **New entries** go in the first loaded part that stays below 32,000 bytes, then the
    first that stays below 40,000. A part that has not been fetched is never written.
-4. **New parts** (stage 2) are added when no existing part has room. The headroom
-   between 32,000 and 40,000 lets entries grow without moving.
-5. **Moving** (stage 2) happens only when an edit would push a part over 40,000 bytes.
-   Publish the destination first. Remove the entry from the source only after every
-   relay that will receive that change has accepted the destination. A failure leaves a
-   duplicate, which merging by id makes harmless. Stage 1 refuses such an edit.
+4. **New parts** are added when no existing part has room, numbered after every part
+   known to exist. The new part is published before the first part counts it. None is
+   created while a known part is missing: it could be overwritten. The headroom between
+   32,000 and 40,000 lets entries grow without moving.
+5. **Moving** happens only when a change would grow a part past 40,000 bytes. An entry
+   that part has never saved is simply placed elsewhere. A saved one moves in order:
+   publish the destination, and remove it from the source only after every relay has
+   accepted the destination. Until then the source keeps the copy it had. No extra
+   state records a move: it is an entry with two homes in a part that is over the
+   limit, so any later sync finishes it, also after a restart. If one configured relay
+   never accepts writes, both copies remain, which merging by id makes harmless.
+6. **Learning of a move.** When a newer copy of a part no longer has an entry and
+   another part does, the entry is forgotten there. If no other part has it, another
+   device overwrote it, and it is written back. A copy older than the one saved here
+   never gives an entry back to a part it has left.
 
 Each part has its own `created_at` watermark and pending flag, so a failed publish
 retries only that part. Two devices adding at once can both write the same part; as
@@ -69,24 +79,20 @@ the same file unchanged. Unlock opens all cached parts before any network reques
 
 - A vault with one part exports as before. With more, encrypted export writes
   `{ format: "ncc-password-vault", events: [...] }`, and refuses while a part is
-  missing.
+  missing. A version before 0.47.11 cannot import this format.
 - Import accepts both. CSV is unchanged.
-- An import is placed across the existing parts. A backup larger than they can hold
-  cannot be restored until stage 2 can create parts.
+- An import is placed across parts, creating them as needed.
 
 ## Older versions
 
-An older build reads and writes only the first part. It does not damage the others, but
-it will not show their entries, and a delete made there for an entry held in another
-part is impossible. Release in two steps:
+A device on a version before 0.47.11 reads and writes only the first part. It does not
+damage the others, but it does not show their entries and cannot delete them.
 
-1. **Read (done):** desktop and Android read and merge all parts, and keep existing ones
-   up to date. They do not create new parts.
-2. **Write:** a later release creates parts. Its release notes ask users to update every
-   device.
+0.47.11 reads and updates all parts, but does not learn of moves: it can write a moved
+entry back into the part it left, leaving two copies and possibly a first part over
+40,000 bytes. Nothing is lost, but a relay may reject a part that grows much further.
 
-A mixed setup can leave copies of one entry in the first part and a later one. Merging
-by id covers it.
+Update every device before the vault outgrows one part.
 
 ## Where the code is
 
@@ -108,3 +114,6 @@ Both platforms must measure the same JSON size.
 - A single-part vault and its cache open unchanged.
 - An older build writing the first part cannot hide or delete entries in other parts.
 - Desktop and Android produce the same placement from the same vault.
+- Several devices with offline edits and refused publishes converge on the expected
+  logins, then stop publishing. Both platforms run this with random operations; set
+  `NCC_VAULT_SEEDS` for a longer Rust run.

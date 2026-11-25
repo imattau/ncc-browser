@@ -14,8 +14,8 @@ use serde_json::{json, Value};
 
 use ncc_identity::IdentityStore;
 use ncc_vault::parts::{
-    declared_parts, is_part_change_allowed, is_vault_incomplete, part_payload, split_vault,
-    vault_part_d, vault_part_index, VaultLayout, VAULT_INCOMPLETE,
+    declared_parts, is_vault_incomplete, part_payload, part_vault, plan_vault, split_vault,
+    vault_part_d, vault_part_index, VaultLayout, VaultPlan, VAULT_INCOMPLETE,
 };
 use ncc_vault::{
     apply_entry, draft_origin, entries_for_origin, find_entry, find_entry_for, merge_vaults,
@@ -120,6 +120,8 @@ struct PartState {
     base: Option<PasswordVault>,
     /// So a replacement event is always newer than the one it replaces.
     last_created_at: u64,
+    /// How many parts `base` says exist.
+    stated: usize,
 }
 
 impl PartState {
@@ -128,8 +130,135 @@ impl PartState {
     }
 }
 
+/// A relay copy of one part, once decrypted.
+struct Absorbed {
+    event: nostr::Event,
+    vault: PasswordVault,
+    /// Older than the copy saved here.
+    stale: bool,
+}
+
 impl State {
-    /// Note which entries a part holds. Ids are only ever added: absence deletes nothing.
+    /// Merge relay copies into the vault and learn which entries each part holds. An
+    /// entry a newer copy dropped is forgotten there only if another part has it: it
+    /// moved. An entry no other part has is written back.
+    fn absorb(
+        &mut self,
+        reads: Vec<(usize, nostr::Event, PasswordVault, usize)>,
+    ) -> (PasswordVault, BTreeMap<usize, Absorbed>) {
+        let mut changed = BTreeMap::new();
+        let mut dropped: Vec<(usize, String)> = Vec::new();
+        let mut merged = self.vault.clone().unwrap_or_default();
+        for (index, event, read, declared) in reads {
+            let stale = self
+                .parts
+                .get(&index)
+                .and_then(|part| part.cached.as_ref())
+                .is_some_and(|cached| {
+                    event.created_at.as_secs() < cached.event.created_at.as_secs()
+                });
+            if stale {
+                self.register_stale(index, &read, declared);
+            } else {
+                if let Some(base) = self.parts.get(&index).and_then(|part| part.base.as_ref()) {
+                    dropped.extend(
+                        base.entries
+                            .iter()
+                            .filter(|entry| find_entry(&read, &entry.id).is_none())
+                            .map(|entry| (index, entry.id.clone())),
+                    );
+                }
+                self.register(index, &read, declared);
+                let part = self.parts.entry(index).or_default();
+                part.base = Some(read.clone());
+                part.stated = declared;
+                part.last_created_at = part.last_created_at.max(event.created_at.as_secs());
+            }
+            merged = merge_vaults(&merged, &read).0;
+            changed.insert(
+                index,
+                Absorbed {
+                    event,
+                    vault: read,
+                    stale,
+                },
+            );
+        }
+        // After every copy is in, so the destination of a move is already known.
+        for (index, id) in dropped {
+            let elsewhere = self.parts.iter().any(|(other, part)| {
+                *other != index
+                    && part
+                        .base
+                        .as_ref()
+                        .is_some_and(|base| find_entry(base, &id).is_some())
+            });
+            if elsewhere {
+                if let Some(ids) = self.layout.get_mut(&index) {
+                    ids.remove(&id);
+                }
+            }
+        }
+        (merged, changed)
+    }
+
+    /// An old copy must not give an entry back to a part it has since moved out of.
+    fn register_stale(&mut self, index: usize, vault: &PasswordVault, declared: usize) {
+        let unplaced: Vec<String> = vault
+            .entries
+            .iter()
+            .filter(|entry| !self.layout.values().any(|ids| ids.contains(&entry.id)))
+            .map(|entry| entry.id.clone())
+            .collect();
+        self.layout.entry(index).or_default().extend(unplaced);
+        self.declared = self.declared.max(declared);
+    }
+
+    fn part_count(&self) -> usize {
+        let known = self.layout.keys().next_back().map_or(0, |highest| highest + 1);
+        self.declared.max(known)
+    }
+
+    fn plan(&self, vault: &PasswordVault) -> VaultPlan {
+        let saved = self
+            .parts
+            .iter()
+            .filter_map(|(index, part)| Some((*index, part.base.clone()?)))
+            .collect();
+        // A missing part could be overwritten by a new one with its number.
+        let next = (!is_vault_incomplete(&self.layout, self.declared)).then(|| self.part_count());
+        plan_vault(vault, &self.layout, &saved, next)
+    }
+
+    /// The first part records how many there are, so a reader can tell one is missing.
+    fn needs_count(&self, index: usize) -> bool {
+        index == 0
+            && self.parts.get(&0).is_some_and(|part| {
+                part.base.is_some() && part.stated.max(1) < self.part_count()
+            })
+    }
+
+    /// True when another part holds this version and every relay accepted it.
+    fn saved_elsewhere(&self, source: usize, entry: &PasswordEntry) -> bool {
+        self.parts.iter().any(|(index, part)| {
+            *index != source
+                && self
+                    .layout
+                    .get(index)
+                    .is_some_and(|ids| ids.contains(&entry.id))
+                && !part.is_pending()
+                && part
+                    .base
+                    .as_ref()
+                    .and_then(|base| find_entry(base, &entry.id))
+                    .is_some_and(|copy| {
+                        copy.updated_at >= entry.updated_at
+                            && copy.favorite_updated_at >= entry.favorite_updated_at
+                    })
+        })
+    }
+
+    /// Note which entries a part holds. Absence alone deletes nothing.
     fn register(&mut self, index: usize, vault: &PasswordVault, declared: usize) {
         let ids = self.layout.entry(index).or_default();
         ids.extend(vault.entries.iter().map(|entry| entry.id.clone()));
@@ -468,6 +597,7 @@ impl VaultService {
                         state.register(index, &read, declared);
                         vault = merge_vaults(&vault, &read).0;
                         part.base = Some(read);
+                        part.stated = declared;
                         opened = LocalOpen::Cached;
                     }
                     Err(error) => {
@@ -1018,8 +1148,9 @@ impl VaultService {
             if !is_session(&state, pubkey) {
                 return;
             }
+            let mut reads = Vec::new();
             for (index, event) in events {
-                let stale = state
+                let seen = state
                     .parts
                     .get(&index)
                     .and_then(|part| part.cached.as_ref())
@@ -1027,24 +1158,26 @@ impl VaultService {
                         event.id == cached.event.id
                             || event.created_at.as_secs() < cached.event.created_at.as_secs()
                     });
-                if stale {
+                if seen {
                     continue;
                 }
-                let Ok((read, declared)) = decrypt(&self.identity, pubkey, &event) else {
-                    continue;
-                };
-                state.register(index, &read, declared);
-                let merged = merge_vaults(&state.vault.clone().unwrap_or_default(), &read).0;
-                let current = split_vault(&merged, &state.layout)
+                if let Ok((read, declared)) = decrypt(&self.identity, pubkey, &event) {
+                    reads.push((index, event, read, declared));
+                }
+            }
+            if reads.is_empty() {
+                return;
+            }
+            let (merged, changed) = state.absorb(reads);
+            let held = split_vault(&merged, &state.layout);
+            state.vault = Some(merged);
+            for (index, remote) in changed {
+                let current = held
                     .get(&index)
-                    .is_some_and(|content| !has_local_changes(content, &read));
-                state.vault = Some(merged);
-                let part = state.parts.entry(index).or_default();
-                part.last_created_at = part.last_created_at.max(event.created_at.as_secs());
-                part.base = Some(read);
+                    .is_some_and(|content| !has_local_changes(content, &remote.vault));
                 if current {
-                    let cached = self.synced_copy(event);
-                    part.cached = Some(cached.clone());
+                    let cached = self.synced_copy(remote.event);
+                    state.parts.entry(index).or_default().cached = Some(cached.clone());
                     adopted.push((index, cached));
                 }
             }
@@ -1120,8 +1253,7 @@ impl VaultService {
             .await?;
 
         let mut adopted = Vec::new();
-        let mut outgoing = Vec::new();
-        {
+        let (plan, changed) = {
             let mut state = self.secure();
             // Locked or switched while the relays were answering: leave it that way.
             if !is_session(&state, pubkey) {
@@ -1129,8 +1261,7 @@ impl VaultService {
             }
 
             // Parts the relays hold that differ from what is saved here.
-            let mut changed: BTreeMap<usize, (nostr::Event, PasswordVault)> = BTreeMap::new();
-            let mut merged = state.vault.clone().unwrap_or_default();
+            let mut reads = Vec::new();
             for (index, event) in &events {
                 let unchanged = state.parts.get(index).is_some_and(|part| {
                     part.base.is_some()
@@ -1143,50 +1274,54 @@ impl VaultService {
                     continue;
                 }
                 let (read, declared) = decrypt(&self.identity, pubkey, event)?;
-                state.register(*index, &read, declared);
-                merged = merge_vaults(&merged, &read).0;
-                changed.insert(*index, (event.clone(), read));
+                reads.push((*index, event.clone(), read, declared));
             }
-            let split = split_vault(&merged, &state.layout);
-            state.vault = Some(merged);
+            let (merged, changed) = state.absorb(reads);
 
-            for (index, content) in split {
-                let part = state.parts.entry(index).or_default();
-                // A save that no relay accepted is retried here, whatever they hold.
-                let mut needs_publish = part.is_pending();
-                if let Some((event, read)) = changed.remove(&index) {
-                    needs_publish |= has_local_changes(&content, &read);
-                    part.last_created_at = part.last_created_at.max(event.created_at.as_secs());
-                    part.base = Some(read);
-                    if !needs_publish {
-                        let cached = self.synced_copy(event);
-                        part.cached = Some(cached.clone());
-                        adopted.push((index, cached));
-                    }
-                } else if events.contains_key(&index) {
-                    needs_publish |= !part
-                        .base
-                        .as_ref()
-                        .is_some_and(|base| !has_local_changes(&content, base));
-                } else {
-                    // The relays do not have this part: send ours if there is anything.
-                    needs_publish |= !content.entries.is_empty();
-                }
-                if needs_publish {
-                    outgoing.push((index, content));
+            // Relay copies with everything this device has can be saved as they are.
+            let held = split_vault(&merged, &state.layout);
+            for (index, remote) in &changed {
+                let part = state.parts.entry(*index).or_default();
+                let current = held
+                    .get(index)
+                    .is_some_and(|content| !has_local_changes(content, &remote.vault));
+                if !remote.stale && !part.is_pending() && current {
+                    let cached = self.synced_copy(remote.event.clone());
+                    part.cached = Some(cached.clone());
+                    adopted.push((*index, cached));
                 }
             }
-        }
+
+            let plan = state.plan(&merged);
+            state.vault = Some(merged);
+            (plan, changed)
+        };
         self.save_parts(pubkey, adopted);
 
         if !publish_merged {
             return Ok(());
         }
-        let mut failure = None;
-        for (index, content) in outgoing {
-            let (_, error) = self.publish_part(pubkey, index, content, relays).await?;
-            failure = failure.or(error);
-        }
+        let failure = self
+            .write(pubkey, plan, relays, |index, content, part| {
+                // A save that no relay accepted is retried here, whatever they hold.
+                if part.is_some_and(PartState::is_pending) {
+                    return true;
+                }
+                // A relay offering an old copy is brought up to date.
+                if changed.get(&index).is_some_and(|remote| {
+                    remote.stale && !same_entries(content, &remote.vault)
+                }) {
+                    return true;
+                }
+                // The relays do not have this part: send ours if there is anything.
+                if !events.contains_key(&index) {
+                    return !content.entries.is_empty();
+                }
+                !part
+                    .and_then(|part| part.base.as_ref())
+                    .is_some_and(|base| !has_local_changes(content, base))
+            })
+            .await?;
         failure.map_or(Ok(()), Err)
     }
 
@@ -1264,41 +1399,36 @@ impl VaultService {
         pubkey: &str,
         next: PasswordVault,
     ) -> Result<(bool, Option<String>), String> {
-        let dirty: Vec<(usize, PasswordVault)> = {
+        let (plan, unsaved) = {
             let state = self.secure();
             if !is_session(&state, pubkey) {
                 return Err(LOCKED.to_string());
             }
-            let before = split_vault(&state.vault.clone().unwrap_or_default(), &state.layout);
-            let mut after = split_vault(&next, &state.layout);
-            // A vault that was never saved still needs an event, if only an empty one.
-            if !state.parts.is_empty() {
-                after.retain(|index, content| match state.parts.get(index) {
-                    Some(part) if part.is_pending() => true,
-                    Some(PartState {
-                        base: Some(base), ..
-                    }) => content.entries != base.entries,
-                    _ => !content.entries.is_empty(),
+            let plan = state.plan(&next);
+            // Checked before anything is sent, so a change is not half saved.
+            if plan.full {
+                return Err(if is_vault_incomplete(&state.layout, state.declared) {
+                    format!("{VAULT_INCOMPLETE}. Sync before adding more.")
+                } else {
+                    "The password vault is full. Delete some logins or shorten notes.".to_string()
                 });
             }
-            // Checked for every part before any is sent, so a change is not half saved.
-            if after
-                .iter()
-                .any(|(index, content)| !is_part_change_allowed(before.get(index), content))
-            {
-                return Err(
-                    "The password vault is full. Delete some logins or shorten notes.".to_string(),
-                );
-            }
-            after.into_iter().collect()
+            // A vault that was never saved still needs an event, if only an empty one.
+            (plan, state.parts.is_empty())
         };
 
         let relays = self.network_relays(pubkey).await;
-        let mut failure = None;
-        for (index, content) in dirty {
-            let (_, error) = self.publish_part(pubkey, index, content, &relays).await?;
-            failure = failure.or(error);
-        }
+        let failure = self
+            .write(pubkey, plan, &relays, |_, content, part| {
+                if unsaved || part.is_some_and(PartState::is_pending) {
+                    return true;
+                }
+                match part.and_then(|part| part.base.as_ref()) {
+                    Some(base) => !same_entries(content, base),
+                    None => !content.entries.is_empty(),
+                }
+            })
+            .await?;
 
         let mut state = self.secure();
         let pending = state.parts.values().any(PartState::is_pending);
@@ -1308,6 +1438,85 @@ impl VaultService {
             state.error = failure.clone();
         }
         Ok((pending, failure))
+    }
+
+    /// Publish the parts that need it, returning the first relay failure. A move is made
+    /// in order: the destination is saved first, and the source gives the entry up only
+    /// once every relay has accepted it. Until then the source keeps the copy it had,
+    /// and a later sync finishes the move.
+    async fn write<F>(
+        &self,
+        pubkey: &str,
+        plan: VaultPlan,
+        relays: &[String],
+        is_dirty: F,
+    ) -> Result<Option<String>, String>
+    where
+        F: Fn(usize, &PasswordVault, Option<&PartState>) -> bool + Send + Sync,
+    {
+        {
+            let mut state = self.secure();
+            if !is_session(&state, pubkey) {
+                return Err(LOCKED.to_string());
+            }
+            state.layout = plan.layout.clone();
+        }
+        let mut failure = None;
+
+        // Highest first: a new part is published before the first part counts it.
+        for (index, content) in plan.parts.iter().rev() {
+            if plan.leaving.contains_key(index) {
+                continue;
+            }
+            let send = {
+                let state = self.secure();
+                is_dirty(*index, content, state.parts.get(index)) || state.needs_count(*index)
+            };
+            if send {
+                let (_, error) = self
+                    .publish_part(pubkey, *index, content.clone(), relays)
+                    .await?;
+                failure = failure.or(error);
+            }
+        }
+
+        for (index, leaving) in &plan.leaving {
+            let (content, send) = {
+                let mut state = self.secure();
+                if !is_session(&state, pubkey) {
+                    return Err(LOCKED.to_string());
+                }
+                let mut moved = false;
+                let mut entries = Vec::new();
+                for entry in plan.parts.get(index).into_iter().flat_map(|p| &p.entries) {
+                    if !leaving.contains(&entry.id) {
+                        entries.push(entry.clone());
+                    } else if state.saved_elsewhere(*index, entry) {
+                        if let Some(ids) = state.layout.get_mut(index) {
+                            ids.remove(&entry.id);
+                        }
+                        moved = true;
+                    } else if let Some(previous) = state
+                        .parts
+                        .get(index)
+                        .and_then(|part| part.base.as_ref())
+                        .and_then(|base| find_entry(base, &entry.id))
+                    {
+                        entries.push(previous.clone());
+                    }
+                }
+                let content = part_vault(entries);
+                let send = moved
+                    || is_dirty(*index, &content, state.parts.get(index))
+                    || state.needs_count(*index);
+                (content, send)
+            };
+            if send {
+                let (_, error) = self.publish_part(pubkey, *index, content, relays).await?;
+                failure = failure.or(error);
+            }
+        }
+        Ok(failure)
     }
 
     async fn publish_part(
@@ -1328,12 +1537,11 @@ impl VaultService {
             if !is_session(&state, pubkey) {
                 return Err(LOCKED.to_string());
             }
-            let known = state.parts.keys().next_back().map_or(0, |highest| highest + 1);
             let previous = state
                 .parts
                 .get(&index)
                 .map_or(0, |part| part.last_created_at);
-            (state.declared.max(known), previous)
+            (state.part_count(), previous)
         };
 
         let plaintext = part_payload(&content, count)
@@ -1401,8 +1609,10 @@ impl VaultService {
         // The vault may have been locked while relays were answering. The saved copy
         // above is ciphertext; nothing decrypted may come back.
         if is_session(&state, pubkey) {
-            state.register(index, &content, 0);
+            let stated = if count > 1 { count } else { 0 };
+            state.register(index, &content, stated);
             let part = state.parts.entry(index).or_default();
+            part.stated = stated;
             part.cached = Some(cached);
             part.last_created_at = created_at;
             part.base = Some(content);
@@ -1432,6 +1642,10 @@ impl VaultService {
 
 fn is_session(state: &State, pubkey: &str) -> bool {
     state.unlocked && state.pubkey.as_deref() == Some(pubkey)
+}
+
+fn same_entries(a: &PasswordVault, b: &PasswordVault) -> bool {
+    part_vault(a.entries.clone()).entries == part_vault(b.entries.clone()).entries
 }
 
 /// Does `local` hold an entry the other copy lacks, or a newer version of one?
@@ -2069,6 +2283,333 @@ mod tests {
         assert!(fresh.save(draft("https://later.example", "bob")).await.ok);
         assert_eq!(store.lock().unwrap().len(), 1, "a missing part is not written");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A relay that, like a real one, never replaces an event with an older one, and
+    /// can be told to refuse one part.
+    #[derive(Clone, Default)]
+    struct Network {
+        url: String,
+        store: Arc<Mutex<HashMap<String, Value>>>,
+        log: Arc<Mutex<Vec<String>>>,
+        refused: Arc<Mutex<Option<String>>>,
+    }
+
+    impl Network {
+        async fn start() -> Self {
+            use futures_util::{SinkExt, StreamExt};
+            use tokio_tungstenite::tungstenite::Message;
+
+            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+                .await
+                .unwrap();
+            let network = Network {
+                url: format!("ws://127.0.0.1:{}", listener.local_addr().unwrap().port()),
+                ..Default::default()
+            };
+            let shared = network.clone();
+            tokio::spawn(async move {
+                while let Ok((stream, _)) = listener.accept().await {
+                    let network = shared.clone();
+                    tokio::spawn(async move {
+                        let Ok(mut socket) = tokio_tungstenite::accept_async(stream).await else {
+                            return;
+                        };
+                        while let Some(Ok(Message::Text(text))) = socket.next().await {
+                            let Ok(value) = serde_json::from_str::<Value>(&text) else {
+                                continue;
+                            };
+                            let replies = match value[0].as_str() {
+                                Some("EVENT") => vec![network.accept(&value[1])],
+                                Some("REQ") => network.matching(&value[1], &value[2]),
+                                _ => Vec::new(),
+                            };
+                            for reply in replies {
+                                let _ = socket.send(Message::Text(reply.to_string().into())).await;
+                            }
+                        }
+                    });
+                }
+            });
+            network
+        }
+
+        fn accept(&self, event: &Value) -> Value {
+            let d = event["tags"][0][1].as_str().unwrap_or_default().to_string();
+            let mut store = self.store.lock().unwrap();
+            let newer = store
+                .get(&d)
+                .map_or(true, |held| held["created_at"].as_u64() < event["created_at"].as_u64());
+            let ok = newer && self.refused.lock().unwrap().as_deref() != Some(d.as_str());
+            if ok {
+                store.insert(d.clone(), event.clone());
+                self.log.lock().unwrap().push(d);
+            }
+            json!(["OK", event["id"], ok, if ok { "" } else { "blocked: refused" }])
+        }
+
+        fn matching(&self, sub: &Value, filter: &Value) -> Vec<Value> {
+            let store = self.store.lock().unwrap();
+            let mut replies: Vec<Value> = filter["#d"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|d| store.get(d.as_str()?))
+                .map(|event| json!(["EVENT", sub, event]))
+                .collect();
+            replies.push(json!(["EOSE", sub]));
+            replies
+        }
+
+        fn usernames(&self, identity: &IdentityStore, index: usize) -> Vec<String> {
+            let event: nostr::Event = match self.store.lock().unwrap().get(&vault_part_d(index)) {
+                Some(event) => serde_json::from_value(event.clone()).unwrap(),
+                None => return Vec::new(),
+            };
+            let pubkey = identity.public_key().unwrap().to_hex();
+            let (part, _) = decrypt(identity, &pubkey, &event).unwrap();
+            part.active().map(|entry| entry.username.clone()).collect()
+        }
+    }
+
+    /// Devices sharing one identity, one relay and one advancing clock.
+    struct Fleet {
+        network: Network,
+        identity: Arc<IdentityStore>,
+        clock: Arc<std::sync::atomic::AtomicU64>,
+        dir: std::path::PathBuf,
+    }
+
+    struct Device {
+        vault: VaultService,
+        settings: Arc<SettingsStore>,
+    }
+
+    impl Fleet {
+        async fn new(name: &str) -> Self {
+            let dir = std::env::temp_dir()
+                .join(format!("ncc-vault-fleet-{}-{name}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            Fleet {
+                network: Network::start().await,
+                identity: identity(),
+                clock: Arc::new(1_700_000_000.into()),
+                dir,
+            }
+        }
+
+        async fn device(&self, name: &str) -> Device {
+            let settings = settings();
+            settings.set_relays(vec![self.network.url.clone()]).unwrap();
+            let clock = self.clock.clone();
+            let vault = VaultService::with_clock(
+                self.identity.clone(),
+                settings.clone(),
+                self.dir.join(name).join("cache.json"),
+                Arc::new(move || clock.fetch_add(1, std::sync::atomic::Ordering::SeqCst)),
+            );
+            vault.unlock().await;
+            Device { vault, settings }
+        }
+    }
+
+    impl Device {
+        fn online(&self, online: bool, network: &Network) {
+            let url = if online { network.url.as_str() } else { "ws://127.0.0.1:1" };
+            self.settings.set_relays(vec![url.to_string()]).unwrap();
+        }
+
+        async fn sync(&self) {
+            let _ = self.vault.sync(true).await;
+        }
+
+        fn id(&self, user: &str) -> Option<String> {
+            self.vault
+                .list()
+                .into_iter()
+                .find(|entry| entry.username == user)
+                .map(|entry| entry.id)
+        }
+
+        fn names(&self) -> Vec<String> {
+            let mut names: Vec<String> =
+                self.vault.list().into_iter().map(|entry| entry.username).collect();
+            names.sort();
+            names
+        }
+
+        fn notes(&self, user: &str) -> usize {
+            self.vault.entry(&self.id(user).unwrap()).unwrap().notes.len()
+        }
+
+        /// Add a login, or resize the one with this name.
+        async fn put(&self, user: &str, size: usize) -> SaveOutcome {
+            let mut login = draft("https://example.com", user);
+            login.id = self.id(user);
+            login.notes = "n".repeat(size);
+            self.vault.save(login).await
+        }
+    }
+
+    async fn nearly_full(device: &Device) {
+        for n in 0..9 {
+            assert!(device.put(&format!("big{n}"), 3900).await.ok);
+        }
+        assert!(device.put("small", 10).await.ok);
+    }
+
+    #[tokio::test]
+    async fn a_new_part_is_created_counted_and_read_by_another_device() {
+        let fleet = Fleet::new("grow").await;
+        let a = fleet.device("a").await;
+        for n in 0..24 {
+            assert!(a.put(&format!("user{n}"), 3900).await.ok);
+        }
+        assert!(fleet.network.store.lock().unwrap().len() >= 3);
+        let b = fleet.device("b").await;
+        assert_eq!(b.vault.status().error, None);
+        assert_eq!(b.names(), a.names());
+        assert_eq!(b.names().len(), 24);
+
+        // With only the first part, another device knows to make no parts of its own.
+        let first = fleet.network.store.lock().unwrap()[&vault_part_d(0)].clone();
+        fleet.network.store.lock().unwrap().clear();
+        fleet.network.store.lock().unwrap().insert(vault_part_d(0), first);
+        let c = fleet.device("c").await;
+        assert_eq!(c.vault.status().error.as_deref(), Some(VAULT_INCOMPLETE));
+        let refused = c.put("more", 3900).await;
+        assert!(refused.error.unwrap().contains("Sync before adding more"));
+        assert_eq!(fleet.network.store.lock().unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(&fleet.dir);
+    }
+
+    #[tokio::test]
+    async fn a_login_leaves_its_part_only_after_the_destination_is_accepted() {
+        let fleet = Fleet::new("move").await;
+        let a = fleet.device("a").await;
+        nearly_full(&a).await;
+        let b = fleet.device("b").await;
+        let holds = |index| {
+            fleet
+                .network
+                .usernames(&fleet.identity, index)
+                .contains(&"small".to_string())
+        };
+
+        *fleet.network.refused.lock().unwrap() = Some(vault_part_d(1));
+        let saved = a.put("small", 4000).await;
+        assert!(saved.ok && saved.pending, "{saved:?}");
+        a.sync().await;
+        assert!(holds(0) && !holds(1));
+
+        // A restart keeps both copies, and the next sync finishes the move.
+        let restarted = fleet.device("a").await;
+        assert_eq!(restarted.notes("small"), 4000);
+        assert!(holds(0));
+        *fleet.network.refused.lock().unwrap() = None;
+        fleet.network.log.lock().unwrap().clear();
+        restarted.sync().await;
+        assert!(!holds(0) && holds(1));
+        assert_eq!(fleet.network.log.lock().unwrap().first(), Some(&vault_part_d(1)));
+        assert_eq!(restarted.notes("small"), 4000);
+
+        // Shrunk again it would fit where it was; a stale device must not put it back.
+        assert!(restarted.put("small", 20).await.ok);
+        b.sync().await;
+        fleet.network.log.lock().unwrap().clear();
+        restarted.sync().await;
+        b.sync().await;
+        assert!(fleet.network.log.lock().unwrap().is_empty());
+        assert!(!holds(0) && holds(1));
+        assert_eq!(b.notes("small"), 20);
+        let _ = std::fs::remove_dir_all(&fleet.dir);
+    }
+
+    #[tokio::test]
+    async fn devices_converge_without_losing_anything_after_random_offline_edits() {
+        let seeds: u64 = std::env::var("NCC_VAULT_SEEDS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(2);
+        let mut parts_seen = BTreeMap::new();
+        for seed in 1..=seeds {
+            let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            let mut random = move |below: u64| {
+                state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+                (state >> 33) % below
+            };
+            let fleet = Fleet::new(&format!("random-{seed}")).await;
+            let devices = [
+                fleet.device("a").await,
+                fleet.device("b").await,
+                fleet.device("c").await,
+            ];
+            // What each login should end up as: its notes length, or None once deleted.
+            let mut expected: BTreeMap<String, Option<usize>> = BTreeMap::new();
+            for step in 0..100 {
+                let device = &devices[random(3) as usize];
+                device.online(random(4) > 0, &fleet.network);
+                *fleet.network.refused.lock().unwrap() =
+                    (random(4) == 0).then(|| vault_part_d(random(5) as usize));
+                let known = device.names();
+                let action = random(10);
+                let size = 200 + random(3800) as usize;
+                if action < 5 || known.is_empty() {
+                    let name = format!("login{step}");
+                    if device.put(&name, size).await.ok {
+                        expected.insert(name, Some(size));
+                    }
+                } else if action < 7 {
+                    let name = &known[random(known.len() as u64) as usize];
+                    if device.put(name, size).await.ok {
+                        expected.insert(name.clone(), Some(size));
+                    }
+                } else if action < 8 {
+                    let name = &known[random(known.len() as u64) as usize];
+                    if device.vault.remove(&device.id(name).unwrap()).await.ok {
+                        expected.insert(name.clone(), None);
+                    }
+                } else {
+                    device.sync().await;
+                }
+            }
+
+            *fleet.network.refused.lock().unwrap() = None;
+            for device in &devices {
+                device.online(true, &fleet.network);
+            }
+            for _ in 0..5 {
+                for device in &devices {
+                    device.sync().await;
+                }
+            }
+            fleet.network.log.lock().unwrap().clear();
+            for device in &devices {
+                device.sync().await;
+            }
+            assert!(
+                fleet.network.log.lock().unwrap().is_empty(),
+                "seed {seed} keeps publishing"
+            );
+
+            let live: Vec<String> = expected
+                .iter()
+                .filter(|(_, size)| size.is_some())
+                .map(|(name, _)| name.clone())
+                .collect();
+            let fresh = fleet.device("fresh").await;
+            for device in devices.iter().chain([&fresh]) {
+                assert_eq!(device.names(), live, "seed {seed}");
+                for name in &live {
+                    assert_eq!(Some(device.notes(name)), expected[name], "seed {seed} {name}");
+                }
+            }
+            *parts_seen
+                .entry(fleet.network.store.lock().unwrap().len())
+                .or_insert(0) += 1;
+            let _ = std::fs::remove_dir_all(&fleet.dir);
+        }
+        println!("parts reached: {parts_seen:?}");
     }
 
     /// Cross-implementation check against a real relay, with `test/password-live.test.ts`:

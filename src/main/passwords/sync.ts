@@ -1,15 +1,18 @@
 import { isDeepStrictEqual } from 'node:util'
 import { verifyEvent, type Event, type EventTemplate } from 'nostr-tools'
 import {
+  VAULT_INCOMPLETE,
   VAULT_PART_DS,
   declaredParts,
-  isPartChangeAllowed,
   isVaultIncomplete,
   partPayload,
+  partVault,
+  planVault,
   splitVault,
   vaultPartD,
   vaultPartIndex,
-  type VaultLayout
+  type VaultLayout,
+  type VaultPlan
 } from '@shared/password-parts'
 import {
   PASSWORD_VAULT_CLIENT,
@@ -22,6 +25,7 @@ import {
   passwordVaultFilter,
   vaultByteLength,
   type PasswordConfig,
+  type PasswordEntry,
   type PasswordRelaySource,
   type PasswordSaveResult,
   type PasswordVault,
@@ -44,6 +48,10 @@ import {
 
 const LOCKED = 'Unlock the password manager first'
 
+function sameEntries(a: PasswordVault, b: PasswordVault): boolean {
+  return isDeepStrictEqual(partVault(a.entries).entries, partVault(b.entries).entries)
+}
+
 /** What this device knows about one encrypted part of the vault. */
 interface PartState {
   /** The ciphertext saved on disk. */
@@ -52,6 +60,16 @@ interface PartState {
   base: PasswordVault | null
   /** So a replacement event is always newer than the one it replaces. */
   lastCreatedAt: number
+  /** How many parts `base` says exist. */
+  stated: number
+}
+
+/** A relay copy of one part, once decrypted. */
+interface Absorbed {
+  event: Event
+  vault: PasswordVault
+  /** Older than the copy saved here. */
+  stale: boolean
 }
 
 interface PublishOutcome {
@@ -131,7 +149,12 @@ export class PasswordSync {
     this.layout = new Map()
     this.declared = 0
     for (const [index, cached] of this.ctx.cache.getParts(pubkey)) {
-      this.parts.set(index, { cached, base: null, lastCreatedAt: cached.event.created_at })
+      this.parts.set(index, {
+        cached,
+        base: null,
+        lastCreatedAt: cached.event.created_at,
+        stated: 0
+      })
     }
     const saved = [...this.parts.values()].map((part) => part.cached!)
     const synced = saved.map((cached) => cached.syncedAt).filter((at): at is number => at !== null)
@@ -149,6 +172,7 @@ export class PasswordSync {
         const read = await this.decryptPart(provider, this.requirePubkey(), part.cached!.event)
         this.register(index, read)
         part.base = read.vault
+        part.stated = read.declared
         vault = mergeVaults(vault, read.vault).vault
       } catch {
         failed = true
@@ -183,40 +207,37 @@ export class PasswordSync {
       const { events } = await this.fetchRemoteReport(provider, pubkey, relays)
 
       // Parts the relays hold that differ from what is saved here.
-      const changed = new Map<number, { event: Event; vault: PasswordVault }>()
-      let next = this.ctx.vault()!
-      for (const [index, event] of events) {
+      const { merged: next, changed } = await this.absorb(provider, pubkey, events, (index, event) => {
         const part = this.parts.get(index)
-        if (part?.base && part.cached?.event.id === event.id && !part.cached.pending) continue
-        const read = await this.decryptPart(provider, pubkey, event)
-        this.register(index, read)
-        next = mergeVaults(next, read.vault).vault
-        changed.set(index, { event, vault: read.vault })
-      }
+        return !(part?.base && part.cached?.event.id === event.id && !part.cached.pending)
+      })
       this.ctx.setVault(next)
 
-      const failures: string[] = []
-      for (const [index, content] of splitVault(next, this.layout)) {
+      // Relay copies with everything this device has can be saved as they are.
+      const held = splitVault(next, this.layout)
+      for (const [index, remote] of changed) {
         const part = this.part(index)
-        const remote = changed.get(index)
-        let needsPublish = part.cached?.pending === true
-        if (remote) {
-          part.base = remote.vault
-          part.lastCreatedAt = Math.max(part.lastCreatedAt, remote.event.created_at)
-          needsPublish ||= hasLocalChanges(content, remote.vault)
-          if (!needsPublish) this.adopt(pubkey, index, remote.event)
-        } else if (events.has(index)) {
-          needsPublish ||= !part.base || hasLocalChanges(content, part.base)
-        } else {
-          // The relays do not have this part: send ours if there is anything in it.
-          needsPublish ||= content.entries.length > 0
-        }
-        if (!needsPublish) continue
-        const outcome = await this.publishPart(provider, pubkey, index, content, relays)
-        if (outcome.pending) {
-          failures.push(outcome.error ?? 'The vault is saved locally but relay sync failed.')
+        if (!remote.stale && !part.cached?.pending && !hasLocalChanges(held.get(index)!, remote.vault)) {
+          this.adopt(pubkey, index, remote.event)
         }
       }
+
+      const failures = await this.write(
+        provider,
+        pubkey,
+        this.plan(next),
+        relays,
+        (index, content) => {
+          const part = this.part(index)
+          if (part.cached?.pending) return true
+          const remote = changed.get(index)
+          // A relay offering an old copy is brought up to date.
+          if (remote?.stale && !sameEntries(content, remote.vault)) return true
+          // The relays do not have this part: send ours if there is anything in it.
+          if (!events.has(index)) return content.entries.length > 0
+          return !part.base || hasLocalChanges(content, part.base)
+        }
+      )
 
       this.lastSyncedAt = this.ctx.now()
       this.pending = this.anyPending()
@@ -233,27 +254,25 @@ export class PasswordSync {
     pubkey: string,
     next: PasswordVault
   ): Promise<PasswordSaveResult> {
-    const before = splitVault(this.ctx.vault() ?? emptyVault(), this.layout)
-    const after = splitVault(next, this.layout)
-    const dirty = [...after].filter(([index, content]) => {
-      const part = this.parts.get(index)
-      if (part?.cached?.pending) return true
-      if (!part?.base) return content.entries.length > 0
-      return !isDeepStrictEqual(content.entries, part.base.entries)
-    })
-    // A vault that was never saved still needs an event, if only an empty one.
-    if (this.parts.size === 0 && dirty.length === 0) dirty.push(...after)
-    // Checked for every part before any is sent, so a change is not half saved.
-    if (dirty.some(([index, content]) => !isPartChangeAllowed(before.get(index) ?? null, content))) {
-      throw new Error('The password vault is full. Delete some logins or shorten notes.')
+    const plan = this.plan(next)
+    // Checked before anything is sent, so a change is not half saved.
+    if (plan.full) {
+      throw new Error(
+        this.incomplete()
+          ? `${VAULT_INCOMPLETE}. Sync before adding more.`
+          : 'The password vault is full. Delete some logins or shorten notes.'
+      )
     }
 
     const relays = await this.resolveRelays(pubkey, false)
-    let failure: string | undefined
-    for (const [index, content] of dirty) {
-      const outcome = await this.publishPart(provider, pubkey, index, content, relays)
-      if (outcome.pending) failure ??= outcome.error
-    }
+    // A vault that was never saved still needs an event, if only an empty one.
+    const unsaved = this.parts.size === 0
+    const failures = await this.write(provider, pubkey, plan, relays, (index, content) => {
+      const part = this.part(index)
+      if (unsaved || part.cached?.pending) return true
+      if (!part.base) return content.entries.length > 0
+      return !sameEntries(content, part.base)
+    })
     this.ctx.setVault(next)
     const pending = this.anyPending()
     this.pending = pending
@@ -264,7 +283,7 @@ export class PasswordSync {
     return {
       ok: true,
       ...(pending ? { pending: true } : {}),
-      ...(pending ? { error: failure } : {}),
+      ...(pending ? { error: failures[0] } : {}),
       status: this.ctx.status()
     }
   }
@@ -273,21 +292,144 @@ export class PasswordSync {
     const relays = await this.resolveRelays(pubkey, false)
     const report = await this.fetchRemoteReport(provider, pubkey, relays).catch(() => null)
     if (!report) return
-    for (const [index, event] of report.events) {
+    const { merged, changed } = await this.absorb(provider, pubkey, report.events, (index, event) => {
       const cached = this.parts.get(index)?.cached
-      if (cached && (event.id === cached.event.id || event.created_at < cached.event.created_at)) {
-        continue
-      }
-      const read = await this.decryptPart(provider, pubkey, event)
-      this.register(index, read)
-      const merged = mergeVaults(this.ctx.vault() ?? emptyVault(), read.vault).vault
-      this.ctx.setVault(merged)
-      const part = this.part(index)
-      part.base = read.vault
-      part.lastCreatedAt = Math.max(part.lastCreatedAt, event.created_at)
-      const content = splitVault(merged, this.layout).get(index)!
-      if (!hasLocalChanges(content, read.vault)) this.adopt(pubkey, index, event)
+      return !cached || (event.id !== cached.event.id && event.created_at >= cached.event.created_at)
+    })
+    if (changed.size === 0) return
+    this.ctx.setVault(merged)
+    const held = splitVault(merged, this.layout)
+    for (const [index, remote] of changed) {
+      if (!hasLocalChanges(held.get(index)!, remote.vault)) this.adopt(pubkey, index, remote.event)
     }
+  }
+
+  /**
+   * Merge relay copies into the vault and learn which entries each part holds. An entry
+   * a newer copy dropped is forgotten there only if another part has it: it moved. An
+   * entry no other part has is written back.
+   */
+  private async absorb(
+    provider: ProviderLike,
+    pubkey: string,
+    events: Map<number, Event>,
+    wanted: (index: number, event: Event) => boolean
+  ): Promise<{ merged: PasswordVault; changed: Map<number, Absorbed> }> {
+    const reads: Array<[number, Event, { vault: PasswordVault; declared: number }]> = []
+    for (const [index, event] of events) {
+      if (wanted(index, event)) {
+        reads.push([index, event, await this.decryptPart(provider, pubkey, event)])
+      }
+    }
+    const changed = new Map<number, Absorbed>()
+    const dropped = new Map<number, string[]>()
+    let merged = this.ctx.vault() ?? emptyVault()
+    for (const [index, event, read] of reads) {
+      const part = this.part(index)
+      const stale = !!part.cached && event.created_at < part.cached.event.created_at
+      if (stale) {
+        this.registerStale(index, read)
+      } else {
+        const ids = new Set(read.vault.entries.map((entry) => entry.id))
+        const gone = (part.base?.entries ?? []).map((entry) => entry.id).filter((id) => !ids.has(id))
+        if (gone.length > 0) dropped.set(index, gone)
+        this.register(index, read)
+        part.base = read.vault
+        part.stated = read.declared
+        part.lastCreatedAt = Math.max(part.lastCreatedAt, event.created_at)
+      }
+      merged = mergeVaults(merged, read.vault).vault
+      changed.set(index, { event, vault: read.vault, stale })
+    }
+    // After every copy is in, so the destination of a move is already known.
+    for (const [index, ids] of dropped) {
+      for (const id of ids) {
+        const elsewhere = [...this.parts].some(
+          ([other, part]) => other !== index && part.base?.entries.some((entry) => entry.id === id)
+        )
+        if (elsewhere) this.layout.get(index)?.delete(id)
+      }
+    }
+    return { merged, changed }
+  }
+
+  private plan(vault: PasswordVault): VaultPlan {
+    const saved = new Map<number, PasswordVault>()
+    for (const [index, part] of this.parts) if (part.base) saved.set(index, part.base)
+    // A missing part could be overwritten by a new one with its number.
+    return planVault(vault, this.layout, saved, this.incomplete() ? null : this.partCount())
+  }
+
+  private partCount(): number {
+    return Math.max(this.declared, ...[...this.layout.keys()].map((index) => index + 1))
+  }
+
+  /**
+   * Publish the parts that need it. A move is made in order: the destination is saved
+   * first, and the source gives the entry up only once every relay has accepted it.
+   * Until then the source keeps the copy it had, and a later sync finishes the move.
+   */
+  private async write(
+    provider: ProviderLike,
+    pubkey: string,
+    plan: VaultPlan,
+    relays: string[],
+    isDirty: (index: number, content: PasswordVault) => boolean
+  ): Promise<string[]> {
+    this.layout = plan.layout
+    const failures: string[] = []
+    // The first part records how many there are, so a reader can tell one is missing.
+    const needsCount = (index: number): boolean => {
+      const part = this.parts.get(index)
+      return index === 0 && !!part?.base && Math.max(part.stated, 1) < this.partCount()
+    }
+    const send = async (index: number, content: PasswordVault): Promise<void> => {
+      const outcome = await this.publishPart(provider, pubkey, index, content, relays)
+      if (outcome.pending) {
+        failures.push(outcome.error ?? 'The vault is saved locally but relay sync failed.')
+      }
+    }
+
+    // Highest first: a new part is published before the first part counts it.
+    for (const [index, content] of [...plan.parts].sort(([a], [b]) => b - a)) {
+      if (plan.leaving.has(index)) continue
+      if (isDirty(index, content) || needsCount(index)) await send(index, content)
+    }
+
+    for (const [index, leaving] of plan.leaving) {
+      const wanted = plan.parts.get(index)!
+      const previous = new Map(
+        (this.parts.get(index)?.base?.entries ?? []).map((entry) => [entry.id, entry])
+      )
+      let moved = false
+      const entries: PasswordEntry[] = []
+      for (const entry of wanted.entries) {
+        if (!leaving.has(entry.id)) entries.push(entry)
+        else if (this.savedElsewhere(index, entry)) {
+          this.layout.get(index)?.delete(entry.id)
+          moved = true
+        } else entries.push(previous.get(entry.id)!)
+      }
+      const content = partVault(entries)
+      if (moved || isDirty(index, content) || needsCount(index)) await send(index, content)
+    }
+    return failures
+  }
+
+  /** True when another part holds this version and every relay accepted it. */
+  private savedElsewhere(source: number, entry: PasswordEntry): boolean {
+    return [...this.parts].some(
+      ([index, part]) =>
+        index !== source &&
+        this.layout.get(index)?.has(entry.id) === true &&
+        part.cached?.pending !== true &&
+        part.base?.entries.some(
+          (copy) =>
+            copy.id === entry.id &&
+            copy.updatedAt >= entry.updatedAt &&
+            (copy.favoriteUpdatedAt ?? 0) >= (entry.favoriteUpdatedAt ?? 0)
+        ) === true
+    )
   }
 
   /** Read another identity's prior vault without changing the active sync state. */
@@ -321,13 +463,23 @@ export class PasswordSync {
   private part(index: number): PartState {
     let part = this.parts.get(index)
     if (!part) {
-      part = { cached: null, base: null, lastCreatedAt: 0 }
+      part = { cached: null, base: null, lastCreatedAt: 0, stated: 0 }
       this.parts.set(index, part)
     }
     return part
   }
 
-  /** Note which entries a part holds. Ids are only ever added: absence deletes nothing. */
+  /** An old copy must not give an entry back to a part it has since moved out of. */
+  private registerStale(index: number, read: { vault: PasswordVault; declared: number }): void {
+    const ids = this.layout.get(index) ?? new Set<string>()
+    for (const entry of read.vault.entries) {
+      if (![...this.layout.values()].some((held) => held.has(entry.id))) ids.add(entry.id)
+    }
+    this.layout.set(index, ids)
+    this.declared = Math.max(this.declared, read.declared)
+  }
+
+  /** Note which entries a part holds. Absence alone deletes nothing. */
   private register(index: number, read: { vault: PasswordVault; declared: number }): void {
     const ids = this.layout.get(index) ?? new Set<string>()
     for (const entry of read.vault.entries) ids.add(entry.id)
@@ -361,7 +513,7 @@ export class PasswordSync {
   ): Promise<PublishOutcome> {
     if (relays.length === 0) throw new Error('No vault relay is configured')
     const part = this.part(index)
-    const count = Math.max(this.declared, ...[...this.parts.keys()].map((known) => known + 1))
+    const count = this.partCount()
     const payload = partPayload(content, count)
     if (vaultByteLength(payload) > MAX_VAULT_PLAINTEXT_BYTES) {
       throw new Error('The password vault is too large to encrypt. Delete some logins.')
@@ -388,7 +540,8 @@ export class PasswordSync {
     part.lastCreatedAt = event.created_at
     part.base = content
     part.cached = { event, pending, syncedAt: this.ctx.now() }
-    this.register(index, { vault: content, declared: 0 })
+    part.stated = count > 1 ? count : 0
+    this.register(index, { vault: content, declared: part.stated })
     this.ctx.cache.setPart(pubkey, index, part.cached)
     return {
       pending,

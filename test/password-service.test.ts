@@ -507,7 +507,7 @@ describe('PasswordService with a vault in two parts', () => {
     expect(names(h)).toEqual(['user1'])
   })
 
-  it('adds a new login to an existing part and never creates one', async () => {
+  it('adds a new login to an existing part while there is room', async () => {
     const h = harness({ relayStore: twoParts() })
     await h.service.unlock()
     expect((await h.service.saveEntry(draft)).ok).toBe(true)
@@ -567,4 +567,265 @@ describe('PasswordService with a vault in two parts', () => {
     expect((await target.service.importCommit(preview.id, 'merge')).ok).toBe(true)
     expect(names(target)).toEqual(['user1', 'user2'])
   })
+})
+
+/** A relay that, like a real one, never replaces an event with an older one. */
+function network() {
+  const store = new Map<string, Event>()
+  const log: string[] = []
+  let clock = 1_700_000_000_000
+  const tag = (event: Event) => event.tags.find((t) => t[0] === 'd')![1]
+  const device = (cachePath?: string) => {
+    const state = { online: true, rejects: (_d: string): boolean => false }
+    const query = async (_urls: string[], filter: Filter): Promise<Event[]> => {
+      if (!state.online) throw new Error('offline')
+      return (filter['#d'] ?? []).flatMap((d) => store.get(d) ?? [])
+    }
+    const path = cachePath ?? join(mkdtempSync(join(tmpdir(), 'ncc-parts-')), 'passwords.json')
+    const h = harness({
+      cache: new PasswordCache(path),
+      now: () => (clock += 1000),
+      relays: {
+        query,
+        queryAuth: query,
+        publishWithAuth: async (_url: string, event: Event) => {
+          const d = tag(event)
+          if (!state.online || state.rejects(d)) throw new Error('rejected')
+          const held = store.get(d)
+          if (held && held.created_at >= event.created_at) throw new Error('replaced: have newer')
+          store.set(d, event)
+          log.push(d)
+          return 'ok'
+        }
+      }
+    } as never)
+    return { ...h, state, path }
+  }
+  const part = (index: number) => {
+    const d = index === 0 ? 'ncc-browser/passwords/v1' : `ncc-browser/passwords/v1/${index}`
+    const event = store.get(d)
+    if (!event) return null
+    const plaintext = nip44.decrypt(event.content, key)
+    return {
+      bytes: Buffer.byteLength(plaintext),
+      ...(JSON.parse(plaintext) as {
+        parts?: number
+        entries: Array<{ id: string; username: string; notes: string; deleted?: boolean }>
+      })
+    }
+  }
+  const usernames = (index: number) =>
+    part(index)?.entries.filter((e) => !e.deleted).map((e) => e.username) ?? []
+  return { store, log, device, part, usernames }
+}
+
+type Device = ReturnType<ReturnType<typeof network>['device']>
+
+const login = (username: string, size: number) => ({ ...draft, username, notes: 'n'.repeat(size) })
+const find = (device: Device, username: string) =>
+  device.service.list().find((entry) => entry.username === username)!
+const notes = (device: Device, username: string) =>
+  device.service.entry(find(device, username).id)!.notes.length
+const everyone = (device: Device) => device.service.list().map((e) => e.username).sort()
+async function resize(device: Device, username: string, size: number) {
+  return device.service.saveEntry({ ...login(username, size), id: find(device, username).id })
+}
+
+/** Nine large logins: the first part is nearly full. */
+async function nearlyFull(device: Device) {
+  await device.service.unlock()
+  for (let n = 0; n < 9; n += 1) {
+    expect((await device.service.saveEntry(login(`big${n}`, 3900))).ok).toBe(true)
+  }
+  expect((await device.service.saveEntry(login('small', 10))).ok).toBe(true)
+}
+
+describe('PasswordService growing into new parts', () => {
+  const FIRST = 'ncc-browser/passwords/v1'
+  const SECOND = 'ncc-browser/passwords/v1/1'
+
+  it('creates a part when the first is full and records the count in the first', async () => {
+    const net = network()
+    const a = net.device()
+    await a.service.unlock()
+    for (let n = 0; n < 24; n += 1) {
+      expect((await a.service.saveEntry(login(`user${n}`, 3900))).ok).toBe(true)
+    }
+    expect(net.store.size).toBeGreaterThanOrEqual(3)
+    expect(net.part(0)!.parts).toBe(net.store.size)
+    for (let index = 0; index < net.store.size; index += 1) {
+      expect(net.part(index)!.bytes).toBeLessThanOrEqual(40_100)
+    }
+    const fresh = net.device()
+    expect((await fresh.service.unlock()).error).toBeNull()
+    expect(everyone(fresh)).toEqual(everyone(a))
+    expect(everyone(a)).toHaveLength(24)
+  })
+
+  it('lets a reader of only the first part know that more exist', async () => {
+    const net = network()
+    const a = net.device()
+    await nearlyFull(a)
+    expect((await a.service.saveEntry(login('next', 3900))).ok).toBe(true)
+    net.store.delete(SECOND)
+    const fresh = net.device()
+    expect((await fresh.service.unlock()).error).toBe('Some passwords haven’t synced yet')
+    // It must not make parts while it cannot see them all.
+    const refused = await fresh.service.saveEntry(login('more', 3900))
+    expect(refused.error).toBe('Some passwords haven’t synced yet. Sync before adding more.')
+    expect([...net.store.keys()]).toEqual([FIRST])
+  })
+
+  it('saves the destination before the source gives up a login that outgrew it', async () => {
+    const net = network()
+    const a = net.device()
+    await nearlyFull(a)
+    net.log.length = 0
+
+    expect((await resize(a, 'small', 4000)).ok).toBe(true)
+
+    expect(net.log.indexOf(SECOND)).toBe(0)
+    expect(net.log.lastIndexOf(FIRST)).toBeGreaterThan(0)
+    expect(net.usernames(0)).not.toContain('small')
+    expect(net.usernames(1)).toEqual(['small'])
+    expect(notes(a, 'small')).toBe(4000)
+  })
+
+  it('keeps the old copy until the destination is accepted, even across a restart', async () => {
+    const net = network()
+    const a = net.device()
+    await nearlyFull(a)
+    a.state.rejects = (d) => d === SECOND
+
+    const saved = await resize(a, 'small', 4000)
+
+    expect(saved).toMatchObject({ ok: true, pending: true })
+    expect(net.usernames(0)).toContain('small')
+    expect(notes(a, 'small')).toBe(4000)
+    await a.service.syncNow()
+    expect(net.usernames(0)).toContain('small')
+
+    const restarted = net.device(a.path)
+    await restarted.service.unlock()
+    expect(notes(restarted, 'small')).toBe(4000)
+    await restarted.service.syncNow()
+    expect(net.usernames(0)).not.toContain('small')
+    expect(net.usernames(1)).toEqual(['small'])
+    expect(notes(restarted, 'small')).toBe(4000)
+  })
+
+  it('does not let a device with the old layout put a moved login back', async () => {
+    const net = network()
+    const a = net.device()
+    await nearlyFull(a)
+    const b = net.device()
+    await b.service.unlock()
+
+    await resize(a, 'small', 4000)
+    // Shrunk again, it would fit where it was, so only the move itself keeps it out.
+    await resize(a, 'small', 20)
+    await b.service.syncNow()
+    net.log.length = 0
+    await a.service.syncNow()
+    await b.service.syncNow()
+
+    expect(net.log).toEqual([])
+    expect(net.usernames(0)).not.toContain('small')
+    expect(notes(b, 'small')).toBe(20)
+  })
+
+  it('restores logins another device overwrote, spilling into a new part', async () => {
+    const net = network()
+    const a = net.device()
+    await nearlyFull(a)
+    const b = net.device()
+    await b.service.unlock()
+    a.state.online = false
+    await a.service.saveEntry(login('from-a', 1500))
+    await b.service.saveEntry(login('from-b', 1500))
+
+    a.state.online = true
+    for (let round = 0; round < 3; round += 1) {
+      await a.service.syncNow()
+      await b.service.syncNow()
+    }
+
+    expect(everyone(a)).toEqual(everyone(b))
+    expect(everyone(a)).toEqual(expect.arrayContaining(['from-a', 'from-b']))
+    expect(net.part(0)!.bytes).toBeLessThanOrEqual(40_100)
+  })
+
+  it('imports more than one part can hold', async () => {
+    const rows = Array.from({ length: 30 }, (_, n) => `site,https://example.com,row${n},pw,${'n'.repeat(3000)},`)
+    const text = ['name,url,username,password,notes,totp', ...rows].join('\n')
+    const h = harness({
+      dialogs: { open: async () => ({ path: '/in.csv', text }), save: async () => null }
+    } as never)
+    await h.service.unlock()
+    const preview = await h.service.importOpen()
+    expect((await h.service.importCommit(preview.id, 'merge')).ok).toBe(true)
+    expect(h.service.list()).toHaveLength(30)
+    expect(h.relayStore.size).toBeGreaterThanOrEqual(3)
+  })
+
+  it.each([1, 2, 3, 4, 5, 6, 7, 8])(
+    'converges without losing anything after random offline edits (seed %i)',
+    async (seed) => {
+      let state = seed * 2654435761
+      const random = (below: number) => {
+        state = (Math.imul(state, 1664525) + 1013904223) >>> 0
+        return Math.floor((state / 2 ** 32) * below)
+      }
+      const net = network()
+      const devices = [net.device(), net.device()]
+      for (const device of devices) await device.service.unlock()
+      /** What each login should end up as: its notes length, or null once deleted. */
+      const expected = new Map<string, number | null>()
+      let created = 0
+
+      for (let step = 0; step < 70; step += 1) {
+        const device = devices[random(2)]
+        device.state.online = random(4) > 0
+        const blocked = random(5) === 0 ? random(3) : -1
+        device.state.rejects = (d) => d === (blocked === 0 ? FIRST : `${FIRST}/${blocked}`)
+        const known = everyone(device)
+        const action = random(10)
+        if (action < 4 || known.length === 0) {
+          const name = `login${created++}`
+          const size = 200 + random(3800)
+          if ((await device.service.saveEntry(login(name, size))).ok) expected.set(name, size)
+        } else if (action < 7) {
+          const name = known[random(known.length)]
+          const size = 200 + random(3800)
+          if ((await resize(device, name, size)).ok) expected.set(name, size)
+        } else if (action < 8) {
+          const name = known[random(known.length)]
+          if ((await device.service.removeEntry(find(device, name).id)).ok) expected.set(name, null)
+        } else {
+          await device.service.syncNow()
+        }
+      }
+
+      for (const device of devices) {
+        device.state.online = true
+        device.state.rejects = () => false
+      }
+      for (let round = 0; round < 5; round += 1) {
+        for (const device of devices) await device.service.syncNow()
+      }
+      net.log.length = 0
+      for (const device of devices) await device.service.syncNow()
+      expect(net.log).toEqual([])
+
+      const fresh = net.device()
+      await fresh.service.unlock()
+      const live = [...expected].filter(([, size]) => size !== null).map(([name]) => name).sort()
+      for (const device of [...devices, fresh]) {
+        // A delete wins over any older edit, so nothing deleted returns.
+        expect(everyone(device)).toEqual(live)
+        for (const name of live) expect(notes(device, name)).toBe(expected.get(name))
+      }
+    },
+    60_000
+  )
 })

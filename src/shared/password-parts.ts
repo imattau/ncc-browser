@@ -2,8 +2,7 @@
  * Vaults stored as several encrypted events ("parts"). See
  * docs/password-vault-sharding.md. The rest of the app sees one merged vault.
  *
- * This build reads every part and keeps existing ones up to date. It never creates
- * one. `crates/ncc-vault/src/parts.rs` must agree; both run
+ * `crates/ncc-vault/src/parts.rs` must agree; both run
  * `test/fixtures/password-parts-vectors.json`.
  */
 import {
@@ -85,6 +84,132 @@ export function splitVault(vault: PasswordVault, layout: VaultLayout): Map<numbe
   return new Map(indexes.map((index) => [index, partVault(held.get(index)!)]))
 }
 
+export interface VaultPlan {
+  /** The layout with new homes added. Nothing saved is removed from it. */
+  layout: VaultLayout
+  /** What each part should hold, with every home filled. */
+  parts: Map<number, PasswordVault>
+  /**
+   * Entries that must leave a part to keep it within the limit. Each may be removed
+   * only once another of its homes is confirmed saved.
+   */
+  leaving: Map<number, Set<string>>
+  /** True when some part cannot be brought within the limit. */
+  full: boolean
+}
+
+/**
+ * Place the vault, adding parts and second homes where the size limit needs them.
+ * `saved` is the last known copy of each part: only growth beyond it is limited.
+ * `nextPart` is the index a new part would take, or null when none may be created.
+ */
+export function planVault(
+  vault: PasswordVault,
+  layout: VaultLayout,
+  saved: Map<number, PasswordVault>,
+  nextPart: number | null
+): VaultPlan {
+  const homes: VaultLayout = new Map([...layout].map(([index, ids]) => [index, new Set(ids)]))
+  // With nothing loaded and nothing known, this is a new vault.
+  if (homes.size === 0) homes.set(0, new Set())
+  let upcoming = nextPart === null ? MAX_VAULT_PARTS : Math.max(nextPart, ...[...homes.keys()].map((i) => i + 1))
+
+  const held = new Map<number, Map<string, PasswordEntry>>(
+    [...homes.keys()].map((index) => [index, new Map()])
+  )
+  const fresh: PasswordEntry[] = []
+  for (const entry of vault.entries) {
+    let placed = false
+    for (const [index, ids] of homes) {
+      if (!ids.has(entry.id)) continue
+      held.get(index)!.set(entry.id, entry)
+      placed = true
+    }
+    if (!placed) fresh.push(entry)
+  }
+
+  const sizeOf = (entries: Iterable<PasswordEntry>): number => vaultByteLength(partVault([...entries]))
+  const put = (index: number, entry: PasswordEntry): void => {
+    homes.get(index)!.add(entry.id)
+    held.get(index)!.set(entry.id, entry)
+  }
+  /** A part with room for the entry, creating one if allowed. */
+  const roomFor = (entry: PasswordEntry, not: number | null): number | null => {
+    const sizes = [...held]
+      .filter(([index]) => index !== not)
+      .sort(([a], [b]) => a - b)
+      .map(([index, entries]) => ({ index, size: sizeOf([...entries.values(), entry]) }))
+    const found =
+      sizes.find(({ size }) => size <= VAULT_PART_TARGET_BYTES) ??
+      sizes.find(({ size }) => size <= MAX_VAULT_BYTES)
+    if (found) return found.index
+    if (upcoming >= MAX_VAULT_PARTS || sizeOf([entry]) > MAX_VAULT_BYTES) return null
+    const index = upcoming++
+    homes.set(index, new Set())
+    held.set(index, new Map())
+    return index
+  }
+
+  for (const entry of fresh.sort(byAge)) {
+    put(roomFor(entry, null) ?? Math.min(...held.keys()), entry)
+  }
+
+  const leaving = new Map<number, Set<string>>()
+  let full = false
+  for (const index of [...held.keys()].sort((a, b) => a - b)) {
+    const entries = held.get(index)!
+    const before = saved.get(index) ?? null
+    const staying = new Map(entries)
+    const fits = (): boolean => isPartChangeAllowed(before, partVault([...staying.values()]))
+    if (fits()) continue
+
+    const old = new Map((before?.entries ?? []).map((entry) => [entry.id, entry]))
+    const growth = (entry: PasswordEntry): number => {
+      const previous = old.get(entry.id)
+      return sizeOf([entry]) - (previous ? sizeOf([previous]) : 0)
+    }
+    // Entries this part has never saved go first: they can move without waiting.
+    const growers = [...entries.values()]
+      .filter((entry) => !old.has(entry.id) || growth(entry) > 0)
+      .sort(
+        (a, b) =>
+          Number(old.has(a.id)) - Number(old.has(b.id)) ||
+          growth(b) - growth(a) ||
+          a.id.localeCompare(b.id)
+      )
+    for (const entry of growers) {
+      if (fits()) break
+      const elsewhere = [...homes].some(([other, ids]) => other !== index && ids.has(entry.id))
+      if (!elsewhere) {
+        const target = roomFor(entry, index)
+        if (target === null) continue
+        put(target, entry)
+      }
+      staying.delete(entry.id)
+      if (old.has(entry.id)) {
+        let moving = leaving.get(index)
+        if (!moving) leaving.set(index, (moving = new Set()))
+        moving.add(entry.id)
+      } else {
+        homes.get(index)!.delete(entry.id)
+        entries.delete(entry.id)
+      }
+    }
+    full ||= !fits()
+  }
+
+  return {
+    layout: homes,
+    parts: new Map(
+      [...held]
+        .sort(([a], [b]) => a - b)
+        .map(([index, entries]) => [index, partVault([...entries.values()])])
+    ),
+    leaving,
+    full
+  }
+}
+
 /** The payload that is encrypted. A single-part vault is exactly the old format. */
 export function partPayload(part: PasswordVault, count: number): PasswordVault & { parts?: number } {
   return count > 1 ? { ...part, parts: count } : part
@@ -99,7 +224,7 @@ function byAge(a: PasswordEntry, b: PasswordEntry): number {
   return a.createdAt - b.createdAt || a.id.localeCompare(b.id)
 }
 
-function partVault(entries: PasswordEntry[]): PasswordVault {
+export function partVault(entries: PasswordEntry[]): PasswordVault {
   const sorted = [...entries].sort(byAge).map((entry) => {
     // Written only when true, so both platforms measure the same size.
     if (entry.favorite !== false) return entry
