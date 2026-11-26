@@ -135,7 +135,10 @@ signer work has settled, then add private as clear-on-exit with a plain-language
   tab, then close the tab, then close the app. Long-press back opens history.
 - **Swipe left/right on the bar** — previous/next tab, as Brave does. Cheap and it makes
   multi-tab usable one-handed.
-- **Pull to refresh** — off by default, desktop has no such gesture; revisit.
+- **Pull to refresh** — pull down at the top of a page, hold, then let go; sliding back
+  up cancels. It starts only when the engine reports a drag the page did not use, and
+  honours the root's `overscroll-behavior`. `PullGesture.kt` holds the rules
+  (`mobile/pull-hold.js` for the tab switcher).
 - **Long-press the address pill** — copy the canonical address.
 - **Insets** — content inset at the top for the cutout, bar inset at the bottom.
 
@@ -193,5 +196,5 @@ site-info and signer bottom sheets with a blurred capture of the page behind;
 drill-down settings; swipe on the pill to change tab; system back closes the sheet in
 front first; keyboard insets lift the strip.
 
-Not done: forced theme does not recolour the system bars, pull-to-refresh, private tabs,
+Not done: forced theme does not recolour the system bars, private tabs,
 long-press tab count to close.

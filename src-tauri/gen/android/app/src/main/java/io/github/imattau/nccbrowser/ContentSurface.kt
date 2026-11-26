@@ -16,7 +16,6 @@ import android.util.Base64
 import android.view.PixelCopy
 import android.view.View
 import android.view.ViewGroup
-import android.view.MotionEvent
 import android.widget.FrameLayout
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -438,6 +437,7 @@ class ContentSurface(
   private external fun nativeClearProtectionSession(kind: String)
   private external fun nativeNip07(kind: String, origin: String, method: String, body: String): String
   private var webView: WebView? = null
+  private var pullToRefresh: PullToRefresh? = null
   /** Captured from the first Tor URL so filtering does not race the shell bridge. */
   private var torListenerPort: Int? = null
   private var showingError = false
@@ -910,6 +910,7 @@ class ContentSurface(
 
   fun hide() {
     hideFullscreen()
+    pullToRefresh?.dismiss()
     webView?.visibility = View.GONE
   }
 
@@ -966,6 +967,8 @@ class ContentSurface(
     if (destroyed) return
     destroyed = true
     hideFullscreen()
+    pullToRefresh?.dismiss()
+    pullToRefresh = null
 
     val web = webView ?: return
     webView = null
@@ -1033,33 +1036,13 @@ class ContentSurface(
 
   @SuppressLint("SetJavaScriptEnabled")
   private fun create(): WebView {
-    val web = WebView(container.context)
-    var pullStart: Pair<Float, Float>? = null
-    web.setOnTouchListener { view, event ->
-      when (event.actionMasked) {
-        MotionEvent.ACTION_DOWN -> {
-          pullStart = if (!view.canScrollVertically(-1)) event.x to event.y else null
-        }
-        MotionEvent.ACTION_MOVE -> {
-          val start = pullStart
-          if (start != null && (event.y - start.second < -12f ||
-              kotlin.math.abs(event.x - start.first) > kotlin.math.abs(event.y - start.second))) {
-            pullStart = null
-          }
-        }
-        MotionEvent.ACTION_UP -> {
-          val start = pullStart
-          pullStart = null
-          if (start != null && event.y - start.second > 120f &&
-              event.y - start.second > kotlin.math.abs(event.x - start.first) &&
-              !view.canScrollVertically(-1) && web.progress >= 100) {
-            reload()
-          }
-        }
-        MotionEvent.ACTION_CANCEL -> pullStart = null
-      }
-      false
-    }
+    val web = PageWebView(container.context)
+    pullToRefresh = PullToRefresh(
+      web,
+      container,
+      canReload = { !destroyed && web.progress >= 100 },
+      reload = { reload() },
+    ).also { it.attach() }
 
     // Before anything else touches it: a profile cannot be chosen once a WebView is in
     // use. Normal tabs stay on the default profile.
@@ -1447,6 +1430,7 @@ class ContentSurface(
       }
 
       override fun onPageFinished(view: WebView, url: String?) {
+        pullToRefresh?.pageLoaded()
         currentUrl = url
         title = view.title
         if (showingError) {

@@ -19,6 +19,7 @@ import { createSecurity } from './security.js'
 import { createSecurityInfo } from './security-info.js'
 import { createPasswords } from './passwords.js'
 import { createLoginDock } from './login-dock.js'
+import { createPullHold } from './pull-hold.js'
 import { createPaymentCards } from './payment-cards.js'
 import { createIdentity } from './identity.js'
 import { nsiteVirtualHost, parseNsiteAddress } from '../src/shared/nsite-url'
@@ -1394,24 +1395,25 @@ function closeSwitcherTab(id) {
 
 function updateSwitcherRefresh(distance = 0, mode = 'pull') {
   const indicator = byId('switcher-refresh')
-  const label = mode === 'refreshing'
-    ? 'Refreshing page…'
-    : mode === 'ready'
-      ? 'Release to refresh'
-      : mode === 'done'
-        ? 'Page refreshed'
-        : mode === 'failed'
-          ? 'Refresh failed'
-          : 'Pull down to refresh'
+  const label = {
+    refreshing: 'Refreshing page…',
+    hold: 'Hold to refresh',
+    ready: 'Release to refresh · slide up to cancel',
+    cancel: 'Let go to cancel',
+    done: 'Page refreshed',
+    failed: 'Refresh failed'
+  }[mode] ?? 'Pull down to refresh'
   const symbol = mode === 'done' ? 'check' : mode === 'failed' ? 'close' : 'refresh'
   indicator.replaceChildren(icon(symbol), document.createElement('span'))
   indicator.lastElementChild.textContent = label
-  indicator.classList.toggle('visible', distance > 0 || mode !== 'pull')
+  // While the finger is down the strip follows it; afterwards it holds a fixed height.
+  const dragging = ['pull', 'hold', 'ready', 'cancel'].includes(mode)
+  indicator.classList.toggle('visible', distance > 0 || !dragging)
   indicator.classList.toggle('refreshing', mode === 'refreshing')
   indicator.classList.toggle('complete', mode === 'done')
   indicator.classList.toggle('failed', mode === 'failed')
   indicator.setAttribute('aria-hidden', String(distance <= 0 && mode === 'pull'))
-  indicator.style.height = `${mode === 'pull' ? Math.min(68, distance * 0.58) : 48}px`
+  indicator.style.height = `${dragging ? Math.min(68, distance * 0.58) : 48}px`
 }
 
 function finishSwitcherRefresh(success) {
@@ -1442,7 +1444,9 @@ function startSwitcherRefresh() {
 
 function wireSwitcherGestures() {
   const grid = byId('tab-grid')
+  const pullHold = createPullHold({ onArmed: (distance) => updateSwitcherRefresh(distance, 'ready') })
   grid.addEventListener('touchstart', (event) => {
+    pullHold.reset()
     if (event.touches.length !== 1) {
       switcherTouch = null
       return
@@ -1476,9 +1480,12 @@ function wireSwitcherGestures() {
     } else if (start.axis === 'vertical') {
       event.preventDefault()
       if (Math.abs(dy) > 8) suppressSwitcherClick = true
-      if (dy > 0 && start.scrollTop <= 0 && activeUrl && progressByTab[activeTabId] === undefined && !switcherRefreshing) {
-        updateSwitcherRefresh(dy, dy >= 100 ? 'ready' : 'pull')
+      // Only offered where letting go would do it: empty space or the active tab's card.
+      const refreshable = !start.id || start.id === activeTabId
+      if (refreshable && dy > 0 && start.scrollTop <= 0 && activeUrl && progressByTab[activeTabId] === undefined && !switcherRefreshing) {
+        updateSwitcherRefresh(dy, pullHold.move(dy))
       } else {
+        pullHold.reset()
         updateSwitcherRefresh()
         grid.scrollTop = Math.max(0, start.scrollTop - dy)
       }
@@ -1488,6 +1495,7 @@ function wireSwitcherGestures() {
   grid.addEventListener('touchend', (event) => {
     const start = switcherTouch
     switcherTouch = null
+    const armed = pullHold.release()
     if (!start || event.changedTouches.length !== 1) return
     const touch = event.changedTouches[0]
     const dx = touch.clientX - start.x
@@ -1502,9 +1510,9 @@ function wireSwitcherGestures() {
         setTimeout(() => closeSwitcherTab(start.id), 200)
       } else closeSwitcherTab(start.id)
       setTimeout(() => { suppressSwitcherClick = false }, 500)
-    } else if (dy > 100 && dy > Math.abs(dx) * 1.25 && start.scrollTop <= 0 && grid.scrollTop <= 0) {
+    } else if (armed && dy > Math.abs(dx) * 1.25 && start.scrollTop <= 0 && grid.scrollTop <= 0) {
       event.preventDefault()
-      const started = (!start.id || start.id === activeTabId) && startSwitcherRefresh()
+      const started = startSwitcherRefresh()
       if (!started) updateSwitcherRefresh()
       setTimeout(() => { suppressSwitcherClick = false }, 500)
     } else {
@@ -1516,6 +1524,7 @@ function wireSwitcherGestures() {
   }, { passive: false })
 
   grid.addEventListener('touchcancel', () => {
+    pullHold.reset()
     switcherTouch?.card?.classList.remove('is-swiping')
     if (switcherTouch?.card) switcherTouch.card.style.transform = ''
     switcherTouch = null

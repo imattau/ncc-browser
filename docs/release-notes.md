@@ -1,5 +1,13 @@
 # Release notes
 
+## Unreleased
+
+### Fixed
+
+- Android pull-to-refresh now shows an indicator on the page and needs a short hold
+  before letting go, so scrolling no longer reloads pages by accident. Sliding back up
+  cancels.
+
 ## 0.47.15 — named nsite addresses on Android
 
 ### Fixed

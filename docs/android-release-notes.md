@@ -1,5 +1,13 @@
 # Nostr Navigator for Android
 
+## Unreleased
+
+- Pull-to-refresh on a page now shows what it is doing, and no longer reloads from a
+  quick flick. Pull down, hold until it says **Release to refresh**, then let go.
+  Slide back up before letting go to cancel. The tab switcher works the same way.
+- Pages that scroll a panel of their own, handle dragging themselves (such as maps), or
+  turn pull-to-refresh off are no longer reloaded by a downward drag.
+
 ## 0.47.15
 
 - Named nsite addresses now open. Version 0.47.14 said they did, but they failed to
