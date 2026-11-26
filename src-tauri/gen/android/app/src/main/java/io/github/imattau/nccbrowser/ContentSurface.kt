@@ -1215,7 +1215,14 @@ class ContentSurface(
             val target = url ?: return false
             if (handled || target == "about:blank") return false
             handled = true
-            openWindowTarget(target)
+            val followed = openedInApp(
+              Uri.parse(target),
+              from = view.url,
+              mainFrame = true,
+              userGesture = true,
+              redirect = false,
+            )
+            if (!followed) openWindowTarget(target)
             popup.post {
               popup.stopLoading()
               (popup.parent as? ViewGroup)?.removeView(popup)
@@ -1482,6 +1489,14 @@ class ContentSurface(
         }
 
         if (accepts(url)) {
+          val followed = openedInApp(
+            request.url,
+            from = view.url,
+            mainFrame = request.isForMainFrame,
+            userGesture = request.hasGesture(),
+            redirect = request.isRedirect,
+          )
+          if (followed) return true
           prepareCosmeticScript(view, url)
           return false
         }
@@ -1621,6 +1636,25 @@ class ContentSurface(
     container.addView(web)
 
     return web
+  }
+
+  /** Hands a followed link to the app it belongs to, if [AppLinks] allows it. */
+  private fun openedInApp(
+    uri: Uri,
+    from: String?,
+    mainFrame: Boolean,
+    userGesture: Boolean,
+    redirect: Boolean,
+  ): Boolean {
+    val kind = when {
+      isTor -> LinkMenu.TabKind.TOR
+      isPrivate -> LinkMenu.TabKind.PRIVATE
+      else -> LinkMenu.TabKind.NORMAL
+    }
+    val tap = AppLinks.Tap(uri.toString(), from, kind, mainFrame, userGesture, redirect)
+    if (!AppLinks.mayHandOff(tap) || !AppLinks.open(container.context, uri)) return false
+    emit(JSONObject().put("type", "external").put("url", uri.toString()))
+    return true
   }
 
   /** Resolve an `ncc://` or `nsite://` link through the proxy, then load it. */

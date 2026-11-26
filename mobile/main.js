@@ -614,6 +614,10 @@ globalThis.__nccContent = (state) => {
     return
   }
 
+  // A link that went to another app. The page has not moved, so neither does the
+  // address bar: showing that link's address would put it over this page's content.
+  if (state.type === 'external') return
+
   if (id === activeTabId && state.url && state.type !== 'progress') {
     activeUrl = state.url
     if (state.title) activeTitle = state.title

@@ -479,6 +479,23 @@ Known limits:
 - The onion is reached over `http`. There is no CA for `.onion`; Tor encrypts the hops,
   and the last hop is inside the service.
 
+## Links that open other apps
+
+A tapped `https://` link opens in another app when that app is the default handler
+for it (on Android 12 and later, a verified app link or one the person approved in
+system settings). The system decides, through `FLAG_ACTIVITY_REQUIRE_NON_BROWSER` and
+`FLAG_ACTIVITY_REQUIRE_DEFAULT`, so the browser needs no permission to list installed
+apps and no chooser appears. This needs Android 11; older versions keep the link in
+the browser.
+
+`AppLinks.kt` holds the rest of the rule. The link stays in the browser:
+
+- in private and Tor tabs
+- without a tap, in a frame, or after a redirect
+- between pages of the same site (so a site's own "Open in app" link to itself stays too)
+- when the address is typed or opened from the long-press menu, which is also how to
+  see the web page instead of the app
+
 ## What does not carry over
 
 - **Extensions (MV3).** No extension API and no background pages. Cut, not deferred.

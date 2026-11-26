@@ -39,6 +39,9 @@ const SITE_NPUB = 'npub15d7l6vky77x34wu2rl2jdlafmpuycjsca06sjpmqgc7ggnd0zazsja3g
 const CONTACT_NPUB = 'npub15d7l6vky77x34wu2rl2jdlafmpuycjsca06sjpmqgc7ggnd0zazsja3gma'
 const WHITE_NOISE_CONTACT = `whitenoise://user/${CONTACT_NPUB}`
 const PUBLISHER_HEX = '4458d45742078c1b6d6d9afbef9f85d1ea26a835c95c30c4cdf399535bcc03e3'
+// Zapstore's own app-link format: Android opens the app if it is installed,
+// anything else gets the web listing (with a QR code on desktop).
+const ZAPSTORE = 'https://zapstore.dev/apps/io.github.imattau.nccbrowser'
 const FALLBACK_VERSION = '0.47.10'
 const NPACK_COMMAND = `npack install ${PUBLISHER_NPUB}/ncc-browser`
 
@@ -163,29 +166,34 @@ function PlatformCard({
   name,
   detail,
   files,
-  href
+  href,
+  action
 }: {
   icon: React.ReactNode
   name: string
   detail: string
   files: string
   href: string
+  action?: React.ReactNode
 }) {
   return (
-    <a
-      href={href}
-      className="glass group flex flex-col rounded-2xl p-5 transition hover:border-accent/40 hover:bg-panel-2"
-    >
+    <div className="glass group relative flex flex-col rounded-2xl p-5 transition hover:border-accent/40 hover:bg-panel-2">
       <div className="flex items-center justify-between">
         <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-line bg-panel-2 text-accent">
           {icon}
         </div>
         <ArrowRight className="h-4 w-4 text-faint transition group-hover:translate-x-0.5 group-hover:text-accent" />
       </div>
-      <h3 className="mt-4 text-[14px] font-semibold text-text">{name}</h3>
+      <h3 className="mt-4 text-[14px] font-semibold text-text">
+        {/* Stretched over the card, so a second link can sit above it. */}
+        <a href={href} className="after:absolute after:inset-0 after:rounded-2xl">
+          {name}
+        </a>
+      </h3>
       <p className="mt-1 text-[12px] leading-relaxed text-muted">{detail}</p>
       <p className="mt-3 font-mono text-[10px] text-faint">{files}</p>
-    </a>
+      {action ? <div className="relative z-10 mt-auto pt-4">{action}</div> : null}
+    </div>
   )
 }
 
@@ -537,6 +545,14 @@ export function App() {
               detail="Alpha arm64 APK. Zapstore or direct."
               files=".apk"
               href={RELEASES}
+              action={
+                <a
+                  href={ZAPSTORE}
+                  className="flex items-center justify-center gap-2 rounded-lg border border-line bg-ink px-3 py-2 text-[12px] font-semibold text-text transition hover:border-accent/50"
+                >
+                  <img src="/zapstore-icon.png" alt="" className="h-5 w-5 rounded-md" /> Get it on Zapstore
+                </a>
+              }
             />
           </div>
           <div className="mt-6 flex flex-col gap-3 rounded-2xl border border-line bg-panel p-4 sm:flex-row sm:items-center">
