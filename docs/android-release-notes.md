@@ -1,6 +1,6 @@
 # Nostr Navigator for Android
 
-## Unreleased
+## 0.47.16
 
 - Pull-to-refresh on a page now shows what it is doing, and no longer reloads from a
   quick flick. Pull down, hold until it says **Release to refresh**, then let go.

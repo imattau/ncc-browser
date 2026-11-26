@@ -1,6 +1,6 @@
 # Release notes
 
-## Unreleased
+## 0.47.16 — Android pull-to-refresh
 
 ### Fixed
 
