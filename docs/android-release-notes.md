@@ -1,5 +1,9 @@
 # Nostr Navigator for Android
 
+## 0.47.18
+
+- No changes for Android. This release fixes a startup crash in the desktop app.
+
 ## 0.47.17
 
 - Lightning payments now show the invoice amount, network, expiry and description for

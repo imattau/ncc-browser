@@ -1,5 +1,15 @@
 # Release notes
 
+## 0.47.18 — desktop startup fix
+
+### Fixed
+
+- The 0.47.17 desktop app failed to start with `Cannot find module
+  '@noble/curves/secp256k1.js'`: two libraries used by the new Lightning invoice code
+  were left out of the installed app. They are now built into it, and the build fails if
+  the desktop app would load a library that the installer leaves out. Android has no
+  changes apart from the version number.
+
 ## 0.47.17 — wallet usability and payment review
 
 ### Changed
