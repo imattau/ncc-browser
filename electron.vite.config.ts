@@ -10,10 +10,20 @@ const sharedAlias = { '@shared': resolve(__dirname, 'src/shared') }
 export default defineConfig({
   main: {
     // nostr-tools is ESM-only and the main process is bundled as CJS, so it must be
-    // inlined rather than externalised.
+    // inlined rather than externalised. The installed app also has almost no
+    // node_modules (see electron-builder.yml), so any other dependency the main
+    // process imports must be listed here; scripts/check-packaged-requires.mjs checks.
     plugins: [
       externalizeDepsPlugin({
-        exclude: ['nostr-tools', '@nostrify/nostrify', '@scure/btc-signer', 'socks-proxy-agent', 'ws']
+        exclude: [
+          'nostr-tools',
+          '@nostrify/nostrify',
+          '@noble/curves',
+          '@noble/hashes',
+          '@scure/btc-signer',
+          'socks-proxy-agent',
+          'ws'
+        ]
       })
     ],
     resolve: { alias: sharedAlias },

@@ -9,7 +9,7 @@
   "license": "MIT",
   "scripts": {
     "dev": "npm run nccsearch:build && npm run site-publisher:build && electron-vite dev",
-    "build": "npm run nccsearch:build && npm run site-publisher:build && npm run typecheck && electron-vite build",
+    "build": "npm run nccsearch:build && npm run site-publisher:build && npm run typecheck && electron-vite build && node scripts/check-packaged-requires.mjs",
     "start": "electron-vite preview",
     "mobile:dev": "npm run nccsearch:build && npm run login-hook:build && vite --config vite.mobile.config.ts",
     "mobile:build": "npm run nccsearch:build && npm run login-hook:build && vite build --config vite.mobile.config.ts",
