@@ -718,10 +718,23 @@ session (`ncc-tor`) with a **fixed SOCKS5 proxy for every request**:
   per-page onion toggle.
 - Tor tabs are always ephemeral: no cookies/storage or session restore, no persistent
   locator cache, no persistent NIP-07 permissions.
+- Tor tabs do not send this browser's name. Their requests carry a plain Chrome user
+  agent and `Accept-Language: en-US,en;q=0.9`, without client-hint headers, on desktop
+  and Android. Saved passkeys are not offered in them.
+- **This does not make a Tor tab look like Tor Browser.** A page's own scripts can still
+  tell: Tor tabs offer `window.nostr` and `window.webln`; workers and blank frames
+  report the device language; the time zone and formatting locale are unchanged; and
+  on Android the page's address is a `.tor.localhost` or `.onion.localhost` name that
+  only this app uses.
 - If Tor cannot start, the tab fails with `tor-unavailable`; it never falls back to a
   direct connection.
 - The approval sheet warns that **NIP-46 remote-signer relay traffic is not routed
   through Tor** yet; NCC relay lookups and page traffic are.
+
+**Recognising this browser:** outside Tor tabs, the user agent on desktop and Android
+contains `NostrNavigator/<version>`. Websites can match `/\bNostrNavigator\//`; do not
+require a version. On desktop, service workers report the plain user agent even for
+ordinary tabs (see `src/main/user-agents.ts`).
 
 `Ctrl+Shift+O` opens a Tor tab. Tor tabs and the global **Prefer Tor connections** setting
 are independent: the setting controls endpoint choice in normal/private tabs, while a Tor

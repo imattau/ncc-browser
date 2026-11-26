@@ -953,11 +953,13 @@ class ContentSurface(
     if (enabled) {
       val chrome = Regex("Chrome/([0-9.]+)").find(web.settings.userAgentString)?.groupValues?.get(1) ?: "120.0.0.0"
       web.settings.userAgentString =
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) " +
+        if (isTor) TorIdentity.userAgent(web.settings.userAgentString, desktop = true)
+        else "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) " +
           "Chrome/$chrome Safari/537.36 NostrNavigator/${BuildConfig.VERSION_NAME}"
     } else {
       web.settings.userAgentString = mobileAgent
     }
+    if (isTor) TorIdentity.applyClientHints(web.settings, desktop = enabled)
     web.settings.useWideViewPort = enabled
     web.settings.loadWithOverviewMode = enabled
     web.reload()
@@ -1134,8 +1136,13 @@ class ContentSurface(
       setSupportMultipleWindows(true)
       mediaPlaybackRequiresUserGesture = false
       mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-      userAgentString = "$userAgentString NostrNavigator/${BuildConfig.VERSION_NAME}"
+      // Normal and private tabs say which browser this is, so sites can tell. A Tor
+      // tab must not: it would single its user out.
+      userAgentString =
+        if (isTor) TorIdentity.userAgent(userAgentString, desktop = false)
+        else "$userAgentString NostrNavigator/${BuildConfig.VERSION_NAME}"
       mobileAgent = userAgentString
+      if (isTor) TorIdentity.applyClientHints(this, desktop = false)
       setSupportZoom(true)
       builtInZoomControls = true
       displayZoomControls = false
@@ -1353,6 +1360,10 @@ class ContentSurface(
     installPaymentBridge(web)
     installFaviconRefreshBridge(web)
     installNip07(web)
+    // After the bridges above, whose app-named globals it takes away again.
+    if (isTor && WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+      WebViewCompat.addDocumentStartJavaScript(web, TorIdentity.SCRIPT, setOf("*"))
+    }
     installPasskeyBridge(web)
 
     web.webViewClient = object : WebViewClient() {

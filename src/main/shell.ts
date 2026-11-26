@@ -45,7 +45,7 @@ import { showHistoryMenu, showNewTabMenu, showTabMenu } from './shell/menus'
 import { browserShellFor, browserShellForTabContents, browserShells, registerShell, unregisterShell } from './shell/registry'
 import { restoredTabPlan, savedWindowSession } from './shell/session'
 import { buildNavState, tabSummaries } from './shell/state'
-import { CONTENT_WEB_PREFERENCES, type Tab } from './shell/types'
+import { contentWebPreferences, type Tab } from './shell/types'
 
 // Keep the historical entry point working: other main modules import the registry here.
 export { browserShellFor, browserShellForTabContents, browserShells } from './shell/registry'
@@ -942,7 +942,7 @@ export class BrowserShell {
   private createTab(kind: TabKind = 'normal'): Tab {
     const view = new WebContentsView({
       webPreferences: {
-        ...CONTENT_WEB_PREFERENCES,
+        ...contentWebPreferences(kind),
         partition: this.deps.partitionFor(kind),
         preload: this.deps.contentPreloadPath
       }

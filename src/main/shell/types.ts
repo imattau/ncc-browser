@@ -1,4 +1,5 @@
-import type { WebContentsView } from 'electron'
+import type { WebContentsView, WebPreferences } from 'electron'
+import { TOR_TAB_ARGUMENT } from '@shared/tor-identity'
 import type { PageMode, SecurityInfo, TabKind } from '@shared/types'
 import type { BrowserShell } from '../shell'
 
@@ -33,3 +34,16 @@ export const CONTENT_WEB_PREFERENCES = {
   spellcheck: false,
   safeDialogs: true
 } as const
+
+/**
+ * A Tor tab's preload also runs in frames, only to give their scripts the same
+ * anonymous language as the page. `sandbox` still applies: no frame gets Node.
+ */
+export function contentWebPreferences(kind: TabKind): WebPreferences {
+  if (kind !== 'tor') return { ...CONTENT_WEB_PREFERENCES }
+  return {
+    ...CONTENT_WEB_PREFERENCES,
+    nodeIntegrationInSubFrames: true,
+    additionalArguments: [TOR_TAB_ARGUMENT]
+  }
+}

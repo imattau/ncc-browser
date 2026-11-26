@@ -13,7 +13,7 @@ import {
 import { formatDisplayUrl, isOnionPageUrl, safeProtocol, tabTitle } from './format'
 import type { ShellInternals } from './internals'
 import { loadWebTarget, navigateInTab } from './navigation'
-import { CONTENT_WEB_PREFERENCES, type Tab } from './types'
+import { contentWebPreferences, type Tab } from './types'
 
 /** Attach the content-view listeners for one tab. */
 export function wireTab(internals: ShellInternals, tab: Tab): void {
@@ -158,7 +158,7 @@ export function wireTab(internals: ShellInternals, tab: Tab): void {
         overrideBrowserWindowOptions: {
           autoHideMenuBar: true,
           webPreferences: {
-            ...CONTENT_WEB_PREFERENCES,
+            ...contentWebPreferences(tab.kind),
             session: contents.session,
             preload: internals.deps.contentPreloadPath
           }

@@ -47,6 +47,67 @@ const HOP_BY_HOP: &[&str] = &[
     "upgrade",
 ];
 
+/// What every Tor request claims to prefer, whatever the device is set to.
+const ANONYMOUS_LANGUAGE: &str = "en-US,en;q=0.9";
+
+/// Used only when a request names no Chrome version to copy.
+const FALLBACK_CHROME_MAJOR: &str = "145";
+
+/// Chrome's own reduced user agent, as an Android phone or (for a desktop layout, or
+/// no hint at all) a Linux desktop sends it. It names neither this app nor a WebView.
+fn anonymous_user_agent(incoming: &str) -> String {
+    let major: String = incoming
+        .split_once("Chrome/")
+        .map(|(_, rest)| rest.chars().take_while(char::is_ascii_digit).collect())
+        .filter(|major: &String| !major.is_empty())
+        .unwrap_or_else(|| FALLBACK_CHROME_MAJOR.to_string());
+    let (platform, mobile) = if incoming.contains("Android") {
+        ("Linux; Android 10; K", " Mobile")
+    } else {
+        ("X11; Linux x86_64", "")
+    };
+    format!(
+        "Mozilla/5.0 ({platform}) AppleWebKit/537.36 (KHTML, like Gecko) \
+         Chrome/{major}.0.0.0{mobile} Safari/537.36"
+    )
+}
+
+/// Remove what tells a site, through Tor, which app and device settings it is talking
+/// to. This is the one place every Tor tab request passes, whoever made it: the page,
+/// a worker, or the app fetching a download.
+fn anonymise(headers: &mut HeaderMap) {
+    let incoming = headers
+        .get(header::USER_AGENT)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    if let Ok(agent) = HeaderValue::from_str(&anonymous_user_agent(incoming)) {
+        headers.insert(header::USER_AGENT, agent);
+    }
+    headers.insert(
+        header::ACCEPT_LANGUAGE,
+        HeaderValue::from_static(ANONYMOUS_LANGUAGE),
+    );
+
+    // Client hints name the browser brand, which for this app is "Android WebView".
+    let hints: Vec<HeaderName> = headers
+        .keys()
+        .filter(|name| name.as_str().starts_with("sec-ch-"))
+        .cloned()
+        .collect();
+    for name in hints {
+        headers.remove(name);
+    }
+
+    // A WebView puts the app's package name here. Scripts use the same header for
+    // "XMLHttpRequest", which sites rely on and which says nothing about the app.
+    let from_a_script = headers
+        .get("x-requested-with")
+        .is_some_and(|value| value.as_bytes().eq_ignore_ascii_case(b"XMLHttpRequest"));
+    if !from_a_script {
+        headers.remove("x-requested-with");
+    }
+}
+
 /// The policy every onion document is served with.
 ///
 /// `'self'` is the onion vhost. Inline scripts are allowed because rewriting a page
@@ -271,6 +332,7 @@ pub async fn serve(
             // Documents and stylesheets are rewritten, which needs the text, not a
             // compressed stream.
             upstream.remove(header::ACCEPT_ENCODING);
+            anonymise(&mut upstream);
             upstream
         });
         let method = method.clone();
@@ -996,6 +1058,51 @@ mod tests {
             url::form_urlencoded::byte_serialize(b"https://example.com/secret").collect::<String>();
         let response = blocked_page(&format!("u={query}"));
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn a_tor_request_does_not_name_the_app() {
+        let mut headers = HeaderMap::new();
+        for (name, value) in [
+            ("user-agent", "Mozilla/5.0 (Linux; Android 10; K; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/145.0.0.0 Mobile Safari/537.36 NostrNavigator/0.47.19"),
+            ("x-requested-with", "io.github.imattau.nccbrowser"),
+            ("sec-ch-ua", "\"Android WebView\";v=\"145\""),
+            ("sec-ch-ua-platform", "\"Android\""),
+            ("accept-language", "fr-FR,fr;q=0.9"),
+            ("accept", "text/html"),
+            ("sec-fetch-mode", "navigate"),
+        ] {
+            headers.insert(HeaderName::from_static(name), HeaderValue::from_static(value));
+        }
+        anonymise(&mut headers);
+
+        assert_eq!(
+            headers[header::USER_AGENT],
+            "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Mobile Safari/537.36"
+        );
+        assert_eq!(headers[header::ACCEPT_LANGUAGE], "en-US,en;q=0.9");
+        let mut names: Vec<&str> = headers.keys().map(|name| name.as_str()).collect();
+        names.sort_unstable();
+        assert_eq!(names, ["accept", "accept-language", "sec-fetch-mode", "user-agent"]);
+    }
+
+    #[test]
+    fn a_desktop_layout_stays_a_desktop_and_a_bare_request_still_gets_an_agent() {
+        assert_eq!(
+            anonymous_user_agent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36 NostrNavigator/1.2.3"),
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"
+        );
+        let mut headers = HeaderMap::new();
+        anonymise(&mut headers);
+        assert!(headers[header::USER_AGENT].to_str().unwrap().contains("Chrome/145.0.0.0 Safari"));
+    }
+
+    #[test]
+    fn a_scripts_own_requested_with_header_is_kept() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-requested-with", HeaderValue::from_static("XMLHttpRequest"));
+        anonymise(&mut headers);
+        assert_eq!(headers["x-requested-with"], "XMLHttpRequest");
     }
 
     #[test]

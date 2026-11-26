@@ -30,7 +30,8 @@ export function hasWebauthnCredentials(ctx: WebauthnContext): boolean {
 }
 
 function pageMatches(page: PasswordPage | null, origin: string): boolean {
-  if (!page || page.kind === 'private' || page.mode === 'blank' || page.mode === 'error') return false
+  // As on Android, no saved passkey is offered through Tor: it would name its owner.
+  if (!page || page.kind === 'private' || page.kind === 'tor' || page.mode === 'blank' || page.mode === 'error') return false
   const parsed = pageOriginFromUrl(page.url)
   return !!parsed && parsed.scheme === 'https' && parsed.origin === new URL(origin).origin
 }

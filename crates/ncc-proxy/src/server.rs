@@ -191,7 +191,6 @@ impl ProxyState {
                 // Tor has to bootstrap and build a circuit before the onion is even
                 // reached, so the ordinary timeout would give up on a working request.
                 .timeout(config.request_timeout.max(Duration::from_secs(120)))
-                .user_agent(concat!("NostrNavigator/", env!("CARGO_PKG_VERSION")))
                 .proxy(proxy);
             if let Ok(tls) = &roots {
                 builder = builder.use_preconfigured_tls(tls.clone());

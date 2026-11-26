@@ -3,6 +3,7 @@ import { app, type Session } from 'electron'
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import adblock from 'adblock-rs'
+import { anonymiseTorHeaders } from '@shared/tor-identity'
 import { DEFAULT_PROTECTION } from '@shared/types'
 import type { ConfigStore } from './config'
 import type { TabKind } from '@shared/types'
@@ -128,17 +129,19 @@ export class ProtectionService {
 
   installCookiePolicy(session: Session, kind: TabKind): void {
     session.webRequest.onBeforeSendHeaders((details, callback) => {
-      if (this.settings().level !== 'strict') { callback({ requestHeaders: details.requestHeaders }); return }
+      // A session takes one listener, so the Tor header rules live in this one too.
+      const requestHeaders = kind === 'tor' ? anonymiseTorHeaders(details.requestHeaders) : details.requestHeaders
+      if (this.settings().level !== 'strict') { callback({ requestHeaders }); return }
       const source = (details as typeof details & { initiator?: string }).initiator || details.referrer || ''
       try {
         if (!this.isExcepted(new URL(source).origin, kind) && new URL(source).origin !== new URL(details.url).origin) {
-          const headers = { ...details.requestHeaders }
+          const headers = { ...requestHeaders }
           for (const name of Object.keys(headers)) if (name.toLowerCase() === 'cookie') delete headers[name]
           callback({ requestHeaders: headers })
           return
         }
       } catch { /* without an initiator, leave browser cookie behavior intact */ }
-      callback({ requestHeaders: details.requestHeaders })
+      callback({ requestHeaders })
     })
     session.webRequest.onHeadersReceived((details, callback) => {
       if (this.settings().level !== 'strict') { callback({ responseHeaders: details.responseHeaders }); return }

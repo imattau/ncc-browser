@@ -5,8 +5,10 @@
  * storage in memory. Each session is cleared when its last tab closes.
  */
 
-import { session, type Session } from 'electron'
+import { app, session, type Session } from 'electron'
+import { TOR_LANGUAGE_LIST } from '@shared/tor-identity'
 import type { TabKind } from '@shared/types'
+import { brandedUserAgent } from './user-agents'
 
 export const SESSION_PARTITIONS: Record<TabKind, string> = {
   normal: 'persist:ncc-content',
@@ -31,6 +33,11 @@ export function createContentSessions(): ContentSessions {
   for (const value of [normal, privateSession, tor, extensions]) {
     value.setSpellCheckerEnabled(false)
   }
+  for (const value of [session.defaultSession, normal, privateSession, extensions]) {
+    value.setUserAgent(brandedUserAgent())
+  }
+  // The app-wide default is the anonymous agent; see user-agents.ts.
+  tor.setUserAgent(app.userAgentFallback, TOR_LANGUAGE_LIST)
   return { normal, private: privateSession, tor, extensions }
 }
 

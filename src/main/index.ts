@@ -12,6 +12,7 @@ import { createRuntime } from './bootstrap/runtime'
 import { createServices } from './bootstrap/services'
 import { createShellStack } from './bootstrap/shell'
 import { registerPrivilegedSchemes } from './schemes'
+import { installDefaultUserAgent } from './user-agents'
 
 // Custom schemes must be registered before the app is ready, in a single call.
 registerPrivilegedSchemes()
@@ -25,6 +26,7 @@ registerPrivilegedSchemes()
 app.commandLine.appendSwitch('disable-features', 'FedCm,FedCmIdPRegistration')
 
 app.setName('Nostr Navigator')
+installDefaultUserAgent()
 // Keep the profile created by earlier NCC Browser builds across the rename.
 app.setPath('userData', join(app.getPath('appData'), 'NCC Browser'))
 
