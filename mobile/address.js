@@ -58,6 +58,17 @@ function displayAddress(url) {
   }
 }
 
+/**
+ * How a link is copied or shared from the long-press menu. The pill drops an `ncc://`
+ * query and fragment; a link someone is passing on keeps them.
+ */
+function linkAddress(url) {
+  const address = displayAddress(url)
+  if (!address.startsWith('ncc://') || address === url) return address
+  const { search, hash } = new URL(url)
+  return `${address}${search}${hash}`
+}
+
 function shortId(id) {
   return id.length > 16 ? `${id.slice(0, 8)}…${id.slice(-4)}` : id
 }
@@ -147,4 +158,4 @@ function avatar(text, className = '', address = '') {
 }
 
 
-export { addressParts, avatar, displayAddress, icon, iconDataUrl, iconKey, labelFor, saveIcon, setIcon, shortId }
+export { addressParts, avatar, displayAddress, icon, iconDataUrl, iconKey, labelFor, linkAddress, saveIcon, setIcon, shortId }

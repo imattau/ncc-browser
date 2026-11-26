@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addressParts, displayAddress, iconKey, labelFor, shortId } from '../mobile/address.js'
+import { addressParts, displayAddress, iconKey, labelFor, linkAddress, shortId } from '../mobile/address.js'
 
 describe('mobile address helpers', () => {
   it('converts proxy hostnames back to user-facing addresses', () => {
@@ -11,6 +11,17 @@ describe('mobile address helpers', () => {
     expect(displayAddress('http://example.com.p8443.tor.localhost:9050/a')).toBe(
       'https://example.com:8443/a'
     )
+  })
+
+  it('keeps the query and fragment of a link being passed on', () => {
+    expect(linkAddress('http://pubkey.web.localhost:8080/docs?q=1#two')).toBe(
+      'ncc://pubkey/web/docs?q=1#two'
+    )
+    expect(linkAddress('ncc://pubkey/web?q=1')).toBe('ncc://pubkey/web?q=1')
+    expect(linkAddress('http://pubkey.blog.nsite.localhost:8080/a?q=1#two')).toBe(
+      'nsite://pubkey/blog/a?q=1#two'
+    )
+    expect(linkAddress('https://example.com/a?b=1#c')).toBe('https://example.com/a?b=1#c')
   })
 
   it('splits NCC addresses and labels entries', () => {

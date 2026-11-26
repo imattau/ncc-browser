@@ -11,7 +11,7 @@
  */
 import { closeMoneroWallet, handleNwcPageRequest, loadWallet, wireWallet } from './wallet.js'
 import './downloads.js'
-import { addressParts, avatar, displayAddress, icon, iconDataUrl, iconKey, labelFor, saveIcon, setIcon, shortId } from './address.js'
+import { addressParts, avatar, displayAddress, icon, iconDataUrl, iconKey, labelFor, linkAddress, saveIcon, setIcon, shortId } from './address.js'
 import { createSync } from './sync.js'
 import { createProfile } from './profile.js'
 import { createHome } from './home.js'
@@ -647,6 +647,15 @@ function openExternalLink() {
   else content.openNew(link)
 }
 globalThis.__nccOpenLink = openExternalLink
+
+/** The long-press menu asks how to write the addresses it is about to show. */
+globalThis.__nccLinkAddresses = (urls) => urls.map((url) => linkAddress(url))
+
+/** An onion or website chosen to open through Tor, from the long-press menu. */
+globalThis.__nccOpenTorLink = async (url) => {
+  const outcome = await navigate(url, { newTab: true, tor: true })
+  if (outcome?.error) content?.notice(outcome.error)
+}
 
 globalThis.__nccContentReady = () => {
   set('bridge', 'ok (content bridge)')
@@ -1596,6 +1605,7 @@ function wireMenu() {
   act('menu-share-nostr', () => {
     const active = tabs.find((tab) => tab.id === activeTabId)
     if (!shareNostrState(active, tabs.length > 0 && activeUrl !== '').ok) return
+    shareLink = null
     showPanel('share-nostr')
   })
   act('menu-new', () => openOmnibox({ newTab: true }))
@@ -2152,6 +2162,21 @@ function shareNostrState(tab, hasPage) {
 }
 
 let sharing = false
+/** A link chosen from the long-press menu; `null` shares the page itself. */
+let shareLink = null
+/** What the share screen is showing, which is exactly what Post sends. */
+let shareDraft = null
+
+globalThis.__nccShareLinkNostr = ({ url, title }) => {
+  const tab = tabs.find((entry) => entry.id === activeTabId)
+  const state = shareNostrState(tab, !!url)
+  if (!state.ok) {
+    content?.notice(`Share to Nostr: ${state.why}`)
+    return
+  }
+  shareLink = { url: linkAddress(url), title: String(title || '').replace(/\s+/g, ' ').trim() }
+  showPanel('share-nostr')
+}
 
 function renderShareNostr() {
   sharing = false
@@ -2160,8 +2185,9 @@ function renderShareNostr() {
   byId('share-post').disabled = false
   byId('share-post').textContent = 'Post'
   byId('share-note').textContent = ''
-  const title = activeTitle ? `${activeTitle}\n` : ''
-  byId('share-preview').textContent = `${title}${displayAddress(activeUrl)}`
+  shareDraft = shareLink ?? { url: displayAddress(activeUrl), title: activeTitle || '' }
+  const title = shareDraft.title ? `${shareDraft.title}\n` : ''
+  byId('share-preview').textContent = `${title}${shareDraft.url}`
   byId('share-preview').style.whiteSpace = 'pre-wrap'
   byId('share-who').textContent = `Posts publicly as ${shortId(identity?.npub || '')} to your relays.`
 }
@@ -2169,7 +2195,8 @@ function renderShareNostr() {
 async function postShareNostr() {
   if (sharing) return
   const tab = tabs.find((entry) => entry.id === activeTabId)
-  if (!shareNostrState(tab, !!activeUrl).ok) return
+  const draft = shareDraft
+  if (!draft || !shareNostrState(tab, !!draft.url).ok) return
   sharing = true
   const note = byId('share-note')
   const button = byId('share-post')
@@ -2179,8 +2206,8 @@ async function postShareNostr() {
   try {
     const result = await invoke('share_nostr', {
       kind: tab.kind || 'normal',
-      url: displayAddress(activeUrl),
-      title: activeTitle || '',
+      url: draft.url,
+      title: draft.title,
       comment: byId('share-comment').value
     })
     if (result.accepted > 0) {

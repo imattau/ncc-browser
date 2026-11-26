@@ -139,6 +139,12 @@ signer work has settled, then add private as clear-on-exit with a plain-language
   up cancels. It starts only when the engine reports a drag the page did not use, and
   honours the root's `overscroll-behavior`. `PullGesture.kt` holds the rules
   (`mobile/pull-hold.js` for the tab switcher).
+- **Long-press in a page** — a sheet for links, pictures, email addresses and phone
+  numbers, with the address always shown. "Open in new tab" loads behind the page and
+  offers "Switch". In a normal tab a link can also be shared to Nostr, through the same
+  screen as the page menu. A private tab offers only private tabs; a Tor tab offers only what
+  stays inside Tor. Text and form fields keep Android's own menu, and a page that
+  handles `contextmenu` keeps the press. `LinkMenu.kt` holds the rules.
 - **Long-press the address pill** — copy the canonical address.
 - **Insets** — content inset at the top for the cutout, bar inset at the bottom.
 

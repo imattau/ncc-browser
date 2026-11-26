@@ -15,9 +15,11 @@ import android.os.Bundle
 import android.content.pm.PackageManager
 import android.util.Base64
 import android.widget.Toast
+import android.view.View
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
+import android.webkit.MimeTypeMap
 import android.webkit.WebStorage
 import android.webkit.WebView
 import android.widget.FrameLayout
@@ -34,6 +36,8 @@ import androidx.core.content.pm.ShortcutManagerCompat
 import androidx.core.graphics.drawable.IconCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import com.google.android.material.bottomsheet.BottomSheetDialog
+import com.google.android.material.snackbar.Snackbar
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -76,6 +80,8 @@ class MainActivity : TauriActivity() {
   /** Extra shell height above the bar for a login prompt, with the page still live. */
   private var dockHeight = 0
   private var barAtBottom = true
+  private var linkSheet: BottomSheetDialog? = null
+  private var openedNotice: Snackbar? = null
 
   private val tabs = mutableListOf<ContentSurface>()
 
@@ -527,9 +533,22 @@ class MainActivity : TauriActivity() {
       then()
       return
     }
-    current.capture { data ->
-      if (data != null) current.thumbnail = data
-      then()
+    val take = {
+      current.capture { data ->
+        if (data != null) current.thumbnail = data
+        then()
+      }
+    }
+    // A capture copies the window, so the "Opened in new tab" message has to be off it
+    // first, and the screen needs a moment to redraw without it.
+    val notice = openedNotice?.takeIf { it.isShownOrQueued }
+    openedNotice = null
+    if (notice == null) {
+      take()
+    } else {
+      notice.view.visibility = View.GONE
+      notice.dismiss()
+      notice.view.postDelayed({ take() }, 50)
     }
   }
 
@@ -570,6 +589,7 @@ class MainActivity : TauriActivity() {
         { target -> openTab(target, reuseActive = false, isPrivate = isPrivate, isTor = isTor) },
         { openPopupTab(isPrivate, isTor) },
       )
+      attachLinkMenu(tab)
       if (!tab.open(url)) {
         tab.destroy()
         return@captureActive
@@ -609,6 +629,7 @@ class MainActivity : TauriActivity() {
       { target -> openTab(target, reuseActive = false, isPrivate = isPrivate, isTor = isTor) },
       { openPopupTab(isPrivate, isTor) },
     )
+    attachLinkMenu(tab)
     active()?.hide()
     tabs.add(tab)
     activeId = tab.id
@@ -638,6 +659,7 @@ class MainActivity : TauriActivity() {
       tab.destroy()
       return
     }
+    attachLinkMenu(tab)
     tab.park(url, savedTitle)
     tabs.add(tab)
     if (makeActive || activeId == null) {
@@ -709,6 +731,142 @@ class MainActivity : TauriActivity() {
     )
   }
 
+  /**
+   * A new tab of the opener's kind that loads behind it. The page being read stays on
+   * screen, and a message offers the way to the new tab.
+   */
+  private fun openBackgroundTab(url: String, isPrivate: Boolean, isTor: Boolean) {
+    val host = contentHost ?: return
+    val tab = ContentSurface(
+      "tab-${nextTabId++}",
+      isPrivate,
+      isTor,
+      host,
+      {
+        when {
+          isTor -> torPortNumber
+          isPrivate -> privatePortNumber
+          else -> proxyPortNumber
+        }
+      },
+      ::onTabEvent,
+      { target, mime, disposition -> startDownload(target, mime, disposition, isPrivate || isTor) },
+      { target -> openTab(target, reuseActive = false, isPrivate = isPrivate, isTor = isTor) },
+      { openPopupTab(isPrivate, isTor) },
+    )
+    attachLinkMenu(tab)
+    if (!tab.openInBackground(url)) {
+      tab.destroy()
+      toast("That link could not be opened")
+      return
+    }
+    tabs.add(tab)
+    emitTabs(false)
+
+    val message = Snackbar.make(host, "Opened in new tab", Snackbar.LENGTH_LONG)
+      .setAction("Switch") { selectTab(tab.id) }
+    // Above the address bar when it is at the bottom, not over it.
+    if (barAtBottom) shell?.let { message.anchorView = it }
+    openedNotice = message
+    message.show()
+  }
+
+  private fun linkRoutes(tab: ContentSurface) = LinkMenu.Routes(
+    when {
+      tab.isTor -> LinkMenu.TabKind.TOR
+      tab.isPrivate -> LinkMenu.TabKind.PRIVATE
+      else -> LinkMenu.TabKind.NORMAL
+    },
+    privatePortNumber,
+    torPortNumber,
+  )
+
+  private fun attachLinkMenu(tab: ContentSurface) {
+    tab.linkMenu = { link, image -> LinkMenu.build(link, image, linkRoutes(tab)) }
+    tab.onLinkPress = { link, image, text -> showLinkMenu(tab, link, image, text) }
+  }
+
+  private fun showLinkMenu(tab: ContentSurface, link: String?, image: String?, text: String?) {
+    val menu = LinkMenu.build(link, image, linkRoutes(tab)) ?: return
+    // The shell owns how an address is written: a virtual host is shown, copied and
+    // shared as the `ncc://` or `nsite://` address it stands for.
+    shellAddresses(menu) { addresses ->
+      if (activeId != tab.id || expanded || isFinishing || isDestroyed) return@shellAddresses
+      linkSheet?.dismiss()
+      val heading = addresses[menu.heading] ?: menu.heading
+      linkSheet = LinkMenuSheet.show(this, menu, text, heading) { item ->
+        runLinkAction(tab, item, addresses[item.target] ?: item.target, text)
+      }
+    }
+  }
+
+  private fun shellAddresses(menu: LinkMenu.Menu, then: (Map<String, String>) -> Unit) {
+    val targets = (listOf(menu.heading) + menu.sections.flatten().map { it.target })
+      .distinct()
+      .filter { !it.startsWith("data:") }
+    val view = shell
+    if (view == null) {
+      then(emptyMap())
+      return
+    }
+    val list = JSONArray(targets).toString()
+    view.evaluateJavascript("window.__nccLinkAddresses ? window.__nccLinkAddresses($list) : null") { answer ->
+      val written = runCatching { JSONArray(answer) }.getOrNull()
+      then(
+        if (written == null || written.length() != targets.size) emptyMap()
+        else targets.indices.associate { targets[it] to written.getString(it) },
+      )
+    }
+  }
+
+  private fun runLinkAction(tab: ContentSurface, item: LinkMenu.Item, written: String, text: String?) {
+    // The tab can close while its menu is up, for instance a popup that closes itself.
+    if (tabs.none { it.id == tab.id }) return
+    when (item.action) {
+      LinkMenu.Action.OPEN_BACKGROUND -> tab.resolveLink(item.target) { resolved ->
+        if (resolved == null) toast("That link could not be opened")
+        else openBackgroundTab(resolved, tab.isPrivate, tab.isTor)
+      }
+      LinkMenu.Action.OPEN_PRIVATE -> tab.resolveLink(item.target) { resolved ->
+        if (resolved == null) toast("That link could not be opened")
+        else openTab(LinkMenu.onPort(resolved, privatePortNumber), reuseActive = false, isPrivate = true)
+      }
+      LinkMenu.Action.OPEN_TOR ->
+        emitToShellRaw("window.__nccOpenTorLink", JSONObject.quote(item.target))
+      LinkMenu.Action.COPY_ADDRESS -> copyText(written, "Link copied")
+      LinkMenu.Action.COPY_TEXT -> copyText(item.target, "Copied")
+      LinkMenu.Action.SHARE -> shareText(written)
+      // The shell writes the address itself, so a raw proxy address cannot be posted.
+      LinkMenu.Action.SHARE_NOSTR ->
+        emitToShell("window.__nccShareLinkNostr", JSONObject().put("url", item.target).put("title", text ?: ""))
+      LinkMenu.Action.DOWNLOAD ->
+        startDownload(item.target, null, null, tab.isPrivate || tab.isTor)
+      LinkMenu.Action.OPEN_APP -> try {
+        // ACTION_VIEW on tel: opens the dialler with the number filled in; it never calls.
+        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(item.target)))
+      } catch (_: Exception) {
+        toast("No app can open this")
+      }
+    }
+  }
+
+  private fun copyText(value: String, message: String) {
+    val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    clipboard.setPrimaryClip(ClipData.newPlainText("address", value))
+    toast(message)
+  }
+
+  private fun shareText(value: String) {
+    val send = Intent(Intent.ACTION_SEND)
+      .setType("text/plain")
+      .putExtra(Intent.EXTRA_TEXT, value)
+    try {
+      startActivity(Intent.createChooser(send, null))
+    } catch (error: Exception) {
+      // No share target installed.
+    }
+  }
+
   private fun selectTab(id: String) {
     val target = tabs.firstOrNull { it.id == id } ?: return
     if (target.id == activeId) return
@@ -725,6 +883,8 @@ class MainActivity : TauriActivity() {
   private fun closeTab(id: String?) {
     val target = tabs.firstOrNull { it.id == id } ?: return
     val position = tabs.indexOf(target)
+    // A menu about the page on screen goes with it.
+    if (target.id == activeId) linkSheet?.dismiss()
     tabs.remove(target)
     target.destroy()
 
@@ -736,6 +896,13 @@ class MainActivity : TauriActivity() {
     if (target.isPrivate && tabs.none { it.isPrivate }) {
       target.clearProtectionSession()
       Profiles.wipe(Profiles.PRIVATE)
+    }
+
+    // Closing a tab that is not on screen leaves the one that is where it was: a tab
+    // opened behind can close itself.
+    if (tabs.isNotEmpty() && target.id != activeId) {
+      emitTabs(false)
+      return
     }
 
     if (tabs.isEmpty()) {
@@ -767,6 +934,7 @@ class MainActivity : TauriActivity() {
    */
   private fun startDownload(url: String, mimeType: String?, contentDisposition: String?, ephemeral: Boolean = false) {
     requestDownloadNotificationPermission()
+    val inline = url.startsWith("data:", ignoreCase = true)
     val parsed = Uri.parse(url)
     val host = parsed.host?.lowercase() ?: ""
     val throughProxy = host.endsWith(".localhost")
@@ -784,46 +952,68 @@ class MainActivity : TauriActivity() {
       return
     }
 
-    val name = filenameFor(contentDisposition, url, mimeType)
+    val inlineType = if (inline) url.substring(5).substringBefore(',').substringBefore(';') else null
+    var type = mimeType ?: inlineType?.takeIf { it.isNotBlank() }
+    var name = if (inline) {
+      withExtension("download", type)
+    } else {
+      filenameFor(contentDisposition, url, type)
+    }
     toast("Downloading $name…")
 
     Thread {
       val temp = File(cacheDir, "download-${System.currentTimeMillis()}")
-      val id = downloads.start(name, if (fromEphemeralTab || ephemeral) "" else url, -1, fromEphemeralTab || ephemeral)
+      // An inline file's "address" is its whole content, which does not belong in the list.
+      val id = downloads.start(name, if (fromEphemeralTab || ephemeral || inline) "" else url, -1, fromEphemeralTab || ephemeral)
 
       val fetched = try {
-        val source = if (throughProxy) {
-          val encoded = URLEncoder.encode(url, "UTF-8")
-          "http://127.0.0.1:$port/__ncc/fetch?u=$encoded"
+        if (inline) {
+          val comma = url.indexOf(',')
+          require(comma > 0)
+          val bytes = if (url.substring(0, comma).endsWith(";base64", ignoreCase = true)) {
+            Base64.decode(url.substring(comma + 1), Base64.DEFAULT)
+          } else {
+            Uri.decode(url.substring(comma + 1)).toByteArray()
+          }
+          temp.writeBytes(bytes)
+          downloads.progress(id, bytes.size.toLong())
+          true
         } else {
-          url
-        }
-        val connection = URL(source).openConnection() as HttpURLConnection
-        connection.connectTimeout = 15_000
-        connection.readTimeout = 60_000
+          val source = if (throughProxy) {
+            val encoded = URLEncoder.encode(url, "UTF-8")
+            "http://127.0.0.1:$port/__ncc/fetch?u=$encoded"
+          } else {
+            url
+          }
+          val connection = URL(source).openConnection() as HttpURLConnection
+          connection.connectTimeout = 15_000
+          connection.readTimeout = 60_000
 
-        var read = 0L
-        connection.inputStream.use { input ->
-          temp.outputStream().use { output ->
-            val buffer = ByteArray(64 * 1024)
-            var lastReport = 0L
-            while (true) {
-              val count = input.read(buffer)
-              if (count <= 0) break
-              output.write(buffer, 0, count)
-              read += count
-              // Report at most a few times a second; the list does not need more.
-              val now = System.currentTimeMillis()
-              if (now - lastReport > 250) {
-                lastReport = now
-                downloads.progress(id, read)
+          var read = 0L
+          connection.inputStream.use { input ->
+            temp.outputStream().use { output ->
+              val buffer = ByteArray(64 * 1024)
+              var lastReport = 0L
+              while (true) {
+                val count = input.read(buffer)
+                if (count <= 0) break
+                output.write(buffer, 0, count)
+                read += count
+                // Report at most a few times a second; the list does not need more.
+                val now = System.currentTimeMillis()
+                if (now - lastReport > 250) {
+                  lastReport = now
+                  downloads.progress(id, read)
+                }
               }
             }
           }
+          downloads.progress(id, read)
+          // A download started from the long-press menu has no type until the server says.
+          if (type == null) type = connection.contentType?.substringBefore(';')?.trim()
+          connection.disconnect()
+          true
         }
-        downloads.progress(id, read)
-        connection.disconnect()
-        true
       } catch (error: Exception) {
         temp.delete()
         false
@@ -839,8 +1029,8 @@ class MainActivity : TauriActivity() {
         pendingDownload = temp to id
         val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
           addCategory(Intent.CATEGORY_OPENABLE)
-          type = mimeType ?: "application/octet-stream"
-          putExtra(Intent.EXTRA_TITLE, name)
+          this.type = type ?: "application/octet-stream"
+          putExtra(Intent.EXTRA_TITLE, if (mimeType == null) withExtension(name, type) else name)
         }
         saveDownload.launch(intent)
       }
@@ -866,6 +1056,13 @@ class MainActivity : TauriActivity() {
     } else {
       safe
     }
+  }
+
+  /** A picture served from an address with no extension should still open once saved. */
+  private fun withExtension(name: String, mimeType: String?): String {
+    if (name.contains('.')) return name
+    val extension = MimeTypeMap.getSingleton().getExtensionFromMimeType(mimeType) ?: return name
+    return "$name.$extension"
   }
 
   private fun toast(message: String) {
@@ -1068,22 +1265,24 @@ class MainActivity : TauriActivity() {
 
     /** The shell learns the port from the Rust side; the tabs need it for links and
      * downloads from pages that do not carry it in their URL. */
+    // Primitive on purpose: the bridge hands a JavaScript number to a nullable `Int?`
+    // (a boxed Integer) as null, which silently left every port unknown.
     @JavascriptInterface
-    fun setProxyPort(port: Int?) {
-      val value = port ?: return
-      runOnUiThread { proxyPortNumber = value }
+    fun setProxyPort(port: Int) {
+      if (port <= 0) return
+      runOnUiThread { proxyPortNumber = port }
     }
 
     @JavascriptInterface
-    fun setPrivateProxyPort(port: Int?) {
-      val value = port ?: return
-      runOnUiThread { privatePortNumber = value }
+    fun setPrivateProxyPort(port: Int) {
+      if (port <= 0) return
+      runOnUiThread { privatePortNumber = port }
     }
 
     @JavascriptInterface
-    fun setTorProxyPort(port: Int?) {
-      val value = port ?: return
-      runOnUiThread { torPortNumber = value }
+    fun setTorProxyPort(port: Int) {
+      if (port <= 0) return
+      runOnUiThread { torPortNumber = port }
     }
 
     /** The strip's arrow: same path as the system gesture, so the two cannot drift. */
@@ -1149,19 +1348,17 @@ class MainActivity : TauriActivity() {
       }
     }
 
+    /** A short message for something that failed with no panel open to say so. */
+    @JavascriptInterface
+    fun notice(text: String?) {
+      val value = text ?: return
+      runOnUiThread { toast(value.take(200)) }
+    }
+
     @JavascriptInterface
     fun share(text: String?) {
       val value = text ?: return
-      runOnUiThread {
-        val send = Intent(Intent.ACTION_SEND)
-          .setType("text/plain")
-          .putExtra(Intent.EXTRA_TEXT, value)
-        try {
-          startActivity(Intent.createChooser(send, null))
-        } catch (error: Exception) {
-          // No share target installed.
-        }
-      }
+      runOnUiThread { shareText(value) }
     }
 
     @JavascriptInterface
@@ -1424,6 +1621,8 @@ class MainActivity : TauriActivity() {
   }
 
   override fun onDestroy() {
+    linkSheet?.dismiss()
+    linkSheet = null
     for (tab in tabs) tab.destroy()
     tabs.clear()
     Profiles.wipe(Profiles.PRIVATE)

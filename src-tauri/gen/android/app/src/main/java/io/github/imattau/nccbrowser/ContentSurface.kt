@@ -453,6 +453,10 @@ class ContentSurface(
   var currentUrl: String? = null
     private set
   var thumbnail: String? = null
+  /** A long press on a link or picture, with the link's own text. */
+  var onLinkPress: ((link: String?, image: String?, text: String?) -> Unit)? = null
+  /** What a long press may offer for an address; null leaves the press to the system. */
+  var linkMenu: ((link: String?, image: String?) -> LinkMenu.Menu?)? = null
   var lastUsed: Long = System.currentTimeMillis()
 
   var desktopMode = false
@@ -808,6 +812,77 @@ class ContentSurface(
   }
 
   /**
+   * Start loading a tab that stays behind the current one. It is invisible, not gone,
+   * so the page lays itself out at the size it will be shown at, and it may not start
+   * playing anything until someone has looked at it.
+   */
+  fun openInBackground(url: String): Boolean {
+    if (!accepts(url)) return false
+    val web = webView ?: create().also { webView = it }
+    if (isTor) torListenerPort = Uri.parse(url).port.takeIf { it > 0 }
+    web.settings.mediaPlaybackRequiresUserGesture = true
+    web.visibility = View.INVISIBLE
+    currentUrl = url
+    prepareCosmeticScript(web, url)
+    web.loadUrl(url)
+    return true
+  }
+
+  /** The address a tab can load for a link: `ncc://` and `nsite://` ask the proxy. */
+  fun resolveLink(url: String, then: (String?) -> Unit) {
+    val scheme = Uri.parse(url).scheme?.lowercase()
+    if (scheme != "ncc" && scheme != "nsite") {
+      then(url.takeIf { accepts(it) })
+      return
+    }
+    val port = routePort()
+    Thread {
+      val resolved = try {
+        if (port > 0) resolveRoute(port, url) else null
+      } catch (_: Exception) {
+        null
+      }
+      container.post { if (!destroyed) then(resolved) }
+    }.apply { isDaemon = true }.start()
+  }
+
+  /**
+   * Answer a long press. A page that handles `contextmenu` itself never gets here, and
+   * text and form fields keep the system's selection and paste menu.
+   */
+  private fun onLongPress(web: WebView): Boolean {
+    val hit = web.hitTestResult
+    val extra = hit.extra?.takeIf { it.isNotEmpty() } ?: return false
+    val offered: (String?, String?) -> Boolean = { link, image -> linkMenu?.invoke(link, image) != null }
+    val report: (String?, String?, String?) -> Unit = { link, image, text ->
+      if (!destroyed && web.isShown) onLinkPress?.invoke(link, image, text)
+    }
+
+    when (hit.type) {
+      WebView.HitTestResult.IMAGE_TYPE -> {
+        if (!offered(null, extra)) return false
+        report(null, extra, null)
+      }
+      WebView.HitTestResult.EMAIL_TYPE -> report("mailto:${Uri.decode(extra)}", null, null)
+      WebView.HitTestResult.PHONE_TYPE -> report("tel:${Uri.decode(extra)}", null, null)
+      WebView.HitTestResult.SRC_ANCHOR_TYPE, WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE -> {
+        val linkedImage = extra.takeIf { hit.type == WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE }
+        // For a plain link the hit is the address; check now, because the answer to
+        // "was this press used?" cannot wait for the engine's details.
+        if (linkedImage == null && !offered(extra, null)) return false
+        val answer = Handler(Looper.getMainLooper()) { message ->
+          val href = message.data.getString("url")?.takeIf { it.isNotEmpty() }
+          report(href ?: extra.takeIf { linkedImage == null }, linkedImage, message.data.getString("title"))
+          true
+        }
+        web.requestFocusNodeHref(answer.obtainMessage())
+      }
+      else -> return false
+    }
+    return true
+  }
+
+  /**
    * Create this tab's WebView, without navigating it, so a window.open() popup can be
    * wired directly as its WebViewTransport target. Keeping the transport-provided
    * WebView itself as the popup (instead of reading its destination and reopening that
@@ -899,6 +974,7 @@ class ContentSurface(
   }
 
   fun show() {
+    webView?.settings?.mediaPlaybackRequiresUserGesture = false
     val parked = parkedUrl
     if (webView == null && parked != null) {
       parkedUrl = null
@@ -1043,6 +1119,8 @@ class ContentSurface(
       canReload = { !destroyed && web.progress >= 100 },
       reload = { reload() },
     ).also { it.attach() }
+
+    web.setOnLongClickListener { onLongPress(web) }
 
     // Before anything else touches it: a profile cannot be chosen once a WebView is in
     // use. Normal tabs stay on the default profile.

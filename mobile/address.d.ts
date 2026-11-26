@@ -15,6 +15,7 @@ export function displayAddress(url: string): string
 export function icon(name: string, className?: string): SVGSVGElement
 export function iconKey(address: string): string
 export function labelFor(entry: AddressEntry): string
+export function linkAddress(url: string): string
 export function saveIcon(address: string, dataUrl: string): void
 export function setIcon(svg: SVGSVGElement, name: string): void
 export function shortId(id: string): string
