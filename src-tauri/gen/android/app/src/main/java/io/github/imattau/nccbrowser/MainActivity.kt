@@ -17,6 +17,9 @@ import android.util.Base64
 import android.widget.Toast
 import android.view.View
 import android.view.ViewGroup
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
+import android.animation.ValueAnimator
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.MimeTypeMap
@@ -76,6 +79,10 @@ class MainActivity : TauriActivity() {
   private var contentHost: FrameLayout? = null
   private var backCallback: OnBackPressedCallback? = null
   private var barHeight = 0
+  private var toolbarHidden = false
+  private var toolbarAnimator: ValueAnimator? = null
+  private var scrollDirection = 0
+  private var accumulatedScroll = 0
   private var expanded = true
   /** Extra shell height above the bar for a login prompt, with the page still live. */
   private var dockHeight = 0
@@ -480,6 +487,12 @@ class MainActivity : TauriActivity() {
   private fun applyExpanded(value: Boolean) {
     expanded = value
     val chromeView = shell ?: return
+    toolbarAnimator?.cancel()
+    toolbarAnimator = null
+    toolbarHidden = false
+    scrollDirection = 0
+    accumulatedScroll = 0
+    chromeView.translationY = 0f
     val params = chromeView.layoutParams as? LinearLayout.LayoutParams ?: return
     // A full panel replaces the prompt; the shell asks for it again afterwards.
     if (value) dockHeight = 0
@@ -497,11 +510,88 @@ class MainActivity : TauriActivity() {
   private fun shellHeight(): Int =
     if (expanded) ViewGroup.LayoutParams.MATCH_PARENT else barHeight + dockHeight
 
+  /** Collapse the chrome at its configured edge and let the page take the space. */
+  private fun setToolbarHidden(hidden: Boolean, animate: Boolean = true) {
+    if (toolbarHidden == hidden) return
+    if (expanded || (hidden && dockHeight > 0)) return
+    val chromeView = shell ?: return
+    val params = chromeView.layoutParams as? LinearLayout.LayoutParams ?: return
+    toolbarAnimator?.cancel()
+    toolbarAnimator = null
+    toolbarHidden = hidden
+    scrollDirection = 0
+    accumulatedScroll = 0
+
+    val targetHeight = if (hidden) 0 else shellHeight()
+    if (!animate || barHeight <= 0) {
+      chromeView.translationY = 0f
+      params.height = targetHeight
+      chromeView.layoutParams = params
+      chromeView.requestLayout()
+      return
+    }
+
+    val direction = if (barAtBottom) 1f else -1f
+    if (hidden) {
+      val animator = ValueAnimator.ofFloat(0f, 1f).apply {
+        duration = 180
+        addUpdateListener { chromeView.translationY = direction * barHeight * (it.animatedValue as Float) }
+        addListener(object : AnimatorListenerAdapter() {
+          override fun onAnimationEnd(animation: Animator) {
+            if (toolbarHidden && shell === chromeView) {
+              chromeView.translationY = 0f
+              val current = chromeView.layoutParams as? LinearLayout.LayoutParams ?: return
+              current.height = 0
+              chromeView.layoutParams = current
+              chromeView.requestLayout()
+            }
+          }
+        })
+      }
+      toolbarAnimator = animator
+      animator.start()
+    } else {
+      params.height = targetHeight
+      chromeView.layoutParams = params
+      chromeView.requestLayout()
+      chromeView.translationY = direction * barHeight
+      val animator = ValueAnimator.ofFloat(1f, 0f).apply {
+        duration = 180
+        addUpdateListener { chromeView.translationY = direction * barHeight * (it.animatedValue as Float) }
+        addListener(object : AnimatorListenerAdapter() {
+          override fun onAnimationEnd(animation: Animator) {
+            if (!toolbarHidden && shell === chromeView) chromeView.translationY = 0f
+          }
+        })
+      }
+      toolbarAnimator = animator
+      animator.start()
+    }
+  }
+
+  private fun onPageScroll(tabId: String, scrollY: Int, deltaY: Int) {
+    if (tabId != activeId || expanded || dockHeight > 0 || active()?.isFullscreen == true) return
+    if (scrollY <= 0) {
+      setToolbarHidden(false)
+      return
+    }
+    if (deltaY == 0) return
+    val direction = if (deltaY > 0) 1 else -1
+    if (direction != scrollDirection) {
+      scrollDirection = direction
+      accumulatedScroll = 0
+    }
+    accumulatedScroll += kotlin.math.abs(deltaY)
+    val threshold = (16 * resources.displayMetrics.density).toInt().coerceAtLeast(1)
+    if (accumulatedScroll >= threshold) setToolbarHidden(direction > 0)
+  }
+
   /** Grow or shrink the collapsed shell by `height` dp, never past half the window. */
   private fun applyDock(height: Int) {
     val wanted = (height.coerceAtLeast(0) * resources.displayMetrics.density).toInt()
     val room = (column?.height ?: 0) / 2
     dockHeight = if (room > 0) wanted.coerceAtMost(room) else wanted
+    if (dockHeight > 0) setToolbarHidden(false, animate = false)
     if (expanded) return
     val chromeView = shell ?: return
     val params = chromeView.layoutParams as? LinearLayout.LayoutParams ?: return
@@ -519,9 +609,9 @@ class MainActivity : TauriActivity() {
     columnView.removeAllViews()
     if (barAtBottom) {
       columnView.addView(host, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-      columnView.addView(chromeView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, shellHeight()))
+      columnView.addView(chromeView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, if (toolbarHidden) 0 else shellHeight()))
     } else {
-      columnView.addView(chromeView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, shellHeight()))
+      columnView.addView(chromeView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, if (toolbarHidden) 0 else shellHeight()))
       columnView.addView(host, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
     }
   }
@@ -565,6 +655,7 @@ class MainActivity : TauriActivity() {
         current.isTor == isTor &&
         current.open(url)
       ) {
+        setToolbarHidden(false, animate = false)
         setExpanded(false)
         emitTabs(false)
         return true
@@ -597,6 +688,7 @@ class MainActivity : TauriActivity() {
       active()?.hide()
       tabs.add(tab)
       activeId = tab.id
+      setToolbarHidden(false, animate = false)
       setExpanded(false)
       emitTabs(false)
     }
@@ -633,6 +725,7 @@ class MainActivity : TauriActivity() {
     active()?.hide()
     tabs.add(tab)
     activeId = tab.id
+    setToolbarHidden(false, animate = false)
     setExpanded(false)
     emitTabs(false)
     return tab.attachAsPopupTarget()
@@ -665,6 +758,7 @@ class MainActivity : TauriActivity() {
     if (makeActive || activeId == null) {
       active()?.hide()
       activeId = tab.id
+      setToolbarHidden(false, animate = false)
       tab.show()
       setExpanded(false)
     }
@@ -874,6 +968,7 @@ class MainActivity : TauriActivity() {
     captureActive {
       active()?.hide()
       activeId = target.id
+      setToolbarHidden(false, animate = false)
       target.show()
       setExpanded(false)
       emitTabs(false)
@@ -1071,6 +1166,15 @@ class MainActivity : TauriActivity() {
 
   private fun onTabEvent(payload: JSONObject) {
     val tab = tabs.firstOrNull { it.id == payload.optString("tab") }
+
+    if (payload.optString("type") == "page-scroll") {
+      if (tab != null) onPageScroll(tab.id, payload.optInt("scrollY"), payload.optInt("deltaY"))
+      return
+    }
+
+    if (payload.optString("type") == "loading" && tab?.id == activeId) {
+      setToolbarHidden(false, animate = false)
+    }
 
     // A popup tab closing itself (e.g. an OAuth dialog once sign-in finishes) — see
     // ContentSurface.onCloseWindow. Handled before the generic forward below: the tab

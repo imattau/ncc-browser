@@ -1126,6 +1126,9 @@ class ContentSurface(
   @SuppressLint("SetJavaScriptEnabled")
   private fun create(): WebView {
     val web = PageWebView(container.context)
+    web.onPageScroll = { scrollY, deltaY ->
+      if (!destroyed) emit(JSONObject().put("type", "page-scroll").put("scrollY", scrollY).put("deltaY", deltaY))
+    }
     pullToRefresh = PullToRefresh(
       web,
       container,

@@ -13,10 +13,13 @@ import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewConfiguration
 import android.webkit.WebView
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.os.Handler
+import android.os.Looper
 
 /**
  * A WebView that says when a downward drag went unused at the top of the page.
@@ -27,6 +30,36 @@ import android.widget.TextView
  */
 class PageWebView(context: Context) : WebView(context) {
   var onTopOverscroll: (() -> Unit)? = null
+  var onPageScroll: ((scrollY: Int, deltaY: Int) -> Unit)? = null
+  private val scrollSlop = ViewConfiguration.get(context).scaledTouchSlop
+  private var touchStartY = 0f
+  private var trackingPageScroll = false
+  private val scrollHandler = Handler(Looper.getMainLooper())
+  private val stopTrackingScroll = Runnable { trackingPageScroll = false }
+
+  override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+    when (event.actionMasked) {
+      MotionEvent.ACTION_DOWN -> {
+        scrollHandler.removeCallbacks(stopTrackingScroll)
+        trackingPageScroll = false
+        touchStartY = event.y
+      }
+      MotionEvent.ACTION_MOVE -> {
+        if (kotlin.math.abs(event.y - touchStartY) > scrollSlop) trackingPageScroll = true
+      }
+      MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+        // Keep observing briefly so the scroll momentum after a finger lift can
+        // continue to hide/reveal the toolbar.
+        scrollHandler.postDelayed(stopTrackingScroll, 350)
+      }
+    }
+    return super.dispatchTouchEvent(event)
+  }
+
+  override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) {
+    super.onScrollChanged(l, t, oldl, oldt)
+    if (trackingPageScroll) onPageScroll?.invoke(t, t - oldt)
+  }
 
   override fun overScrollBy(
     deltaX: Int,
