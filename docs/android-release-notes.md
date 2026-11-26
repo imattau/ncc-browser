@@ -1,5 +1,15 @@
 # Nostr Navigator for Android
 
+## 0.47.17
+
+- Lightning payments now show the invoice amount, network, expiry and description for
+  review before sending. Invalid and expired invoices are refused.
+- Sending and receiving Lightning payments now use in-app steps. You can scan an
+  invoice QR code, and a receive invoice shows its amount and expiry when available.
+- Wallet type controls are now aligned icon buttons with accessible names; Android
+  touch targets meet the 48dp minimum.
+- The Lightning connection URI stays masked unless you reveal it.
+
 ## 0.47.16
 
 - Pull-to-refresh on a page now shows what it is doing, and no longer reloads from a

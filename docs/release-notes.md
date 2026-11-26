@@ -1,5 +1,18 @@
 # Release notes
 
+## 0.47.17 — wallet usability and payment review
+
+### Changed
+
+- Bitcoin, Lightning and Monero selectors now use consistent icon-only controls with
+  accessible currency names.
+- Android Lightning send and receive use in-app steps instead of system prompts.
+- Desktop and Android show decoded Lightning invoice details before payment and reject
+  expired or invalid invoices.
+- Bitcoin and Monero can scan payment QR codes on desktop; Android can scan Lightning
+  invoices.
+- Lightning connection URIs are masked by default, with an explicit reveal control.
+
 ## 0.47.16 — Android pull-to-refresh
 
 ### Fixed
