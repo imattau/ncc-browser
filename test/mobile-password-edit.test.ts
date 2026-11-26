@@ -11,6 +11,7 @@ class FakeElement {
   value = ''
   hidden = false
   disabled = false
+  readOnly = false
   private own = ''
   get textContent(): string {
     return this.own + this.children.map((child) => child.textContent).join('')
@@ -51,8 +52,13 @@ function harness() {
   }
   let finish: (outcome: unknown) => void = () => undefined
   const removed: string[] = []
+  const saved: Array<{ id: string | null; title: string }> = []
   const shown: string[] = []
-  const invoke = vi.fn(async (command: string, args?: { id: string }) => {
+  const invoke = vi.fn(async (command: string, args?: { id: string; draft: { id: string | null; title: string } }) => {
+    if (command === 'vault_save') {
+      saved.push(args!.draft)
+      return new Promise((resolve) => (finish = resolve))
+    }
     if (command === 'vault_entry') {
       return { origin: 'https://example.com', title: `Login ${args!.id}`, username: 'alice', password: 'p', notes: '', totp: '' }
     }
@@ -75,10 +81,10 @@ function harness() {
     const element = byId('vault-toast')
     return element.hidden ? null : { tone: element.children[0].dataset.tone, text: element.textContent }
   }
-  return { passwords, byId, open, show, shown, removed, toast, finish: (value: unknown) => finish(value) }
+  return { passwords, byId, open, show, shown, removed, saved, toast, finish: (value: unknown) => finish(value) }
 }
 
-describe('deleting a login on Android', () => {
+describe('saving and deleting a login on Android', () => {
   let answer = true
   const asked: string[] = []
 
@@ -162,5 +168,76 @@ describe('deleting a login on Android', () => {
 
     expect(h.shown).toHaveLength(panels)
     expect(h.toast()).toEqual({ tone: 'error', text: '“Login a” was not deleted. offline' })
+  })
+
+  function adding(title = 'New') {
+    const h = harness()
+    h.passwords.openNewLogin('https://example.com')
+    h.byId('edit-title').value = title
+    return h
+  }
+
+  it('shows that a save is running and adds the login once however often it is tapped', async () => {
+    const h = adding()
+    const running = h.passwords.saveEdits()
+    const button = h.byId('edit-save')
+    expect(button.textContent).toBe('Saving…')
+    expect(button.children[0].className).toBe('spinner')
+    expect([button.disabled, h.byId('edit-generate').disabled, h.byId('edit-password').readOnly]).toEqual([true, true, true])
+    await h.passwords.saveEdits()
+    expect(h.saved).toHaveLength(1)
+
+    h.finish({ ok: true })
+    await running
+
+    expect(button.textContent).toBe('Save login')
+    expect([button.disabled, h.byId('edit-password').readOnly]).toEqual([false, false])
+    expect(h.shown.at(-1)).toBe('passwords')
+    expect(h.toast()).toEqual({ tone: 'ok', text: 'Saved “New”.' })
+  })
+
+  it('does not delete a login that is being saved', async () => {
+    const h = await editing()
+    const running = h.passwords.saveEdits()
+    expect(h.byId('edit-delete').disabled).toBe(true)
+    await h.passwords.deleteEditing()
+    expect(asked).toEqual([])
+    h.finish({ ok: true, pending: true })
+    await running
+    expect(h.toast()).toEqual({ tone: 'warn', text: 'Saved “Login a” on this device. Relay sync will retry.' })
+  })
+
+  it('keeps what was typed when a save fails, and allows another try', async () => {
+    const h = adding()
+    const running = h.passwords.saveEdits()
+    h.finish({ ok: false, error: 'Enter an https:// or ncc:// address' })
+    await running
+    expect(h.shown.at(-1)).toBe('password-edit')
+    expect(h.byId('edit-title').value).toBe('New')
+    const result = h.byId('edit-note').children[0]
+    expect([result.dataset.tone, result.textContent]).toEqual(['error', 'Enter an https:// or ncc:// address'])
+
+    const again = h.passwords.saveEdits()
+    expect(h.saved).toHaveLength(2)
+    h.finish({ ok: true })
+    await again
+  })
+
+  it('explains the wait on a second new login, and leaves it open when the first is saved', async () => {
+    const h = adding('First')
+    const running = h.passwords.saveEdits()
+    h.passwords.openNewLogin('')
+    expect(h.byId('edit-save').textContent).toBe('Save login')
+    expect([h.byId('edit-save').disabled, h.byId('edit-title').readOnly]).toEqual([true, false])
+    expect(h.byId('edit-note').textContent).toBe('Waiting for the last save to finish.')
+    const panels = h.shown.length
+
+    h.finish({ ok: false, error: 'offline' })
+    await running
+
+    expect(h.shown).toHaveLength(panels)
+    expect(h.byId('edit-save').disabled).toBe(false)
+    expect(h.byId('edit-note').textContent).toBe('')
+    expect(h.toast()).toEqual({ tone: 'error', text: '“First” was not saved. offline' })
   })
 })

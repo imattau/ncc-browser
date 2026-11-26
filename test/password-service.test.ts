@@ -304,6 +304,84 @@ describe('PasswordService', () => {
     expect(h.service.list().some((entry) => entry.username === 'bob')).toBe(true)
   })
 
+  const lastOffer = (h: ReturnType<typeof harness>) =>
+    h.chrome.filter((entry) => entry.channel === 'ncc:password-save-request').at(-1)?.payload as {
+      id: string
+      username: string
+      mode: string
+    }
+
+  it('keeps a save offer through unlocking, and answers it only once', async () => {
+    const h = harness()
+    h.service.handleCapture(1, { username: 'bob', password: 'hunter2' })
+    const offer = lastOffer(h)
+
+    const first = h.service.respondToSave(offer.id, 'save')
+    const second = await h.service.respondToSave(offer.id, 'save')
+    expect(second).toEqual({ ok: false, error: 'This login is already being saved' })
+    expect((await first).ok).toBe(true)
+    expect(h.service.list()).toHaveLength(1)
+    expect((await h.service.respondToSave(offer.id, 'save')).error).toBe('That save request expired')
+  })
+
+  it('lets a failed save be tried again', async () => {
+    const h = harness()
+    await h.service.unlock()
+    h.service.handleCapture(1, { username: 'bob', password: 'hunter2' })
+    const offer = lastOffer(h)
+    const save = h.service.saveEntry.bind(h.service)
+    h.service.saveEntry = async () => ({ ok: false, error: 'No relay accepted it' })
+
+    expect((await h.service.respondToSave(offer.id, 'save')).error).toBe('No relay accepted it')
+    h.service.saveEntry = save
+    expect((await h.service.respondToSave(offer.id, 'save')).ok).toBe(true)
+    expect(h.service.list()).toHaveLength(1)
+  })
+
+  it('uses the account from a username-only step', async () => {
+    const h = harness()
+    await h.service.unlock()
+    h.service.handleUsername(1, { username: 'bob' })
+    h.service.handleCapture(1, { username: '', password: 'hunter2' })
+    expect(lastOffer(h).username).toBe('bob')
+  })
+
+  it('treats a new password with no account as an update to the only login', async () => {
+    const h = harness()
+    await h.service.unlock()
+    await h.service.saveEntry(draft)
+    h.service.handleCapture(1, { username: '', password: 'changed' })
+    expect(lastOffer(h)).toMatchObject({ username: 'alice', mode: 'update' })
+  })
+
+  it('suggests account names beside a field, never passwords', async () => {
+    const h = harness()
+    h.service.handleFieldFocus(1)
+    expect(h.content.at(-1)).toMatchObject({ channel: 'passwords:suggestions', payload: { locked: true, items: [] } })
+
+    await h.service.unlock()
+    await h.service.saveEntry(draft)
+    h.service.handleFieldFocus(1)
+    const sent = h.content.at(-1)!.payload as { locked: boolean; items: Array<{ label: string }> }
+    expect(sent.items.map((item) => item.label)).toEqual(['alice'])
+    expect(JSON.stringify(sent)).not.toContain('secret')
+
+    const count = h.content.length
+    h.service.handleFieldFocus(99)
+    expect(h.content).toHaveLength(count)
+  })
+
+  it('sends a fill with the page it was matched to', async () => {
+    const h = harness()
+    await h.service.unlock()
+    await h.service.saveEntry(draft)
+    const filling = h.service.fill(h.service.list()[0].id)
+    const sent = h.content.at(-1)!.payload as { requestId: string; pageUrl: string }
+    expect(sent.pageUrl).toBe('https://example.com/login')
+    h.service.handleFillResult({ requestId: sent.requestId, ok: true, usernameOnly: true })
+    expect(await filling).toEqual({ ok: true, usernameOnly: true })
+  })
+
   it('does not offer to save on HTTP pages', async () => {
     const h = harness({
       page: {
