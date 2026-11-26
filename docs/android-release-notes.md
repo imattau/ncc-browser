@@ -1,5 +1,12 @@
 # Nostr Navigator for Android
 
+## 0.47.13
+
+- Deleting a password now asks you to confirm first.
+- A spinner shows while the delete runs, which can take a few seconds.
+- A message with an icon then shows whether it was deleted, is waiting to sync with
+  relays, or failed and why.
+
 ## 0.47.12
 
 - Password lists can now grow past the old storage limit. The app adds more encrypted

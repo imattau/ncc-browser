@@ -1,5 +1,18 @@
 # Release notes
 
+## 0.47.13 — password deletion feedback on Android
+
+### Fixed
+
+- Android now asks before deleting a login, naming the login and username.
+- While the delete runs, the button shows a spinner, and Save, Generate and Delete are
+  disabled. A second tap does nothing.
+- The result is now visible: a message with an icon says the login was deleted, that
+  relay sync will retry, or why the delete failed. A failed delete keeps you on the
+  login. Before, the confirmation appeared below the list, usually off screen.
+
+There are no desktop changes in this release.
+
 ## 0.47.12 — longer password lists
 
 ### Added

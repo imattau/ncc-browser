@@ -14,6 +14,8 @@ export function createPasswords(deps) {
   let editPasswordRevealed = false
   let deviceWaiter = null
   let fillNotice = ''
+  let deletingId = null
+  let toastTimer = null
   /** Ask for the device credential: the shell cannot check it, Android can. */
   function deviceCredentialReply(ok) {
     const waiter = deviceWaiter
@@ -591,6 +593,7 @@ export function createPasswords(deps) {
     byId('edit-totp').value = ''
     byId('edit-note').textContent = ''
     byId('edit-delete').hidden = true
+    showDeleteProgress()
     showPanel('password-edit')
   }
 
@@ -608,6 +611,7 @@ export function createPasswords(deps) {
       byId('edit-totp').value = entry.totp
       byId('edit-note').textContent = ''
       byId('edit-delete').hidden = false
+      showDeleteProgress()
       showPanel('password-edit')
     } catch (error) {
       byId('vault-note').textContent = String(error)
@@ -644,22 +648,96 @@ export function createPasswords(deps) {
     }
   }
 
-  async function deleteEditing() {
-    if (!editingId) return
-    try {
-      const outcome = await invoke('vault_remove', { id: editingId })
-      if (!outcome.ok) {
-        byId('edit-note').textContent = outcome.error || 'Could not delete that login.'
-        return
-      }
-      editingId = null
-      showPanel('passwords')
-      byId('vault-note').textContent = outcome.pending
-        ? 'Deleted locally; relay sync will retry.'
-        : 'Deleted.'
-    } catch (error) {
-      byId('edit-note').textContent = String(error)
+  /** An icon and a message, so success and failure are told apart at a glance. */
+  function showResult(element, tone, message) {
+    const result = document.createElement('span')
+    result.className = 'result'
+    result.dataset.tone = tone
+    const text = document.createElement('span')
+    text.textContent = message
+    result.append(vaultIcon(tone === 'ok' ? 'check' : 'warn'), text)
+    element.textContent = ''
+    element.appendChild(result)
+  }
+
+  function hideVaultToast() {
+    if (toastTimer !== null) clearTimeout(toastTimer)
+    toastTimer = null
+    byId('vault-toast').hidden = true
+  }
+
+  /** Shown above the list's scrolling area: a note under a long list is never seen. */
+  function showVaultToast(tone, message) {
+    hideVaultToast()
+    const toast = byId('vault-toast')
+    showResult(toast, tone, message)
+    toast.hidden = false
+    // Anything that needs attention stays up longer.
+    toastTimer = setTimeout(hideVaultToast, tone === 'ok' ? 4000 : 10_000)
+  }
+
+  /** The editor is busy only while it shows the login being deleted. */
+  function showDeleteProgress() {
+    const busy = deletingId !== null && deletingId === editingId
+    const button = byId('edit-delete')
+    button.textContent = ''
+    if (busy) {
+      const spinner = document.createElement('span')
+      spinner.className = 'spinner'
+      spinner.setAttribute('aria-hidden', 'true')
+      button.appendChild(spinner)
     }
+    button.append(busy ? 'Deleting…' : 'Delete login')
+    button.setAttribute('aria-busy', String(busy))
+    // One delete at a time, and a save must not run against a login on its way out.
+    button.disabled = deletingId !== null
+    byId('edit-save').disabled = busy
+    byId('edit-generate').disabled = busy
+  }
+
+  async function deleteEditing() {
+    if (!editingId || deletingId !== null) return
+    const id = editingId
+    const name = byId('edit-title').value.trim() || byId('edit-origin').value.trim()
+    const username = byId('edit-username').value.trim()
+    if (!window.confirm(`Delete the login “${name}”${username ? ` for ${username}` : ''}? This cannot be undone.`)) return
+
+    deletingId = id
+    hideVaultToast()
+    showDeleteProgress()
+    byId('edit-note').textContent = 'This can take a few seconds while relays respond.'
+    let outcome
+    try {
+      outcome = await invoke('vault_remove', { id })
+    } catch (error) {
+      outcome = { ok: false, error: String(error) }
+    }
+    deletingId = null
+
+    // The person may have gone back, or opened another login, while this ran.
+    const stillEditing = editingId === id && !byId('password-edit').hidden
+    if (editingId === id && outcome.ok) editingId = null
+    showDeleteProgress()
+
+    if (!outcome.ok) {
+      const reason = outcome.error || 'Could not delete that login.'
+      if (stillEditing) {
+        showResult(byId('edit-note'), 'error', reason)
+        byId('edit-note').scrollIntoView({ block: 'nearest' })
+      } else {
+        showVaultToast('error', `“${name}” was not deleted. ${reason}`)
+      }
+      return
+    }
+
+    showVaultToast(
+      outcome.pending ? 'warn' : 'ok',
+      outcome.pending
+        ? `Deleted “${name}” on this device. Relay sync will retry.`
+        : `Deleted “${name}”.`
+    )
+    if (stillEditing) showPanel('passwords')
+    else await vaultSynced()
   }
 
   async function generateIntoEdit() {
@@ -748,7 +826,7 @@ export function createPasswords(deps) {
   return {
     deviceCredentialReply, reportFillFailure, loadPasswords, renderVaultList, vaultSynced, unlockVault, lockVault,
     handleWebauthnRequest, saveVaultConfig, renderPasswordFill, openNewLogin, renderPasswordSave, renderPasswordEdit,
-    saveEdits, deleteEditing, generateIntoEdit, respondSave, handlePasswordCapture, onPanelChange, onAppBackground,
+    saveEdits, openPasswordEdit, deleteEditing, generateIntoEdit, respondSave, handlePasswordCapture, onPanelChange, onAppBackground,
     toggleEditPasswordReveal: () => setEditPasswordRevealed(!editPasswordRevealed)
   }
 }

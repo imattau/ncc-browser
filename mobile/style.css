@@ -585,6 +585,50 @@ body[data-bar='top'] #progress {
   font-size: calc(14px * var(--text-scale));
 }
 
+/* The outcome of an action: an icon as well as a colour. */
+.result {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  overflow-wrap: anywhere;
+}
+
+.result .i {
+  flex: none;
+  width: 20px;
+  height: 20px;
+}
+
+.result[data-tone='ok'] .i { color: var(--good); }
+.result[data-tone='warn'] .i { color: var(--warn); }
+.result[data-tone='error'] { color: var(--bad); }
+
+.toast {
+  flex: none;
+  margin: 8px 16px 0;
+  padding: 12px 16px;
+  border-radius: 16px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: calc(14px * var(--text-scale));
+}
+
+.toast[hidden] { display: none; }
+
+/* Disabled while working, but not faded to the point of looking switched off. */
+button[aria-busy='true']:disabled {
+  opacity: 0.85;
+}
+
+.spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: switcher-refresh-spin 0.8s linear infinite;
+}
+
 .section-label {
   margin: 24px 4px 8px;
   color: var(--muted);
