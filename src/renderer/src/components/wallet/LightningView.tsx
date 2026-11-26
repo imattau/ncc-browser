@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { ArrowUpFromLine, Copy } from 'lucide-react'
 import { LightningReceiveDialog } from './LightningReceiveDialog'
 import { LightningScannerDialog } from './LightningScannerDialog'
@@ -9,6 +10,7 @@ import { useQrCode } from './useQrCode'
 
 /** NWC balance, receive invoice, connection settings and the Lightning dialogs. */
 export function LightningView({ wallet }: { wallet: WalletContext }) {
+  const [showUri, setShowUri] = useState(false)
   const lightning = useLightningWallet(wallet)
   const { nwc } = wallet
   const receiveQr = useQrCode(lightning.receiveInvoice, 'lightning', wallet.setMessage)
@@ -71,18 +73,23 @@ export function LightningView({ wallet }: { wallet: WalletContext }) {
         ) : (
           <div className="mt-3">
             <p className="text-ui-10 text-[color:var(--color-muted)]">
-              Connect with a Nostr Wallet Connect URI.
+              This private connection URI can authorize wallet actions. Only connect a URI from a wallet you trust.
             </p>
             <label className="mt-3 block text-ui-10">
               NWC connection URI
               <input
                 aria-label="NWC connection URI"
+                type={showUri ? 'text' : 'password'}
+                autoComplete="off"
                 placeholder="nostr+walletconnect://…"
                 className="mt-1 w-full rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-panel)] p-2 font-mono text-ui-10"
                 value={lightning.uri}
                 onChange={(event) => lightning.setUri(event.target.value)}
               />
             </label>
+            <button className="mt-2 text-ui-10 underline" type="button" onClick={() => setShowUri((value) => !value)}>
+              {showUri ? 'Hide connection URI' : 'Reveal connection URI'}
+            </button>
             <button
               disabled={wallet.busy || !lightning.uri.trim()}
               className="mt-3 rounded-lg bg-[color:var(--color-accent)] px-4 py-2 text-ui-10 text-white disabled:opacity-50"

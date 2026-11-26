@@ -5,6 +5,8 @@ interface LightningScannerDialogProps {
   open: boolean
   videoRef: RefObject<HTMLVideoElement | null>
   error: string
+  currency?: string
+  instruction?: string
   onClose: () => void
 }
 
@@ -13,6 +15,8 @@ export function LightningScannerDialog({
   open,
   videoRef,
   error,
+  currency = 'Lightning',
+  instruction = 'Hold a Lightning invoice QR code in front of your camera.',
   onClose
 }: LightningScannerDialogProps) {
   if (!open) return null
@@ -28,10 +32,10 @@ export function LightningScannerDialog({
         <div className="flex items-start justify-between">
           <div>
             <p className="text-ui-10 font-semibold uppercase tracking-[0.12em] text-[color:var(--color-muted)]">
-              Lightning
+              {currency}
             </p>
             <h2 id="lightning-scanner-title" className="mt-1 text-ui-16 font-semibold">
-              Scan invoice QR
+              Scan {currency} QR
             </h2>
           </div>
           <button
@@ -47,7 +51,7 @@ export function LightningScannerDialog({
         </div>
         <p className="mt-3 text-ui-11 text-[color:var(--color-muted)]">
           <Camera className="mr-1 inline h-4 w-4" />
-          Hold a Lightning invoice QR code in front of your camera.
+          {instruction}
         </p>
         {error ? (
           <p role="alert" className="mt-3 rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-ui-11">

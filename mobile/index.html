@@ -641,7 +641,7 @@
         <button id="wallet-refresh" class="ib" type="button" aria-label="Refresh wallet"><svg class="i"><use href="#i-reload" /></svg></button>
       </header>
       <div class="body wallet-body">
-        <div class="wallet-currencies" role="tablist" aria-label="Wallet currency">
+        <div class="wallet-currencies" role="group" aria-label="Wallet currency">
           <button class="wallet-currency selected" type="button" data-currency="BTC" aria-label="Bitcoin" title="Bitcoin" aria-pressed="true"><span aria-hidden="true" class="currency-icon bitcoin-icon">₿</span></button>
           <button class="wallet-currency" type="button" data-currency="XMR" aria-label="Monero" title="Monero" aria-pressed="false"><span aria-hidden="true" class="currency-icon monero-icon">M</span></button>
           <button class="wallet-currency" type="button" data-currency="LN" aria-label="Lightning" title="Lightning" aria-pressed="false"><span aria-hidden="true" class="currency-icon lightning-icon">⚡</span></button>
@@ -656,6 +656,7 @@
               <button id="wallet-open-send" class="btn wallet-send-pill" type="button">Send</button>
             </div>
             <div class="wallet-receive">
+              <h3 class="wallet-receive-heading">Receive Bitcoin</h3>
               <img id="wallet-qr" alt="Bitcoin receive address QR code" hidden />
               <button id="wallet-copy-address" class="wallet-address-pill" type="button" aria-label="Copy Bitcoin receive address"><code id="wallet-address">Unlock identity to view address</code><span aria-hidden="true">▢</span></button>
             </div>
@@ -690,21 +691,31 @@
               <button id="wallet-nwc-open-send" class="btn wallet-send-pill" type="button">Send</button>
               <button id="wallet-nwc-receive" class="btn wallet-send-pill" type="button">Receive</button>
             </div>
-            <div id="wallet-nwc-receive-view" class="wallet-receive" hidden>
+            <section id="wallet-nwc-receive-view" class="wallet-receive" hidden aria-label="Lightning payment request">
+              <p id="wallet-nwc-receive-amount" class="hint"></p>
               <img id="wallet-nwc-qr" alt="Lightning invoice QR code" hidden />
               <button id="wallet-nwc-created" class="wallet-address-pill" type="button"></button>
-            </div>
+            </section>
           </article>
           <details id="wallet-nwc-connect-card" class="wallet-settings" hidden>
             <summary>Connect a Lightning wallet</summary>
-            <p class="hint">Connect with a Nostr Wallet Connect URI.</p>
+            <p class="hint">This private connection URI can authorize wallet actions. Only connect a URI from a wallet you trust.</p>
             <label>NWC connection URI<input id="wallet-nwc-uri" type="password" autocomplete="off" placeholder="nostr+walletconnect://…" /></label>
+            <button id="wallet-nwc-reveal" class="btn tonal" type="button" aria-pressed="false">Reveal connection URI</button>
             <button id="wallet-nwc-connect" class="btn tonal" type="button">Connect</button>
           </details>
           <section id="wallet-nwc-send" class="wallet-card" hidden>
             <h3>Send Lightning</h3>
-            <label>Lightning invoice<input id="wallet-nwc-invoice" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="lnbc…" /></label>
-            <div class="wallet-actions"><button id="wallet-nwc-cancel-send" class="btn tonal" type="button">Cancel</button><button id="wallet-nwc-pay" class="btn danger" type="button">Review and pay</button></div>
+            <div id="wallet-nwc-send-entry"><label>Lightning invoice<span class="wallet-scan-field"><input id="wallet-nwc-invoice" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="lnbc…" /><button class="wallet-scan" type="button" data-scan-target="wallet-nwc-invoice" aria-label="Scan Lightning invoice QR code"><svg class="i"><use href="#i-qr" /></svg></button></span></label></div>
+            <div id="wallet-nwc-send-preview" class="wallet-send-preview" hidden></div>
+            <p id="wallet-nwc-send-error" class="wallet-inline-error" role="alert" hidden></p>
+            <div class="wallet-actions"><button id="wallet-nwc-cancel-send" class="btn tonal" type="button">Cancel</button><button id="wallet-nwc-pay" class="btn danger" type="button">Review payment</button><button id="wallet-nwc-confirm" class="btn danger" type="button" hidden>Confirm and pay</button></div>
+          </section>
+          <section id="wallet-nwc-receive-entry" class="wallet-card" hidden>
+            <h3>Receive Lightning</h3>
+            <label>Amount in sats<input id="wallet-nwc-amount" type="number" min="1" step="1" inputmode="numeric" /></label>
+            <p id="wallet-nwc-receive-error" class="wallet-inline-error" role="alert" hidden></p>
+            <div class="wallet-actions"><button id="wallet-nwc-cancel-receive" class="btn tonal" type="button">Cancel</button><button id="wallet-nwc-create-invoice" class="btn" type="button">Create invoice</button></div>
           </section>
           <details id="wallet-nwc-settings" class="wallet-settings" hidden><summary>Lightning wallet connection</summary><p id="wallet-nwc-status-detail" class="hint"></p><button id="wallet-nwc-disconnect" class="btn tonal" type="button">Disconnect</button></details>
         </section>
@@ -717,7 +728,7 @@
               <details><summary>Restore wallet</summary><label>25-word recovery seed<textarea id="wallet-xmr-restore-seed" rows="3" autocomplete="off" autocapitalize="none" spellcheck="false"></textarea></label><label>Restore from block height<input id="wallet-xmr-restore-height" type="number" min="0" value="0" /></label><p class="hint">Use the block height of your wallet's first transaction. Starting from 0 scans the whole chain, which can take hours on a phone.</p><button id="wallet-xmr-restore" class="btn tonal" type="button">Continue</button></details>
             </div>
             <div id="wallet-xmr-backup" hidden><p class="wallet-warning">Write these 25 words down in order. Anyone with this seed can spend your Monero.</p><ol id="wallet-xmr-words" class="wallet-seed-words"></ol><label>Enter word <span id="wallet-xmr-word-number"></span> to confirm your backup<input id="wallet-xmr-word-answer" autocomplete="off" autocapitalize="none" /></label><label>Wallet sync mode<select id="wallet-xmr-sync"><option value="local">This device only</option><option value="encrypted-relay">Encrypted Nostr relay sync</option></select></label><button id="wallet-xmr-backup-confirm" class="btn" type="button">I backed up my seed</button></div>
-            <div id="wallet-xmr-receive" class="wallet-receive wallet-xmr-receive" hidden><button id="wallet-xmr-open-send" class="btn wallet-send-pill" type="button">Send</button><img id="wallet-xmr-qr" alt="Monero receive address QR code" hidden /><button id="wallet-xmr-copy" class="wallet-address-pill" type="button" aria-label="Copy Monero receive address"><code id="wallet-xmr-address"></code><span aria-hidden="true">▢</span></button></div>
+            <div id="wallet-xmr-receive" class="wallet-receive wallet-xmr-receive" hidden><button id="wallet-xmr-open-send" class="btn wallet-send-pill" type="button">Send</button><h3 class="wallet-receive-heading">Receive Monero</h3><img id="wallet-xmr-qr" alt="Monero receive address QR code" hidden /><button id="wallet-xmr-copy" class="wallet-address-pill" type="button" aria-label="Copy Monero receive address"><code id="wallet-xmr-address"></code><span aria-hidden="true">▢</span></button></div>
             <div id="wallet-xmr-send" hidden><label>Destination address<span class="wallet-scan-field"><input id="wallet-xmr-send-address" autocomplete="off" autocapitalize="none" spellcheck="false" /><button class="wallet-scan" type="button" data-scan-target="wallet-xmr-send-address" aria-label="Scan QR code"><svg class="i"><use href="#i-qr" /></svg></button></span></label><label>Amount in XMR<input id="wallet-xmr-send-amount" inputmode="decimal" autocomplete="off" /></label><div id="wallet-xmr-send-preview" class="wallet-send-preview" hidden></div><button id="wallet-xmr-send-review" class="btn tonal" type="button">Review fee</button><button id="wallet-xmr-send-confirm" class="btn danger" type="button" hidden>Confirm and send</button><button id="wallet-xmr-send-cancel" class="btn tonal" type="button">Cancel</button></div>
           </article>
           <details class="wallet-card wallet-transactions-card"><summary>Transactions <span aria-hidden="true">⌄</span></summary><div id="wallet-xmr-transactions" class="wallet-transactions">No transactions yet.</div></details>

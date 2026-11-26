@@ -5,10 +5,13 @@ import { BitcoinSettingsDialog } from './BitcoinSettingsDialog'
 import { shortId, type WalletContext } from './types'
 import { useBitcoinSend } from './useBitcoinSend'
 import { useQrCode } from './useQrCode'
+import { LightningScannerDialog } from './LightningScannerDialog'
+import { useLightningScanner } from './useLightningScanner'
 
 /** Bitcoin balance, receive address, transactions and its two dialogs. */
 export function BitcoinView({ wallet }: { wallet: WalletContext }) {
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [scannerOpen, setScannerOpen] = useState(false)
   const snapshot = wallet.snapshot
   const receiveAddress = useMemo(
     () => snapshot?.receive.find((item) => item.currency === 'BTC')?.address ?? '',
@@ -16,6 +19,16 @@ export function BitcoinView({ wallet }: { wallet: WalletContext }) {
   )
   const qr = useQrCode(receiveAddress, 'bitcoin', wallet.setMessage)
   const send = useBitcoinSend(wallet)
+  const scanner = useLightningScanner(scannerOpen, (value) => {
+    const payload = value.trim().replace(/^bitcoin:/i, '')
+    const [scannedAddress, query = ''] = payload.split('?')
+    if (!scannedAddress) { wallet.setMessage('The QR code does not contain a Bitcoin address.'); setScannerOpen(false); return }
+    send.setAddress(scannedAddress)
+    const amount = new URLSearchParams(query).get('amount')
+    if (amount) send.setAmount(amount)
+    wallet.setMessage('Bitcoin payment QR scanned.')
+    setScannerOpen(false)
+  })
   const transactions = (snapshot?.transactions ?? []).filter((tx) => tx.currency === 'BTC')
 
   return (
@@ -42,6 +55,7 @@ export function BitcoinView({ wallet }: { wallet: WalletContext }) {
         </button>
         {snapshot?.status.bitcoinAddress ? (
           <div className="wallet-receive-simple">
+            <h3 className="text-ui-12 font-semibold">Receive Bitcoin</h3>
             {qr ? (
               <img src={qr} alt="QR code for Bitcoin receive address" className="wallet-receive-qr" />
             ) : null}
@@ -120,10 +134,13 @@ export function BitcoinView({ wallet }: { wallet: WalletContext }) {
         busy={wallet.busy}
         onAddress={send.setAddress}
         onAmount={send.setAmount}
+        onScan={() => setScannerOpen(true)}
         onPrepare={() => void send.prepare()}
         onConfirm={() => void send.confirm()}
         onClose={send.close}
       />
+
+      <LightningScannerDialog open={scannerOpen} videoRef={scanner.videoRef} error={scanner.scannerError} currency="Bitcoin" instruction="Hold a Bitcoin address QR code in front of your camera." onClose={() => setScannerOpen(false)} />
 
       <BitcoinSettingsDialog
         open={settingsOpen}

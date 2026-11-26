@@ -1,4 +1,5 @@
 import type { BitcoinSendPreview } from '@shared/wallet'
+import { ScanLine } from 'lucide-react'
 
 interface BitcoinSendDialogProps {
   open: boolean
@@ -8,6 +9,7 @@ interface BitcoinSendDialogProps {
   busy: boolean
   onAddress: (value: string) => void
   onAmount: (value: string) => void
+  onScan: () => void
   onPrepare: () => void
   onConfirm: () => void
   onClose: () => void
@@ -22,6 +24,7 @@ export function BitcoinSendDialog({
   busy,
   onAddress,
   onAmount,
+  onScan,
   onPrepare,
   onConfirm,
   onClose
@@ -62,6 +65,7 @@ export function BitcoinSendDialog({
                 onChange={(event) => onAddress(event.target.value)}
               />
             </label>
+            <button type="button" className="inline-flex items-center gap-2 rounded-lg border border-[color:var(--color-line)] px-3 py-2 text-ui-11" onClick={onScan}><ScanLine className="h-4 w-4" />Scan QR code</button>
             <label className="block text-ui-11">
               Amount in BTC
               <input

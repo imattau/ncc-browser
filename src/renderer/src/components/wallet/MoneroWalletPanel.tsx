@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import QRCode from 'qrcode'
-import { Copy, RefreshCw, Send } from 'lucide-react'
+import { Copy, RefreshCw, ScanLine, Send } from 'lucide-react'
 import { DEFAULT_MONERO_DAEMON_URL, type MoneroWalletRecord } from '@shared/wallet'
 import { MoneroWalletSession, type MoneroSendPreview, type MoneroSnapshot } from '@shared/monero-wallet'
+import { LightningScannerDialog } from './LightningScannerDialog'
+import { useLightningScanner } from './useLightningScanner'
 
 function asError(error: unknown): string { return error instanceof Error ? error.message : String(error) }
 
@@ -25,7 +27,19 @@ export function MoneroWalletPanel({ onOpenIdentitySettings }: { onOpenIdentitySe
   const [message, setMessage] = useState('')
   const [sendAddress, setSendAddress] = useState('')
   const [sendAmount, setSendAmount] = useState('')
+  const [scannerOpen, setScannerOpen] = useState(false)
   const [preview, setPreview] = useState<MoneroSendPreview | null>(null)
+  const scanner = useLightningScanner(scannerOpen, (value) => {
+    const payload = value.trim().replace(/^monero:/i, '')
+    const [address, query = ''] = payload.split('?')
+    if (!address) { setMessage('The QR code does not contain a Monero address.'); setScannerOpen(false); return }
+    setSendAddress(address)
+    const params = new URLSearchParams(query)
+    const amount = params.get('tx_amount') || params.get('amount')
+    if (amount) setSendAmount(amount)
+    setMessage('Monero payment QR scanned.')
+    setScannerOpen(false)
+  })
 
   useEffect(() => {
     let alive = true
@@ -114,7 +128,7 @@ export function MoneroWalletPanel({ onOpenIdentitySettings }: { onOpenIdentitySe
   }
 
   async function confirmSend() {
-    if (!preview || !window.confirm('Send this Monero transaction now? This cannot be reversed.')) return
+    if (!preview) return
     setBusy(true)
     try {
       const ids = await session.current!.confirmSend(preview.id)
@@ -131,7 +145,7 @@ export function MoneroWalletPanel({ onOpenIdentitySettings }: { onOpenIdentitySe
       {record ? <>
         <div className="wallet-simple-balance"><p>{snapshot?.balance ?? '—'} XMR</p><span>Available{snapshot ? ` · ${snapshot.unlocked} XMR unlocked` : ''}{scanning ? ` · scanning ${session.current?.progress.percent.toFixed(0) ?? 0}%` : ''}</span></div>
         <button disabled={!snapshot || busy} className="wallet-primary-send" onClick={() => setPreview({ id: '', address: '', amount: '', fee: '', transactions: 0 })}><Send className="h-4 w-4" />Send</button>
-        <div className="wallet-receive-simple">{qr ? <img src={qr} alt="QR code for Monero receive address" className="wallet-receive-qr" /> : null}<button className="wallet-address-pill" onClick={() => void navigator.clipboard.writeText(snapshot?.address ?? record.address)}><span>{(snapshot?.address ?? record.address).slice(0, 12)}…{(snapshot?.address ?? record.address).slice(-8)}</span><Copy className="h-4 w-4 shrink-0" /></button></div>
+        <div className="wallet-receive-simple"><h3 className="text-ui-12 font-semibold">Receive Monero</h3>{qr ? <img src={qr} alt="QR code for Monero receive address" className="wallet-receive-qr" /> : null}<button className="wallet-address-pill" onClick={() => { void navigator.clipboard.writeText(snapshot?.address ?? record.address).then(() => setMessage('Address copied.')).catch(() => setMessage('Could not copy the address.')) }}><span>{(snapshot?.address ?? record.address).slice(0, 12)}…{(snapshot?.address ?? record.address).slice(-8)}</span><Copy className="h-4 w-4 shrink-0" /></button></div>
       </> : draftSeed ? <>
         <p className="mt-4 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-ui-11">Write down these 25 words in order and store them somewhere safe. Anyone with the seed can spend your Monero. This is the only way to recover this wallet.</p>
         <ol className="mt-3 grid list-none grid-cols-2 gap-2 pl-0 sm:grid-cols-3">{words.map((word, index) => <li key={`${index}-${word}`} className="rounded-lg bg-[color:var(--color-hover)] px-2 py-1.5 font-mono text-ui-10"><span className="mr-2 text-[color:var(--color-muted)]">{index + 1}</span>{word}</li>)}</ol>
@@ -149,7 +163,8 @@ export function MoneroWalletPanel({ onOpenIdentitySettings }: { onOpenIdentitySe
     {record && <details className="wallet-transactions-simple"><summary>Transactions <span>⌄</span></summary>{snapshot?.transactions.length ? <ul className="mt-3 divide-y divide-[color:var(--color-line)]">{snapshot.transactions.map((tx) => <li key={tx.id} className="flex items-center justify-between gap-3 py-3"><div><p className="font-mono text-ui-10">{tx.id.slice(0, 12)}…{tx.id.slice(-8)}</p><p className="text-ui-10 text-[color:var(--color-muted)]">{tx.direction} · {tx.status} · {tx.confirmations} confirmations</p></div><span className="font-mono text-ui-11">{tx.direction === 'incoming' ? '+' : '−'}{tx.amount} XMR</span></li>)}</ul> : <p className="py-5 text-center text-ui-11 text-[color:var(--color-muted)]">{scanning ? 'Scanning…' : 'No transactions yet.'}</p>}</details>}
     {message ? <p role="status" className="rounded-lg border border-[color:var(--color-line)] p-3 text-ui-11">{message}</p> : null}
     {record && <details className="text-ui-10 text-[color:var(--color-muted)]"><summary className="cursor-pointer text-center">Privacy and sync settings</summary><p className="mt-2 text-center">Keys stay on this device. The remote daemon can see your IP address and scan requests.</p><label className="mt-2 block">Monero daemon<input className="mt-1 w-full rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-panel)] p-2 font-mono" value={daemonUrl} onChange={(event) => setDaemonUrl(event.target.value)} /></label></details>}
-    {preview && !preview.id ? <div className="rounded-xl border border-[color:var(--color-line)] p-4"><h3 className="text-ui-13 font-semibold">Send Monero</h3><input className="mt-3 w-full rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-panel)] p-3 font-mono text-ui-10" placeholder="Monero address" value={sendAddress} onChange={(event) => setSendAddress(event.target.value)} /><input inputMode="decimal" className="mt-2 w-full rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-panel)] p-3 font-mono" placeholder="Amount in XMR" value={sendAmount} onChange={(event) => setSendAmount(event.target.value)} /><div className="mt-3 flex justify-end gap-2"><button className="rounded-lg border px-3 py-2 text-ui-10" onClick={() => setPreview(null)}>Cancel</button><button disabled={busy || !sendAddress || !sendAmount} className="rounded-lg bg-[color:var(--color-accent)] px-3 py-2 text-ui-10 text-white disabled:opacity-50" onClick={() => void reviewSend()}>Review fee</button></div></div> : null}
+    {preview && !preview.id ? <div className="rounded-xl border border-[color:var(--color-line)] p-4"><h3 className="text-ui-13 font-semibold">Send Monero</h3><label className="mt-3 block text-ui-11">Destination address<input className="mt-1 w-full rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-panel)] p-3 font-mono text-ui-10" value={sendAddress} onChange={(event) => setSendAddress(event.target.value)} /></label><button type="button" className="mt-2 inline-flex items-center gap-2 rounded-lg border border-[color:var(--color-line)] px-3 py-2 text-ui-11" onClick={() => setScannerOpen(true)}><ScanLine className="h-4 w-4" />Scan QR code</button><label className="mt-2 block text-ui-11">Amount in XMR<input inputMode="decimal" className="mt-1 w-full rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-panel)] p-3 font-mono" value={sendAmount} onChange={(event) => setSendAmount(event.target.value)} /></label><div className="mt-3 flex justify-end gap-2"><button className="rounded-lg border px-3 py-2 text-ui-10" onClick={() => setPreview(null)}>Cancel</button><button disabled={busy || !sendAddress || !sendAmount} className="rounded-lg bg-[color:var(--color-accent)] px-3 py-2 text-ui-10 text-white disabled:opacity-50" onClick={() => void reviewSend()}>Review fee</button></div></div> : null}
     {preview?.id ? <div role="dialog" aria-modal="true" className="rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-4"><h3 className="text-ui-13 font-semibold">Confirm Monero send</h3><p className="mt-3 break-all font-mono text-ui-10">To: {preview.address}</p><p className="mt-2 text-ui-11">Amount: {preview.amount} XMR</p><p className="text-ui-11">Network fee: {preview.fee} XMR</p><p className="text-ui-10 text-[color:var(--color-muted)]">{preview.transactions} transaction(s). Monero transfers cannot be reversed.</p><div className="mt-3 flex justify-end gap-2"><button className="rounded-lg border px-3 py-2 text-ui-10" onClick={() => { setPreview(null); setMessage('') }}>Cancel</button><button disabled={busy} className="rounded-lg bg-[color:var(--color-danger)] px-3 py-2 text-ui-10 text-white disabled:opacity-50" onClick={() => void confirmSend()}>Confirm and send</button></div></div> : null}
+    <LightningScannerDialog open={scannerOpen} videoRef={scanner.videoRef} error={scanner.scannerError} currency="Monero" instruction="Hold a Monero address QR code in front of your camera." onClose={() => setScannerOpen(false)} />
   </div>
 }

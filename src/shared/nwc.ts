@@ -1,4 +1,5 @@
 import { finalizeEvent, getPublicKey, nip44, verifyEvent, type Event } from 'nostr-tools'
+export { decodeBolt11Invoice } from './bolt11'
 
 export interface NwcConnection {
   pubkey: string
@@ -6,7 +7,6 @@ export interface NwcConnection {
   secret: Uint8Array
   lud16?: string
 }
-
 export interface NwcInvoice {
   invoice: string
   amountMsat: string
@@ -87,15 +87,4 @@ export class NwcClient {
 export interface NwcTransport {
   publish(relays: string[], event: Event): Promise<void>
   waitForResponse(connection: NwcConnection, clientPubkey: string, eventId: string, timeoutMs: number): Promise<Event>
-}
-
-export function decodeBolt11Invoice(value: string): { invoice: string; amountMsat: string | null } {
-  const invoice = value.trim().replace(/^lightning:/i, '')
-  if (!/^ln(bc|tb|bcrt)[0-9a-z]+$/i.test(invoice)) throw new Error('Enter a valid Lightning invoice')
-  const lower = invoice.toLowerCase()
-  const match = /^ln(?:bc|tb|bcrt)(\d+)?(m|u|n|p)?1/i.exec(lower)
-  if (!match?.[1]) return { invoice, amountMsat: null }
-  const multipliers: Record<string, bigint> = { m: 100_000_000_000n, u: 100_000_000n, n: 100_000n }
-  const amount = BigInt(match[1]) * (multipliers[match[2] ?? ''] ?? 100_000_000_000n)
-  return { invoice, amountMsat: String(match[2] === 'p' ? amount / 10n : amount) }
 }

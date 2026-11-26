@@ -5,6 +5,7 @@ import { parsePaymentQr, scanQr } from './qr-scan.js'
 import { MoneroWalletSession } from '../src/shared/monero-wallet.ts'
 import { DEFAULT_MONERO_DAEMON_URL } from '../src/shared/wallet.ts'
 import { createMobileNwc } from './nwc.js'
+import { decodeBolt11Invoice } from '../src/shared/bolt11.ts'
 
 const DEFAULT_ESPLORA = 'https://blockstream.info/api'
 const byId = (id) => document.getElementById(id)
@@ -18,6 +19,7 @@ let moneroDraftSeed = ''
 let moneroChallengeIndex = 0
 let moneroPreview = null
 let nwc = null
+let nwcPaymentPending = false
 
 async function loadNwc() {
   try {
@@ -48,8 +50,11 @@ export async function handleNwcPageRequest(request) {
     case 'pay_invoice': {
       const invoice = typeof request.params === 'string' ? request.params : request.params?.paymentRequest
       if (typeof invoice !== 'string' || !invoice) throw new Error('The page did not provide a Lightning invoice')
-      if (!window.confirm(`${request.origin} requests a Lightning payment.\n\n${invoice}\n\nPay this invoice?`)) throw new Error('Payment cancelled')
-      return nwc.payInvoice(invoice)
+      const decoded = decodeBolt11Invoice(invoice)
+      if (decoded.expired) throw new Error('This Lightning invoice has expired. Request a new invoice.')
+      const amount = lightningAmount(decoded.amountMsat)
+      if (!window.confirm(`${request.origin} requests a Lightning payment.\n\nAmount: ${amount}\nNetwork: ${decoded.network}\nExpires: ${new Date(decoded.expiresAt * 1000).toLocaleString()}\nDescription: ${decoded.description || (decoded.descriptionHash ? 'Private description' : 'None provided')}\n\nPay this invoice?`)) throw new Error('Payment cancelled')
+      return nwc.payInvoice(decoded.invoice)
     }
     case 'make_invoice': {
       const params = request.params || {}
@@ -62,6 +67,11 @@ export async function handleNwcPageRequest(request) {
 }
 
 function message(text) { byId('wallet-note').textContent = text }
+function lightningAmount(msat) {
+  if (msat == null) return 'No fixed amount'
+  const value = BigInt(msat)
+  return value % 1000n === 0n ? `${(value / 1000n).toLocaleString()} sats` : `${value.toLocaleString()} msat`
+}
 function parseAmount(input) {
   const value = input.trim()
   if (!/^(?:0|[1-9]\d*)(?:\.\d{1,8})?$/.test(value)) throw new Error('Enter a BTC amount with up to 8 decimal places')
@@ -333,31 +343,65 @@ export function wireWallet() {
       message(`${info.alias || 'Lightning wallet'} connected.`)
     } catch (error) { message(error instanceof Error ? error.message : String(error)) }
   })
+  byId('wallet-nwc-reveal').addEventListener('click', () => {
+    const input = byId('wallet-nwc-uri')
+    const visible = input.type === 'password'
+    input.type = visible ? 'text' : 'password'
+    byId('wallet-nwc-reveal').textContent = visible ? 'Hide connection URI' : 'Reveal connection URI'
+    byId('wallet-nwc-reveal').setAttribute('aria-pressed', String(visible))
+  })
   byId('wallet-nwc-disconnect').addEventListener('click', async () => {
     await window.__TAURI__.core.invoke('wallet_nwc_delete'); nwc?.dispose(); nwc = null
     byId('wallet-nwc-connected').hidden = true; byId('wallet-nwc-settings').hidden = true; byId('wallet-nwc-connect-card').hidden = false
     byId('wallet-nwc-receive-view').hidden = true; byId('wallet-nwc-send').hidden = true
   })
-  byId('wallet-nwc-open-send').addEventListener('click', () => { byId('wallet-nwc-send').hidden = false; byId('wallet-nwc-invoice').focus() })
-  byId('wallet-nwc-cancel-send').addEventListener('click', () => { byId('wallet-nwc-send').hidden = true })
-  byId('wallet-nwc-pay').addEventListener('click', async () => {
+  byId('wallet-nwc-open-send').addEventListener('click', () => { byId('wallet-nwc-send').hidden = false; byId('wallet-nwc-send-entry').hidden = false; byId('wallet-nwc-send-preview').hidden = true; byId('wallet-nwc-send-error').hidden = true; byId('wallet-nwc-confirm').hidden = true; byId('wallet-nwc-pay').hidden = false; byId('wallet-nwc-invoice').focus() })
+  byId('wallet-nwc-cancel-send').addEventListener('click', () => { byId('wallet-nwc-send').hidden = true; byId('wallet-nwc-invoice').value = ''; byId('wallet-nwc-send-preview').hidden = true; byId('wallet-nwc-send-error').hidden = true })
+  byId('wallet-nwc-pay').addEventListener('click', () => {
     try {
-      const invoice = byId('wallet-nwc-invoice').value.trim()
-      if (!invoice || !window.confirm(`Send this Lightning payment now?\n\n${invoice.slice(0, 160)}${invoice.length > 160 ? '…' : ''}`)) return
-      await nwc.payInvoice(invoice); byId('wallet-nwc-invoice').value = ''; byId('wallet-nwc-send').hidden = true; message('Lightning payment sent.')
-      await loadNwc()
-    } catch (error) { message(error instanceof Error ? error.message : String(error)) }
+      const decoded = decodeBolt11Invoice(byId('wallet-nwc-invoice').value)
+      if (decoded.expired) throw new Error('This Lightning invoice has expired. Request a new invoice.')
+      const amount = lightningAmount(decoded.amountMsat)
+      const preview = byId('wallet-nwc-send-preview'); preview.replaceChildren()
+      for (const [key, value] of [['Amount', amount], ['Network', decoded.network], ['Expires', new Date(decoded.expiresAt * 1000).toLocaleString()], ['Description', decoded.description || (decoded.descriptionHash ? 'Private description (hash only)' : 'None provided')]]) {
+        const row = document.createElement('p'); row.textContent = `${key}: ${value}`; preview.append(row)
+      }
+      const details = document.createElement('details'); const summary = document.createElement('summary'); summary.textContent = 'Show invoice'; const raw = document.createElement('code'); raw.className = 'wallet-raw-invoice'; raw.textContent = decoded.invoice; details.append(summary, raw); preview.append(details)
+      preview.hidden = false; byId('wallet-nwc-send-entry').hidden = true; byId('wallet-nwc-pay').hidden = true; byId('wallet-nwc-confirm').hidden = false
+      byId('wallet-nwc-send-error').hidden = true
+    } catch (error) { const text = error instanceof Error ? error.message : String(error); byId('wallet-nwc-send-error').textContent = text; byId('wallet-nwc-send-error').hidden = false; message(text) }
   })
-  byId('wallet-nwc-receive').addEventListener('click', async () => {
+  byId('wallet-nwc-confirm').addEventListener('click', async () => {
+    if (nwcPaymentPending) return
     try {
-      const sats = Number(window.prompt('Amount in sats'))
-      if (!Number.isSafeInteger(sats) || sats <= 0 || sats > Number.MAX_SAFE_INTEGER / 1000) return
+      const decoded = decodeBolt11Invoice(byId('wallet-nwc-invoice').value)
+      if (decoded.expired) throw new Error('This Lightning invoice has expired. Request a new invoice.')
+      nwcPaymentPending = true; byId('wallet-nwc-confirm').disabled = true; byId('wallet-nwc-confirm').textContent = 'Sending…'
+      await nwc.payInvoice(decoded.invoice); byId('wallet-nwc-invoice').value = ''; byId('wallet-nwc-send').hidden = true; byId('wallet-nwc-send-preview').hidden = true; message('Lightning payment sent.')
+      await loadNwc()
+    } catch (error) { const text = error instanceof Error ? error.message : String(error); byId('wallet-nwc-send-error').textContent = text; byId('wallet-nwc-send-error').hidden = false; message(text) }
+    finally { nwcPaymentPending = false; byId('wallet-nwc-confirm').disabled = false; byId('wallet-nwc-confirm').textContent = 'Confirm and pay' }
+  })
+  byId('wallet-nwc-receive').addEventListener('click', () => {
+    byId('wallet-nwc-receive-entry').hidden = false; byId('wallet-nwc-receive-view').hidden = true; byId('wallet-nwc-receive-error').hidden = true; byId('wallet-nwc-amount').value = ''; byId('wallet-nwc-amount').focus()
+  })
+  byId('wallet-nwc-cancel-receive').addEventListener('click', () => { byId('wallet-nwc-receive-entry').hidden = true })
+  byId('wallet-nwc-create-invoice').addEventListener('click', async () => {
+    const create = byId('wallet-nwc-create-invoice')
+    try {
+      const sats = Number(byId('wallet-nwc-amount').value)
+      if (!Number.isSafeInteger(sats) || sats <= 0 || sats > Number.MAX_SAFE_INTEGER / 1000) throw new Error('Enter a positive whole amount in sats.')
+      create.disabled = true; create.textContent = 'Creating…'
       const result = await nwc.makeInvoice({ amount: sats * 1000 })
       byId('wallet-nwc-created').textContent = result.invoice
       byId('wallet-nwc-created').onclick = async () => { try { await navigator.clipboard.writeText(result.invoice); message('Invoice copied.') } catch { message('Could not copy invoice.') } }
       byId('wallet-nwc-qr').src = await QRCode.toDataURL(`lightning:${result.invoice}`, { width: 220, margin: 1 })
-      byId('wallet-nwc-qr').hidden = false; byId('wallet-nwc-receive-view').hidden = false
-    } catch (error) { message(error instanceof Error ? error.message : String(error)) }
+      let expiryText = ''
+      try { expiryText = ` · expires ${new Date(decodeBolt11Invoice(result.invoice).expiresAt * 1000).toLocaleString()}` } catch { /* Keep the generated invoice usable if its wallet omits decodable metadata. */ }
+      byId('wallet-nwc-receive-amount').textContent = `Requesting ${sats.toLocaleString()} sats${expiryText}`
+      byId('wallet-nwc-qr').hidden = false; byId('wallet-nwc-receive-entry').hidden = true; byId('wallet-nwc-receive-view').hidden = false
+    } catch (error) { const text = error instanceof Error ? error.message : String(error); byId('wallet-nwc-receive-error').textContent = text; byId('wallet-nwc-receive-error').hidden = false; message(text) }
+    finally { create.disabled = false; create.textContent = 'Create invoice' }
   })
   byId('wallet-copy-address').addEventListener('click', async () => {
     try { await navigator.clipboard.writeText(currentAddress); message('Address copied.') }
@@ -372,6 +416,11 @@ export function wireWallet() {
     const isMonero = button.dataset.scanTarget.includes('xmr')
     const text = await scanQr()
     if (!text) return
+    if (button.dataset.scanTarget === 'wallet-nwc-invoice') {
+      input.value = text.trim().replace(/^lightning:/i, '')
+      message('Lightning invoice scanned.')
+      return
+    }
     const { address, amount } = parsePaymentQr(text, isMonero ? 'monero' : 'bitcoin')
     input.value = address
     const amountInput = byId(isMonero ? 'wallet-xmr-send-amount' : 'wallet-send-amount')
@@ -387,7 +436,6 @@ export function wireWallet() {
     catch (error) { message(error instanceof Error ? error.message : String(error)) }
   })
   byId('wallet-send-confirm').addEventListener('click', async () => {
-    if (!window.confirm('Send this Bitcoin transaction now? This cannot be reversed.')) return
     try { message('Signing and broadcasting…'); await confirmSend() }
     catch (error) { message(error instanceof Error ? error.message : String(error)) }
   })
@@ -430,7 +478,7 @@ export function wireWallet() {
     } catch (error) { byId('wallet-xmr-note').textContent = error instanceof Error ? error.message : String(error) }
   })
   xmr('wallet-xmr-send-confirm', 'click', async () => {
-    if (!moneroPreview || !window.confirm('Send this Monero transaction now? This cannot be reversed.')) return
+    if (!moneroPreview) return
     try { const ids = await moneroSession.confirmSend(moneroPreview.id); byId('wallet-xmr-note').textContent = `Broadcast ${ids.length} Monero transaction${ids.length === 1 ? '' : 's'}.`; moneroPreview = null; byId('wallet-xmr-send').hidden = true; await renderMoneroSnapshot(await moneroSession.snapshot()) }
     catch (error) { byId('wallet-xmr-note').textContent = error instanceof Error ? error.message : String(error) }
   })

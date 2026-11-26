@@ -34,11 +34,12 @@ export function WalletPanel({ onClose, onOpenIdentitySettings }: WalletPanelProp
         </div>
         <div className="flex gap-2">
           <button
+            disabled={data.busy}
             className="rounded-lg p-2 hover:bg-[color:var(--color-hover)]"
             title="Refresh"
             onClick={() => void data.refresh()}
           >
-            <RefreshCw className="h-4 w-4" />
+            <RefreshCw className={`h-4 w-4 ${data.busy ? 'animate-spin' : ''}`} />
           </button>
           <button
             className="rounded-lg p-2 hover:bg-[color:var(--color-hover)]"
@@ -51,10 +52,7 @@ export function WalletPanel({ onClose, onOpenIdentitySettings }: WalletPanelProp
       </header>
 
       <div className="mx-auto max-w-xl space-y-5 px-5 py-6">
-        <nav
-          className="mx-auto flex w-fit rounded-full border border-[color:var(--color-line)] p-1"
-          aria-label="Wallet currency"
-        >
+        <nav className="mx-auto flex w-fit rounded-full border border-[color:var(--color-line)] p-1" aria-label="Wallet currency">
           {CURRENCIES.map((item) => {
             const label = currencyLabel(item)
             const selected = currency === item
@@ -65,16 +63,14 @@ export function WalletPanel({ onClose, onOpenIdentitySettings }: WalletPanelProp
                 aria-label={label}
                 title={label}
                 aria-pressed={selected}
-                className={`grid h-10 w-10 place-items-center rounded-full text-ui-18 ${
+                className={`grid h-11 w-11 place-items-center rounded-full ${
                   selected
                     ? 'bg-[color:var(--color-hover)] text-[color:var(--color-text-strong)]'
                     : 'text-[color:var(--color-muted)]'
                 }`}
                 onClick={() => setCurrency(item)}
               >
-                {item === 'BTC' ? (
-                  <span aria-hidden="true">₿</span>
-                ) : item === 'XMR' ? (
+                {item === 'BTC' ? <span aria-hidden="true" className="text-ui-18">₿</span> : item === 'XMR' ? (
                   <span
                     aria-hidden="true"
                     className="grid h-6 w-6 place-items-center rounded-full border-2 border-[#f26822] text-ui-12 font-bold text-[#f26822]"
@@ -97,9 +93,9 @@ export function WalletPanel({ onClose, onOpenIdentitySettings }: WalletPanelProp
           <LightningView wallet={wallet} />
         )}
 
-        {data.message ? (
-          <p role="status" className="rounded-lg border border-[color:var(--color-line)] p-3 text-ui-11">
-            {data.message}
+        {data.message || data.busy ? (
+          <p role="status" aria-live="polite" className="rounded-lg border border-[color:var(--color-line)] p-3 text-ui-11">
+            {data.message || 'Refreshing wallet…'}
           </p>
         ) : null}
       </div>

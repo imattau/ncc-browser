@@ -1,4 +1,5 @@
 import { ScanLine, X } from 'lucide-react'
+import { decodeBolt11Invoice } from '@shared/bolt11'
 
 interface LightningSendDialogProps {
   open: boolean
@@ -25,6 +26,18 @@ export function LightningSendDialog({
   onClose
 }: LightningSendDialogProps) {
   if (!open) return null
+  let decoded: ReturnType<typeof decodeBolt11Invoice> | null = null
+  let decodeError = ''
+  if (invoice.trim()) {
+    try { decoded = decodeBolt11Invoice(invoice) }
+    catch (error) { decodeError = error instanceof Error ? error.message : String(error) }
+  }
+  const amountMsat = decoded?.amountMsat ? BigInt(decoded.amountMsat) : null
+  const amount = amountMsat === null
+    ? 'No fixed amount'
+    : amountMsat % 1000n === 0n
+      ? `${(amountMsat / 1000n).toLocaleString()} sats`
+      : `${amountMsat.toLocaleString()} msat`
 
   return (
     <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 p-4">
@@ -53,10 +66,15 @@ export function LightningSendDialog({
         </div>
         {review ? (
           <div className="mt-4">
-            <p className="text-ui-11 text-[color:var(--color-muted)]">
-              Confirm that you want to pay this Lightning invoice. This payment cannot be
-              reversed.
-            </p>
+            <p className="text-ui-11 text-[color:var(--color-muted)]">Check the payment details before sending. Lightning payments cannot be reversed.</p>
+            <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-panel)] p-3 text-ui-11">
+              <dt className="text-[color:var(--color-muted)]">Amount</dt><dd>{amount}</dd>
+              <dt className="text-[color:var(--color-muted)]">Network</dt><dd>{decoded?.network}</dd>
+              <dt className="text-[color:var(--color-muted)]">Expires</dt><dd>{decoded ? new Date(decoded.expiresAt * 1000).toLocaleString() : 'Unavailable'}</dd>
+              <dt className="text-[color:var(--color-muted)]">Description</dt><dd className="break-words">{decoded?.description ?? (decoded?.descriptionHash ? 'Private description (hash only)' : 'None provided')}</dd>
+              {decoded?.payee ? <><dt className="text-[color:var(--color-muted)]">Payee</dt><dd className="break-all font-mono">{decoded.payee}</dd></> : null}
+            </dl>
+            {decoded?.expired ? <p role="alert" className="mt-3 text-ui-11 text-[color:var(--color-danger)]">This invoice has expired. Ask the sender for a new invoice.</p> : null}
             <div className="mt-3 max-h-36 overflow-auto break-all rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-panel)] p-3 font-mono text-ui-10">
               {invoice}
             </div>
@@ -82,6 +100,7 @@ export function LightningSendDialog({
               <ScanLine className="h-4 w-4" />
               Scan QR code
             </button>
+            {decodeError ? <p role="alert" className="mt-2 text-ui-11 text-[color:var(--color-danger)]">{decodeError}</p> : null}
           </>
         )}
         <div className="mt-5 flex justify-end gap-2">
@@ -93,7 +112,7 @@ export function LightningSendDialog({
           </button>
           {review ? (
             <button
-              disabled={busy}
+              disabled={busy || !decoded || decoded.expired}
               className="rounded-lg bg-[color:var(--color-danger)] px-4 py-2 text-ui-11 font-semibold text-white disabled:opacity-50"
               onClick={onPay}
             >
@@ -101,7 +120,7 @@ export function LightningSendDialog({
             </button>
           ) : (
             <button
-              disabled={!/^ln(?:bc|tb|bcrt)[0-9a-z]+$/i.test(invoice.trim())}
+              disabled={!decoded || decoded.expired || busy}
               className="rounded-lg bg-[color:var(--color-accent)] px-4 py-2 text-ui-11 font-semibold text-white disabled:opacity-50"
               onClick={onReview}
             >

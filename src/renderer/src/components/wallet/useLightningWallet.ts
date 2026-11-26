@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { messageOf } from '../../lib/format'
+import { decodeBolt11Invoice } from '@shared/bolt11'
 import type { WalletContext } from './types'
 
 type Wallet = Pick<WalletContext, 'nwc' | 'setNwc' | 'setBusy' | 'setMessage'>
@@ -81,7 +82,9 @@ export function useLightningWallet(wallet: Wallet): LightningWalletApi {
     wallet.setBusy(true)
     wallet.setMessage('')
     try {
-      await window.ncc.nwcPay(invoice.trim())
+      const decoded = decodeBolt11Invoice(invoice)
+      if (decoded.expired) throw new Error('This Lightning invoice has expired. Request a new invoice.')
+      await window.ncc.nwcPay(decoded.invoice)
       setInvoice('')
       setPayReview(false)
       setSendOpen(false)

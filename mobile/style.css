@@ -2321,7 +2321,8 @@ body[data-kind='tor'] .pill-kind {
 .screen#wallet { width: 100%; min-width: 0; max-width: 100%; overflow: hidden; }
 .screen#wallet > .wallet-body { flex: 1 1 0%; width: 100%; min-width: 0; min-height: 0; max-width: 100%; grid-template-columns: minmax(0, 1fr); overflow-x: hidden; }
 .wallet-currencies { display: flex; width: fit-content; max-width: 100%; border-radius: 999px; }
-.wallet-currency { min-width: 48px; min-height: 38px; padding: 0 10px; border-radius: 999px; }
+.wallet-currency { display: grid; width: 48px; min-width: 48px; height: 48px; min-height: 48px; place-items: center; padding: 0; border-radius: 999px; }
+.wallet-receive-heading { margin: 2px 0 0; color: var(--text); font-size: 13px; font-weight: 650; }
 .currency-icon { display: grid; width: 24px; height: 24px; place-items: center; line-height: 1; }
 .bitcoin-icon { font-size: 23px; font-weight: 700; }
 .monero-icon { border: 2px solid #f26822; border-radius: 50%; color: #f26822; font-size: 13px; font-weight: 800; }
@@ -2368,7 +2369,9 @@ body[data-kind='tor'] .pill-kind {
 
 .wallet-scan-field { position: relative; display: block; }
 .wallet-scan-field input { padding-right: 46px !important; }
-.wallet-scan { position: absolute; inset-block: 0; inset-inline-end: 0; width: 44px; display: grid; place-items: center; border: 0; background: transparent; color: var(--muted); }
+.wallet-scan { position: absolute; inset-block: 0; inset-inline-end: 0; width: 48px; min-height: 48px; display: grid; place-items: center; border: 0; background: transparent; color: var(--muted); }
+.wallet-inline-error { color: var(--danger); font-size: 12px; }
+.wallet-raw-invoice { display: block; margin-top: 8px; overflow-wrap: anywhere; font-size: 10px; }
 .wallet-scan .i { width: 20px; height: 20px; }
 .qr-scan { position: fixed; inset: 0; z-index: 1000; display: grid; grid-template-rows: 1fr auto auto; gap: 12px; padding: 0 16px calc(20px + env(safe-area-inset-bottom)); background: #000; }
 .qr-scan video { width: 100%; height: 100%; min-height: 0; object-fit: cover; border-radius: 0 0 18px 18px; }

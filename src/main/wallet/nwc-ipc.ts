@@ -20,7 +20,9 @@ export function registerNwcIpc(service: NwcService, shell: BrowserShell, session
   handle('ncc:nwc-refresh', () => service.refresh())
   handle('ncc:nwc-pay', (invoice) => {
     if (typeof invoice !== 'string' || invoice.length > 4096) throw new Error('Invalid Lightning invoice')
-    return service.payInvoice(invoice)
+    const decoded = decodeBolt11Invoice(invoice)
+    if (decoded.expired) throw new Error('This Lightning invoice has expired. Request a new invoice.')
+    return service.payInvoice(decoded.invoice)
   })
   handle('ncc:nwc-make-invoice', (params) => {
     if (!params || typeof params !== 'object') throw new Error('Enter an invoice amount')
@@ -58,10 +60,11 @@ export function registerNwcIpc(service: NwcService, shell: BrowserShell, session
     const invoice = typeof args === 'string' ? args : (args as { paymentRequest?: unknown } | null)?.paymentRequest
     if (typeof invoice !== 'string' || invoice.length > 4096) throw new Error('Invalid Lightning invoice')
     const decoded = decodeBolt11Invoice(invoice)
-    const amount = decoded.amountMsat ? `${(Number(decoded.amountMsat) / 1000).toLocaleString()} sats` : 'amount not encoded'
+    if (decoded.expired) throw new Error('This Lightning invoice has expired. Request a new invoice.')
+    const amount = decoded.amountMsat ? `${BigInt(decoded.amountMsat) / 1000n} sats` : 'No fixed amount'
     const answer = await dialog.showMessageBox(shell.window, {
       type: 'warning', buttons: ['Cancel', 'Pay'], defaultId: 0, cancelId: 0,
-      title: 'Confirm Lightning payment', message: `${origin} requests a Lightning payment`, detail: `Invoice amount: ${amount}\nInvoice: ${decoded.invoice.slice(0, 120)}${decoded.invoice.length > 120 ? '…' : ''}\n\nOnly continue if you trust this page and have checked the payment.`
+      title: 'Confirm Lightning payment', message: `${origin} requests a Lightning payment`, detail: `Amount: ${amount}\nNetwork: ${decoded.network}\nExpires: ${new Date(decoded.expiresAt * 1000).toLocaleString()}\nDescription: ${decoded.description || (decoded.descriptionHash ? 'Private description (hash only)' : 'None provided')}\n\nOnly continue if you trust this page and have checked the payment.`
     })
     if (answer.response !== 1) throw new Error('Payment cancelled')
     return service.payInvoice(decoded.invoice)
