@@ -1,5 +1,17 @@
 # Nostr Navigator for Android
 
+## 0.47.19
+
+- Long-press a link to open it in a new tab. The page you are reading stays put, and
+  **Switch** takes you to the new tab. You can also open it in a private tab, copy it,
+  share it, share it to Nostr or download it.
+- Long-press a picture to open or download it. Email addresses and phone numbers can be
+  opened in another app or copied.
+- Private tabs only open links privately. Tor tabs offer no downloads outside Tor.
+- Fixed a fault that kept the app's local proxy ports from reaching the page view, which
+  could stop `ncc://` links on ordinary websites from opening.
+- Closing a tab in the switcher no longer moves you to a different tab.
+
 ## 0.47.18
 
 - No changes for Android. This release fixes a startup crash in the desktop app.

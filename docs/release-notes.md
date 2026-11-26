@@ -1,5 +1,24 @@
 # Release notes
 
+## 0.47.19 — Android long-press menu
+
+### Added
+
+- **Android:** long-press a link for **Open in new tab** (it loads in the background,
+  with **Switch**), open in a private tab, copy, share, **Share to Nostr** and download.
+  Pictures can be opened, downloaded or have their address copied; email addresses and
+  phone numbers can be opened in another app or copied. Private tabs only open links
+  privately, and Tor tabs offer no downloads outside Tor.
+
+### Fixed
+
+- **Android:** the app's native side never received the local proxy ports. This could
+  stop `ncc://` links on ordinary websites from opening, and could record the address of
+  a download from a private pop-up.
+- **Android:** closing a tab that was not on screen could switch to another tab.
+- The release `SHA256SUMS.txt` no longer includes an entry for itself that fails to
+  verify. Desktop has no other changes.
+
 ## 0.47.18 — desktop startup fix
 
 ### Fixed
