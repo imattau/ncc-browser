@@ -1,5 +1,41 @@
 # Release notes
 
+## 0.47.14 — more reliable password saving and filling
+
+### Fixed
+
+- The offer to save a login now appears on far more sites. Before, it needed a plain
+  form submit. It now also covers sign-ins run by a script, Enter, password changes,
+  and forms built as page components.
+- Filling no longer puts a saved password into a signup form, or your username into a
+  search box or a hidden field. It also works on sign-ins that ask for the username
+  first.
+- A save that fails can be tried again. Before, trying again said the request had
+  expired. This includes saving after unlocking on desktop.
+- On desktop, clicking outside the save prompt no longer discards it.
+- On Android, saving from the login editor shows progress and a result, and a double
+  tap cannot add the login twice.
+
+### Changed
+
+- Saved accounts now appear when you tap into a login field: a list under the field on
+  desktop, and a sheet above the address bar on Android.
+- On Android, the prompt to save a login uses the same sheet instead of covering the
+  page. It shows progress, then whether the save worked.
+
+### Added
+
+- `nsite://` addresses can use the NIP-5A named-site form, which joins the site's key
+  in base36 and the site name.
+
+### Security
+
+- On Android, a frame embedded in a page can no longer prompt you to save a login under
+  that page's address.
+- Filling now checks again that the page is still the one the login belongs to.
+
+Logins inside embedded frames are not detected or filled.
+
 ## 0.47.13 — password deletion feedback on Android
 
 ### Fixed

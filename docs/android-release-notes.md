@@ -1,5 +1,18 @@
 # Nostr Navigator for Android
 
+## 0.47.14
+
+- Saving passwords works on many more sites, including after changing a password.
+- Tap a login field to see your saved accounts in a sheet above the address bar.
+- The prompt to save a login uses that sheet too, so the page stays in view. It shows
+  progress and the result, and a failed save can be tried again.
+- Filling no longer types into signup, search or hidden fields, and works when a site
+  asks for your username first.
+- Saving from the password editor now shows progress.
+- Security: embedded frames can no longer prompt you to save a login for the page
+  around them.
+- nsite addresses in the NIP-5A named-site form now open.
+
 ## 0.47.13
 
 - Deleting a password now asks you to confirm first.
