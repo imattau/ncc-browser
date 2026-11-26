@@ -1,5 +1,21 @@
 # Release notes
 
+## 0.47.22 — links open their apps on Android
+
+### Added
+
+- **Android:** tapping an `https://` link to another site now opens the app that is its
+  default handler, such as Zapstore for its listings. Private and Tor tabs keep every
+  link in the browser, as do redirects and navigations without a tap. Needs Android 11.
+  To see the web page instead, open the link in a new tab from the long-press menu.
+- **Android:** the toolbar moves out of the way as you scroll down a page and returns
+  as you scroll up.
+
+### Fixed
+
+- **Android:** following a link into another app, including email and phone links, no
+  longer changes the address bar of the page you left.
+
 ## 0.47.21 — pages follow signer changes
 
 ### Changed

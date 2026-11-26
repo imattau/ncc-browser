@@ -1,5 +1,14 @@
 # Nostr Navigator for Android
 
+## 0.47.22
+
+- Links that belong to an installed app, such as a Zapstore listing, now open in it
+  when you tap them from another site. Private and Tor tabs keep links in the browser.
+  This needs Android 11 or later. To see the web page instead, press and hold the link
+  and open it in a new tab.
+- The toolbar hides as you scroll down a page and comes back as you scroll up.
+- Opening another app from a link no longer changes the address shown for the page.
+
 ## 0.47.21
 
 - Pages receive `accountsChanged` when you switch or remove the active signer. Sites
