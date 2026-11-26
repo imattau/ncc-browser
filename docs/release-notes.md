@@ -1,5 +1,17 @@
 # Release notes
 
+## 0.47.15 — named nsite addresses on Android
+
+### Fixed
+
+- On Android, NIP-5A named-site `nsite://` addresses now open. 0.47.14 said they did,
+  but they failed to load there. So did any `nsite://` address typed with a
+  64-character hex key.
+- On Android, a page that fails to load is no longer reported as a certificate problem
+  unless there was one.
+
+There are no desktop changes in this release.
+
 ## 0.47.14 — more reliable password saving and filling
 
 ### Fixed

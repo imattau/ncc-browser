@@ -1,5 +1,13 @@
 # Nostr Navigator for Android
 
+## 0.47.15
+
+- Named nsite addresses now open. Version 0.47.14 said they did, but they failed to
+  load.
+- nsite addresses typed with a 64-character key open too.
+- A page that fails to load is no longer blamed on its certificate unless that was the
+  problem.
+
 ## 0.47.14
 
 - Saving passwords works on many more sites, including after changing a password.
