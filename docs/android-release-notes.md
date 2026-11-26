@@ -1,5 +1,11 @@
 # Nostr Navigator for Android
 
+## 0.47.21
+
+- Pages receive `accountsChanged` when you switch or remove the active signer. Sites
+  can listen with `window.nostr.on('accountsChanged', listener)` and unsubscribe with
+  `off`; this also works on NCC pages served through the browser's local proxy.
+
 ## 0.47.20
 
 - Tor tabs no longer tell sites which app you are using. They report an ordinary Chrome

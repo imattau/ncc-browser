@@ -34,7 +34,10 @@ export function registerSignerChromeIpc(deps: SignerChromeIpcDeps): void {
   ipcMain.handle('ncc:identity-list', () => deps.identity.list())
   ipcMain.handle('ncc:identity-select', async (event, id: unknown) => {
     if (!fromChrome(event)) throw new Error('Not allowed')
+    const previousPubkey = deps.identity.status().hexPubkey ?? null
     const status = await deps.identity.select(String(id ?? ''))
+    const nextPubkey = deps.identity.status().hexPubkey ?? null
+    if (nextPubkey !== previousPubkey) deps.shell.notifySignerAccountsChanged(nextPubkey)
     resetCaches(deps)
     return status
   })
@@ -49,7 +52,10 @@ export function registerSignerChromeIpc(deps: SignerChromeIpcDeps): void {
   ipcMain.handle('ncc:identity-remove-profile', async (event, id: unknown) => {
     if (!fromChrome(event)) throw new Error('Not allowed')
     const previousDefault = deps.identity.list().defaultId
+    const previousPubkey = deps.identity.status().hexPubkey ?? null
     const status = await deps.identity.remove(String(id ?? ''))
+    const nextPubkey = deps.identity.status().hexPubkey ?? null
+    if (nextPubkey !== previousPubkey) deps.shell.notifySignerAccountsChanged(nextPubkey)
     if (deps.identity.list().defaultId !== previousDefault) deps.passwords.onIdentityChanged()
     resetCaches(deps)
     return status

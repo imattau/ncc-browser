@@ -1089,10 +1089,23 @@ fn identity_import_profile(state: tauri::State<'_, SignerState>, cards: tauri::S
 }
 
 #[tauri::command]
-async fn identity_select(state: tauri::State<'_, SignerState>, cards: tauri::State<'_, PaymentCardsHandle>, id: String) -> Result<IdentityProfilesInfo, String> {
+async fn identity_select(app: tauri::AppHandle, state: tauri::State<'_, SignerState>, cards: tauri::State<'_, PaymentCardsHandle>, id: String) -> Result<IdentityProfilesInfo, String> {
+    let previous_info = identity_profiles_info(&state);
+    let previous = previous_info.identities.iter().find(|profile| profile.active)
+        .and_then(|profile| profile.npub.as_deref())
+        .and_then(|npub| nostr::PublicKey::parse(npub).ok())
+        .map(|key| key.to_hex());
     cards.0.lock();
     activate_identity(&state, &id).await?;
-    Ok(identity_profiles_info(&state))
+    let next_info = identity_profiles_info(&state);
+    let next = next_info.identities.iter().find(|profile| profile.active)
+        .and_then(|profile| profile.npub.as_deref())
+        .and_then(|npub| nostr::PublicKey::parse(npub).ok())
+        .map(|key| key.to_hex());
+    if next != previous {
+        let _ = app.emit("ncc:signer-accounts-changed", next.map(|key| vec![key]).unwrap_or_default());
+    }
+    Ok(next_info)
 }
 
 async fn activate_identity(state: &SignerState, id: &str) -> Result<(), String> {
@@ -1144,7 +1157,12 @@ fn identity_set_default(state: tauri::State<'_, SignerState>, id: String, vault:
 }
 
 #[tauri::command]
-async fn identity_remove_profile(state: tauri::State<'_, SignerState>, cards: tauri::State<'_, PaymentCardsHandle>, id: String, vault: tauri::State<'_, VaultHandle>) -> Result<IdentityProfilesInfo, String> {
+async fn identity_remove_profile(app: tauri::AppHandle, state: tauri::State<'_, SignerState>, cards: tauri::State<'_, PaymentCardsHandle>, id: String, vault: tauri::State<'_, VaultHandle>) -> Result<IdentityProfilesInfo, String> {
+    let before = identity_profiles_info(&state);
+    let previous = before.identities.iter().find(|profile| profile.active)
+        .and_then(|profile| profile.npub.as_deref())
+        .and_then(|npub| nostr::PublicKey::parse(npub).ok())
+        .map(|key| key.to_hex());
     cards.0.lock();
     if let Some(local_id) = id.strip_prefix("local:") {
         state.identity.remove_profile(local_id).map_err(|error| error.to_string())?;
@@ -1171,8 +1189,16 @@ async fn identity_remove_profile(state: tauri::State<'_, SignerState>, cards: ta
     })?;
     if let Some(active) = fallback { activate_identity(&state, &active).await?; }
     else { state.proxy.set_remote(None); }
+    let after = identity_profiles_info(&state);
+    let next = after.identities.iter().find(|profile| profile.active)
+        .and_then(|profile| profile.npub.as_deref())
+        .and_then(|npub| nostr::PublicKey::parse(npub).ok())
+        .map(|key| key.to_hex());
+    if next != previous {
+        let _ = app.emit("ncc:signer-accounts-changed", next.map(|key| vec![key]).unwrap_or_default());
+    }
     configure_vault_default(&state, &vault.0);
-    Ok(identity_profiles_info(&state))
+    Ok(after)
 }
 
 /// PSBT signing is exposed only to the browser chrome. The page's separate WebView

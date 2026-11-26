@@ -1,5 +1,14 @@
 # Release notes
 
+## 0.47.21 — pages follow signer changes
+
+### Changed
+
+- **Desktop and Android:** open normal pages now receive NIP-07 `accountsChanged`
+  events when the active identity is switched or removed. Pages can subscribe with
+  `window.nostr.on('accountsChanged', listener)` and unsubscribe with `off`.
+- **Android:** account changes also reach NCC pages served through the local proxy.
+
 ## 0.47.20 — Tor tabs no longer name the browser
 
 ### Privacy

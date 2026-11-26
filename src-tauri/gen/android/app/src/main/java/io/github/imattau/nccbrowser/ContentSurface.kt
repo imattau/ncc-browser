@@ -102,7 +102,13 @@ private const val NIP07_SHIM = """
     nip44: {
       encrypt: function (peer, text) { return call('nip44-encrypt', { peer: peer, text: text }); },
       decrypt: function (peer, text) { return call('nip44-decrypt', { peer: peer, text: text }); }
-    }
+    },
+    on: function (event, listener) { if (event === 'accountsChanged' && typeof listener === 'function') listeners.add(listener); },
+    off: function (event, listener) { if (event === 'accountsChanged') listeners.delete(listener); }
+  };
+  var listeners = new Set();
+  window.__nccSignerChanged = function (accounts) {
+    listeners.forEach(function (listener) { try { listener(accounts); } catch (e) {} });
   };
   try {
     Object.defineProperty(window, 'nostr', { value: nostr, writable: false, configurable: false });
@@ -900,6 +906,11 @@ class ContentSurface(
       currentUrl?.let { prepareCosmeticScript(web, it) }
       web.reload()
     }
+  }
+
+  fun notifySignerAccountsChanged(accountsJson: String) {
+    val web = webView ?: return
+    web.evaluateJavascript("window.__nccSignerChanged && window.__nccSignerChanged($accountsJson)", null)
   }
 
   fun clearCache() {

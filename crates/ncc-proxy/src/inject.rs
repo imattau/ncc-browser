@@ -54,6 +54,7 @@ impl Injection {
   if (window.__nccInjected) return;
   window.__nccInjected = true;
   var token = "{token}";
+  var accountListeners = new Set();
   function call(method, params) {{
     return fetch("/__ncc/nip07/" + method, {{
       method: "POST",
@@ -81,7 +82,12 @@ impl Injection {
     nip44: {{
       encrypt: function (peer, text) {{ return call("nip44-encrypt", {{ peer: peer, text: text }}); }},
       decrypt: function (peer, text) {{ return call("nip44-decrypt", {{ peer: peer, text: text }}); }}
-    }}
+    }},
+    on: function (event, listener) {{ if (event === "accountsChanged" && typeof listener === "function") accountListeners.add(listener); }},
+    off: function (event, listener) {{ if (event === "accountsChanged") accountListeners.delete(listener); }}
+  }};
+  window.__nccSignerChanged = function (accounts) {{
+    accountListeners.forEach(function (listener) {{ try {{ listener(accounts); }} catch (error) {{}} }});
   }};
   try {{
     Object.defineProperty(window, "nostr", {{ value: nostr, writable: false, configurable: false }});

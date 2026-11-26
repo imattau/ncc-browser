@@ -39,6 +39,14 @@ if (location.protocol === 'ncc-ext:') {
       ipcRenderer.invoke('nip07:nip44-decrypt', peer, ciphertext)
   }
 
+  const accountListeners = new Set<(accounts: string[]) => void>()
+  ipcRenderer.on('nip07:accounts-changed', (_event, accounts: unknown) => {
+    if (!Array.isArray(accounts)) return
+    for (const listener of accountListeners) {
+      try { listener(accounts as string[]) } catch (error) { console.error('window.nostr accountsChanged listener failed', error) }
+    }
+  })
+
   contextBridge.exposeInMainWorld('nostr', {
     getPublicKey: (): Promise<string> => ipcRenderer.invoke('nip07:get-public-key'),
     signEvent: (event: unknown): Promise<unknown> =>
@@ -46,7 +54,13 @@ if (location.protocol === 'ncc-ext:') {
     getRelays: (): Promise<Record<string, { read: boolean; write: boolean }>> =>
       ipcRenderer.invoke('nip07:get-relays'),
     nip04,
-    nip44
+    nip44,
+    on: (event: string, listener: (accounts: string[]) => void): void => {
+      if (event === 'accountsChanged' && typeof listener === 'function') accountListeners.add(listener)
+    },
+    off: (event: string, listener: (accounts: string[]) => void): void => {
+      if (event === 'accountsChanged') accountListeners.delete(listener)
+    }
   })
 
   contextBridge.exposeInMainWorld('webln', {

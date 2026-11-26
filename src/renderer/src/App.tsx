@@ -13,8 +13,19 @@ import { useOverlayController } from './hooks/useOverlayController'
 import { usePasswordPrompts } from './hooks/usePasswordPrompts'
 import { useSignerPrompts } from './hooks/useSignerPrompts'
 import { normalizeHomeSite } from '@shared/home-sites'
+import { listen } from '@tauri-apps/api/event'
 
 export function App() {
+  useEffect(() => {
+    const content = (window as Window & { NccContent?: { notifySignerAccountsChanged?: (accounts: string) => void } }).NccContent
+    if (!content?.notifySignerAccountsChanged) return
+    let unlisten: (() => void) | undefined
+    void listen<string[]>('ncc:signer-accounts-changed', (event) => {
+      content.notifySignerAccountsChanged?.(JSON.stringify(event.payload))
+    }).then((stop) => { unlisten = stop })
+    return () => unlisten?.()
+  }, [])
+
   const data = useBrowserData()
   const {
     state,

@@ -224,6 +224,15 @@ export class BrowserShell {
     return contents && !contents.isDestroyed() ? contents : null
   }
 
+  /** Notify live page providers after the active NIP-07 account changes. */
+  notifySignerAccountsChanged(publicKey: string | null): void {
+    for (const tab of this.tabs) {
+      const contents = tab.view.webContents
+      if (tab.kind !== 'normal' || contents.isDestroyed()) continue
+      contents.send('nip07:accounts-changed', publicKey ? [publicKey] : [])
+    }
+  }
+
   /** Live contents for automation. Private and Tor tabs are never handed out. */
   automationContents(tabId: string): WebContents | null {
     const tab = this.tabs.find((entry) => entry.id === tabId)

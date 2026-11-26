@@ -1166,6 +1166,14 @@ class MainActivity : TauriActivity() {
       runOnUiThread { tabs.firstOrNull { it.id == tabKey }?.resolvePasskey(requestKey, response ?: "{}") }
     }
 
+    @JavascriptInterface
+    fun notifySignerAccountsChanged(accountsJson: String?) {
+      val accounts = accountsJson ?: "[]"
+      runOnUiThread {
+        tabs.filter { !it.isPrivate && !it.isTor }.forEach { it.notifySignerAccountsChanged(accounts) }
+      }
+    }
+
     /** The link another app asked us to open, once. */
     @JavascriptInterface
     fun takeLink(): String? {
