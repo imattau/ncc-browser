@@ -1,5 +1,24 @@
 # Release notes
 
+## 0.47.20 — Tor tabs no longer name the browser
+
+### Privacy
+
+- **Tor tabs, desktop and Android:** requests no longer carry this browser's name. They
+  send a plain Chrome user agent and `Accept-Language: en-US,en;q=0.9`, without client
+  hints or, on Android, the app's package name. Page scripts see the same user agent,
+  and the app-named page objects are gone.
+- **Desktop:** Tor tabs no longer offer passkeys saved in the browser, as on Android.
+- This does not make a Tor tab look like Tor Browser, and a page's own scripts can
+  still tell which browser it is. Workers and blank frames still report the device
+  language. See "Tor tabs" in the README for the other remaining signs.
+
+### Changed
+
+- Outside Tor tabs, sites can still recognise the browser by `NostrNavigator/` in the
+  user agent. **Desktop:** scripts in service workers now see the plain user agent in
+  every tab.
+
 ## 0.47.19 — Android long-press menu
 
 ### Added

@@ -1,5 +1,13 @@
 # Nostr Navigator for Android
 
+## 0.47.20
+
+- Tor tabs no longer tell sites which app you are using. They report an ordinary Chrome
+  browser and US English, without the app's name or your phone's model.
+- This does not make a Tor tab look like Tor Browser: a page's own scripts can still
+  tell it apart, and some parts of a page can still see your language.
+- Other tabs are unchanged.
+
 ## 0.47.19
 
 - Long-press a link to open it in a new tab. The page you are reading stays put, and
