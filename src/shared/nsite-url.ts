@@ -60,7 +60,16 @@ export function parseNsiteHost(hostname: string): NsiteHost | null {
   const host = hostname.toLowerCase()
   const dot = host.indexOf('.')
   if (dot === -1) {
-    return isNostrId(host) ? { pubkey: host, site: null, canonical: false } : null
+    if (isNostrId(host)) return { pubkey: host, site: null, canonical: false }
+
+    // NIP-5A named-site gateway labels concatenate the 50-character base36
+    // pubkey and the site's d-tag, with no separator.
+    if (host.length > 50 && host.length <= 63 && /^[0-9a-z-]+$/.test(host)) {
+      const pubkey = decodeBase36Pubkey(host.slice(0, 50))
+      const site = host.slice(50)
+      if (pubkey && isValidSiteId(site)) return { pubkey, site, canonical: false }
+    }
+    return null
   }
   const pubkey = host.slice(0, dot)
   if (!isNostrId(pubkey)) return null
@@ -92,11 +101,21 @@ export function parseNsiteAddress(raw: string): NsiteAddress {
   const host = parseNsiteHost(url.hostname)
   if (!host) {
     throw new NsiteUrlError(
-      'The host must be an npub (npub1…) or a 64-character hex pubkey, optionally followed by a site id'
+      'The host must be an npub, a 64-character hex pubkey, or a NIP-5A base36 named-site label'
     )
   }
 
   const pathname = url.pathname || '/'
+  if (host.site && !host.canonical) {
+    return {
+      pubkey: host.pubkey,
+      site: host.site,
+      path: pathname,
+      search: url.search,
+      hash: url.hash,
+      internal: false
+    }
+  }
   if (host.canonical) {
     return {
       pubkey: host.pubkey,
@@ -129,6 +148,21 @@ export function parseNsiteAddress(raw: string): NsiteAddress {
   }
 
   return { pubkey: host.pubkey, site, path, search: url.search, hash: url.hash, internal: false }
+}
+
+/** Decode NIP-5A's fixed-width base36 public-key prefix into lowercase hex. */
+export function decodeBase36Pubkey(value: string): string | null {
+  const input = value.toLowerCase()
+  if (!/^[0-9a-z]{50}$/.test(input)) return null
+  let number = 0n
+  for (const character of input) {
+    const digit = character >= '0' && character <= '9'
+      ? character.charCodeAt(0) - 48
+      : character.charCodeAt(0) - 87
+    number = number * 36n + BigInt(digit)
+  }
+  if (number >= (1n << 256n)) return null
+  return number.toString(16).padStart(64, '0')
 }
 
 export interface BuildNsiteAddress {

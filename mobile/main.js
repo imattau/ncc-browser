@@ -20,6 +20,7 @@ import { createSecurityInfo } from './security-info.js'
 import { createPasswords } from './passwords.js'
 import { createPaymentCards } from './payment-cards.js'
 import { createIdentity } from './identity.js'
+import { parseNsiteAddress } from '../src/shared/nsite-url'
 
 const byId = (id) => document.getElementById(id)
 
@@ -1051,21 +1052,13 @@ function parseAddress(input) {
  * when such a site is published.
  */
 function nsiteTarget(input, port) {
-  const rest = input.replace(/^nsite:\/\//i, '').replace(/^\/+/, '')
-  const [pubkey, ...segments] = rest.split('/')
-
-  if (!/^(npub1[0-9a-z]{20,}|[0-9a-f]{64})$/i.test(pubkey || '')) {
-    return { error: 'An nsite address starts with an npub.' }
-  }
-
-  let site = null
-  if (segments.length > 0 && /^[a-z0-9-]{1,13}$/i.test(segments[0]) && !segments[0].endsWith('-')) {
-    site = segments.shift().toLowerCase()
-  }
-
-  const path = segments.length > 0 ? `/${segments.join('/')}` : '/'
-  return {
-    url: `http://${pubkey.toLowerCase()}${site ? `.${site}` : ''}.nsite.localhost:${port}${path}`
+  try {
+    const address = parseNsiteAddress(input)
+    return {
+      url: `http://${address.pubkey.toLowerCase()}${address.site ? `.${address.site}` : ''}.nsite.localhost:${port}${address.path}${address.search}${address.hash}`
+    }
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : 'Invalid nsite address' }
   }
 }
 

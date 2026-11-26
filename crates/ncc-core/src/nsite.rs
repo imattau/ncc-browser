@@ -48,7 +48,8 @@ pub struct NsiteAddress {
     pub hash: String,
 }
 
-/// Parse `nsite://<npub>[/<d>][/<path…>]`, the form a link or a person uses.
+/// Parse `nsite://<npub>[/<d>][/<path…>]` and NIP-5A's concatenated base36 named-site
+/// form `nsite://<pubkeyB36><d>[/<path…>]`.
 ///
 /// The first segment is a site id only when it could be one, so `index.html` is a
 /// root-site path and `blog` is a named site. Deciding properly needs the manifest,
@@ -71,20 +72,33 @@ pub fn parse_nsite_address(raw: &str) -> Option<NsiteAddress> {
     };
 
     let mut segments = before_search.split('/');
-    let pubkey = segments.next().filter(|value| !value.is_empty())?;
-    if !crate::address::is_nostr_id(pubkey) {
-        return None;
-    }
+    let host = segments.next().filter(|value| !value.is_empty())?;
+    let (pubkey, host_site) = if crate::address::is_nostr_id(host) {
+        (host.to_string(), None)
+    } else {
+        let host = host.to_ascii_lowercase();
+        if !(51..=63).contains(&host.len()) || !host.is_ascii() {
+            return None;
+        }
+        let pubkey = decode_base36_pubkey(&host[..50])?;
+        let site = host[50..].to_string();
+        if !is_valid_site_id(&site) {
+            return None;
+        }
+        (pubkey, Some(site))
+    };
 
     let rest: Vec<&str> = segments.collect();
-    let mut site = None;
+    let mut site = host_site;
     let mut path_segments: &[&str] = &rest;
 
-    if let Some(first) = rest.first() {
-        let candidate = first.to_ascii_lowercase();
-        if is_valid_site_id(&candidate) {
-            site = Some(candidate);
-            path_segments = &rest[1..];
+    if site.is_none() {
+        if let Some(first) = rest.first() {
+            let candidate = first.to_ascii_lowercase();
+            if is_valid_site_id(&candidate) {
+                site = Some(candidate);
+                path_segments = &rest[1..];
+            }
         }
     }
 
@@ -95,12 +109,37 @@ pub fn parse_nsite_address(raw: &str) -> Option<NsiteAddress> {
     };
 
     Some(NsiteAddress {
-        pubkey: pubkey.to_string(),
+        pubkey,
         site,
         path,
         search,
         hash,
     })
+}
+
+/// Decode exactly 50 lowercase base36 digits as a big-endian 32-byte pubkey.
+fn decode_base36_pubkey(input: &str) -> Option<String> {
+    if input.len() != 50 || !input.is_ascii() {
+        return None;
+    }
+    let mut bytes = [0u8; 32];
+    for character in input.bytes() {
+        let digit = match character.to_ascii_lowercase() {
+            b'0'..=b'9' => character.to_ascii_lowercase() - b'0',
+            b'a'..=b'z' => character.to_ascii_lowercase() - b'a' + 10,
+            _ => return None,
+        };
+        let mut carry = u16::from(digit);
+        for byte in bytes.iter_mut().rev() {
+            let value = u16::from(*byte) * 36 + carry;
+            *byte = value as u8;
+            carry = value >> 8;
+        }
+        if carry != 0 {
+            return None;
+        }
+    }
+    Some(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -290,6 +329,23 @@ mod tests {
 
         assert!(parse_nsite_address("nsite://example.com/blog").is_none());
         assert!(parse_nsite_address("https://example.com").is_none());
+    }
+
+    #[test]
+    fn parses_nip5a_concatenated_base36_named_site() {
+        let address = parse_nsite_address(
+            "nsite://47h1rs70oqaspur8bichfzalg0wnassb8d7tslfacl7hwyaxhkfreedom-tv",
+        )
+        .expect("NIP-5A named site");
+        assert_eq!(
+            address.pubkey,
+            "a8d1560d6a647d501699167246f237b36fb123f89168fda11dc743533fec7a08"
+        );
+        assert_eq!(address.site.as_deref(), Some("freedom-tv"));
+        assert_eq!(address.path, "/");
+
+        assert!(parse_nsite_address(&format!("nsite://{}{}", "z".repeat(50), "site")).is_none());
+        assert!(parse_nsite_address(&format!("nsite://{}bad-", "1".repeat(50))).is_none());
     }
 
     #[test]

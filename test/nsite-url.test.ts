@@ -15,6 +15,21 @@ describe('nsite:// addresses', () => {
     expect(parseNsiteAddress(`nsite://${PUB}/`)).toMatchObject({ site: null, path: '/' })
   })
 
+  it('parses the NIP-5A concatenated base36 named-site label', () => {
+    const parsed = parseNsiteAddress(
+      'nsite://47h1rs70oqaspur8bichfzalg0wnassb8d7tslfacl7hwyaxhkfreedom-tv'
+    )
+    expect(parsed).toMatchObject({
+      pubkey: 'a8d1560d6a647d501699167246f237b36fb123f89168fda11dc743533fec7a08',
+      site: 'freedom-tv',
+      path: '/',
+      internal: false
+    })
+    expect(buildNsiteUrl(parsed)).toBe(
+      'nsite://a8d1560d6a647d501699167246f237b36fb123f89168fda11dc743533fec7a08/freedom-tv/'
+    )
+  })
+
   it('treats a valid d tag as a named site', () => {
     expect(parseNsiteAddress(`nsite://${PUB}/blog/`)).toMatchObject({ site: 'blog', path: '/' })
     expect(parseNsiteAddress(`nsite://${PUB}/blog`)).toMatchObject({ site: 'blog', path: '/' })
@@ -40,6 +55,8 @@ describe('nsite:// addresses', () => {
     // The URL parser collapses `..`, so the result is an ordinary in-site path.
     expect(parseNsiteAddress(`nsite://${PUB}/../etc/passwd`).path).toBe('/passwd')
     expect(() => parseNsiteAddress('nsite://example.com/')).toThrow()
+    expect(() => parseNsiteAddress(`nsite://${'z'.repeat(50)}site`)).toThrow()
+    expect(() => parseNsiteAddress(`nsite://${'1'.repeat(50)}bad-`)).toThrow()
     expect(() => parseNsiteAddress('https://example.com/')).toThrow()
   })
 
