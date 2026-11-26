@@ -35,9 +35,6 @@ export function PasswordSavePrompt({
     <div
       className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto bg-[color:var(--color-scrim-strong)] px-4 py-[9vh] backdrop-blur-sm"
       data-password-save-prompt
-      onMouseDown={() => {
-        if (!busy) onRespond('dismiss')
-      }}
     >
       <div
         ref={panelRef}
@@ -45,7 +42,6 @@ export function PasswordSavePrompt({
         aria-modal="true"
         aria-label="Save password"
         className="ncc-fade-in w-full max-w-[420px] overflow-hidden rounded-2xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] shadow-[0_30px_100px_rgba(0,0,0,0.65)]"
-        onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="flex items-start gap-3 border-b border-[color:var(--color-line)] px-4 py-3">
           <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[color:var(--color-accent)]/10 text-[color:var(--color-accent)]">
@@ -121,7 +117,7 @@ export function PasswordSavePrompt({
             onClick={() => onRespond('save')}
             className="rounded-lg bg-[color:var(--color-accent)] px-3.5 py-1.5 text-ui-11 font-semibold text-[color:var(--color-on-accent)] disabled:opacity-50"
           >
-            {busy ? 'Saving…' : request.mode === 'update' ? 'Update password' : 'Save login'}
+            {busy ? 'Saving…' : error ? 'Try again' : request.mode === 'update' ? 'Update password' : 'Save login'}
           </button>
         </div>
       </div>

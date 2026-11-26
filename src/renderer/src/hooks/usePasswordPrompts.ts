@@ -175,7 +175,12 @@ export function usePasswordPrompts({
       closeOverlay()
       const result = await window.ncc.passwordsFill(id)
       if (!result.ok) setPasswordToast({ tone: 'error', message: result.error ?? 'Could not fill' })
-      else setPasswordToast({ tone: 'ok', message: 'Login filled.' })
+      else {
+        setPasswordToast({
+          tone: 'ok',
+          message: result.usernameOnly ? 'Username filled. Continue, then fill the password.' : 'Login filled.'
+        })
+      }
       await refreshPasswords()
     },
     [closeOverlay, refreshPasswords]
@@ -222,6 +227,8 @@ export function usePasswordPrompts({
         setPasswordSave(null)
         closeOverlay()
         await refreshPasswords()
+      } catch (error) {
+        setPasswordSaveError(messageOf(error))
       } finally {
         setPasswordSaveBusy(false)
       }

@@ -6,26 +6,22 @@ export function createPasswords(deps) {
     getTabs, getActiveUrl, getActiveTabId
   } = deps
   let vaultStatus = null
-  let pendingSave = null
   let editingId = null
   let revealedPassword = null
   let revealTimer = null
   let revealRequest = 0
   let editPasswordRevealed = false
   let deviceWaiter = null
-  let fillNotice = ''
-  let deletingId = null
+  /** The save or delete in flight. Only one runs at a time. */
+  let writing = null
+  /** Counts editor openings: a login being added has no id to recognise it by. */
+  let editorOpening = 0
   let toastTimer = null
   /** Ask for the device credential: the shell cannot check it, Android can. */
   function deviceCredentialReply(ok) {
     const waiter = deviceWaiter
     deviceWaiter = null
     waiter?.(ok === true)
-  }
-
-  function reportFillFailure() {
-    fillNotice = 'No login form was found on this page.'
-    showPanel('password-fill')
   }
 
   function askDeviceCredential(purpose = 'password-vault') {
@@ -513,8 +509,7 @@ export function createPasswords(deps) {
     const list = byId('fill-list')
     const note = byId('fill-note')
     list.textContent = ''
-    note.textContent = fillNotice
-    fillNotice = ''
+    note.textContent = ''
 
     if (!getActiveUrl()) {
       note.textContent = 'Open a page first.'
@@ -566,12 +561,14 @@ export function createPasswords(deps) {
       list.appendChild(
         vaultRow(entry, async (chosen) => {
           try {
+            const url = getActiveUrl()
             const credentials = await invoke('vault_fill', {
               id: chosen.id,
-              url: getActiveUrl(),
+              url,
               kind: activeKind()
             })
-            content.fillLogin(getActiveTabId(), credentials.username, credentials.password)
+            // The page URL goes along: native code fills only if the tab is still on it.
+            content.fillLogin(getActiveTabId(), credentials.username, credentials.password, url)
             closePanel()
           } catch (error) {
             note.textContent = String(error)
@@ -584,6 +581,7 @@ export function createPasswords(deps) {
   function openNewLogin(origin) {
     setEditPasswordRevealed(false)
     editingId = null
+    editorOpening += 1
     byId('edit-heading').textContent = 'Add login'
     byId('edit-origin').value = origin || ''
     byId('edit-title').value = ''
@@ -593,7 +591,7 @@ export function createPasswords(deps) {
     byId('edit-totp').value = ''
     byId('edit-note').textContent = ''
     byId('edit-delete').hidden = true
-    showDeleteProgress()
+    showEditorProgress()
     showPanel('password-edit')
   }
 
@@ -602,6 +600,7 @@ export function createPasswords(deps) {
       const entry = await invoke('vault_entry', { id })
       setEditPasswordRevealed(false)
       editingId = id
+      editorOpening += 1
       byId('edit-heading').textContent = 'Edit login'
       byId('edit-origin').value = entry.origin
       byId('edit-title').value = entry.title
@@ -611,7 +610,7 @@ export function createPasswords(deps) {
       byId('edit-totp').value = entry.totp
       byId('edit-note').textContent = ''
       byId('edit-delete').hidden = false
-      showDeleteProgress()
+      showEditorProgress()
       showPanel('password-edit')
     } catch (error) {
       byId('vault-note').textContent = String(error)
@@ -622,30 +621,24 @@ export function createPasswords(deps) {
   function renderPasswordEdit() {}
 
   async function saveEdits() {
-    const note = byId('edit-note')
-    try {
-      const draft = {
-        id: editingId,
-        origin: byId('edit-origin').value.trim(),
-        title: byId('edit-title').value.trim(),
-        username: byId('edit-username').value.trim(),
-        password: byId('edit-password').value,
-        notes: byId('edit-notes').value,
-        totp: byId('edit-totp').value.trim()
-      }
-      const outcome = await invoke('vault_save', { draft })
-      if (!outcome.ok) {
-        note.textContent = outcome.error || 'Could not save that login.'
-        return
-      }
-      pendingSave = null
-      showPanel('passwords')
-      byId('vault-note').textContent = outcome.pending
-        ? 'Saved locally; relay sync will retry.'
-        : 'Saved.'
-    } catch (error) {
-      note.textContent = String(error)
+    if (writing) return
+    const draft = {
+      id: editingId,
+      origin: byId('edit-origin').value.trim(),
+      title: byId('edit-title').value.trim(),
+      username: byId('edit-username').value.trim(),
+      password: byId('edit-password').value,
+      notes: byId('edit-notes').value,
+      totp: byId('edit-totp').value.trim()
     }
+    const name = draft.title || draft.origin
+    const { outcome, stillEditing } = await runWrite('save', () => invoke('vault_save', { draft }))
+
+    if (!outcome.ok) {
+      reportWriteFailure(stillEditing, name, 'saved', outcome.error || 'Could not save that login.')
+      return
+    }
+    await reportWriteSuccess(stillEditing, outcome, 'Saved', name)
   }
 
   /** An icon and a message, so success and failure are told apart at a glance. */
@@ -676,68 +669,101 @@ export function createPasswords(deps) {
     toastTimer = setTimeout(hideVaultToast, tone === 'ok' ? 4000 : 10_000)
   }
 
-  /** The editor is busy only while it shows the login being deleted. */
-  function showDeleteProgress() {
-    const busy = deletingId !== null && deletingId === editingId
-    const button = byId('edit-delete')
-    button.textContent = ''
-    if (busy) {
-      const spinner = document.createElement('span')
-      spinner.className = 'spinner'
-      spinner.setAttribute('aria-hidden', 'true')
-      button.appendChild(spinner)
+  const WAITING_FOR_SAVE = 'Waiting for the last save to finish.'
+  const WRITE_BUTTONS = {
+    save: { id: 'edit-save', idle: 'Save login', busy: 'Saving…' },
+    delete: { id: 'edit-delete', idle: 'Delete login', busy: 'Deleting…' }
+  }
+
+  /** Whether the editor is showing the login that is being saved or deleted. */
+  function writingHere() {
+    if (!writing) return false
+    return writing.opening === editorOpening || (writing.id !== null && writing.id === editingId)
+  }
+
+  function showEditorProgress() {
+    const here = writingHere()
+    for (const [kind, label] of Object.entries(WRITE_BUTTONS)) {
+      const busy = here && writing.kind === kind
+      const button = byId(label.id)
+      button.textContent = ''
+      if (busy) {
+        const spinner = document.createElement('span')
+        spinner.className = 'spinner'
+        spinner.setAttribute('aria-hidden', 'true')
+        button.appendChild(spinner)
+      }
+      button.append(busy ? label.busy : label.idle)
+      button.setAttribute('aria-busy', String(busy))
     }
-    button.append(busy ? 'Deleting…' : 'Delete login')
-    button.setAttribute('aria-busy', String(busy))
-    // One delete at a time, and a save must not run against a login on its way out.
-    button.disabled = deletingId !== null
-    byId('edit-save').disabled = busy
-    byId('edit-generate').disabled = busy
+    // A save must not run against a login on its way out, or twice for a new one.
+    byId('edit-save').disabled = here || writing?.kind === 'save'
+    byId('edit-delete').disabled = writing !== null
+    byId('edit-generate').disabled = here
+    // The values are already on their way: a later change would be silently dropped.
+    for (const field of ['origin', 'title', 'username', 'password', 'notes', 'totp']) {
+      byId(`edit-${field}`).readOnly = here
+    }
+    const note = byId('edit-note')
+    if (writing?.kind === 'save' && !here) note.textContent = WAITING_FOR_SAVE
+    else if (note.textContent === WAITING_FOR_SAVE) note.textContent = ''
+  }
+
+  /** Run a save or delete with the editor showing that it is working. */
+  async function runWrite(kind, call) {
+    const started = { kind, id: editingId, opening: editorOpening }
+    writing = started
+    hideVaultToast()
+    showEditorProgress()
+    byId('edit-note').textContent = 'This can take a few seconds while relays respond.'
+    let outcome
+    try {
+      outcome = await call()
+    } catch (error) {
+      outcome = { ok: false, error: String(error) }
+    }
+    // The person may have gone back, or opened another login, while this ran.
+    const stillEditing = writingHere() && !byId('password-edit').hidden
+    writing = null
+    showEditorProgress()
+    return { outcome, stillEditing }
+  }
+
+  function reportWriteFailure(stillEditing, name, verb, reason) {
+    if (stillEditing) {
+      showResult(byId('edit-note'), 'error', reason)
+      byId('edit-note').scrollIntoView({ block: 'nearest' })
+    } else {
+      showVaultToast('error', `“${name}” was not ${verb}. ${reason}`)
+    }
+  }
+
+  async function reportWriteSuccess(stillEditing, outcome, verb, name) {
+    showVaultToast(
+      outcome.pending ? 'warn' : 'ok',
+      outcome.pending
+        ? `${verb} “${name}” on this device. Relay sync will retry.`
+        : `${verb} “${name}”.`
+    )
+    if (stillEditing) showPanel('passwords')
+    else await vaultSynced()
   }
 
   async function deleteEditing() {
-    if (!editingId || deletingId !== null) return
+    if (!editingId || writing) return
     const id = editingId
     const name = byId('edit-title').value.trim() || byId('edit-origin').value.trim()
     const username = byId('edit-username').value.trim()
     if (!window.confirm(`Delete the login “${name}”${username ? ` for ${username}` : ''}? This cannot be undone.`)) return
 
-    deletingId = id
-    hideVaultToast()
-    showDeleteProgress()
-    byId('edit-note').textContent = 'This can take a few seconds while relays respond.'
-    let outcome
-    try {
-      outcome = await invoke('vault_remove', { id })
-    } catch (error) {
-      outcome = { ok: false, error: String(error) }
-    }
-    deletingId = null
-
-    // The person may have gone back, or opened another login, while this ran.
-    const stillEditing = editingId === id && !byId('password-edit').hidden
-    if (editingId === id && outcome.ok) editingId = null
-    showDeleteProgress()
+    const { outcome, stillEditing } = await runWrite('delete', () => invoke('vault_remove', { id }))
 
     if (!outcome.ok) {
-      const reason = outcome.error || 'Could not delete that login.'
-      if (stillEditing) {
-        showResult(byId('edit-note'), 'error', reason)
-        byId('edit-note').scrollIntoView({ block: 'nearest' })
-      } else {
-        showVaultToast('error', `“${name}” was not deleted. ${reason}`)
-      }
+      reportWriteFailure(stillEditing, name, 'deleted', outcome.error || 'Could not delete that login.')
       return
     }
-
-    showVaultToast(
-      outcome.pending ? 'warn' : 'ok',
-      outcome.pending
-        ? `Deleted “${name}” on this device. Relay sync will retry.`
-        : `Deleted “${name}”.`
-    )
-    if (stillEditing) showPanel('passwords')
-    else await vaultSynced()
+    if (editingId === id) editingId = null
+    await reportWriteSuccess(stillEditing, outcome, 'Deleted', name)
   }
 
   async function generateIntoEdit() {
@@ -752,81 +778,29 @@ export function createPasswords(deps) {
     }
   }
 
-  function renderPasswordSave() {
-    if (!pendingSave) {
-      goBackPanel()
-      return
-    }
-    byId('save-origin').textContent = pendingSave.origin
-    byId('save-username').textContent = pendingSave.username
-      ? `Account: ${pendingSave.username}`
-      : 'No username was captured.'
-    byId('save-accept').textContent =
-      pendingSave.mode === 'update' ? 'Update saved password' : 'Save login'
-    byId('save-note').textContent = pendingSave.locked
-      ? 'The vault is locked; you will be asked to unlock before saving.'
-      : ''
+  /* What the login sheet needs from the vault. */
+
+  async function status() {
+    // Always ask: the idle timer may have locked the vault since the last look.
+    vaultStatus = await invoke('vault_status').catch(() => vaultStatus)
+    return vaultStatus
   }
 
-  async function respondSave(action) {
-    if (!pendingSave) return
-    const request = pendingSave
+  async function ensureUnlocked() {
+    if ((await status())?.unlocked) return { ok: true }
+    if (!(await askDeviceCredential())) return { ok: false, error: 'Unlock was cancelled.' }
     try {
-      if (action === 'save' && !vaultStatus?.unlocked) {
-        const approved = await askDeviceCredential()
-        if (!approved) return
-        vaultStatus = await invoke('vault_unlock')
-        if (!vaultStatus.unlocked) {
-          byId('save-note').textContent = 'Unlock the vault first.'
-          return
-        }
-      }
-      const outcome = await invoke('vault_respond', { id: request.id, action })
-      if (!outcome.ok && outcome.error) {
-        byId('save-note').textContent = outcome.error
-        return
-      }
-      pendingSave = null
-      vaultStatus = await invoke('vault_status').catch(() => vaultStatus)
-      closePanel()
+      vaultStatus = await invoke('vault_unlock')
     } catch (error) {
-      byId('save-note').textContent = String(error)
+      return { ok: false, error: String(error) }
     }
-  }
-
-  /**
-   * A submitted login the native hook reported. Only a normal tab can get here: the hook
-   * is not installed in private or Tor tabs.
-   */
-  async function handlePasswordCapture(state) {
-    const tab = getTabs().find((entry) => entry.id === state.tab)
-    if (!tab || tab.kind !== 'normal') return
-    // The URL stamped at submit time, not the tab's current one: a login form often
-    // redirects, and the credential belongs to the page that asked for it.
-    const url = state.url || tab.url
-    if (!url) return
-
-    try {
-      const pending = await invoke('vault_capture', {
-        url,
-        kind: tab.kind || 'normal',
-        title: state.title || '',
-        username: state.username || '',
-        password: state.password || ''
-      })
-      if (!pending) return
-      pendingSave = pending
-      vaultStatus = await invoke('vault_status').catch(() => vaultStatus)
-      showPanel('password-save')
-    } catch {
-      // An insecure page or a second prompt is not an error worth showing.
-    }
+    return vaultStatus.unlocked ? { ok: true } : { ok: false, error: vaultStatus.error || 'Unlock the vault first.' }
   }
 
   return {
-    deviceCredentialReply, reportFillFailure, loadPasswords, renderVaultList, vaultSynced, unlockVault, lockVault,
-    handleWebauthnRequest, saveVaultConfig, renderPasswordFill, openNewLogin, renderPasswordSave, renderPasswordEdit,
-    saveEdits, openPasswordEdit, deleteEditing, generateIntoEdit, respondSave, handlePasswordCapture, onPanelChange, onAppBackground,
+    deviceCredentialReply, status, ensureUnlocked, loadPasswords, renderVaultList, vaultSynced, unlockVault, lockVault,
+    handleWebauthnRequest, saveVaultConfig, renderPasswordFill, openNewLogin, renderPasswordEdit,
+    saveEdits, openPasswordEdit, deleteEditing, generateIntoEdit, onPanelChange, onAppBackground,
     toggleEditPasswordReveal: () => setEditPasswordRevealed(!editPasswordRevealed)
   }
 }

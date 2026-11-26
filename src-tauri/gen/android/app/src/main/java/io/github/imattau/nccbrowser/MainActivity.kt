@@ -73,6 +73,8 @@ class MainActivity : TauriActivity() {
   private var backCallback: OnBackPressedCallback? = null
   private var barHeight = 0
   private var expanded = true
+  /** Extra shell height above the bar for a login prompt, with the page still live. */
+  private var dockHeight = 0
   private var barAtBottom = true
 
   private val tabs = mutableListOf<ContentSurface>()
@@ -473,7 +475,9 @@ class MainActivity : TauriActivity() {
     expanded = value
     val chromeView = shell ?: return
     val params = chromeView.layoutParams as? LinearLayout.LayoutParams ?: return
-    params.height = if (value) ViewGroup.LayoutParams.MATCH_PARENT else barHeight
+    // A full panel replaces the prompt; the shell asks for it again afterwards.
+    if (value) dockHeight = 0
+    params.height = shellHeight()
     chromeView.layoutParams = params
     chromeView.requestLayout()
 
@@ -482,6 +486,22 @@ class MainActivity : TauriActivity() {
     } else {
       active()?.show()
     }
+  }
+
+  private fun shellHeight(): Int =
+    if (expanded) ViewGroup.LayoutParams.MATCH_PARENT else barHeight + dockHeight
+
+  /** Grow or shrink the collapsed shell by `height` dp, never past half the window. */
+  private fun applyDock(height: Int) {
+    val wanted = (height.coerceAtLeast(0) * resources.displayMetrics.density).toInt()
+    val room = (column?.height ?: 0) / 2
+    dockHeight = if (room > 0) wanted.coerceAtMost(room) else wanted
+    if (expanded) return
+    val chromeView = shell ?: return
+    val params = chromeView.layoutParams as? LinearLayout.LayoutParams ?: return
+    params.height = shellHeight()
+    chromeView.layoutParams = params
+    chromeView.requestLayout()
   }
 
   private fun applyBarPosition(position: String) {
@@ -493,9 +513,9 @@ class MainActivity : TauriActivity() {
     columnView.removeAllViews()
     if (barAtBottom) {
       columnView.addView(host, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-      columnView.addView(chromeView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, if (expanded) ViewGroup.LayoutParams.MATCH_PARENT else barHeight))
+      columnView.addView(chromeView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, shellHeight()))
     } else {
-      columnView.addView(chromeView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, if (expanded) ViewGroup.LayoutParams.MATCH_PARENT else barHeight))
+      columnView.addView(chromeView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, shellHeight()))
       columnView.addView(host, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
     }
   }
@@ -1145,11 +1165,12 @@ class MainActivity : TauriActivity() {
     }
 
     @JavascriptInterface
-    fun fillLogin(tabId: String?, username: String?, password: String?) {
+    fun fillLogin(tabId: String?, username: String?, password: String?, pageUrl: String?) {
       val id = tabId ?: return
       val secret = password ?: return
       val user = username ?: ""
-      runOnUiThread { tabs.firstOrNull { it.id == id }?.fillLogin(user, secret) }
+      val page = pageUrl ?: return
+      runOnUiThread { tabs.firstOrNull { it.id == id }?.fillLogin(user, secret, page) }
     }
 
     @JavascriptInterface
@@ -1370,6 +1391,11 @@ class MainActivity : TauriActivity() {
       } catch (_: OutOfMemoryError) {
         null
       }
+    }
+
+    @JavascriptInterface
+    fun dock(height: Int) {
+      runOnUiThread { applyDock(height) }
     }
 
     @JavascriptInterface

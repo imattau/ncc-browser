@@ -406,17 +406,24 @@ unavailable for autofill. The limit is reported as "set up a locally stored iden
 deliberate: a system service sees only a web domain, cannot tell a private tab from a
 normal one, and cannot express `ncc://` origins. Instead:
 
-- Every normal tab gets a small hook after the page finishes loading. It reports a
-  login only on a *trusted submit*, the same rule the desktop preload uses.
-- The report goes to Kotlin through a `JavascriptInterface` object that is **write-only**:
-  it has one method and returns nothing, so a page can offer a capture but cannot read
-  a credential. A hostile page can therefore spam save prompts; the user confirms each
+- Every normal tab gets a hook before the page loads. Finding, reading and filling
+  forms is `src/shared/login-forms.ts`, which the desktop preload imports and
+  `npm run login-hook:build` compiles into the Android asset `login-forms.js`
+  (`mobile:build` runs it). A login is read on a trusted submit, Enter or sign-in
+  button, or when a typed password leaves the page after one.
+- The report goes to Kotlin through a **one-way** web message listener: nothing is sent
+  back. Messages from embedded frames are dropped, and the login belongs to the origin
+  that sent it. A hostile page can still spam save prompts; the user confirms each
   one, captures are deduplicated, and `neverSave` applies.
 - Filling is the opposite direction: the user picks an entry, the origin is checked in
-  Rust, and Kotlin injects a one-shot script with the values inline. There is no
-  page-callable function that returns a password.
+  Rust, and Kotlin injects a one-shot script with the values inline. Kotlin and that
+  script both check the tab is still on the matched origin. There is no page-callable
+  function that returns a password.
 - A captured password crosses the shell's command call on its way to Rust (the shell is
   our own bundle, not the page), and the save prompt then holds only the request id.
+- The offers are a sheet beside the address bar (`mobile/login-dock.js`). The native
+  `dock(height)` call grows the shell by that much, so the page stays usable above it
+  and the keyboard lifts both.
 - Private and Tor tabs never get the hook, and the vault refuses those tab kinds even
   if the shell asks. `http://` pages are refused; `ncc://` pages are allowed (the npub
   authenticates the locator), `nsite://` is refused for the format reason above.

@@ -300,9 +300,15 @@ the author, timestamps and the approximate size.
 - **Toolbar popover** lists logins matching the active origin. Clicking one fills the
   visible login form in the isolated content preload; the password never passes through
   the chrome renderer. Fill is never automatic and never submits the form.
-- **Save prompt** appears after a real form submit. It shows the exact origin and
-  username, never the password, and offers Save/Update, Never for this site, or Not now.
-  Private tabs and Tor tabs never offer to save.
+- **Beside the field**, tapping into a login field offers the saved accounts for that
+  site: a list under the field on desktop, and a sheet above the address bar on Android
+  that leaves the page usable. A sign-in that asks for the account first is filled one
+  step at a time.
+- **Save prompt** appears after a login is sent: a form submit, Enter, a sign-in button,
+  or a form that disappears after one. It shows the exact origin and username, never the
+  password, and offers Save/Update, Never for this site, or Not now. A save that fails
+  can be tried again. Private tabs and Tor tabs never offer to save. Logins inside
+  embedded frames are not detected or filled.
 - **TOTP** secrets stay inside the encrypted vault. Codes are generated in the main
   process and can be displayed or copied from the toolbar and Settings.
 - **Storage** uses the browser relays plus the identity's NIP-65 write relays, with an

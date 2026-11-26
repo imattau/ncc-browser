@@ -300,75 +300,34 @@ private const val PASSKEY_SHIM = """
 """
 
 /**
- * Reports a submitted login to the native side. Scoped to a window flag so a second
- * page load in the same document does not double-report.
+ * Tells the shell about logins. It runs after `login-forms.js` (compiled from
+ * `src/shared/login-forms.ts`) inside one function, so the page cannot reach either.
  */
-private const val PASSWORD_HOOK = """
-(function () {
-  if (window.__nccPasswordHook) return
-  window.__nccPasswordHook = true
-  var last = { key: '', at: 0 }
-
-  function visible(el) {
-    if (!el) return false
-    if (el.hidden || el.disabled || el.readOnly) return false
-    var style = getComputedStyle(el)
-    if (style.display === 'none' || style.visibility === 'hidden') return false
-    return el.getClientRects().length > 0
+private const val LOGIN_HOOK = """
+  var port = window.__nccLogin
+  if (!port || window.top !== window) return
+  function send(message) {
+    try { port.postMessage(JSON.stringify(message)) } catch (error) {}
   }
-
-  function passwordInputs(root) {
-    return [].slice.call(root.querySelectorAll('input')).filter(function (input) {
-      return input.type === 'password' && visible(input)
-    })
-  }
-
-  function usernameFor(field, root) {
-    var inputs = [].slice.call(root.querySelectorAll('input'))
-    var candidates = inputs.filter(function (input) {
-      return input !== field && visible(input) &&
-        (input.autocomplete === 'username' || input.type === 'email' ||
-         input.type === 'text' || input.type === 'tel' || !input.type)
-    })
-    var explicit = candidates.filter(function (input) {
-      return input.autocomplete === 'username'
-    })[0]
-    if (explicit) return explicit
-    var before = candidates.filter(function (input) {
-      return (field.compareDocumentPosition(input) & 4) !== 0
-    })
-    return before[before.length - 1] || candidates[0] || null
-  }
-
-  document.addEventListener('submit', function (event) {
-    if (!event.isTrusted) return
-    var form = event.target
-    if (!(form instanceof HTMLFormElement)) return
-    var fields = passwordInputs(form)
-    var values = fields.map(function (field) { return field.value }).filter(function (value) {
-      return value.length > 0
-    })
-    if (values.length === 0) return
-    if (new Set(values).size > 1) return
-    var password = values[0]
-    var field = fields.filter(function (candidate) { return candidate.value === password })[0]
-    if (!field) return
-    var user = usernameFor(field, form)
-    var key = (user ? user.value : '') + '\u0000' + password
-    var now = Date.now()
-    if (last.key === key && now - last.at < 2500) return
-    last.key = key
-    last.at = now
-    if (window.NccVault && window.NccVault.capture) {
-      window.NccVault.capture(
-        user ? user.value.slice(0, 320) : '',
-        password.slice(0, 4096),
-        (document.title || '').slice(0, 200)
-      )
-    }
-  }, true)
-})()
+  nccLogin.watchLogins({
+    capture: function (login) {
+      send({ type: 'capture', username: login.username, password: login.password, title: (document.title || '').slice(0, 200) })
+    },
+    username: function (username) { send({ type: 'username', username: username }) },
+    focus: function (field) { send({ type: 'focus', login: !!field }) }
+  })
 """
+
+/** The origin a login belongs to. NCC pages are plain HTTP on a loopback name. */
+private fun loginOrigin(raw: String?): String? {
+  val uri = raw?.let { try { Uri.parse(it) } catch (_: Exception) { null } } ?: return null
+  val scheme = uri.scheme?.lowercase() ?: return null
+  val host = uri.host?.lowercase() ?: return null
+  if (scheme != "https" && scheme != "http") return null
+  val standard = if (scheme == "https") 443 else 80
+  val port = if (uri.port == -1 || uri.port == standard) "" else ":${uri.port}"
+  return "$scheme://$host$port"
+}
 
 /** Detect card forms from their combined autocomplete, labels, and field layout. */
 private const val PAYMENT_HOOK = """
@@ -550,42 +509,48 @@ class ContentSurface(
   private fun emptyResponse(): WebResourceResponse =
     WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
 
+  /** Compiled from `src/shared/login-forms.ts` by `scripts/build-login-hook.mjs`. */
+  private val loginLibrary: String by lazy {
+    container.context.assets.open("login-forms.js").bufferedReader().use { it.readText() }
+  }
+
   /**
-   * Expose the one thing a page may tell us about a login: what was submitted.
+   * Hear about logins from the page, one way only: nothing from the vault is sent back.
    *
-   * The object is reachable from page JavaScript (Android has no isolated world), so
-   * it is deliberately write-only and carries no secret from the vault. A hostile page
-   * can offer captures; it cannot read one, and the user confirms every save.
+   * A message listener, not a JavaScript interface, because it says which frame spoke.
+   * An embedded frame must not be able to offer a "new password" for the page around it,
+   * and the login is stored under the origin that sent it, even if the tab has moved on.
    */
   private fun installPasswordBridge(web: WebView) {
     if (isPrivate || isTor) return
-    web.addJavascriptInterface(
-      object {
-        @JavascriptInterface
-        fun capture(username: String?, password: String?, title: String?) {
-          if (destroyed) return
-          val secret = password?.take(4096) ?: return
-          if (secret.isEmpty()) return
-          val user = username?.take(320) ?: ""
-          val heading = title?.take(200) ?: ""
-          // The page being submitted, read now: a submit that navigates updates
-          // `currentUrl` before the posted lambda runs, and a login must be stored
-          // under the form's origin, not the page it redirected to.
-          val page = currentUrl ?: ""
-          Handler(Looper.getMainLooper()).post {
-            emit(
-              JSONObject()
-                .put("type", "capture")
-                .put("username", user)
-                .put("password", secret)
-                .put("title", heading)
-                .put("url", page),
-            )
+    if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER) ||
+      !WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) return
+    try {
+      WebViewCompat.addWebMessageListener(web, "__nccLogin", setOf("*")) { _, message, sourceOrigin, isMainFrame, _ ->
+        if (!isMainFrame || destroyed) return@addWebMessageListener
+        val origin = loginOrigin(sourceOrigin.toString()) ?: return@addWebMessageListener
+        val request = try { JSONObject(message.data ?: return@addWebMessageListener) } catch (_: Exception) { return@addWebMessageListener }
+        val event = JSONObject().put("url", origin)
+        when (request.optString("type")) {
+          "capture" -> {
+            val secret = request.optString("password").take(4096)
+            if (secret.isEmpty()) return@addWebMessageListener
+            event.put("type", "capture")
+              .put("username", request.optString("username").take(320))
+              .put("password", secret)
+              .put("title", request.optString("title").take(200))
           }
+          "username" -> event.put("type", "login-username").put("username", request.optString("username").take(320))
+          "focus" -> event.put("type", "login-focus").put("login", request.optBoolean("login"))
+          else -> return@addWebMessageListener
         }
-      },
-      "NccVault",
-    )
+        emit(event)
+      }
+      // Registered before the page loads, so a quick sign-in is not missed.
+      WebViewCompat.addDocumentStartJavaScript(web, "(function () {\n$loginLibrary\n$LOGIN_HOOK\n})()", setOf("*"))
+    } catch (error: Exception) {
+      android.util.Log.w("NccPasswords", "login detection is unavailable", error)
+    }
   }
 
   private fun installPaymentBridge(web: WebView) {
@@ -795,59 +760,27 @@ class ContentSurface(
 
   /**
    * Fill the login form the user chose an entry for. Injected as a one-shot script:
-   * there is no page-callable function that returns a credential.
+   * there is no page-callable function that returns a credential. `expectedUrl` is the
+   * page the login was matched to; a tab that has since moved elsewhere gets nothing.
    */
-  fun fillLogin(username: String, password: String) {
+  fun fillLogin(username: String, password: String, expectedUrl: String) {
     val web = webView ?: return
     if (isPrivate || isTor || destroyed) return
+    fun report(result: String) = emit(JSONObject().put("type", "filled").put("result", result))
 
-    val user = JSONObject.quote(username)
-    val secret = JSONObject.quote(password)
-    val script =
-      """
-      (function () {
-        function visible(el) {
-          if (!el) return false
-          if (el.hidden || el.disabled || el.readOnly) return false
-          var style = getComputedStyle(el)
-          if (style.display === 'none' || style.visibility === 'hidden') return false
-          return el.getClientRects().length > 0
-        }
-        var inputs = [].slice.call(document.querySelectorAll('input'))
-        var passwords = inputs.filter(function (input) {
-          return input.type === 'password' && visible(input)
-        })
-        var field = passwords[0]
-        if (!field) return false
-        var candidates = inputs.filter(function (input) {
-          return input !== field && visible(input) &&
-            (input.autocomplete === 'username' || input.type === 'email' ||
-             input.type === 'text' || input.type === 'tel' || !input.type)
-        })
-        var explicit = candidates.filter(function (input) {
-          return input.autocomplete === 'username'
-        })[0]
-        var before = candidates.filter(function (input) {
-          return (field.compareDocumentPosition(input) & 4) !== 0
-        })
-        var userField = explicit || before[before.length - 1] || candidates[0] || null
-        var setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
-        function fill(el, value) {
-          if (!el || !value) return
-          setter.call(el, value)
-          el.dispatchEvent(new Event('input', { bubbles: true }))
-          el.dispatchEvent(new Event('change', { bubbles: true }))
-        }
-        fill(userField, $user)
-        fill(field, $secret)
-        field.focus()
-        return true
-      })()
-      """.trimIndent()
-
-    web.evaluateJavascript(script) { result ->
-      emit(JSONObject().put("type", "filled").put("ok", result == "true"))
+    val expected = loginOrigin(expectedUrl)
+    if (expected == null || loginOrigin(web.url) != expected) {
+      report("moved")
+      return
     }
+    val script =
+      "(function () {\n" +
+        "if (location.origin !== ${JSONObject.quote(expected)}) return 'moved'\n" +
+        "$loginLibrary\n" +
+        "return nccLogin.fillLogin(${JSONObject.quote(username)}, ${JSONObject.quote(password)})\n" +
+        "})()"
+
+    web.evaluateJavascript(script) { result -> report(result?.trim('"') ?: "none") }
   }
 
   fun fillPaymentCard(cardJson: String, expectedOrigin: String) {
@@ -1541,11 +1474,8 @@ class ContentSurface(
           }
         }
 
-        if (PASSWORD_HOOK.isNotBlank() && !isPrivate && !isTor) {
-          // Every page, not just NCC ones: clearnet pages are where most logins are,
-          // and they do not come through the proxy, so the hook is installed here.
-          view.evaluateJavascript(PASSWORD_HOOK, null)
-          if (url?.startsWith("https://", true) == true) view.evaluateJavascript(PAYMENT_HOOK, null)
+        if (!isPrivate && !isTor && url?.startsWith("https://", true) == true) {
+          view.evaluateJavascript(PAYMENT_HOOK, null)
         }
       }
 

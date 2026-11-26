@@ -232,6 +232,14 @@ export interface PasswordSaveResult {
 export interface PasswordFillResult {
   ok: boolean
   error?: string
+  /** A sign-in that asks for the password on a later step. */
+  usernameOnly?: boolean
+}
+
+/** What the page may be shown beside a focused login field: never a password. */
+export interface PasswordSuggestions {
+  locked: boolean
+  items: Array<{ id: string; label: string; detail: string }>
 }
 
 export interface PasswordCopyResult {

@@ -31,6 +31,8 @@ use crate::settings::SettingsStore;
 
 const RELAY_WAIT: Duration = Duration::from_secs(8);
 const PENDING_TTL: u64 = 120;
+/// How long an account name from a username-only step waits for its password.
+const USERNAME_TTL: u64 = 600;
 const LOCKED: &str = "Unlock the password manager first";
 const NO_IDENTITY: &str =
     "Unlock a locally stored identity first: the vault is encrypted to your key.";
@@ -109,6 +111,8 @@ struct Pending {
     username: String,
     password: String,
     expires: u64,
+    /// Being saved now, so a second tap must not start another write.
+    saving: bool,
 }
 
 /// What this device knows about one encrypted part of the vault.
@@ -277,6 +281,8 @@ struct State {
     /// The highest part count any payload has stated.
     declared: usize,
     pending: HashMap<String, Pending>,
+    /// Account names from username-only steps, by origin, with when they expire.
+    usernames: HashMap<String, (String, u64)>,
     syncing: bool,
     error: Option<String>,
     last_synced_at: Option<u64>,
@@ -807,6 +813,20 @@ impl VaultService {
             .ok_or_else(|| "That login no longer exists".to_string())
     }
 
+    /// The account name typed on a sign-in step that has no password yet.
+    pub fn note_username(&self, url: &str, kind: &str, username: &str) -> Result<(), String> {
+        let origin = self.origin_for_tab(url, kind)?;
+        let username: String = username.trim().chars().take(ncc_vault::MAX_USERNAME).collect();
+        if username.is_empty() {
+            return Ok(());
+        }
+        let now = self.now();
+        let mut state = self.secure();
+        state.usernames.retain(|_, (_, expires)| *expires > now);
+        state.usernames.insert(origin, (username, now + USERNAME_TTL));
+        Ok(())
+    }
+
     /// A password the page offered on submit. Does not save anything: the shell shows a
     /// prompt and calls `respond_to_save`.
     pub fn capture(
@@ -842,6 +862,30 @@ impl VaultService {
 
         state.pending.retain(|_, pending| pending.expires > now);
 
+        let username = if username.is_empty() {
+            let noted = state
+                .usernames
+                .get(&origin)
+                .filter(|(_, expires)| *expires > now)
+                .map(|(name, _)| name.clone());
+            // A password change often has no account box. With one saved login for the
+            // site there is no doubt which one it changes.
+            noted
+                .or_else(|| {
+                    let vault = state.vault.as_ref()?;
+                    let mut saved = entries_for_origin(vault, &origin)
+                        .into_iter()
+                        .filter(|entry| entry.passkey.is_none());
+                    match (saved.next(), saved.next()) {
+                        (Some(only), None) => Some(only.username.clone()),
+                        _ => None,
+                    }
+                })
+                .unwrap_or_default()
+        } else {
+            username
+        };
+
         let duplicate = state.pending.values().any(|pending| {
             pending.origin == origin && pending.username == username && pending.password == password
         });
@@ -875,6 +919,7 @@ impl VaultService {
                 username: username.clone(),
                 password,
                 expires: now + PENDING_TTL,
+                saving: false,
             },
         );
 
@@ -893,86 +938,105 @@ impl VaultService {
         }))
     }
 
+    /// Answer a save prompt. The request is kept until it succeeds, so a save that
+    /// fails or finds the vault locked can be tried again.
     pub async fn respond_to_save(&self, id: &str, action: &str) -> SaveOutcome {
-        let pending = {
-            let now = self.now();
-            let mut state = self.secure();
-            state.pending.retain(|_, pending| pending.expires > now);
-            state.pending.remove(id)
+        let failed = |error: &str| SaveOutcome {
+            ok: false,
+            pending: false,
+            error: Some(error.to_string()),
+            status: self.status(),
+        };
+        let done = || SaveOutcome {
+            ok: true,
+            pending: false,
+            error: None,
+            status: self.status(),
         };
 
-        let Some(pending) = pending else {
-            return SaveOutcome {
-                ok: false,
-                pending: false,
-                error: Some("That save request expired".to_string()),
-                status: self.status(),
-            };
+        let request = {
+            let now = self.now();
+            let mut state = self.secure();
+            state
+                .pending
+                .retain(|_, pending| pending.saving || pending.expires > now);
+            let unlocked = state.unlocked;
+            match state.pending.get_mut(id) {
+                None => Err("That save request expired"),
+                Some(pending) if pending.saving => Err("This login is already being saved"),
+                Some(pending) => {
+                    // An answer is a sign of life: give a retry the full time again.
+                    pending.expires = now + PENDING_TTL;
+                    pending.saving = action == "save" && unlocked;
+                    Ok((
+                        pending.origin.clone(),
+                        pending.title.clone(),
+                        pending.username.clone(),
+                        pending.password.clone(),
+                        unlocked,
+                    ))
+                }
+            }
+        };
+        let (origin, title, username, password, unlocked) = match request {
+            Ok(request) => request,
+            Err(error) => return failed(error),
+        };
+        let forget = || {
+            self.secure().pending.remove(id);
         };
 
         match action {
-            "dismiss" => SaveOutcome {
-                ok: true,
-                pending: false,
-                error: None,
-                status: self.status(),
-            },
-            "never" => match self.settings.add_never_save(&pending.origin) {
-                Ok(_) => SaveOutcome {
-                    ok: true,
-                    pending: false,
-                    error: None,
-                    status: self.status(),
-                },
-                Err(error) => SaveOutcome {
-                    ok: false,
-                    pending: false,
-                    error: Some(error),
-                    status: self.status(),
-                },
+            "dismiss" => {
+                forget();
+                done()
+            }
+            "never" => match self.settings.add_never_save(&origin) {
+                Ok(_) => {
+                    forget();
+                    done()
+                }
+                Err(error) => failed(&error),
             },
             "save" => {
-                if !self.secure().unlocked {
-                    return SaveOutcome {
-                        ok: false,
-                        pending: false,
-                        error: Some(LOCKED.to_string()),
-                        status: self.status(),
-                    };
+                if !unlocked {
+                    return failed(LOCKED);
                 }
                 let existing = self
                     .secure()
                     .vault
                     .as_ref()
-                    .and_then(|vault| find_entry_for(vault, &pending.origin, &pending.username))
-                    .map(|entry| entry.id);
+                    .and_then(|vault| find_entry_for(vault, &origin, &username));
+                // A prompt raised while locked cannot know the login is already saved.
+                if existing.as_ref().is_some_and(|entry| entry.password == password) {
+                    forget();
+                    return done();
+                }
 
-                self.save(Draft {
-                    id: existing.clone(),
-                    origin: pending.origin,
-                    title: pending.title,
-                    username: pending.username,
-                    password: pending.password,
-                    notes: existing
-                        .as_deref()
-                        .and_then(|id| self.entry(id).ok())
-                        .map(|entry| entry.notes)
-                        .unwrap_or_default(),
-                    totp: existing
-                        .as_deref()
-                        .and_then(|id| self.entry(id).ok())
-                        .map(|entry| entry.totp)
-                        .unwrap_or_default(),
-                    passkey: None,
-                })
-                .await
+                let outcome = self
+                    .save(Draft {
+                        id: existing.as_ref().map(|entry| entry.id.clone()),
+                        origin,
+                        title: existing
+                            .as_ref()
+                            .map(|entry| entry.title.clone())
+                            .filter(|title| !title.is_empty())
+                            .unwrap_or(title),
+                        username,
+                        password,
+                        notes: existing.as_ref().map(|entry| entry.notes.clone()).unwrap_or_default(),
+                        totp: existing.map(|entry| entry.totp).unwrap_or_default(),
+                        passkey: None,
+                    })
+                    .await;
+                if outcome.ok {
+                    forget();
+                } else if let Some(pending) = self.secure().pending.get_mut(id) {
+                    pending.saving = false;
+                }
+                outcome
             }
-            _ => SaveOutcome {
-                ok: false,
-                pending: false,
-                error: Some("Unknown action".to_string()),
-                status: self.status(),
-            },
+            _ => failed("Unknown action"),
         }
     }
 
@@ -1890,6 +1954,69 @@ mod tests {
         let outcome = vault.respond_to_save(&pending.id, "save").await;
         assert!(outcome.ok, "{:?}", outcome.error);
         assert_eq!(vault.list().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_save_refused_while_locked_can_be_tried_again() {
+        let vault = service(5100);
+        let pending = vault
+            .capture("https://example.com", "normal", "Example", "alice", "hunter2")
+            .unwrap()
+            .expect("pending");
+
+        let refused = vault.respond_to_save(&pending.id, "save").await;
+        assert_eq!(refused.error.as_deref(), Some(LOCKED));
+
+        vault.unlock().await;
+        let outcome = vault.respond_to_save(&pending.id, "save").await;
+        assert!(outcome.ok, "{:?}", outcome.error);
+        assert_eq!(vault.list().len(), 1);
+
+        let again = vault.respond_to_save(&pending.id, "save").await;
+        assert_eq!(again.error.as_deref(), Some("That save request expired"));
+    }
+
+    #[tokio::test]
+    async fn a_two_step_sign_in_keeps_its_account_name() {
+        let vault = service(5200);
+        vault.unlock().await;
+        vault
+            .note_username("https://example.com/identify", "normal", "alice")
+            .unwrap();
+
+        let pending = vault
+            .capture("https://example.com/password", "normal", "", "", "hunter2")
+            .unwrap()
+            .expect("pending");
+        assert_eq!(pending.username, "alice");
+
+        let elsewhere = vault
+            .capture("https://other.example", "normal", "", "", "hunter2")
+            .unwrap()
+            .expect("pending");
+        assert_eq!(elsewhere.username, "");
+    }
+
+    #[tokio::test]
+    async fn a_new_password_with_no_account_updates_the_only_login() {
+        let vault = service(5300);
+        vault.unlock().await;
+        let first = vault
+            .capture("https://example.com", "normal", "My site", "alice", "old")
+            .unwrap()
+            .expect("pending");
+        assert!(vault.respond_to_save(&first.id, "save").await.ok);
+
+        let change = vault
+            .capture("https://example.com/settings", "normal", "Settings", "", "new")
+            .unwrap()
+            .expect("pending");
+        assert_eq!((change.mode.as_str(), change.username.as_str()), ("update", "alice"));
+        assert!(vault.respond_to_save(&change.id, "save").await.ok);
+
+        let saved = vault.list();
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0].title, "My site");
     }
 
     #[tokio::test]

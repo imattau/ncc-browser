@@ -613,6 +613,16 @@ fn vault_capture(
 }
 
 #[tauri::command]
+fn vault_username(
+    vault: tauri::State<'_, VaultHandle>,
+    url: String,
+    kind: String,
+    username: String,
+) -> Result<(), String> {
+    vault.0.note_username(&url, &kind, &username)
+}
+
+#[tauri::command]
 async fn vault_respond(
     vault: tauri::State<'_, VaultHandle>,
     id: String,
@@ -1799,6 +1809,7 @@ pub fn run() {
             vault_remove,
             vault_favorite,
             vault_capture,
+            vault_username,
             vault_respond,
             vault_config,
             vault_forget_never_save,

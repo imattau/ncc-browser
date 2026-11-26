@@ -3437,6 +3437,42 @@ async function main() {
       (await evaluate(cdp, 'document.querySelector("#password")?.value')) === 's3cret'
     )
 
+    // Tapping into the login field lists saved logins beside it, and choosing one fills.
+    const clickPage = async (x, y) => {
+      for (const type of ['mousePressed', 'mouseReleased']) {
+        await cdp.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: 1 })
+      }
+    }
+    const fieldBox = await evaluate(
+      cdp,
+      `(() => {
+        for (const id of ['username', 'password']) document.getElementById(id).value = ''
+        document.activeElement?.blur()
+        const rect = document.querySelector('#username').getBoundingClientRect()
+        return { x: rect.x, y: rect.y, width: rect.width, height: rect.height, bottom: rect.bottom }
+      })()`
+    )
+    await clickPage(fieldBox.x + fieldBox.width / 2, fieldBox.y + fieldBox.height / 2)
+    const suggestionHost = `[...document.documentElement.children].find((el) => el.tagName === 'DIV' && el.style.zIndex === '2147483647')`
+    await waitForValue(cdp, `${suggestionHost} ? "ready" : ""`, 80)
+    const suggestionBox = await evaluate(
+      cdp,
+      `(() => { const r = ${suggestionHost}.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height } })()`
+    )
+    check(
+      'page script cannot read the login suggestions',
+      await evaluate(cdp, `${suggestionHost}.shadowRoot === null && ${suggestionHost}.textContent === ''`)
+    )
+    const loginDropdownShot = await cdp.send('Page.captureScreenshot', { format: 'png' })
+    writeFileSync(join(ARTIFACTS, 'password-suggestions.png'), Buffer.from(loginDropdownShot.data, 'base64'))
+    // The first login sits at the bottom of a one-entry list.
+    await clickPage(suggestionBox.x + 40, suggestionBox.y + suggestionBox.height - 22)
+    await waitForValue(cdp, 'document.querySelector("#password")?.value === "s3cret" ? "filled" : ""', 80)
+    check(
+      'fills from the suggestion beside the field',
+      (await evaluate(cdp, 'document.querySelector("#username")?.value')) === 'alice'
+    )
+
     // Change the password and submit with a real click so the content preload sees
     // a trusted submit event.
     await evaluate(

@@ -18,6 +18,7 @@ import { createHome } from './home.js'
 import { createSecurity } from './security.js'
 import { createSecurityInfo } from './security-info.js'
 import { createPasswords } from './passwords.js'
+import { createLoginDock } from './login-dock.js'
 import { createPaymentCards } from './payment-cards.js'
 import { createIdentity } from './identity.js'
 import { parseNsiteAddress } from '../src/shared/nsite-url'
@@ -144,7 +145,6 @@ const PANELS = [
   'wallet',
   'sync',
   'password-fill',
-  'password-save',
   'share-nostr',
   'password-edit',
   'payment-cards',
@@ -491,6 +491,8 @@ globalThis.__nccTabs = (payload) => {
   tabs = payload.tabs || []
   activeTabId = payload.active || ''
 
+  loginDock.tabChanged(activeTabId)
+
   const active = tabs.find((tab) => tab.id === activeTabId)
   if (active) {
     activeUrl = active.url || activeUrl
@@ -515,6 +517,7 @@ globalThis.__nccTabs = (payload) => {
   renderPill()
   void refreshSecurity()
   if (panel === 'menu') renderMenu()
+  if (loginDock.height()) applyLayout()
 
   if (panel === 'switcher') {
     if (tabs.length === 0) {
@@ -539,6 +542,7 @@ globalThis.__nccContent = (state) => {
   }
 
   if (state.type === 'loading') {
+    loginDock.pageLoading(id)
     progressByTab[id] = progressByTab[id] ?? 8
     certificateFailures.delete(id)
     if (id === activeTabId) securityState = 'unknown'
@@ -566,21 +570,20 @@ globalThis.__nccContent = (state) => {
     else if (state.type === 'failed' || state.type === 'blocked' || state.type === 'rejected') finishSwitcherRefresh(false)
   }
 
-  // A login the native hook saw submitted. The secret goes straight into the vault
-  // command; the prompt below holds only an id.
+  // What the login script in the page saw. A captured password goes straight into
+  // the vault command; the sheet holds only an id.
   if (state.type === 'capture') {
-    void passwordFeature.handlePasswordCapture(state)
+    void loginDock.handleCapture(state)
     return
   }
+  if (state.type === 'login-username') { void loginDock.handleUsername(state); return }
+  if (state.type === 'login-focus') { void loginDock.handleFocus(state); return }
   if (state.type === 'payment-detected') { void paymentFeature.detect(state); return }
   if (state.type === 'payment-capture') { void paymentFeature.capture(state); return }
 
   if (state.type === 'filled') {
-    // The fill runs after the panel closes, so a miss is reported where the user can
-    // act on it rather than as a silent no-op.
-    if (state.ok === false) {
-      passwordFeature.reportFillFailure()
-    }
+    // The fill runs after the sheet closes, so a miss is reported rather than silent.
+    loginDock.filled(state.result)
     return
   }
 
@@ -653,6 +656,10 @@ globalThis.__nccBack = () => {
     closeFind()
     return true
   }
+  if (panel === 'home' && loginDock.height()) {
+    loginDock.close()
+    return true
+  }
   if (panel !== 'home') {
     goBackPanel()
     return true
@@ -697,7 +704,6 @@ function showPanel(name) {
   if (name === 'wallet') void loadWallet()
   if (name === 'sync') syncFeature.renderSync()
   if (name === 'password-fill') void passwordFeature.renderPasswordFill()
-  if (name === 'password-save') passwordFeature.renderPasswordSave()
   if (name === 'share-nostr') renderShareNostr()
   if (name === 'password-edit') passwordFeature.renderPasswordEdit()
   if (name === 'appearance') renderAppearanceSub()
@@ -730,7 +736,13 @@ function goBackPanel() {
 }
 
 function applyLayout() {
-  const compact = window.innerHeight < 200
+  // Docked, the shell is taller than a bare bar but is still not over the page.
+  const collapsed = window.innerHeight < Math.max(200, loginDock.height() + 80)
+  const docked = loginDock.sync(
+    collapsed && panel === 'home' && tabs.length > 0 && !findOpen && !identityFeature.hasSignerRequest()
+  )
+  const compact = docked || window.innerHeight < 200
+  document.body.classList.toggle('docked', docked)
   document.body.classList.toggle('compact', compact)
   byId('bar').hidden = !compact
   byId('strip-main').hidden = findOpen
@@ -2450,9 +2462,10 @@ function wireChrome() {
   byId('edit-delete').addEventListener('click', () => void passwordFeature.deleteEditing())
   byId('edit-generate').addEventListener('click', () => void passwordFeature.generateIntoEdit())
   byId('edit-password-toggle').addEventListener('click', () => passwordFeature.toggleEditPasswordReveal())
-  byId('save-accept').addEventListener('click', () => void passwordFeature.respondSave('save'))
-  byId('save-never').addEventListener('click', () => void passwordFeature.respondSave('never'))
-  byId('save-dismiss').addEventListener('click', () => void passwordFeature.respondSave('dismiss'))
+  byId('save-accept').addEventListener('click', () => void loginDock.respond('save'))
+  byId('save-never').addEventListener('click', () => void loginDock.respond('never'))
+  byId('save-dismiss').addEventListener('click', () => void loginDock.respond('dismiss'))
+  byId('dock-close').addEventListener('click', () => loginDock.close())
   byId('share-post').addEventListener('click', () => void postShareNostr())
 
   // Coming back to the app is a reasonable moment to pull the relay copy; the vault
@@ -2512,6 +2525,16 @@ const passwordFeature = createPasswords({
   content, invoke, byId, set, displayAddress, showPanel, closePanel, goBackPanel, activeKind,
   getTabs: () => tabs,
   getActiveUrl: () => activeUrl,
+  getActiveTabId: () => activeTabId
+})
+const loginDock = createLoginDock({
+  content, invoke, byId, displayAddress, showPanel, relayout: applyLayout, activeKind,
+  vault: {
+    status: () => passwordFeature.status(),
+    ensureUnlocked: () => passwordFeature.ensureUnlocked(),
+    changed: () => passwordFeature.vaultSynced()
+  },
+  getTabs: () => tabs,
   getActiveTabId: () => activeTabId
 })
 const paymentFeature = createPaymentCards({ content, invoke, byId, showPanel, closePanel,

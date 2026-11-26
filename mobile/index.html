@@ -65,6 +65,26 @@
       The chrome strip. Only visible when the shell is resized to one row; every
       full-window surface below is the shell expanded over the page.
     -->
+    <!-- A sheet beside the address bar. The page above it stays live. -->
+    <aside id="login-dock" class="login-dock" aria-label="Passwords" hidden>
+      <div id="login-dock-body" class="login-dock-body">
+        <div class="dock-head">
+          <svg class="i" aria-hidden="true"><use href="#i-key" /></svg>
+          <span class="row-text"><b id="dock-title"></b><small id="dock-detail"></small></span>
+          <button id="dock-close" class="ib" type="button" aria-label="Close"><svg class="i"><use href="#i-close" /></svg></button>
+        </div>
+        <div id="dock-list" class="dock-list"></div>
+        <p id="dock-note" class="status" role="status" aria-live="polite"></p>
+        <div id="dock-actions" class="dock-actions">
+          <button id="save-accept" class="btn block" type="button">Save login</button>
+          <div class="dock-secondary">
+            <button id="save-never" class="btn tonal" type="button">Never for this site</button>
+            <button id="save-dismiss" class="btn tonal" type="button">Not now</button>
+          </div>
+        </div>
+      </div>
+    </aside>
+
     <header id="bar" class="strip" hidden>
       <div id="progress" aria-hidden="true"></div>
 
@@ -777,20 +797,6 @@
         <p id="fill-note" class="status" role="status"></p>
         <button id="fill-add" class="btn tonal block" type="button">Add a login for this page</button>
         <button id="fill-manage" class="btn tonal block" type="button">Manage passwords</button>
-      </div>
-    </section>
-
-    <section id="password-save" class="screen" hidden>
-      <header class="appbar">
-        <h2>Save this login?</h2>
-      </header>
-      <div class="body">
-        <p id="save-origin" class="hint"></p>
-        <p id="save-username" class="hint"></p>
-        <button id="save-accept" class="btn block" type="button">Save login</button>
-        <button id="save-never" class="btn tonal block" type="button">Never for this site</button>
-        <button id="save-dismiss" class="btn tonal block" type="button">Not now</button>
-        <p id="save-note" class="status" role="status"></p>
       </div>
     </section>
 

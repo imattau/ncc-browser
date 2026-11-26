@@ -236,6 +236,23 @@ export function registerPasswordIpc(service: PasswordService, deps: PasswordIpcD
     service.handleFormState(event.sender.id, payload)
   })
 
+  ipcMain.on('passwords:username', (event, payload) => {
+    if (fromContent(event, deps.shell)) service.handleUsername(event.sender.id, payload)
+  })
+
+  ipcMain.on('passwords:field-focused', (event) => {
+    if (fromContent(event, deps.shell)) service.handleFieldFocus(event.sender.id)
+  })
+
+  ipcMain.on('passwords:suggestion-selected', (event, id: unknown) => {
+    if (fromContent(event, deps.shell) && typeof id === 'string') void service.fillFromSuggestion(event.sender.id, id)
+  })
+
+  ipcMain.on('passwords:suggestion-unlock', (event) => {
+    if (!fromContent(event, deps.shell)) return
+    void service.unlockFromSuggestion(event.sender.id).then(() => deps.afterUnlock?.()).catch(() => undefined)
+  })
+
   ipcMain.on('passwords:capture', (event, payload) => {
     if (!fromContent(event, deps.shell)) return
     service.handleCapture(event.sender.id, payload)

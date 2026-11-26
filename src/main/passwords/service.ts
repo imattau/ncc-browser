@@ -30,6 +30,7 @@ import type {
   PasswordPage,
   PasswordSaveRequest,
   PasswordSaveResult,
+  PasswordSuggestions,
   PasswordSummary,
   PasswordToast,
   PasswordTotpCode,
@@ -133,7 +134,14 @@ interface PendingSave {
   password: string
   tabId: string
   expires: number
+  /** Being saved now, so a second answer must not start another write. */
+  saving?: boolean
 }
+
+const SAVE_TTL = 120_000
+/** How long an account name from a username-only step waits for its password. */
+const USERNAME_TTL = 600_000
+const FILL_FIRST_STEP = 'Username filled. Continue, then fill the password.'
 
 const LOCKED = 'Unlock the password manager first'
 
@@ -146,6 +154,8 @@ export class PasswordService {
   private lockTimer: NodeJS.Timeout | null = null
   private readonly pendingSaves = new Map<string, PendingSave>()
   private readonly saveTimers = new Map<string, NodeJS.Timeout>()
+  /** Account names from username-only steps, by origin. */
+  private readonly usernameHints = new Map<string, { username: string; expires: number }>()
   private readonly migratingVaults = new Set<string>()
   private readonly backfillingSecrets = new Set<string>()
   private readonly syncEngine: PasswordSync
@@ -341,7 +351,8 @@ export class PasswordService {
       return this.status()
     }
 
-    this.lockInternal(false)
+    // Unlocking is how a waiting save offer gets answered, so it must survive this.
+    this.lockInternal(false, true)
     this.pubkey = pubkey
     this.syncEngine.load(pubkey)
     this.error = null
@@ -669,6 +680,56 @@ export class PasswordService {
     this.fillController.handleFormState(webContentsId, payload)
   }
 
+  /** The account typed on a sign-in step that has no password yet. */
+  handleUsername(webContentsId: number, payload: unknown): void {
+    const tabId = this.deps.host.tabIdForContents(webContentsId)
+    const page = tabId ? this.deps.host.pageForTab(tabId) : null
+    if (!page || page.kind !== 'normal') return
+    const info = pageOriginFromUrl(page.url)
+    if (!info || !canUsePasswordOrigin(info)) return
+    const raw = payload && typeof payload === 'object' ? (payload as { username?: unknown }).username : null
+    const username = typeof raw === 'string' ? raw.trim().slice(0, 320) : ''
+    if (username) this.usernameHints.set(info.origin, { username, expires: this.now() + USERNAME_TTL })
+  }
+
+  /** Show saved logins beside the field the person is in. */
+  handleFieldFocus(webContentsId: number): void {
+    const target = this.suggestionTarget(webContentsId)
+    if (!target || !this.status().configured) return
+    const items =
+      this.unlocked && this.vault
+        ? entriesForOrigin(this.vault, target.origin)
+            .filter((entry) => !entry.passkey && entry.password)
+            .slice(0, 6)
+            .map((entry) => ({ id: entry.id, label: entry.username || entry.title, detail: entry.title }))
+        : []
+    if (this.unlocked && items.length === 0) return
+    const suggestions: PasswordSuggestions = { locked: !this.unlocked, items }
+    this.deps.host.sendToContent(target.tabId, 'passwords:suggestions', suggestions)
+  }
+
+  async unlockFromSuggestion(webContentsId: number): Promise<void> {
+    if (!this.suggestionTarget(webContentsId)) return
+    const status = await this.unlock()
+    if (status.unlocked) this.handleFieldFocus(webContentsId)
+  }
+
+  async fillFromSuggestion(webContentsId: number, id: string): Promise<void> {
+    if (!this.suggestionTarget(webContentsId)) return
+    const result = await this.fill(id)
+    if (!result.ok) this.sendToast({ tone: 'error', message: result.error ?? 'Could not fill' })
+    else if (result.usernameOnly) this.sendToast({ tone: 'ok', message: FILL_FIRST_STEP })
+  }
+
+  /** Only the tab in front may ask, and only where filling is allowed. */
+  private suggestionTarget(webContentsId: number): { tabId: string; origin: string } | null {
+    const tabId = this.deps.host.tabIdForContents(webContentsId)
+    const page = this.deps.host.activePage()
+    if (!tabId || !page || page.tabId !== tabId || page.kind === 'private') return null
+    const info = pageOriginFromUrl(page.url)
+    return info && canUsePasswordOrigin(info) ? { tabId, origin: info.origin } : null
+  }
+
   handleCapture(webContentsId: number, payload: unknown): void {
     const tabId = this.deps.host.tabIdForContents(webContentsId)
     if (!tabId) return
@@ -683,7 +744,8 @@ export class PasswordService {
     if (!this.deps.identity.provider()) return
 
     const value = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {}
-    const username = typeof value.username === 'string' ? value.username.trim().slice(0, 320) : ''
+    const typed = typeof value.username === 'string' ? value.username.trim().slice(0, 320) : ''
+    const username = typed || this.accountFor(info.origin)
     const password = typeof value.password === 'string' ? value.password.slice(0, 4096) : ''
     if (!password) return
     const title =
@@ -714,15 +776,13 @@ export class PasswordService {
       tabKind: page.kind,
       locked: !this.unlocked
     }
-    const timer = setTimeout(() => this.clearSave(id), 120_000)
-    timer.unref?.()
-    this.saveTimers.set(id, timer)
     this.pendingSaves.set(id, {
       request,
       password,
       tabId,
-      expires: this.now() + 120_000
+      expires: this.now() + SAVE_TTL
     })
+    this.expireSave(id)
     this.deps.host.sendToChrome('ncc:password-save-request', request)
     this.sendContext()
   }
@@ -733,19 +793,42 @@ export class PasswordService {
   ): Promise<PasswordSaveResult> {
     const pending = this.pendingSaves.get(id)
     if (!pending) return { ok: false, error: 'That save request expired' }
-    this.clearSave(id)
+    if (pending.saving) return { ok: false, error: 'This login is already being saved' }
 
     if (action === 'dismiss') {
+      this.clearSave(id)
       this.sendContext()
       return { ok: true, status: this.status() }
     }
     if (action === 'never') {
       this.deps.config.addNeverSave(pending.request.origin)
+      this.clearSave(id)
       this.sendStatus()
       this.sendContext()
       return { ok: true, status: this.status() }
     }
 
+    // Kept until it succeeds, so a failed save can be tried again.
+    pending.saving = true
+    const timer = this.saveTimers.get(id)
+    if (timer) clearTimeout(timer)
+    let saved = false
+    try {
+      const result = await this.saveOffer(pending)
+      saved = result.ok
+      return result
+    } finally {
+      pending.saving = false
+      if (saved) this.clearSave(id)
+      else if (this.pendingSaves.has(id)) {
+        pending.expires = this.now() + SAVE_TTL
+        this.expireSave(id)
+      }
+      this.sendContext()
+    }
+  }
+
+  private async saveOffer(pending: PendingSave): Promise<PasswordSaveResult> {
     if (!this.unlocked) {
       const status = await this.unlock()
       if (!status.unlocked) return { ok: false, error: status.error ?? 'Could not unlock the vault' }
@@ -753,6 +836,8 @@ export class PasswordService {
     if (!this.vault) return { ok: false, error: VAULT_ERROR }
 
     const existing = findEntryFor(this.vault, pending.request.origin, pending.request.username)
+    // A prompt raised while locked cannot know the login is already saved.
+    if (existing && existing.password === pending.password) return { ok: true, status: this.status() }
     const result = await this.saveEntry({
       ...(existing ? { id: existing.id } : {}),
       origin: pending.request.origin,
@@ -772,8 +857,22 @@ export class PasswordService {
             : 'Login saved.'
       })
     }
-    this.sendContext()
     return result
+  }
+
+  /** The account for a password sent without one: a first step, or a password change. */
+  private accountFor(origin: string): string {
+    const hint = this.usernameHints.get(origin)
+    if (hint && hint.expires > this.now()) return hint.username
+    if (!this.unlocked || !this.vault) return ''
+    const saved = entriesForOrigin(this.vault, origin).filter((entry) => !entry.passkey)
+    return saved.length === 1 ? saved[0].username : ''
+  }
+
+  private expireSave(id: string): void {
+    const timer = setTimeout(() => this.clearSave(id), SAVE_TTL)
+    timer.unref?.()
+    this.saveTimers.set(id, timer)
   }
 
   async setConfig(input: Partial<PasswordConfig>): Promise<PasswordVaultStatus> {
@@ -926,13 +1025,16 @@ export class PasswordService {
     this.saveTimers.delete(id)
   }
 
-  private lockInternal(notify: boolean): void {
+  private lockInternal(notify: boolean, keepOffers = false): void {
     this.unlocked = false
     this.pubkey = null
     this.vault = null
-    this.pendingSaves.clear()
-    for (const timer of this.saveTimers.values()) clearTimeout(timer)
-    this.saveTimers.clear()
+    if (!keepOffers) {
+      this.pendingSaves.clear()
+      this.usernameHints.clear()
+      for (const timer of this.saveTimers.values()) clearTimeout(timer)
+      this.saveTimers.clear()
+    }
     this.fillController.clear()
     if (this.lockTimer) clearTimeout(this.lockTimer)
     this.lockTimer = null

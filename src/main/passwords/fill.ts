@@ -69,7 +69,9 @@ export class PasswordFill {
     const sent = this.ctx.host.sendToContent(page.tabId, 'passwords:fill', {
       requestId,
       username: entry.username,
-      password: entry.password
+      password: entry.password,
+      // The page checks it is still the one the login was matched to.
+      pageUrl: page.url
     })
     if (!sent) {
       const waiter = this.waiters.get(requestId)
@@ -85,7 +87,7 @@ export class PasswordFill {
 
   handleResult(payload: unknown): void {
     if (!payload || typeof payload !== 'object') return
-    const value = payload as { requestId?: unknown; ok?: unknown; error?: unknown }
+    const value = payload as { requestId?: unknown; ok?: unknown; error?: unknown; usernameOnly?: unknown }
     if (typeof value.requestId !== 'string') return
     const waiter = this.waiters.get(value.requestId)
     if (!waiter) return
@@ -93,6 +95,7 @@ export class PasswordFill {
     clearTimeout(waiter.timer)
     waiter.resolve({
       ok: value.ok === true,
+      ...(value.usernameOnly === true ? { usernameOnly: true } : {}),
       ...(typeof value.error === 'string' ? { error: value.error } : {})
     })
   }
