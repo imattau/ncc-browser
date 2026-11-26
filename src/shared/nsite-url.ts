@@ -10,6 +10,7 @@
  * no chance of reading "assets" as a site called `assets`.
  */
 
+import { nip19 } from 'nostr-tools'
 import { isNostrId } from './ncc-url'
 
 export const NSITE_SCHEME = 'nsite'
@@ -54,6 +55,17 @@ export interface NsiteHost {
   site: string | null
   /** True when the host carried a site suffix (`<npub>.<d>`). */
   canonical: boolean
+}
+
+/**
+ * The hostname the Android WebView loads a site from. Always the npub: this is a real
+ * DNS name, each label of which is at most 63 characters. An npub is exactly 63 and a
+ * hex pubkey is 64, which never resolves. Matches `host_for` in `ncc-proxy`.
+ */
+export function nsiteVirtualHost(pubkey: string, site: string | null): string {
+  const lower = pubkey.toLowerCase()
+  const label = /^[0-9a-f]{64}$/.test(lower) ? nip19.npubEncode(lower) : lower
+  return `${label}${site ? `.${site}` : ''}.nsite.localhost`
 }
 
 export function parseNsiteHost(hostname: string): NsiteHost | null {

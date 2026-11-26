@@ -1509,6 +1509,8 @@ class ContentSurface(
         val code = certificate?.getOrNull(0)
         val rawError = certificate?.getOrNull(1)
         val certificateMessage = when (code) {
+          // Not a certificate problem at all, such as a name that does not resolve.
+          null -> null
           "certificate-date-invalid" -> "The certificate is outside its valid date range. Check this device’s date and time; if they are correct, the site owner may need to renew the certificate."
           "certificate-name-mismatch" -> "The certificate does not identify this website. Check the address or contact the site owner."
           "certificate-untrusted" -> "The browser could not verify who issued this certificate. The connection was blocked."

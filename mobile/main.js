@@ -21,7 +21,7 @@ import { createPasswords } from './passwords.js'
 import { createLoginDock } from './login-dock.js'
 import { createPaymentCards } from './payment-cards.js'
 import { createIdentity } from './identity.js'
-import { parseNsiteAddress } from '../src/shared/nsite-url'
+import { nsiteVirtualHost, parseNsiteAddress } from '../src/shared/nsite-url'
 
 const byId = (id) => document.getElementById(id)
 
@@ -289,7 +289,9 @@ const certificateFailures = new Map()
 async function refreshSecurity() {
   const url = activeUrl
   const activeFailure = certificateFailures.get(activeTabId)
-  const state = activeFailure ? 'certificate-error' : url ? await security.securityFor(url) : 'unknown'
+  const state = activeFailure
+    ? activeFailure.code?.startsWith('certificate-') ? 'certificate-error' : 'failure'
+    : url ? await security.securityFor(url) : 'unknown'
   if (url !== activeUrl) return
   securityState = state
   renderPill()
@@ -1067,7 +1069,7 @@ function nsiteTarget(input, port) {
   try {
     const address = parseNsiteAddress(input)
     return {
-      url: `http://${address.pubkey.toLowerCase()}${address.site ? `.${address.site}` : ''}.nsite.localhost:${port}${address.path}${address.search}${address.hash}`
+      url: `http://${nsiteVirtualHost(address.pubkey, address.site)}:${port}${address.path}${address.search}${address.hash}`
     }
   } catch (error) {
     return { error: error instanceof Error ? error.message : 'Invalid nsite address' }

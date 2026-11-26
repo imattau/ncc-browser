@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
+import { nip19 } from 'nostr-tools'
 import {
   buildNsiteUrl,
   isValidSiteId,
   looksLikeNsiteInput,
   nsiteOrigin,
+  nsiteVirtualHost,
   parseNsiteAddress
 } from '../src/shared/nsite-url'
 
@@ -13,6 +15,17 @@ describe('nsite:// addresses', () => {
   it('parses a root site with no path', () => {
     expect(parseNsiteAddress(`nsite://${PUB}`)).toMatchObject({ pubkey: PUB, site: null, path: '/' })
     expect(parseNsiteAddress(`nsite://${PUB}/`)).toMatchObject({ site: null, path: '/' })
+  })
+
+  it('builds an Android hostname that can resolve, from every form of the key', () => {
+    const base36 = parseNsiteAddress('nsite://47h1rs70oqaspur8bichfzalg0wnassb8d7tslfacl7hwyaxhkfreedom-tv')
+    const npub = nip19.npubEncode(base36.pubkey)
+    for (const pubkey of [base36.pubkey, base36.pubkey.toUpperCase(), npub]) {
+      const host = nsiteVirtualHost(pubkey, base36.site)
+      expect(host).toBe(`${npub}.freedom-tv.nsite.localhost`)
+      expect(Math.max(...host.split('.').map((label) => label.length))).toBeLessThanOrEqual(63)
+    }
+    expect(nsiteVirtualHost(base36.pubkey, null)).toBe(`${npub}.nsite.localhost`)
   })
 
   it('parses the NIP-5A concatenated base36 named-site label', () => {
