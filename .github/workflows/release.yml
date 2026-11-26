@@ -343,7 +343,11 @@ jobs:
       - name: Generate checksums
         run: |
           cd artifacts
-          sha256sum * > SHA256SUMS.txt
+          # The Android artifact brings its own SHA256SUMS.txt. Remove it first, or
+          # the new list includes an entry for itself that can never verify.
+          rm -f SHA256SUMS.txt
+          sha256sum -- * > SHA256SUMS.txt
+          sha256sum --check --strict SHA256SUMS.txt
 
       - uses: softprops/action-gh-release@v3
         with:
