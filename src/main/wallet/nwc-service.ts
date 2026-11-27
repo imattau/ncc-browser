@@ -3,7 +3,7 @@ import { dirname } from 'node:path'
 import type { Event } from 'nostr-tools'
 import type { NwcSnapshot } from '@shared/wallet'
 import type { RelayPool } from '../relay/pool'
-import { NwcClient, parseNwcUri, type NwcTransport } from '@shared/nwc'
+import { NwcClient, normalizeNwcUri, parseNwcUri, type NwcTransport } from '@shared/nwc'
 
 export class NwcService {
   private client: NwcClient | null = null
@@ -26,7 +26,7 @@ export class NwcService {
     const client = new NwcClient(connection, this.transport)
     try {
       const info = await client.getInfo()
-      this.save(uri)
+      this.save(normalizeNwcUri(uri))
       this.client?.dispose()
       this.client = client
       this.info = info

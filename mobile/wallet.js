@@ -5,6 +5,7 @@ import { parsePaymentQr, scanQr } from './qr-scan.js'
 import { MoneroSyncCancelled, MoneroWalletSession, resolveRestoreHeight } from '../src/shared/monero-wallet.ts'
 import { DEFAULT_MONERO_DAEMON_URL } from '../src/shared/wallet.ts'
 import { createMobileNwc } from './nwc.js'
+import { normalizeNwcUri } from '../src/shared/nwc.ts'
 import { decodeBolt11Invoice } from '../src/shared/bolt11.ts'
 
 const DEFAULT_ESPLORA = 'https://blockstream.info/api'
@@ -340,7 +341,8 @@ export function wireWallet() {
   byId('wallet-refresh').addEventListener('click', () => void loadWallet())
   byId('wallet-nwc-connect').addEventListener('click', async () => {
     try {
-      const uri = byId('wallet-nwc-uri').value.trim()
+      // Saved tidied: the Android side only stores the exact nostr+walletconnect:// form.
+      const uri = normalizeNwcUri(byId('wallet-nwc-uri').value)
       const next = createMobileNwc(uri)
       const info = await next.getInfo()
       await window.__TAURI__.core.invoke('wallet_nwc_save', { uri })

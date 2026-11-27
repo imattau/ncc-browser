@@ -20,9 +20,32 @@ export interface NwcPayment {
   feesPaidMsat?: string
 }
 
+/** Spaces, line breaks and characters that take no room on screen. None belong in a URI. */
+const UNSEEN = /[\s\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g
+/** The address, wherever it starts. It ends at a closing quote or angle bracket. */
+const NWC_ADDRESS = /nostr\+?walletconnect:(?:\/\/)?([^"'`<>\u2018\u2019\u201c\u201d\u00ab\u00bb]*)/i
+
+/**
+ * Tidies what was pasted into `nostr+walletconnect://…`. Copying from a wallet, chat or
+ * web page often adds quotes, a label, line breaks or invisible characters, which the
+ * user cannot see in a hidden field. The older `nostrwalletconnect:` spelling and a
+ * wholly percent-encoded link are accepted too. Text without an address is returned
+ * as it is, for the checks to reject.
+ */
+export function normalizeNwcUri(input: string): string {
+  let text = input.replace(UNSEEN, '')
+  if (!NWC_ADDRESS.test(text) && /walletconnect%3a/i.test(text)) {
+    try { text = decodeURIComponent(text) } catch { return text }
+  }
+  const found = NWC_ADDRESS.exec(text)
+  return found ? `nostr+walletconnect://${found[1].replace(/[.,;)]+$/, '')}` : text
+}
+
 export function parseNwcUri(input: string): NwcConnection {
   let url: URL
-  try { url = new URL(input.trim()) } catch { throw new Error('Paste a valid Nostr Wallet Connect URI') }
+  try { url = new URL(normalizeNwcUri(input)) } catch {
+    throw new Error('Paste a Nostr Wallet Connect URI. It starts with nostr+walletconnect://')
+  }
   if (url.protocol !== 'nostr+walletconnect:' || !/^[0-9a-f]{64}$/i.test(url.hostname || url.pathname.replace(/^\//, ''))) {
     throw new Error('NWC URI must use nostr+walletconnect:// and include a wallet public key')
   }
