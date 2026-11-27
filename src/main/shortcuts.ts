@@ -26,6 +26,7 @@ export function commandForInput(input: Input): CommandId | null {
     if ((key === '-' || key === '_') && !input.shift) return 'zoom-out'
     if (key === 'tab') return input.shift ? 'previous-tab' : 'next-tab'
     if (key === 'd' && !input.shift) return 'toggle-bookmark'
+    if (key === 'b' && input.shift) return 'toggle-bookmarks-view'
     if (key === 'h' && !input.shift) return 'open-history'
     if (key === 'j' && !input.shift) return 'open-downloads'
     if (key === 'i' && input.shift) return 'toggle-page-devtools'

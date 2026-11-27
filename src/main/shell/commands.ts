@@ -61,6 +61,12 @@ export function runShellCommand(shell: BrowserShell, command: CommandId): void {
     case 'zoom-reset':
       shell.zoomReset()
       break
+    case 'toggle-bookmarks-view':
+      shell.toggleBookmarksVisibility()
+      break
+    case 'toggle-tab-layout':
+      shell.toggleTabLayout()
+      break
     case 'toggle-page-devtools':
       shell.togglePageDevTools()
       break

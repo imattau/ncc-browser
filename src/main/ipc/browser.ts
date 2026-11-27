@@ -164,6 +164,16 @@ export function registerBrowserIpc(deps: BrowserIpcDeps): void {
     return shellFor(event).removeBookmark(url)
   })
 
+  ipcMain.handle('ncc:bookmark-menu', (event, url: unknown) => {
+    if (!fromChrome(event) || typeof url !== 'string') return
+    shellFor(event).showBookmarkMenu(url)
+  })
+
+  ipcMain.handle('ncc:bookmark-list-menu', (event, fromIndex: unknown) => {
+    if (!fromChrome(event) || !Number.isSafeInteger(fromIndex)) return
+    shellFor(event).showBookmarkListMenu(fromIndex as number)
+  })
+
   ipcMain.handle('ncc:window-minimize', (event) => {
     if (fromChrome(event)) shellFor(event).minimizeWindow()
   })

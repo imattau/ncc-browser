@@ -19,9 +19,12 @@ import type { DownloadNotice, IdentityStatus, NavState } from '@shared/types'
 import type { PasswordContext, PasswordVaultStatus } from '@shared/passwords'
 import { isActiveDownload } from '@shared/downloads'
 import { AddressBar } from './AddressBar'
+import { WindowControls, type WindowControlsProps } from './WindowControls'
 import type { PopoverAnchor } from './Popover'
 import { securitySummary } from '../lib/security'
 import { cn } from '../lib/cn'
+
+const isMac = navigator.platform.toLowerCase().includes('mac')
 
 interface ToolbarProps {
   state: NavState
@@ -51,6 +54,8 @@ interface ToolbarProps {
   onOpenIdentity: (anchor: PopoverAnchor) => void
   onOpenMenu: () => void
   onShareNostr: () => void
+  /** Set when the tabs are in the sidebar and this row is the window's title bar. */
+  titleBar?: WindowControlsProps | null
 }
 
 export function Toolbar({
@@ -80,13 +85,28 @@ export function Toolbar({
   onOpenSiteInfo,
   onOpenIdentity,
   onOpenMenu,
-  onShareNostr
+  onShareNostr,
+  titleBar
 }: ToolbarProps) {
   const activeDownloads = downloads.filter((notice) => isActiveDownload(notice.state)).length
   const security = securitySummary(state)
 
   return (
-    <header data-toolbar className="relative z-10 flex h-[60px] shrink-0 items-center gap-2 border-b border-[color:var(--color-line)] bg-[color:var(--color-panel)] px-3">
+    <header
+      data-toolbar
+      data-titlebar={titleBar ? true : undefined}
+      onDoubleClick={(event) => {
+        if (!titleBar || isMac) return
+        // Only the bare title bar; a double click in a control or its popup is not one.
+        const target = event.target as HTMLElement
+        if (target !== event.currentTarget && !target.hasAttribute('data-drag-handle')) return
+        titleBar.onToggleMaximize()
+      }}
+      className={cn(
+        'relative z-10 flex h-[60px] shrink-0 items-center gap-2 border-b border-[color:var(--color-line)] bg-[color:var(--color-panel)] px-3',
+        titleBar && 'ncc-titlebar'
+      )}
+    >
       <NavButton
         label="Back (Alt+←) — right-click or hold for history"
         disabled={!state.canGoBack}
@@ -223,6 +243,16 @@ export function Toolbar({
       <NavButton label="Menu" onClick={onOpenMenu}>
         <Menu className="h-4 w-4" />
       </NavButton>
+
+      {titleBar ? (
+        <>
+          {/* Always leaves somewhere to take hold of the window. */}
+          <span data-drag-handle aria-hidden className="h-full w-6 shrink-0" />
+          <div className="flex shrink-0 items-center gap-0.5">
+            <WindowControls {...titleBar} />
+          </div>
+        </>
+      ) : null}
     </header>
   )
 }

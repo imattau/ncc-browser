@@ -218,6 +218,10 @@ working while the remote page has focus.
   overflow button appears when the strip cannot fit every tab, with a searchable list.
   Right-click a tab for reload, duplicate, mute, copy address, close, close others and
   close to the right. A blank tab shows the welcome screen.
+- **Tab layouts (desktop)** — tabs run along the top, with an optional bookmarks
+  toolbar, or in a left sidebar above the bookmarks, which can shrink to icons. Switch in
+  **Settings → Appearance** or from the menu; `Ctrl+Shift+B` shows or hides bookmarks.
+  Right-click a bookmark to open it in a new, private or Tor tab, or to remove it.
 - **Private tabs** — a separate in-memory session, a mask indicator and `Ctrl+Shift+N`.
   Cookies, cache, history and remembered signer permissions are dropped when the last
   private tab closes. Private tabs are never written to the restore session.
@@ -237,7 +241,7 @@ working while the remote page has focus.
   `Identity & signer`, `Passwords`, `Extensions`, `Trusted services` and `About`, with a
   back-to-browsing button. `Esc` also leaves it.
   **General** also picks the search engine and the Tor onion search preference.
-  **Appearance** covers light/dark, text size, density, accent colour and reduced motion.
+  **Appearance** covers tab position, light/dark, text size, density, accent colour and reduced motion.
   **Passwords** unlocks the encrypted login vault, lists and edits entries, generates
   passwords, shows TOTP codes, controls sync relays and imports/exports credentials.
   **Extensions** installs packages or unpacked folders, enables/disables them, grants

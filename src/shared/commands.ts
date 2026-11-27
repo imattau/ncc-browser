@@ -18,6 +18,8 @@ export type CommandId =
   | 'zoom-in'
   | 'zoom-out'
   | 'zoom-reset'
+  | 'toggle-bookmarks-view'
+  | 'toggle-tab-layout'
   | 'toggle-page-devtools'
   | 'toggle-browser-devtools'
   | 'toggle-bookmark'
@@ -71,6 +73,13 @@ export const COMMANDS: CommandDefinition[] = [
   { id: 'zoom-in', label: 'Zoom in', shortcut: 'Ctrl++', group: 'View' },
   { id: 'zoom-out', label: 'Zoom out', shortcut: 'Ctrl+-', group: 'View' },
   { id: 'zoom-reset', label: 'Actual size', shortcut: 'Ctrl+0', group: 'View' },
+  {
+    id: 'toggle-bookmarks-view',
+    label: 'Show or hide bookmarks',
+    shortcut: 'Ctrl+Shift+B',
+    group: 'View'
+  },
+  { id: 'toggle-tab-layout', label: 'Move tabs to the side or top', group: 'View' },
   {
     id: 'toggle-page-devtools',
     label: 'Page developer tools',

@@ -35,6 +35,7 @@ import { registerNwcIpc } from '../wallet/nwc-ipc'
 import { NwcService } from '../wallet/nwc-service'
 import { registerWalletIpc } from '../wallet/ipc'
 import { WalletService } from '../wallet/service'
+import { browserShells } from '../shell'
 import type { BrowserStack } from './browser'
 import type { Foundation } from './foundation'
 import { findStartupAddress } from './options'
@@ -202,7 +203,9 @@ export function createServices(
     notify: (status) => {
       if (shell.window.isDestroyed()) return
       shell.sendToChrome('ncc:sync-status', status)
-      shell.sendToChrome('ncc:bookmarks', shellStack.bookmarks.list())
+      for (const entry of browserShells()) {
+        entry.sendToChrome('ncc:bookmarks', shellStack.bookmarks.list())
+      }
     }
   })
   shell.onTabsChanged = () => syncService.tabsChanged()

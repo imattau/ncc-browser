@@ -140,6 +140,10 @@ export interface NccApi {
   bookmarks(): Promise<Bookmark[]>
   createHomeShortcut(site: HomeSite): Promise<{ ok: boolean; error?: string }>
   toggleBookmark(): Promise<Bookmark[]>
+  /** Native right-click menu for one bookmark. */
+  showBookmarkMenu(url: string): Promise<void>
+  /** Native menu of the bookmarks from this position on. */
+  showBookmarkListMenu(fromIndex: number): Promise<void>
   removeBookmark(url: string): Promise<Bookmark[]>
   downloads(): Promise<DownloadNotice[]>
   cancelDownload(id: string): Promise<DownloadNotice[]>

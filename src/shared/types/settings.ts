@@ -51,12 +51,22 @@ export type AccentPreference = 'blue' | 'violet' | 'green' | 'amber'
 
 export type DensityPreference = 'comfortable' | 'compact'
 
+/** Desktop only: tabs in a strip along the top, or in a sidebar with the bookmarks. */
+export type TabLayout = 'horizontal' | 'vertical'
+
 export interface AppearanceConfig {
   theme: ThemePreference
   textSize: TextSizePreference
   accent: AccentPreference
   density: DensityPreference
   reduceMotion: boolean
+  tabLayout: TabLayout
+  /** The bookmarks toolbar under the address bar; only with tabs along the top. */
+  bookmarksBar: boolean
+  /** The sidebar shrunk to a strip of icons. */
+  sidebarCollapsed: boolean
+  /** The bookmarks list in the expanded sidebar. */
+  sidebarBookmarks: boolean
 }
 
 /** Dark by default, keeping the look earlier versions shipped with. */
@@ -65,7 +75,11 @@ export const DEFAULT_APPEARANCE: AppearanceConfig = {
   textSize: 'default',
   accent: 'blue',
   density: 'comfortable',
-  reduceMotion: false
+  reduceMotion: false,
+  tabLayout: 'horizontal',
+  bookmarksBar: false,
+  sidebarCollapsed: false,
+  sidebarBookmarks: true
 }
 
 /** Multiplier applied to every `text-ui-*` utility. */
@@ -103,8 +117,16 @@ export function normalizeAppearance(input: unknown): AppearanceConfig {
     reduceMotion:
       typeof value.reduceMotion === 'boolean'
         ? value.reduceMotion
-        : DEFAULT_APPEARANCE.reduceMotion
+        : DEFAULT_APPEARANCE.reduceMotion,
+    tabLayout: value.tabLayout === 'vertical' ? 'vertical' : DEFAULT_APPEARANCE.tabLayout,
+    bookmarksBar: flag(value.bookmarksBar, DEFAULT_APPEARANCE.bookmarksBar),
+    sidebarCollapsed: flag(value.sidebarCollapsed, DEFAULT_APPEARANCE.sidebarCollapsed),
+    sidebarBookmarks: flag(value.sidebarBookmarks, DEFAULT_APPEARANCE.sidebarBookmarks)
   }
+}
+
+function flag(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback
 }
 
 export type ExternalAddressCheck = 'ask' | 'always' | 'never'

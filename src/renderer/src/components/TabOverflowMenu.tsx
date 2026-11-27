@@ -5,6 +5,7 @@ import { cn } from '../lib/cn'
 import { TAB_KIND_LABEL, TAB_KIND_TONE } from '../lib/tab-kind'
 import { OnionIcon } from './TransportIcons'
 import { Popover } from './Popover'
+import { TabIcon } from './TabParts'
 
 interface TabOverflowMenuProps {
   tabs: TabSummary[]
@@ -123,23 +124,4 @@ export function TabOverflowMenu({
       )}
     </Popover>
   )
-}
-
-function TabIcon({ tab }: { tab: TabSummary }) {
-  if (tab.loading) {
-    return (
-      <span className="h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-[color:var(--color-accent)]/30 border-t-[color:var(--color-accent)]" />
-    )
-  }
-  if (tab.favicon) {
-    return (
-      <img
-        src={tab.favicon}
-        alt=""
-        draggable={false}
-        className="h-3.5 w-3.5 shrink-0 rounded-[2px] object-contain"
-      />
-    )
-  }
-  return <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[color:var(--color-accent)]/60" />
 }

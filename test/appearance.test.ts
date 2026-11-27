@@ -16,6 +16,7 @@ describe('normalizeAppearance', () => {
 
   it('keeps valid values', () => {
     const input: AppearanceConfig = {
+      ...DEFAULT_APPEARANCE,
       theme: 'light',
       textSize: 'xlarge',
       accent: 'green',
@@ -59,6 +60,7 @@ describe('text size presets', () => {
 describe('appearance boot argument', () => {
   it('round-trips through the preload argument list', () => {
     const appearance: AppearanceConfig = {
+      ...DEFAULT_APPEARANCE,
       theme: 'system',
       textSize: 'large',
       accent: 'violet',

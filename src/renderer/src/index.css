@@ -246,6 +246,15 @@ textarea {
   -webkit-app-region: no-drag;
 }
 
+/* A toolbar that is also the title bar: drag the gaps, never the controls. */
+.ncc-titlebar {
+  -webkit-app-region: drag;
+}
+
+.ncc-titlebar > :not([data-drag-handle]) {
+  -webkit-app-region: no-drag;
+}
+
 ::selection {
   background: var(--color-selection);
 }

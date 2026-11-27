@@ -1,8 +1,21 @@
-import { Check, Gauge, Monitor, Moon, Palette, RotateCcw, Sun, Type, ZapOff } from 'lucide-react'
+import {
+  Check,
+  Gauge,
+  Monitor,
+  Moon,
+  Palette,
+  PanelLeft,
+  PanelTop,
+  RotateCcw,
+  Sun,
+  Type,
+  ZapOff
+} from 'lucide-react'
 import type {
   AccentPreference,
   AppearanceConfig,
   DensityPreference,
+  TabLayout,
   TextSizePreference,
   ThemePreference
 } from '@shared/types'
@@ -14,6 +27,11 @@ interface AppearanceSettingsProps {
   onReset: () => void
   error?: string | null
 }
+
+const TAB_LAYOUTS: Array<{ id: TabLayout; label: string; hint: string; icon: typeof Sun }> = [
+  { id: 'horizontal', label: 'Along the top', hint: 'With an optional bookmarks toolbar', icon: PanelTop },
+  { id: 'vertical', label: 'Left sidebar', hint: 'Tabs and bookmarks in one column', icon: PanelLeft }
+]
 
 const THEMES: Array<{ id: ThemePreference; label: string; hint: string; icon: typeof Sun }> = [
   { id: 'system', label: 'System', hint: 'Follow the operating system', icon: Monitor },
@@ -57,9 +75,70 @@ export function AppearanceSettings({
           Appearance
         </h2>
         <p className="mt-1 text-ui-11 leading-relaxed text-[color:var(--color-muted)]">
-          Theme, text size, density and accent. Changes apply immediately and are remembered
+          Tab position, theme, text size, density and accent. Changes apply immediately and are remembered
           across launches.
         </p>
+      </div>
+
+      <div className="rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-4">
+        <Label
+          icon={PanelLeft}
+          title="Tabs and bookmarks"
+          hint="Where your tabs sit. You can also switch from the browser menu."
+        />
+        <div role="radiogroup" aria-label="Tab position" className="mt-3 grid grid-cols-2 gap-2">
+          {TAB_LAYOUTS.map((layout) => {
+            const active = appearance.tabLayout === layout.id
+            const Icon = layout.icon
+            return (
+              <button
+                key={layout.id}
+                type="button"
+                role="radio"
+                aria-checked={active}
+                data-tab-layout-option={layout.id}
+                onClick={() => onChange({ tabLayout: layout.id })}
+                className={cn(
+                  'rounded-lg border px-3 py-2 text-left text-ui-11 transition-colors',
+                  active
+                    ? 'border-[color:var(--color-accent)]/45 bg-[color:var(--color-accent)]/10 text-[color:var(--color-text-strong)]'
+                    : 'border-[color:var(--color-line)] bg-[color:var(--color-field)] text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)]'
+                )}
+              >
+                <span className="flex items-center gap-1.5 font-medium">
+                  <Icon className="h-3.5 w-3.5" />
+                  {layout.label}
+                </span>
+                <span className="mt-0.5 block text-ui-105 text-[color:var(--color-muted)]">
+                  {layout.hint}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+        {appearance.tabLayout === 'horizontal' ? (
+          <label className="mt-3 flex cursor-pointer items-center gap-2 text-ui-12 text-[color:var(--color-text)]">
+            <input
+              type="checkbox"
+              data-bookmarks-bar-toggle
+              checked={appearance.bookmarksBar}
+              onChange={(event) => onChange({ bookmarksBar: event.target.checked })}
+              className="h-4 w-4 accent-[color:var(--color-accent)]"
+            />
+            Show the bookmarks toolbar (Ctrl+Shift+B)
+          </label>
+        ) : (
+          <label className="mt-3 flex cursor-pointer items-center gap-2 text-ui-12 text-[color:var(--color-text)]">
+            <input
+              type="checkbox"
+              data-sidebar-bookmarks-toggle
+              checked={appearance.sidebarBookmarks}
+              onChange={(event) => onChange({ sidebarBookmarks: event.target.checked })}
+              className="h-4 w-4 accent-[color:var(--color-accent)]"
+            />
+            Show bookmarks in the sidebar (Ctrl+Shift+B)
+          </label>
+        )}
       </div>
 
       <div className="rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-4">

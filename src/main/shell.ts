@@ -8,7 +8,7 @@ import {
 import { parseNccAddress, toDisplayUrl, toInternalUrl, type NccAddress } from '@shared/ncc-url'
 import { buildNsiteUrl, parseNsiteAddress, type NsiteAddress } from '@shared/nsite-url'
 import type { NsiteActivity } from './nsite/protocol'
-import { BANNER_HEIGHT, CHROME_HEIGHT } from '@shared/layout'
+import { BANNER_HEIGHT, chromeInsets, toggleBookmarksPatch } from '@shared/layout'
 import type { CommandId } from '@shared/commands'
 import { reorderTabs } from '@shared/tabs'
 import { appearanceBootArgument } from '@shared/appearance'
@@ -41,7 +41,13 @@ import { formatDisplayUrl, isOnionPageUrl, tabTitle } from './shell/format'
 import type { ShellInternals } from './shell/internals'
 import { applyUrlToTab, loadWebTarget, navigateInTab as navigateTabTo } from './shell/navigation'
 import { wireTab as wireTabListeners } from './shell/wiring'
-import { showHistoryMenu, showNewTabMenu, showTabMenu } from './shell/menus'
+import {
+  showBookmarkListMenu,
+  showBookmarkMenu,
+  showHistoryMenu,
+  showNewTabMenu,
+  showTabMenu
+} from './shell/menus'
 import { browserShellFor, browserShellForTabContents, browserShells, registerShell, unregisterShell } from './shell/registry'
 import { restoredTabPlan, savedWindowSession } from './shell/session'
 import { buildNavState, tabSummaries } from './shell/state'
@@ -81,6 +87,8 @@ export interface ShellDeps {
   health: EndpointHealth
   preferTor: () => boolean
   appearance: () => AppearanceConfig
+  /** Save an appearance change made from a command and apply it to every window. */
+  updateAppearance: (patch: Partial<AppearanceConfig>) => void
   onContentWebContents?: (contents: WebContents) => void
   extensionContextItems?: (url: string) => Array<{ label: string; click: () => void }>
   /** Drop a cached NCC locator before a forced reload. */
@@ -279,9 +287,24 @@ export class BrowserShell {
     return true
   }
 
-  /** Match the native window background to the resolved theme. */
+  /** Match the native window background to the theme, and the page to the layout. */
   applyAppearance(): void {
-    if (!this.window.isDestroyed()) this.window.setBackgroundColor(windowBackground())
+    if (this.window.isDestroyed()) return
+    this.window.setBackgroundColor(windowBackground())
+    this.syncState()
+  }
+
+  tabsAreVertical(): boolean {
+    return this.deps.appearance().tabLayout === 'vertical'
+  }
+
+  toggleTabLayout(): void {
+    const { tabLayout } = this.deps.appearance()
+    this.deps.updateAppearance({ tabLayout: tabLayout === 'vertical' ? 'horizontal' : 'vertical' })
+  }
+
+  toggleBookmarksVisibility(): void {
+    this.deps.updateAppearance(toggleBookmarksPatch(this.deps.appearance()))
   }
 
   getState(): NavState {
@@ -679,14 +702,29 @@ export class BrowserShell {
     const page = this.getActivePage()
     if (!page) return this.getBookmarks()
     const list = this.deps.bookmarks.toggle(page.url, page.title)
-    this.sendChrome('ncc:bookmarks', list)
+    this.publishBookmarks(list)
     return list
   }
 
   removeBookmark(url: string): Bookmark[] {
     const list = this.deps.bookmarks.remove(url)
-    this.sendChrome('ncc:bookmarks', list)
+    this.publishBookmarks(list)
     return list
+  }
+
+  /** Every window can have bookmarks on screen, so all of them hear about a change. */
+  private publishBookmarks(list: Bookmark[]): void {
+    for (const browserShell of browserShells()) browserShell.sendToChrome('ncc:bookmarks', list)
+  }
+
+  /** Right-click menu for a bookmark in the toolbar or sidebar. */
+  showBookmarkMenu(url: string): void {
+    if (this.deps.bookmarks.has(url)) showBookmarkMenu(this, url)
+  }
+
+  /** The bookmarks that did not fit, as a native menu so it can cover the page. */
+  showBookmarkListMenu(fromIndex: number): void {
+    showBookmarkListMenu(this, this.getBookmarks().slice(Math.max(0, fromIndex)))
   }
 
   getActivePage(): { url: string; title: string } | null {
@@ -1018,7 +1056,7 @@ export class BrowserShell {
       try {
         tab.view.setVisible(visible)
       } catch {
-        tab.view.setBounds(visible ? bounds : { x: 0, y: CHROME_HEIGHT, width: 0, height: 0 })
+        tab.view.setBounds(visible ? bounds : { x: bounds.x, y: bounds.y, width: 0, height: 0 })
       }
     }
   }
@@ -1160,11 +1198,12 @@ export class BrowserShell {
     const [width, height] = this.window.getContentSize()
     const banner =
       this.overlays.size === 0 && this.bannerFor(this.activeTab()) ? BANNER_HEIGHT : 0
+    const { top, left } = chromeInsets(this.deps.appearance())
     return {
-      x: 0,
-      y: CHROME_HEIGHT + banner,
-      width,
-      height: Math.max(0, height - CHROME_HEIGHT - banner)
+      x: left,
+      y: top + banner,
+      width: Math.max(0, width - left),
+      height: Math.max(0, height - top - banner)
     }
   }
 

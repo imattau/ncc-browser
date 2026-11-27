@@ -64,6 +64,13 @@ export function createShellStack(
     health: foundation.health,
     preferTor: () => foundation.config.get().preferTor,
     appearance: () => foundation.config.get().appearance,
+    updateAppearance: (patch) => {
+      const config = foundation.config.setAppearance(patch)
+      for (const entry of browserShells()) {
+        entry.applyAppearance()
+        entry.sendConfig(config)
+      }
+    },
     onContentWebContents: (contents) => {
       // Remote content must never be able to keep the window from closing.
       contents.on('will-prevent-unload', (event) => event.preventDefault())

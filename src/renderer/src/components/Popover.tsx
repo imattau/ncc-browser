@@ -30,7 +30,7 @@ export interface PopoverAnchor {
 export function Popover({
   title,
   subtitle,
-  topClass = 'top-[104px]',
+  topClass = 'top-[calc(var(--chrome-top,98px)+6px)]',
   widthClass = 'w-[340px]',
   widthPx = 340,
   anchor,

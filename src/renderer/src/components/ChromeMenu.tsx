@@ -63,7 +63,7 @@ export function ChromeMenu({
         role="menu"
         data-chrome-menu
         aria-label="Browser menu"
-        className="ncc-fade-in absolute right-3 top-[104px] max-h-[72vh] w-[312px] overflow-y-auto rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] py-1.5 shadow-[0_30px_90px_rgba(0,0,0,0.6)]"
+        className="ncc-fade-in absolute right-3 top-[calc(var(--chrome-top,98px)+6px)] max-h-[min(72vh,calc(100vh-var(--chrome-top,98px)-16px))] w-[312px] overflow-y-auto rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] py-1.5 shadow-[0_30px_90px_rgba(0,0,0,0.6)]"
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="border-b border-[color:var(--color-line)] px-3 pb-2.5 pt-1">

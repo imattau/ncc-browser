@@ -1,4 +1,5 @@
 import { Menu, clipboard } from 'electron'
+import type { Bookmark } from '@shared/types'
 import type { BrowserShell } from '../shell'
 import { historyLabel } from './format'
 
@@ -36,7 +37,47 @@ export function showHistoryMenu(shell: BrowserShell, direction: 'back' | 'forwar
   ).popup({ window: shell.window })
 }
 
-/** Context menu for a tab in the strip. */
+/** Context menu for a bookmark. New tabs keep the current tab's kind by default. */
+export function showBookmarkMenu(shell: BrowserShell, url: string): void {
+  const kind = shell.getState().tabKind
+  const sameKind = (): void => {
+    if (kind === 'tor') shell.newTorTab(url)
+    else if (kind === 'private') shell.newPrivateTab(url)
+    else shell.newTab(url)
+  }
+
+  Menu.buildFromTemplate([
+    { label: 'Open', click: () => void shell.navigate(url) },
+    { label: 'Open in new tab', click: sameKind },
+    { label: 'Open in new private tab', click: () => shell.newPrivateTab(url) },
+    { label: 'Open in new Tor tab', click: () => shell.newTorTab(url) },
+    { type: 'separator' },
+    { label: 'Copy address', click: () => clipboard.writeText(url) },
+    { type: 'separator' },
+    { label: 'Remove bookmark', click: () => void shell.removeBookmark(url) }
+  ]).popup({ window: shell.window })
+}
+
+/** Bookmarks that do not fit in the toolbar or the collapsed sidebar. */
+export function showBookmarkListMenu(shell: BrowserShell, bookmarks: Bookmark[]): void {
+  const items = bookmarks.slice(0, 40).map((bookmark) => ({
+    // `&` marks a keyboard mnemonic in native menus.
+    label: historyLabel(bookmark.title, bookmark.url).replace(/&/g, '&&'),
+    click: () => void shell.navigate(bookmark.url)
+  }))
+  Menu.buildFromTemplate(
+    items.length > 0
+      ? [
+          ...items,
+          ...(bookmarks.length > items.length
+            ? [{ label: `${bookmarks.length - items.length} more in the sidebar`, enabled: false }]
+            : [])
+        ]
+      : [{ label: 'No bookmarks yet', enabled: false }]
+  ).popup({ window: shell.window })
+}
+
+/** Context menu for a tab in the strip or sidebar. */
 export function showTabMenu(shell: BrowserShell, id: string): void {
   const info = shell.tabMenuInfo(id)
   if (!info) return
@@ -63,7 +104,7 @@ export function showTabMenu(shell: BrowserShell, id: string): void {
       click: () => shell.closeOtherTabs(id)
     },
     {
-      label: 'Close tabs to the right',
+      label: shell.tabsAreVertical() ? 'Close tabs below' : 'Close tabs to the right',
       enabled: info.index < info.count - 1,
       click: () => shell.closeTabsToRight(id)
     },

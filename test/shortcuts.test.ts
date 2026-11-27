@@ -46,6 +46,7 @@ describe('commandForInput', () => {
     )
     expect(commandForInput(input({ key: 'q', control: true }))).toBe('quit')
     expect(commandForInput(input({ key: 'd', control: true }))).toBe('toggle-bookmark')
+    expect(commandForInput(input({ key: 'B', control: true, shift: true }))).toBe('toggle-bookmarks-view')
     expect(commandForInput(input({ key: 'h', control: true }))).toBe('open-history')
     expect(commandForInput(input({ key: 'j', control: true }))).toBe('open-downloads')
   })

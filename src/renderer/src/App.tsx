@@ -4,6 +4,13 @@ import { InsecureWarning, SecurityBanner } from './components/SecurityNotice'
 import { SettingsPage } from './components/SettingsPage'
 import { WalletPanel } from './components/WalletPanel'
 import { TabStrip } from './components/TabStrip'
+import { Sidebar } from './components/Sidebar'
+import { BookmarksBar } from './components/BookmarksBar'
+import type { TabActions } from './components/TabParts'
+import type { WindowControlsProps } from './components/WindowControls'
+import { openInNewTabOfKind, type BookmarkActions } from './lib/open-bookmark'
+import { chromeInsets } from '@shared/layout'
+import { normalizeAppearance, type AppearanceConfig } from '@shared/types'
 import { AppPrompts } from './components/overlays/AppPrompts'
 import { OverlayPanels } from './components/overlays/OverlayPanels'
 import { Toolbar } from './components/Toolbar'
@@ -298,6 +305,45 @@ export function App() {
     showOverlay('history')
   }, [refreshHistory, showOverlay])
 
+  // The boot value covers the first paint, before the config has arrived.
+  const appearance = config?.appearance ?? normalizeAppearance(window.ncc.initialAppearance)
+  const vertical = appearance.tabLayout === 'vertical'
+  const chromeTop = chromeInsets(appearance).top
+
+  // Menus and popovers are positioned against the window, so they read the chrome height.
+  useEffect(() => {
+    document.documentElement.style.setProperty('--chrome-top', `${chromeTop}px`)
+  }, [chromeTop])
+
+  const changeLayout = useCallback((patch: Partial<AppearanceConfig>) => {
+    void window.ncc.setAppearance(patch)
+  }, [])
+
+  const bookmarkActions: BookmarkActions = {
+    onOpen: openBookmark,
+    onOpenInNewTab: (url) => {
+      closeOverlay()
+      void openInNewTabOfKind(url, state.tabKind)
+    },
+    onContextMenu: (url) => void window.ncc.showBookmarkMenu(url)
+  }
+
+  const tabActions: TabActions = {
+    onSelect: selectTab,
+    onClose: closeTab,
+    onMove: moveTab,
+    onDetach: (id, screenX, screenY) => void window.ncc.detachTab(id, screenX, screenY),
+    onContextMenu: tabContextMenu,
+    onToggleMute: toggleMute
+  }
+
+  const windowControls: WindowControlsProps = {
+    windowMaximized: state.windowMaximized,
+    onMinimize: () => void window.ncc.minimizeWindow(),
+    onToggleMaximize: () => void window.ncc.toggleMaximizeWindow(),
+    onCloseWindow: () => void window.ncc.closeWindow()
+  }
+
   const bookmarked = state.displayUrl !== '' && bookmarks.some((item) => item.url === state.displayUrl)
 
   return (
@@ -305,23 +351,17 @@ export function App() {
       data-window-kind={state.tabKind}
       className="flex h-full flex-col overflow-hidden bg-[color:var(--color-ink)]"
     >
-      <TabStrip
-        tabs={state.tabs}
-        activeTabId={state.activeTabId}
-        windowMaximized={state.windowMaximized}
-        onSelect={selectTab}
-        onClose={closeTab}
-        onNew={newTab}
-        onNewMenu={() => void window.ncc.showNewTabMenu()}
-        onMove={moveTab}
-        onDetach={(id, screenX, screenY) => void window.ncc.detachTab(id, screenX, screenY)}
-        onContextMenu={tabContextMenu}
-        onToggleMute={toggleMute}
-        onOverflow={() => showOverlay('tabs')}
-        onMinimize={() => void window.ncc.minimizeWindow()}
-        onToggleMaximize={() => void window.ncc.toggleMaximizeWindow()}
-        onCloseWindow={() => void window.ncc.closeWindow()}
-      />
+      {vertical ? null : (
+        <TabStrip
+          tabs={state.tabs}
+          activeTabId={state.activeTabId}
+          {...tabActions}
+          {...windowControls}
+          onNew={newTab}
+          onNewMenu={() => void window.ncc.showNewTabMenu()}
+          onOverflow={() => showOverlay('tabs')}
+        />
+      )}
 
       <Toolbar
         state={state}
@@ -354,41 +394,73 @@ export function App() {
         onOpenIdentity={(anchor) => void openIdentityChooser(anchor)}
         onOpenMenu={() => showOverlay('menu')}
         onShareNostr={() => showOverlay('share-nostr')}
+        titleBar={vertical ? windowControls : null}
       />
 
-      {state.banner && !state.insecurePrompt && !overlay ? (
-        <SecurityBanner banner={state.banner} />
+      {!vertical && appearance.bookmarksBar ? (
+        <BookmarksBar
+          bookmarks={bookmarks}
+          onMore={(fromIndex) => void window.ncc.showBookmarkListMenu(fromIndex)}
+          {...bookmarkActions}
+        />
       ) : null}
 
-      <main className="relative min-h-0 flex-1 overflow-hidden">
-        {state.insecurePrompt ? (
-          <InsecureWarning
-            prompt={state.insecurePrompt}
-            onChoice={(choice) => void window.ncc.insecureChoice(choice)}
-          />
-        ) : overlay === 'settings' ? (
-          <SettingsPage
-            open
-            initialSection={settingsSection}
-            hostingDraft={hostingDraft}
-            onHostingDraftUsed={() => setHostingDraft(null)}
-            onClose={closeOverlay}
-            onIdentityChange={setIdentity}
-            passwordDraftOrigin={passwordDraftOrigin}
-            onPasswordDraftUsed={() => clearPasswordDraftOrigin()}
-          />
-        ) : overlay === 'wallet' ? (
-          <WalletPanel onClose={closeOverlay} onOpenIdentitySettings={() => openSettings('identity')} />
-        ) : state.mode === 'blank' ? (
-          <Welcome
-            onOpenSettings={() => openSettings('general')}
-            onOpenServices={() => openSettings('services')}
-            onNewPrivateTab={newPrivateTab}
-            onNewTorTab={newTorTab}
-            kind={state.tabKind}
+      {/* One structure for both layouts, so switching never remounts the open page. */}
+      <div className="flex min-h-0 flex-1">
+        {vertical ? (
+          <Sidebar
+            tabs={state.tabs}
+            activeTabId={state.activeTabId}
+            {...tabActions}
+            collapsed={appearance.sidebarCollapsed}
+            showBookmarks={appearance.sidebarBookmarks}
+            bookmarks={bookmarks}
+            bookmarkActions={bookmarkActions}
+            onBookmarkList={() => void window.ncc.showBookmarkListMenu(0)}
+            onNew={newTab}
+            onNewMenu={() => void window.ncc.showNewTabMenu()}
+            onToggleCollapsed={() => changeLayout({ sidebarCollapsed: !appearance.sidebarCollapsed })}
+            onToggleBookmarks={() => changeLayout({ sidebarBookmarks: !appearance.sidebarBookmarks })}
+            onMoveTabsToTop={() => changeLayout({ tabLayout: 'horizontal' })}
           />
         ) : null}
-      </main>
+        <div className="flex min-w-0 flex-1 flex-col">
+
+          {state.banner && !state.insecurePrompt && !overlay ? (
+            <SecurityBanner banner={state.banner} />
+          ) : null}
+
+          <main className="relative min-h-0 flex-1 overflow-hidden">
+            {state.insecurePrompt ? (
+              <InsecureWarning
+                prompt={state.insecurePrompt}
+                onChoice={(choice) => void window.ncc.insecureChoice(choice)}
+              />
+            ) : overlay === 'settings' ? (
+              <SettingsPage
+                open
+                initialSection={settingsSection}
+                hostingDraft={hostingDraft}
+                onHostingDraftUsed={() => setHostingDraft(null)}
+                onClose={closeOverlay}
+                onIdentityChange={setIdentity}
+                passwordDraftOrigin={passwordDraftOrigin}
+                onPasswordDraftUsed={() => clearPasswordDraftOrigin()}
+              />
+            ) : overlay === 'wallet' ? (
+              <WalletPanel onClose={closeOverlay} onOpenIdentitySettings={() => openSettings('identity')} />
+            ) : state.mode === 'blank' ? (
+              <Welcome
+                onOpenSettings={() => openSettings('general')}
+                onOpenServices={() => openSettings('services')}
+                onNewPrivateTab={newPrivateTab}
+                onNewTorTab={newTorTab}
+                kind={state.tabKind}
+              />
+            ) : null}
+          </main>
+        </div>
+      </div>
 
       <OverlayPanels
         overlay={overlay}
