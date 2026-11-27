@@ -25,6 +25,12 @@ export function registerSyncIpc(
     typeof id === 'string' ? service.removeDevice(id) : service.status()
   )
   handle('ncc:sync-migrate-identities', () => service.migrateIdentities())
+  handle('ncc:sync-identity-removal', (pubkey, action) =>
+    typeof pubkey === 'string' && (action === 'keep' || action === 'restore')
+      ? service.resolveIdentityRemoval(pubkey, action)
+      : service.status()
+  )
+  handle('ncc:sync-reset-identity-owner', () => service.resetIdentityOwner())
   handle('ncc:sync-open-tab', (url) => {
     // Another device chose this address; it is still only an address the person clicked.
     if (isSyncableUrl(url)) deps.openTab(url.trim())

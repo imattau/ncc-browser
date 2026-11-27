@@ -3,6 +3,7 @@ import { Bookmark, Clock, KeyRound, Laptop, Monitor, RefreshCw, Smartphone, Tras
 import type { IdentityStatus } from '@shared/types'
 import type { SyncCategory, SyncDevice, SyncStatus } from '@shared/sync-status'
 import { cn } from '../lib/cn'
+import { IdentityRemovals } from './IdentityRemovals'
 
 interface SyncSettingsProps {
   identity: IdentityStatus | null
@@ -36,7 +37,7 @@ const CATEGORIES: Array<{
   {
     id: 'identities',
     label: 'Identities',
-    hint: 'Sync locally stored Nostr keys in a separate encrypted vault. Other devices need the current default key already. Remote signer connections stay on this device. Changing the default requires migration.',
+    hint: 'Sync locally stored Nostr keys in a separate encrypted vault. Other devices need the current default key already. Remote signer connections stay on this device. Changing the default requires migration. To stop syncing one key, remove it in Settings → Identity.',
     icon: KeyRound
   }
 ]
@@ -90,7 +91,23 @@ export function SyncSettings({ identity, onOpenIdentity }: SyncSettingsProps) {
         </p>
       </div>
 
-      {status.identityMigrationFrom ? (
+      <IdentityRemovals status={status} apply={apply} />
+
+      {status.identityMigrationFrom && status.identityOwnerMissing ? (
+        <div data-identity-owner-missing className="rounded-xl border border-[color:var(--color-warn)]/40 bg-[color:var(--color-panel-raised)] p-4 text-ui-12 text-[color:var(--color-muted)]">
+          Identity sync is paused. The identity that protected your synced list is no longer on
+          this device. To migrate that list, import its key again in Settings → Identity. Or start
+          from the current default’s list: keys saved here are added to it, and the old encrypted
+          copy stays on your relays.
+          <button type="button" disabled={busy || status.syncing} onClick={() => {
+            if (!window.confirm('Continue with the current default identity’s list? Keys that are only in the old list, and not on this device, will not be carried over.')) return
+            setBusy(true)
+            void window.ncc.syncResetIdentityOwner().then(apply).finally(() => setBusy(false))
+          }} className="mt-3 block rounded-lg border border-[color:var(--color-line)] px-3 py-1.5 text-ui-12 text-[color:var(--color-text-strong)] disabled:opacity-50">
+            Use the current default instead
+          </button>
+        </div>
+      ) : status.identityMigrationFrom ? (
         <div className="rounded-xl border border-[color:var(--color-warn)]/40 bg-[color:var(--color-panel-raised)] p-4 text-ui-12 text-[color:var(--color-muted)]">
           The identity vault is still encrypted to the previous default identity. Migrate it to the current default to sync identities from here. The previous encrypted copy will remain available to devices that have not caught up.
           <button type="button" disabled={busy || status.syncing} onClick={() => {

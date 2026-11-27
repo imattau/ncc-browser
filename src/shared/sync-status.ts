@@ -37,7 +37,25 @@ export interface SyncStatus {
   devices: SyncDevice[]
   /** Previous default-key owner, when an identity vault migration needs confirmation. */
   identityMigrationFrom?: string
+  /** That previous identity is no longer on this device, so the list cannot be migrated. */
+  identityOwnerMissing?: boolean
+  /** The key the synced list is encrypted to. It cannot be removed while identity sync is on. */
+  identityOwner?: string
+  /** Keys on this device that have been removed from identity sync. */
+  identityRemovals?: IdentityRemoval[]
+  /** Goes up whenever sync adds a key here, so open identity lists can reload. */
+  identityRevision?: number
 }
+
+export interface IdentityRemoval {
+  pubkey: string
+  npub: string
+  /** The person chose to keep this key here. */
+  kept: boolean
+}
+
+/** What removing a saved key means for identity sync. */
+export type IdentityRemovalScope = 'device' | 'everywhere'
 
 export interface SyncPrefsPatch {
   categories?: Partial<SyncCategories>

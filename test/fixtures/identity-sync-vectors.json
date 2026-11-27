@@ -1,0 +1,481 @@
+{
+ "comment": "Made-up keys. Run by test/identity-sync.test.ts and crates/ncc-vault/src/sync.rs.",
+ "cases": [
+  {
+   "name": "adds what the vault has",
+   "local": [
+    {
+     "pubkey": "d18b698ad65fde610cc6a2970381fbeabd2964437836afc37d9378e4b829b7b0",
+     "nsec": "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq98mrssdxzweq"
+    }
+   ],
+   "remote": {
+    "v": 1,
+    "updatedAt": 1,
+    "entries": [
+     {
+      "pubkey": "d18b698ad65fde610cc6a2970381fbeabd2964437836afc37d9378e4b829b7b0",
+      "nsec": "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq98mrssdxzweq"
+     },
+     {
+      "pubkey": "8b0f2e2654cb8aa4304ac5e5659cf3823f516fe661f4902faf7ef6612cde729a",
+      "nsec": "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq9hrvjq97krvk"
+     },
+     {
+      "pubkey": "4d81b159ba4c5328667340754e2385cfd8bd0542da140337bbe33da649de3389",
+      "nsec": "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqxxt4ns986vyk"
+     }
+    ]
+   },
+   "state": {
+    "excluded": [],
+    "marks": []
+   },
+   "expect": {
+    "entries": [
+     "4d81b159ba4c5328667340754e2385cfd8bd0542da140337bbe33da649de3389",
+     "8b0f2e2654cb8aa4304ac5e5659cf3823f516fe661f4902faf7ef6612cde729a",
+     "d18b698ad65fde610cc6a2970381fbeabd2964437836afc37d9378e4b829b7b0"
+    ],
+    "imports": [
+     "4d81b159ba4c5328667340754e2385cfd8bd0542da140337bbe33da649de3389",
+     "8b0f2e2654cb8aa4304ac5e5659cf3823f516fe661f4902faf7ef6612cde729a"
+    ],
+    "unexclude": [],
+    "removals": [],
+    "marks": []
+   }
+  },
+  {
+   "name": "a shorter vault takes nothing away",
+   "local": [
+    {
+     "pubkey": "d18b698ad65fde610cc6a2970381fbeabd2964437836afc37d9378e4b829b7b0",
+     "nsec": "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq98mrssdxzweq"
+    },
+    {
+     "pubkey": "8b0f2e2654cb8aa4304ac5e5659cf3823f516fe661f4902faf7ef6612cde729a",
+     "nsec": "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq9hrvjq97krvk"
+    },
+    {
+     "pubkey": "4d81b159ba4c5328667340754e2385cfd8bd0542da140337bbe33da649de3389",
+     "nsec": "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqxxt4ns986vyk"
+    }
+   ],
+   "remote": {
+    "v": 1,
+    "updatedAt": 1,
+    "entries": [
+     {
+      "pubkey": "d18b698ad65fde610cc6a2970381fbeabd2964437836afc37d9378e4b829b7b0",
+      "nsec": "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq98mrssdxzweq"
+     }
+    ]
+   },
+   "state": {
+    "excluded": [],
+    "marks": []
+   },
+   "expect": {
+    "entries": [
+     "4d81b159ba4c5328667340754e2385cfd8bd0542da140337bbe33da649de3389",
+     "8b0f2e2654cb8aa4304ac5e5659cf3823f516fe661f4902faf7ef6612cde729a",
+     "d18b698ad65fde610cc6a2970381fbeabd2964437836afc37d9378e4b829b7b0"
+    ],
+    "imports": [],
+    "unexclude": [],
+    "removals": [],
+    "marks": []
+   }
+  },
+  {
+   "name": "an excluded key stays synced but is not imported",
+   "local": [
+    {
+     "pubkey": "d18b698ad65fde610cc6a2970381fbeabd2964437836afc37d9378e4b829b7b0",
+     "nsec": "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq98mrssdxzweq"
+    },
+    {
+     "pubkey": "8b0f2e2654cb8aa4304ac5e5659cf3823f516fe661f4902faf7ef6612cde729a",
+     "nsec": "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq9hrvjq97krvk"
+    }
+   ],
+   "remote": {
+    "v": 1,
+    "updatedAt": 1,
+    "entries": [
+     {
+      "pubkey": "d18b698ad65fde610cc6a2970381fbeabd2964437836afc37d9378e4b829b7b0",
+      "nsec": "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq98mrssdxzweq"
+     },
+     {
+      "pubkey": "8b0f2e2654cb8aa4304ac5e5659cf3823f516fe661f4902faf7ef6612cde729a",
+      "nsec": "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq9hrvjq97krvk"
+     },
+     {
+      "pubkey": "4d81b159ba4c5328667340754e2385cfd8bd0542da140337bbe33da649de3389",
+      "nsec": "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqxxt4ns986vyk"
+     }
+    ]
+   },
+   "state": {
+    "excluded": [
+     "4d81b159ba4c5328667340754e2385cfd8bd0542da140337bbe33da649de3389"
+    ],
+    "marks": []
+   },
+   "expect": {
+    "entries": [
+     "4d81b159ba4c5328667340754e2385cfd8bd0542da140337bbe33da649de3389",
+     "8b0f2e2654cb8aa4304ac5e5659cf3823f516fe661f4902faf7ef6612cde729a",
+     "d18b698ad65fde610cc6a2970381fbeabd2964437836afc37d9378e4b829b7b0"
+    ],
+    "imports": [],
+    "unexclude": [],
+    "removals": [],
+    "marks": []
+   }
+  },
+  {
+   "name": "adding a key back ends its exclusion",
+   "local": [
+    {
+     "pubkey": "4d81b159ba4c5328667340754e2385cfd8bd0542da140337bbe33da649de3389",
+     "nsec": "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqxxt4ns986vyk"
+    }
+   ],
+   "remote": {
+    "v": 1,
+    "updatedAt": 1,
+    "entries": []
+   },
+   "state": {
+    "excluded": [
+     "4d81b159ba4c5328667340754e2385cfd8bd0542da140337bbe33da649de3389"
+    ],
+    "marks": []
+   },
+   "expect": {
+    "entries": [
+     "4d81b159ba4c5328667340754e2385cfd8bd0542da140337bbe33da649de3389"
+    ],
+    "imports": [],
+    "unexclude": [
+     "4d81b159ba4c5328667340754e2385cfd8bd0542da140337bbe33da649de3389"
+    ],
+    "removals": [],
+    "marks": []
+   }
+  },
+  {
+   "name": "a removed key leaves the vault and its holder is asked",
+   "local": [
+    {
+     "pubkey": "d18b698ad65fde610cc6a2970381fbeabd2964437836afc37d9378e4b829b7b0",
+     "nsec": "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq98mrssdxzweq"
+    },
+    {
+     "pubkey": "4d81b159ba4c5328667340754e2385cfd8bd0542da140337bbe33da649de3389",
+     "nsec": "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqxxt4ns986vyk"
+    }
+   ],
+   "remote": {
+    "v": 1,
+    "updatedAt": 1,
+    "entries": [
+     {
+      "pubkey": "d18b698ad65fde610cc6a2970381fbeabd2964437836afc37d9378e4b829b7b0",
+      "nsec": "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq98mrssdxzweq"
+     },
+     {
+      "pubkey": "8b0f2e2654cb8aa4304ac5e5659cf3823f516fe661f4902faf7ef6612cde729a",
+      "nsec": "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq9hrvjq97krvk"
+     },
+     {
+      "pubkey": "4d81b159ba4c5328667340754e2385cfd8bd0542da140337bbe33da649de3389",
+      "nsec": "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqxxt4ns986vyk"
+     }
+    ]
+   },
+   "state": {
+    "excluded": [],
+    "marks": [
+     {
+      "pubkey": "4d81b159ba4c5328667340754e2385cfd8bd0542da140337bbe33da649de3389",
+      "removed": true,
+      "at": 5
+     }
+    ]
+   },
+   "expect": {
+    "entries": [
+     "8b0f2e2654cb8aa4304ac5e5659cf3823f516fe661f4902faf7ef6612cde729a",
+     "d18b698ad65fde610cc6a2970381fbeabd2964437836afc37d9378e4b829b7b0"
+    ],
+    "imports": [
+     "8b0f2e2654cb8aa4304ac5e5659cf3823f516fe661f4902faf7ef6612cde729a"
+    ],
+    "unexclude": [],
+    "removals": [
+     "4d81b159ba4c5328667340754e2385cfd8bd0542da140337bbe33da649de3389"
+    ],
+    "marks": [
+     {
+      "pubkey": "4d81b159ba4c5328667340754e2385cfd8bd0542da140337bbe33da649de3389",
+      "removed": true,
+      "at": 5
+     }
+    ]
+   }
+  },
+  {
+   "name": "a removed key is not given to anyone",
+   "local": [
+    {
+     "pubkey": "d18b698ad65fde610cc6a2970381fbeabd2964437836afc37d9378e4b829b7b0",
+     "nsec": "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq98mrssdxzweq"
+    }
+   ],
+   "remote": {
+    "v": 1,
+    "updatedAt": 1,
+    "entries": [
+     {
+      "pubkey": "d18b698ad65fde610cc6a2970381fbeabd2964437836afc37d9378e4b829b7b0",
+      "nsec": "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq98mrssdxzweq"
+     },
+     {
+      "pubkey": "8b0f2e2654cb8aa4304ac5e5659cf3823f516fe661f4902faf7ef6612cde729a",
+      "nsec": "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq9hrvjq97krvk"
+     },
+     {
+      "pubkey": "4d81b159ba4c5328667340754e2385cfd8bd0542da140337bbe33da649de3389",
+      "nsec": "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqxxt4ns986vyk"
+     }
+    ],
+    "marks": [
+     {
+      "pubkey": "4d81b159ba4c5328667340754e2385cfd8bd0542da140337bbe33da649de3389",
+      "removed": true,
+      "at": 5
+     }
+    ]
+   },
+   "state": {
+    "excluded": [],
+    "marks": []
+   },
+   "expect": {
+    "entries": [
+     "8b0f2e2654cb8aa4304ac5e5659cf3823f516fe661f4902faf7ef6612cde729a",
+     "d18b698ad65fde610cc6a2970381fbeabd2964437836afc37d9378e4b829b7b0"
+    ],
+    "imports": [
+     "8b0f2e2654cb8aa4304ac5e5659cf3823f516fe661f4902faf7ef6612cde729a"
+    ],
+    "unexclude": [],
+    "removals": [],
+    "marks": [
+     {
+      "pubkey": "4d81b159ba4c5328667340754e2385cfd8bd0542da140337bbe33da649de3389",
+      "removed": true,
+      "at": 5
+     }
+    ]
+   }
+  },
+  {
+   "name": "a newer restore beats a removal",
+   "local": [
+    {
+     "pubkey": "4d81b159ba4c5328667340754e2385cfd8bd0542da140337bbe33da649de3389",
+     "nsec": "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqxxt4ns986vyk"
+    }
+   ],
+   "remote": {
+    "v": 1,
+    "updatedAt": 1,
+    "entries": [
+     {
+      "pubkey": "d18b698ad65fde610cc6a2970381fbeabd2964437836afc37d9378e4b829b7b0",
+      "nsec": "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq98mrssdxzweq"
+     }
+    ],
+    "marks": [
+     {
+      "pubkey": "4d81b159ba4c5328667340754e2385cfd8bd0542da140337bbe33da649de3389",
+      "removed": true,
+      "at": 5
+     }
+    ]
+   },
+   "state": {
+    "excluded": [],
+    "marks": [
+     {
+      "pubkey": "4d81b159ba4c5328667340754e2385cfd8bd0542da140337bbe33da649de3389",
+      "removed": false,
+      "at": 6
+     }
+    ]
+   },
+   "expect": {
+    "entries": [
+     "4d81b159ba4c5328667340754e2385cfd8bd0542da140337bbe33da649de3389",
+     "d18b698ad65fde610cc6a2970381fbeabd2964437836afc37d9378e4b829b7b0"
+    ],
+    "imports": [
+     "d18b698ad65fde610cc6a2970381fbeabd2964437836afc37d9378e4b829b7b0"
+    ],
+    "unexclude": [],
+    "removals": [],
+    "marks": [
+     {
+      "pubkey": "4d81b159ba4c5328667340754e2385cfd8bd0542da140337bbe33da649de3389",
+      "removed": false,
+      "at": 6
+     }
+    ]
+   }
+  },
+  {
+   "name": "removal wins a tie",
+   "local": [
+    {
+     "pubkey": "d18b698ad65fde610cc6a2970381fbeabd2964437836afc37d9378e4b829b7b0",
+     "nsec": "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq98mrssdxzweq"
+    }
+   ],
+   "remote": {
+    "v": 1,
+    "updatedAt": 1,
+    "entries": [
+     {
+      "pubkey": "d18b698ad65fde610cc6a2970381fbeabd2964437836afc37d9378e4b829b7b0",
+      "nsec": "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq98mrssdxzweq"
+     },
+     {
+      "pubkey": "4d81b159ba4c5328667340754e2385cfd8bd0542da140337bbe33da649de3389",
+      "nsec": "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqxxt4ns986vyk"
+     }
+    ],
+    "marks": [
+     {
+      "pubkey": "4d81b159ba4c5328667340754e2385cfd8bd0542da140337bbe33da649de3389",
+      "removed": false,
+      "at": 5
+     }
+    ]
+   },
+   "state": {
+    "excluded": [],
+    "marks": [
+     {
+      "pubkey": "4d81b159ba4c5328667340754e2385cfd8bd0542da140337bbe33da649de3389",
+      "removed": true,
+      "at": 5
+     }
+    ]
+   },
+   "expect": {
+    "entries": [
+     "d18b698ad65fde610cc6a2970381fbeabd2964437836afc37d9378e4b829b7b0"
+    ],
+    "imports": [],
+    "unexclude": [],
+    "removals": [],
+    "marks": [
+     {
+      "pubkey": "4d81b159ba4c5328667340754e2385cfd8bd0542da140337bbe33da649de3389",
+      "removed": true,
+      "at": 5
+     }
+    ]
+   }
+  },
+  {
+   "name": "a missing vault starts from this device",
+   "local": [
+    {
+     "pubkey": "8b0f2e2654cb8aa4304ac5e5659cf3823f516fe661f4902faf7ef6612cde729a",
+     "nsec": "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq9hrvjq97krvk"
+    },
+    {
+     "pubkey": "d18b698ad65fde610cc6a2970381fbeabd2964437836afc37d9378e4b829b7b0",
+     "nsec": "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq98mrssdxzweq"
+    }
+   ],
+   "remote": null,
+   "state": {
+    "excluded": [],
+    "marks": []
+   },
+   "expect": {
+    "entries": [
+     "8b0f2e2654cb8aa4304ac5e5659cf3823f516fe661f4902faf7ef6612cde729a",
+     "d18b698ad65fde610cc6a2970381fbeabd2964437836afc37d9378e4b829b7b0"
+    ],
+    "imports": [],
+    "unexclude": [],
+    "removals": [],
+    "marks": []
+   }
+  }
+ ],
+ "refused": [
+  {
+   "name": "a key that is not the one named",
+   "remote": {
+    "v": 1,
+    "updatedAt": 1,
+    "entries": [
+     {
+      "pubkey": "d18b698ad65fde610cc6a2970381fbeabd2964437836afc37d9378e4b829b7b0",
+      "nsec": "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq9hrvjq97krvk"
+     }
+    ]
+   }
+  },
+  {
+   "name": "removals that are not a list",
+   "remote": {
+    "v": 1,
+    "updatedAt": 1,
+    "entries": [
+     {
+      "pubkey": "d18b698ad65fde610cc6a2970381fbeabd2964437836afc37d9378e4b829b7b0",
+      "nsec": "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq98mrssdxzweq"
+     }
+    ],
+    "marks": {}
+   }
+  },
+  {
+   "name": "a malformed removal",
+   "remote": {
+    "v": 1,
+    "updatedAt": 1,
+    "entries": [
+     {
+      "pubkey": "d18b698ad65fde610cc6a2970381fbeabd2964437836afc37d9378e4b829b7b0",
+      "nsec": "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq98mrssdxzweq"
+     }
+    ],
+    "marks": [
+     {
+      "pubkey": "d18b698ad65fde610cc6a2970381fbeabd2964437836afc37d9378e4b829b7b0",
+      "removed": "yes",
+      "at": 1
+     }
+    ]
+   }
+  },
+  {
+   "name": "another version",
+   "remote": {
+    "v": 2,
+    "entries": []
+   }
+  }
+ ]
+}

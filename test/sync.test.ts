@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { negated, testIdentity } from './helpers/identities'
 import {
   BOOKMARKS_D,
   docKind,
@@ -60,25 +61,13 @@ describe('sync vectors shared with the Rust implementation', () => {
 
 describe('sync helpers', () => {
   it('validates and merges identity vault entries by public key', () => {
-    const keyA = 'a'.repeat(64)
-    const keyB = 'b'.repeat(64)
-    expect(() => normalizeIdentityVault({ v: 1, entries: [
-      { pubkey: 'bad', nsec: 'not-a-key' }
-    ] })).toThrow()
-    const a = normalizeIdentityVault({ v: 1, entries: [
-      { pubkey: keyA, nsec: `nsec1${'a'.repeat(40)}` }
-    ] })
-    const merged = mergeIdentityVaults(a, { v: 1, entries: [
-      { pubkey: keyA, nsec: `nsec1${'a'.repeat(40)}` },
-      { pubkey: keyB, nsec: `nsec1${'b'.repeat(40)}` }
-    ] })
-    expect(merged.entries).toEqual([
-      { pubkey: keyA, nsec: `nsec1${'a'.repeat(40)}` },
-      { pubkey: keyB, nsec: `nsec1${'b'.repeat(40)}` }
-    ])
-    expect(() => mergeIdentityVaults(a, { v: 1, entries: [
-      { pubkey: keyA, nsec: `nsec1${'c'.repeat(40)}` }
-    ] })).toThrow(/conflicting keys/)
+    const [a, b] = [testIdentity(1), testIdentity(2)]
+    expect(() => normalizeIdentityVault({ v: 1, entries: [{ pubkey: 'bad', nsec: 'not-a-key' }] })).toThrow()
+    expect(() => normalizeIdentityVault({ v: 1, entries: [{ pubkey: a.pubkey, nsec: b.nsec }] })).toThrow(/does not match/)
+    const merged = mergeIdentityVaults({ v: 1, entries: [a] }, { v: 1, entries: [a, b] })
+    expect(merged.entries).toEqual([a, b].sort((x, y) => x.pubkey.localeCompare(y.pubkey)))
+    // The negated secret has the same public key: two different keys for one identity.
+    expect(() => mergeIdentityVaults({ v: 1, entries: [a] }, { v: 1, entries: [negated(a)] })).toThrow(/conflicting keys/)
   })
 
   it('starts weeks on Monday', () => {

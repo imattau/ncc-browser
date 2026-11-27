@@ -15,6 +15,45 @@ export function createIdentity(deps) {
   let stopChooserProfileWatch = null
 
 
+  /** What removing a saved key will do, said before it is done. */
+  function removalPanel(info, onRemove) {
+    const panel = document.createElement('div')
+    panel.className = 'identity-remove-panel'
+    const paragraph = (text) => {
+      const element = document.createElement('p')
+      element.textContent = text
+      panel.append(element)
+    }
+    const buttons = document.createElement('div')
+    buttons.className = 'identity-profile-actions'
+    const button = (label, run, className = '') => {
+      const element = document.createElement('button')
+      element.type = 'button'
+      element.className = className
+      element.textContent = label
+      element.addEventListener('click', run)
+      buttons.append(element)
+    }
+    if (info.protectsList) {
+      paragraph('This identity protects your synced identity list. First turn off identity sync, or make another identity the default and migrate the list in Sync.')
+      button('Close', () => panel.remove())
+    } else {
+      paragraph('This deletes the key from this phone. If this is the only copy, it can’t be recovered.')
+      if (info.syncing) {
+        paragraph('From this phone only: sync won’t add it back here, and it stays on your other devices.')
+        paragraph('Everywhere: it is also taken out of your synced list. Other devices ask before deleting their copy. Update all devices, because older versions can add it back for a time. This can’t revoke the key or erase every old copy.')
+        button('Remove from this phone', () => { panel.remove(); void onRemove('device') }, 'danger')
+        button('Remove and stop syncing everywhere', () => { panel.remove(); void onRemove('everywhere') }, 'danger')
+      } else {
+        paragraph('If you use identity sync later, it won’t be added back to this phone.')
+        button('Remove', () => { panel.remove(); void onRemove('device') }, 'danger')
+      }
+      button('Cancel', () => panel.remove())
+    }
+    panel.append(buttons)
+    return panel
+  }
+
   function renderIdentityProfiles(result, metadata = {}) {
     identityProfiles = result
     const list = byId('identity-profiles')
@@ -80,13 +119,25 @@ export function createIdentity(deps) {
       remove.type = 'button'
       remove.className = 'danger'
       remove.textContent = 'Remove'
-      remove.addEventListener('click', async () => {
-        if (!confirm('Remove this identity from Nostr Navigator?')) return
+      const removeWith = async (task) => {
         try {
-          await invoke('identity_remove_profile', { id: profile.id })
+          await task()
           await refreshIdentity()
           await refreshBunker()
           await refreshIdentityProfiles()
+        } catch (error) { identityFailure(error) }
+      }
+      remove.addEventListener('click', async () => {
+        if (profile.mode !== 'local') {
+          if (!confirm('Remove this identity from Nostr Navigator?')) return
+          await removeWith(() => invoke('identity_remove_profile', { id: profile.id }))
+          return
+        }
+        // A saved key can be synced, so removing it needs more than yes or no.
+        if (row.querySelector('.identity-remove-panel')) return
+        try {
+          const info = await deps.identitySync().removalInfo(profile.id)
+          row.append(removalPanel(info, (scope) => removeWith(() => deps.identitySync().removeIdentity(profile.id, scope))))
         } catch (error) { identityFailure(error) }
       })
       actions.append(remove)
@@ -415,6 +466,7 @@ export function createIdentity(deps) {
   function stopProfileWatches() { stopSettingsProfileWatch?.(); stopSettingsProfileWatch = null; stopChooserProfileWatch?.(); stopChooserProfileWatch = null }
 
   return {
+    refreshIdentityProfiles,
     hasSignerRequest: () => Boolean(signerRequest),
     setupIdentity, refreshIdentity, refreshBunker, renderIdentity, answerSigner,
     openSignerChooser, stopProfileWatches

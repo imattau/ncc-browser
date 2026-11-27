@@ -49,11 +49,11 @@ export function registerSignerChromeIpc(deps: SignerChromeIpcDeps): void {
     resetCaches(deps)
     return list
   })
-  ipcMain.handle('ncc:identity-remove-profile', async (event, id: unknown) => {
+  ipcMain.handle('ncc:identity-remove-profile', async (event, id: unknown, scope: unknown) => {
     if (!fromChrome(event)) throw new Error('Not allowed')
     const previousDefault = deps.identity.list().defaultId
     const previousPubkey = deps.identity.status().hexPubkey ?? null
-    const status = await deps.identity.remove(String(id ?? ''))
+    const status = await deps.identity.remove(String(id ?? ''), scope === 'everywhere' ? 'everywhere' : 'device')
     const nextPubkey = deps.identity.status().hexPubkey ?? null
     if (nextPubkey !== previousPubkey) deps.shell.notifySignerAccountsChanged(nextPubkey)
     if (deps.identity.list().defaultId !== previousDefault) deps.passwords.onIdentityChanged()

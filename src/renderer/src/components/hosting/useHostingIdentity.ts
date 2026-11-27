@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { nip19 } from 'nostr-tools'
 import type { IdentityList, IdentityStatus } from '@shared/types'
+import { useReloadOnSyncedIdentity } from '../../hooks/useSyncStatus'
 import { messageOf } from '../../lib/format'
 
 export interface HostingIdentityApi {
@@ -53,6 +54,8 @@ export function useHostingIdentity({
       // keep the last known list
     }
   }
+
+  useReloadOnSyncedIdentity(() => void refreshIdentities())
 
   const selectIdentity = async (id: string): Promise<void> => {
     if (!id || id === identity?.hexPubkey) return

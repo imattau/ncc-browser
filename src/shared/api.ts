@@ -2,7 +2,7 @@ import type { PublishDraftKind } from './publish-drafts'
 import type { MoneroWalletData } from './monero-wallet'
 import type { AutomationState } from './automation'
 import type { CommandId } from './commands'
-import type { SyncPrefsPatch, SyncStatus } from './sync-status'
+import type { SyncPrefsPatch, SyncStatus, IdentityRemovalScope } from './sync-status'
 import type {
   ExtensionInstallResult,
   ExtensionsState
@@ -255,6 +255,10 @@ export interface NccApi {
   syncConfigure(patch: SyncPrefsPatch): Promise<SyncStatus>
   syncRemoveDevice(id: string): Promise<SyncStatus>
   syncMigrateIdentities(): Promise<SyncStatus>
+  /** For a key held here that was removed from sync: keep it quietly, or sync it again. */
+  syncIdentityRemoval(pubkey: string, action: 'keep' | 'restore'): Promise<SyncStatus>
+  /** Start again from the default's list when the previous owner's key is gone. */
+  syncResetIdentityOwner(): Promise<SyncStatus>
   syncOpenTab(url: string): Promise<void>
   onSyncStatus(listener: (status: SyncStatus) => void): () => void
   passwordsStatus(): Promise<PasswordVaultStatus>
@@ -353,7 +357,7 @@ export interface NccApi {
   onIdentityProfileMetadata(listener: (profiles: IdentityProfileMetadata[]) => void): () => void
   identitySelect(id: string): Promise<IdentityStatus>
   identitySetDefault(id: string): Promise<IdentityList>
-  identityRemove(id: string): Promise<IdentityStatus>
+  identityRemove(id: string, scope?: IdentityRemovalScope): Promise<IdentityStatus>
   shareNostr(comment: string): Promise<{ accepted: number; relays: number; error?: string }>
   importIdentity(secret: string): Promise<IdentityStatus>
   generateIdentity(): Promise<IdentityStatus>

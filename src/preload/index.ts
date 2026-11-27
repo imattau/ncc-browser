@@ -182,6 +182,9 @@ const api: NccApi = {
   syncConfigure: (patch) => ipcRenderer.invoke('ncc:sync-configure', patch),
   syncRemoveDevice: (id) => ipcRenderer.invoke('ncc:sync-remove-device', id),
   syncMigrateIdentities: () => ipcRenderer.invoke('ncc:sync-migrate-identities'),
+  syncIdentityRemoval: (pubkey, action) =>
+    ipcRenderer.invoke('ncc:sync-identity-removal', pubkey, action),
+  syncResetIdentityOwner: () => ipcRenderer.invoke('ncc:sync-reset-identity-owner'),
   syncOpenTab: (url) => ipcRenderer.invoke('ncc:sync-open-tab', url),
   onSyncStatus: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, status: SyncStatus): void =>
@@ -287,7 +290,7 @@ const api: NccApi = {
   },
   identitySelect: (id) => ipcRenderer.invoke('ncc:identity-select', id),
   identitySetDefault: (id) => ipcRenderer.invoke('ncc:identity-default', id),
-  identityRemove: (id) => ipcRenderer.invoke('ncc:identity-remove-profile', id),
+  identityRemove: (id, scope) => ipcRenderer.invoke('ncc:identity-remove-profile', id, scope),
   shareNostr: (comment) => ipcRenderer.invoke('ncc:share-nostr', comment),
   importIdentity: (secret) => ipcRenderer.invoke('ncc:identity-import', secret),
   generateIdentity: () => ipcRenderer.invoke('ncc:identity-generate'),

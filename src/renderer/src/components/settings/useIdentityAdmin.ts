@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { useReloadOnSyncedIdentity } from '../../hooks/useSyncStatus'
 import type { IdentityList, IdentityStatus } from '@shared/types'
 import { messageOf } from '../../lib/format'
 
@@ -17,6 +18,7 @@ export interface IdentityAdminApi {
   remoteError: string | null
   ephemeralSigner: boolean
   /** Select, remove or import an identity that resolves to a status. */
+  refresh: () => Promise<void>
   runIdentity: (action: () => Promise<IdentityStatus>) => Promise<void>
   /** Actions that return a list (set-default) or a status (select, remove). */
   updateIdentityProfile: (action: () => Promise<IdentityStatus | IdentityList>) => Promise<void>
@@ -64,6 +66,10 @@ export function useIdentityAdmin(options: {
   const refresh = useCallback(async (): Promise<void> => {
     setIdentityList(await window.ncc.identityList())
   }, [])
+
+  useReloadOnSyncedIdentity(() => {
+    if (open) void refresh()
+  })
 
   const runIdentity = async (action: () => Promise<IdentityStatus>): Promise<void> => {
     setIdentityBusy(true)
@@ -133,6 +139,7 @@ export function useIdentityAdmin(options: {
     connectBusy,
     remoteError,
     ephemeralSigner,
+    refresh,
     runIdentity,
     updateIdentityProfile,
     connectBunker,

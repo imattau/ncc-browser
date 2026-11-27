@@ -3,13 +3,17 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { dirname } from 'node:path'
 import { hostname } from 'node:os'
 import type { SyncCategories, SyncPrefsPatch } from '@shared/sync-status'
-import { isDeviceId } from '@shared/sync'
+import { isDeviceId, mergeIdentityMarks, type IdentityLocalState, type IdentityMark } from '@shared/sync'
 
 export interface SyncPrefs {
   categories: SyncCategories
   deviceId: string
   deviceName: string
   identityVaultOwnerId?: string
+  /** What this device remembers about identity removals. */
+  identityState: IdentityLocalState
+  /** Removals the person chose to keep the key for, by pubkey, so they are not asked again. */
+  identityKept: Record<string, number>
 }
 
 const FILE_VERSION = 1
@@ -51,11 +55,18 @@ export class SyncPrefsStore {
     this.write()
   }
 
+  setIdentityState(state: IdentityLocalState, kept = this.get().identityKept): void {
+    this.prefs = { ...this.get(), identityState: state, identityKept: kept }
+    this.write()
+  }
+
   private read(): SyncPrefs {
     const fresh: SyncPrefs = {
       categories: { bookmarks: false, tabs: false, history: false, identities: false },
       deviceId: randomBytes(8).toString('hex'),
-      deviceName: defaultDeviceName()
+      deviceName: defaultDeviceName(),
+      identityState: { excluded: [], marks: [] },
+      identityKept: {}
     }
     try {
       if (existsSync(this.filePath)) {
@@ -65,6 +76,8 @@ export class SyncPrefsStore {
           deviceId: string
           deviceName: string
           identityVaultOwnerId?: string
+          identityState: unknown
+          identityKept: unknown
         }>
         if (parsed.version === FILE_VERSION) {
           return {
@@ -79,6 +92,8 @@ export class SyncPrefsStore {
               typeof parsed.deviceName === 'string' && parsed.deviceName.trim()
                 ? parsed.deviceName.trim().slice(0, 80)
                 : fresh.deviceName,
+            identityState: readIdentityState(parsed.identityState),
+            identityKept: readKept(parsed.identityKept),
             ...(typeof parsed.identityVaultOwnerId === 'string' ? { identityVaultOwnerId: parsed.identityVaultOwnerId } : {})
           }
         }
@@ -102,6 +117,30 @@ export class SyncPrefsStore {
       console.warn('[sync] could not save sync preferences:', error)
     }
   }
+}
+
+const isPubkey = (value: unknown): value is string =>
+  typeof value === 'string' && /^[0-9a-f]{64}$/.test(value)
+
+function readIdentityState(value: unknown): IdentityLocalState {
+  const saved = (value ?? {}) as { excluded?: unknown; marks?: unknown }
+  const marks = (Array.isArray(saved.marks) ? saved.marks : []).filter(
+    (mark): mark is IdentityMark =>
+      isPubkey(mark?.pubkey) && typeof mark.removed === 'boolean' && Number.isSafeInteger(mark.at)
+  )
+  return {
+    excluded: Array.isArray(saved.excluded) ? saved.excluded.filter(isPubkey) : [],
+    marks: mergeIdentityMarks(marks)
+  }
+}
+
+function readKept(value: unknown): Record<string, number> {
+  if (!value || typeof value !== 'object') return {}
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      (entry): entry is [string, number] => isPubkey(entry[0]) && Number.isSafeInteger(entry[1])
+    )
+  )
 }
 
 function defaultDeviceName(): string {

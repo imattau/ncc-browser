@@ -504,6 +504,176 @@ fn doc_len(value: &Value) -> usize {
         .unwrap_or(usize::MAX)
 }
 
+// ---------------------------------------------------------------------------
+// Identities. The rules here match `planIdentitySync` in `src/shared/sync.ts`; both
+// run `test/fixtures/identity-sync-vectors.json`.
+// ---------------------------------------------------------------------------
+
+/// Whether a key has been taken out of identity sync, or put back. The newer mark for
+/// a key wins; at the same moment, removal wins. A removed key is left out of the
+/// vault, but no device deletes its own copy because of a mark.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IdentityMark {
+    pub pubkey: String,
+    pub removed: bool,
+    /// Epoch milliseconds the choice was made.
+    pub at: u64,
+}
+
+/// What one device remembers: keys removed from it only, and every mark it has seen.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IdentityState {
+    #[serde(default)]
+    pub excluded: Vec<String>,
+    #[serde(default)]
+    pub marks: Vec<IdentityMark>,
+}
+
+/// A vault in canonical form: `pubkey -> nsec`, with removed keys left out.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct IdentityVault {
+    pub entries: BTreeMap<String, String>,
+    pub marks: Vec<IdentityMark>,
+}
+
+impl IdentityVault {
+    pub fn to_document(&self, now: u64) -> Value {
+        let entries: Vec<Value> = self
+            .entries
+            .iter()
+            .map(|(pubkey, nsec)| json!({"pubkey": pubkey, "nsec": nsec}))
+            .collect();
+        let mut document = json!({"v": SYNC_VERSION, "updatedAt": now, "entries": entries});
+        if !self.marks.is_empty() {
+            document["marks"] = json!(self.marks);
+        }
+        document
+    }
+}
+
+fn is_pubkey(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+pub fn merge_identity_marks<'a>(marks: impl IntoIterator<Item = &'a IdentityMark>) -> Vec<IdentityMark> {
+    let mut merged = BTreeMap::<String, IdentityMark>::new();
+    for mark in marks {
+        let newer = merged.get(&mark.pubkey).map_or(true, |current| {
+            mark.at > current.at || (mark.at == current.at && mark.removed)
+        });
+        if newer {
+            merged.insert(mark.pubkey.clone(), mark.clone());
+        }
+    }
+    merged.into_values().collect()
+}
+
+fn identity_vault(entries: BTreeMap<String, String>, marks: Vec<IdentityMark>) -> IdentityVault {
+    let mut entries = entries;
+    for mark in marks.iter().filter(|mark| mark.removed) {
+        entries.remove(&mark.pubkey);
+    }
+    IdentityVault { entries, marks }
+}
+
+fn add_identity(entries: &mut BTreeMap<String, String>, pubkey: String, nsec: String) -> Result<(), String> {
+    if entries.get(&pubkey).is_some_and(|existing| *existing != nsec) {
+        return Err("The identity vault has conflicting keys for one public key".into());
+    }
+    entries.insert(pubkey, nsec);
+    Ok(())
+}
+
+/// Read a decrypted vault. `None` is a vault that has not been written yet.
+pub fn parse_identity_vault(value: Option<&Value>) -> Result<IdentityVault, String> {
+    let Some(value) = value else { return Ok(IdentityVault::default()) };
+    let invalid = || "The identity vault has an unsupported or invalid format".to_string();
+    if value.get("v").and_then(Value::as_u64) != Some(u64::from(SYNC_VERSION)) {
+        return Err(invalid());
+    }
+    let items = value.get("entries").and_then(Value::as_array).ok_or_else(invalid)?;
+    if items.len() > MAX_SYNCED_IDENTITIES {
+        return Err("The identity vault contains too many identities".into());
+    }
+    let mut entries = BTreeMap::new();
+    for item in items {
+        let (Some(pubkey), Some(nsec)) = (
+            item.get("pubkey").and_then(Value::as_str).filter(|id| is_pubkey(id)),
+            item.get("nsec").and_then(Value::as_str),
+        ) else {
+            return Err("The identity vault contains an invalid key entry".into());
+        };
+        let pubkey = pubkey.to_ascii_lowercase();
+        // Removals go by public key, so an entry must really be the key it says it is.
+        let matches = nostr::SecretKey::parse(nsec)
+            .is_ok_and(|secret| nostr::Keys::new(secret).public_key().to_hex() == pubkey);
+        if !matches {
+            return Err("An identity vault key does not match its public key".into());
+        }
+        add_identity(&mut entries, pubkey, nsec.to_string())?;
+    }
+    let marks = match value.get("marks") {
+        None => Vec::new(),
+        Some(list) => {
+            let marks: Vec<IdentityMark> = serde_json::from_value(list.clone())
+                .map_err(|_| "The identity vault has an invalid list of removals".to_string())?;
+            if marks.len() > MAX_SYNCED_IDENTITIES || !marks.iter().all(|mark| is_pubkey(&mark.pubkey)) {
+                return Err("The identity vault has an invalid list of removals".into());
+            }
+            let lowered: Vec<IdentityMark> = marks
+                .into_iter()
+                .map(|mark| IdentityMark { pubkey: mark.pubkey.to_ascii_lowercase(), ..mark })
+                .collect();
+            merge_identity_marks(&lowered)
+        }
+    };
+    Ok(identity_vault(entries, marks))
+}
+
+pub fn merge_identity_vaults(a: &IdentityVault, b: &IdentityVault) -> Result<IdentityVault, String> {
+    let mut entries = a.entries.clone();
+    for (pubkey, nsec) in &b.entries {
+        add_identity(&mut entries, pubkey.clone(), nsec.clone())?;
+    }
+    Ok(identity_vault(entries, merge_identity_marks(a.marks.iter().chain(&b.marks))))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IdentityPlan {
+    /// The vault as it should now be on the relays.
+    pub vault: IdentityVault,
+    /// Public keys in the vault to save on this device.
+    pub imports: Vec<String>,
+    /// Excluded keys that are on this device again.
+    pub unexclude: Vec<String>,
+    /// Keys held here that have been removed from sync. Never deleted without asking.
+    pub removals: Vec<String>,
+}
+
+pub fn plan_identity_sync(
+    local: &BTreeMap<String, String>,
+    remote: &IdentityVault,
+    state: &IdentityState,
+) -> Result<IdentityPlan, String> {
+    let mine = identity_vault(local.clone(), merge_identity_marks(&state.marks));
+    // The device's own removals must also drop keys it still holds.
+    let vault = merge_identity_vaults(&mine, remote)?;
+    let imports = vault
+        .entries
+        .keys()
+        .filter(|id| !local.contains_key(*id) && !state.excluded.contains(*id))
+        .cloned()
+        .collect();
+    let unexclude = state.excluded.iter().filter(|id| local.contains_key(*id)).cloned().collect();
+    let removals = vault
+        .marks
+        .iter()
+        .filter(|mark| mark.removed && local.contains_key(&mark.pubkey))
+        .map(|mark| mark.pubkey.clone())
+        .collect();
+    Ok(IdentityPlan { vault, imports, unexclude, removals })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -629,5 +799,53 @@ mod tests {
             Some(DocKind::Tabs("0123456789abcdef".into()))
         );
         assert_eq!(doc_kind("ncc-browser/passwords/v1"), None);
+    }
+
+    #[test]
+    fn identity_cases_match_the_desktop_build() {
+        let vectors: Value = serde_json::from_str(include_str!(
+            "../../../test/fixtures/identity-sync-vectors.json"
+        ))
+        .unwrap();
+        let strings = |value: &Value| -> Vec<String> {
+            serde_json::from_value(value.clone()).unwrap()
+        };
+        let cases = vectors["cases"].as_array().unwrap();
+        assert!(!cases.is_empty());
+        for case in cases {
+            let name = case["name"].as_str().unwrap();
+            let local = case["local"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|entry| {
+                    (
+                        entry["pubkey"].as_str().unwrap().to_string(),
+                        entry["nsec"].as_str().unwrap().to_string(),
+                    )
+                })
+                .collect();
+            let remote =
+                parse_identity_vault(Some(&case["remote"]).filter(|value| !value.is_null())).unwrap();
+            let state: IdentityState = serde_json::from_value(case["state"].clone()).unwrap();
+            let plan = plan_identity_sync(&local, &remote, &state).unwrap();
+            let expected = &case["expect"];
+            assert_eq!(
+                plan.vault.entries.keys().cloned().collect::<Vec<_>>(),
+                strings(&expected["entries"]),
+                "{name}"
+            );
+            assert_eq!(plan.imports, strings(&expected["imports"]), "{name}");
+            assert_eq!(plan.unexclude, strings(&expected["unexclude"]), "{name}");
+            assert_eq!(plan.removals, strings(&expected["removals"]), "{name}");
+            assert_eq!(json!(plan.vault.marks), expected["marks"], "{name}");
+        }
+        for case in vectors["refused"].as_array().unwrap() {
+            assert!(
+                parse_identity_vault(Some(&case["remote"])).is_err(),
+                "{}",
+                case["name"]
+            );
+        }
     }
 }

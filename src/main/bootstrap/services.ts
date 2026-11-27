@@ -206,6 +206,11 @@ export function createServices(
     }
   })
   shell.onTabsChanged = () => syncService.tabsChanged()
+  identity.setRemovalGuard((pubkey, scope) => {
+    syncService.prepareIdentityRemoval(pubkey, scope)
+    // After this turn the key is gone, and the change can be sent.
+    setImmediate(() => syncService.identityRemoved())
+  })
   registerSyncIpc(syncService, { shell, openTab: (url) => shell.newTab(url) })
   shell.window.on('focus', () => syncService.onWindowFocus())
   syncService.start()

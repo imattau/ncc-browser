@@ -660,6 +660,20 @@ turn them on. Passwords sync separately, in their own vault.
   identity. Changing the default on one device does not change other devices. Sync
   asks you to migrate that device's vault; it publishes under the new key and retains
   the old encrypted copy so devices that have not caught up can still read it.
+- **Removing an identity.** Identity sync only adds keys unless you remove one. In
+  Settings → Identity (the Identity screen on Android), **Remove from this device only**
+  deletes the key there and stops sync adding it back; it stays in the synced list and
+  on other devices. Importing it again undoes that. **Also stop syncing it everywhere**
+  (offered while identity sync is on) takes it out of the synced list and records a
+  removal marker; the newest choice for a key wins. A device that still holds the key
+  never deletes it by itself: it asks whether to remove it, keep it unsynced or sync it
+  again. Older versions do not know about markers and can put a removed key back into
+  the list until an updated device syncs again, so update every device. None of this
+  revokes a Nostr key or erases old encrypted copies on relays.
+- **The key that protects the list** cannot be removed while identity sync is on: turn
+  sync off, or make another identity the default and migrate first. If that key is
+  already gone, Sync offers to continue with the current default's list, or you can
+  import the old key again and migrate.
 - **Checking it works.** `test/sync-live.test.ts` and the ignored Rust test
   `sync::tests::live_round_trip_with_the_desktop_build` run the two builds against a
   real relay (`nak serve`); their doc comments give the commands.

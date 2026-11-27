@@ -1,4 +1,4 @@
-import { verifyEvent, type Event, type EventTemplate } from 'nostr-tools'
+import { verifyEvent, type Event, type EventTemplate, nip19 } from 'nostr-tools'
 import {
   BOOKMARKS_D,
   SYNC_CLIENT,
@@ -12,8 +12,13 @@ import {
   historyWeeks,
   historyWindowStart,
   IDENTITIES_D,
+  mergeIdentityMarks,
   mergeIdentityVaults,
   normalizeIdentityVault,
+  planIdentitySync,
+  sameIdentityVault,
+  type IdentityMark,
+  type IdentityVaultDoc,
   mergeBookmarks,
   mergeHistory,
   normalizeBookmarks,
@@ -25,7 +30,7 @@ import {
   type SyncTab,
   type TabsDoc
 } from '@shared/sync'
-import type { SyncCategory, SyncDevice, SyncPrefsPatch, SyncStatus } from '@shared/sync-status'
+import type { SyncCategory, SyncDevice, SyncPrefsPatch, SyncStatus, IdentityRemovalScope } from '@shared/sync-status'
 import type { BookmarkStore } from '../bookmarks'
 import type { HistoryStore } from '../history'
 import type { PasswordRelayPoolLike, ProviderLike } from '../passwords/service'
@@ -76,6 +81,7 @@ export class SyncService {
   private debounce: NodeJS.Timeout | null = null
   private poll: NodeJS.Timeout | null = null
   private lastTabsKey = ''
+  private identityRevision = 0
 
   constructor(private readonly deps: SyncDeps) {
     this.now = deps.now ?? (() => Date.now())
@@ -95,8 +101,101 @@ export class SyncService {
       lastSyncedAt: this.lastSyncedAt,
       error: this.error,
       devices: this.devices,
-      ...(this.identityMigrationFrom() ? { identityMigrationFrom: this.identityMigrationFrom()! } : {})
+      ...this.identityStatus()
     }
+  }
+
+  private identityStatus(): Partial<SyncStatus> {
+    const prefs = this.deps.prefs.get()
+    const vault = this.deps.identityVault
+    if (!vault) return {}
+    const from = this.identityMigrationFrom()
+    const owner = prefs.identityVaultOwnerId ?? vault.defaultId()
+    const held = new Set(prefs.categories.identities ? vault.entries().map((entry) => entry.pubkey) : [])
+    const removals = prefs.identityState.marks
+      .filter((mark) => mark.removed && held.has(mark.pubkey))
+      .map((mark) => ({
+        pubkey: mark.pubkey,
+        npub: nip19.npubEncode(mark.pubkey),
+        kept: (prefs.identityKept[mark.pubkey] ?? -1) >= mark.at
+      }))
+    return {
+      identityRevision: this.identityRevision,
+      ...(from ? { identityMigrationFrom: from } : {}),
+      ...(from && !vault.providerFor(from) ? { identityOwnerMissing: true } : {}),
+      ...(prefs.categories.identities && owner ? { identityOwner: owner } : {}),
+      ...(removals.length ? { identityRemovals: removals } : {})
+    }
+  }
+
+  /**
+   * Called just before a saved key is removed from this device. Records the choice
+   * first, so that no sync can bring the key straight back. Throws if the key must
+   * not be removed yet.
+   */
+  prepareIdentityRemoval(pubkey: string, scope: IdentityRemovalScope): void {
+    const prefs = this.deps.prefs.get()
+    const syncing = prefs.categories.identities
+    const owner = prefs.identityVaultOwnerId ?? (syncing ? this.deps.identityVault?.defaultId() : undefined)
+    if (syncing && owner === pubkey) {
+      throw new Error(
+        'This identity protects your synced identity list. First turn off identity sync, or make another identity the default and migrate the list in Settings → Sync.'
+      )
+    }
+    if (scope === 'everywhere' && !syncing) {
+      throw new Error('Turn on identity sync to stop syncing this identity everywhere.')
+    }
+    // With sync off there is nothing to protect, and the next default can take over.
+    if (!syncing && prefs.identityVaultOwnerId === pubkey) this.deps.prefs.setIdentityVaultOwner(undefined)
+    const { excluded, marks } = this.deps.prefs.get().identityState
+    this.deps.prefs.setIdentityState({
+      excluded: [...new Set([...excluded, pubkey])],
+      marks:
+        scope === 'everywhere' ? mergeIdentityMarks(marks, [this.newMark(pubkey, true)]) : marks
+    })
+  }
+
+  /** Sends a removal to the relays, and updates the screens. */
+  identityRemoved(): void {
+    this.notify()
+    if (this.deps.prefs.get().categories.identities) void this.syncNow()
+  }
+
+  /** Answer for a key held here that was removed from sync: keep it, or sync it again. */
+  async resolveIdentityRemoval(pubkey: string, action: 'keep' | 'restore'): Promise<SyncStatus> {
+    const prefs = this.deps.prefs.get()
+    const mark = prefs.identityState.marks.find((entry) => entry.pubkey === pubkey)
+    if (!mark?.removed) return this.status()
+    if (action === 'keep') {
+      this.deps.prefs.setIdentityState(prefs.identityState, { ...prefs.identityKept, [pubkey]: mark.at })
+      this.notify()
+      return this.status()
+    }
+    this.deps.prefs.setIdentityState({
+      excluded: prefs.identityState.excluded.filter((entry) => entry !== pubkey),
+      marks: mergeIdentityMarks(prefs.identityState.marks, [this.newMark(pubkey, false)])
+    })
+    this.notify()
+    return this.syncNow()
+  }
+
+  /**
+   * When the key that protected the list is gone from this device, start again from
+   * the current default's list. The old encrypted copy stays on the relays.
+   */
+  async resetIdentityOwner(): Promise<SyncStatus> {
+    const from = this.identityMigrationFrom()
+    const next = this.deps.identityVault?.defaultId()
+    if (!from || !next || this.deps.identityVault?.providerFor(from)) return this.status()
+    this.deps.prefs.setIdentityVaultOwner(next)
+    this.notify()
+    return this.syncNow()
+  }
+
+  /** A new choice is always later than the one it replaces, whatever the clocks say. */
+  private newMark(pubkey: string, removed: boolean): IdentityMark {
+    const previous = this.deps.prefs.get().identityState.marks.find((mark) => mark.pubkey === pubkey)
+    return { pubkey, removed, at: Math.max(this.now(), (previous?.at ?? 0) + 1) }
   }
 
   start(): void {
@@ -167,12 +266,7 @@ export class SyncService {
       const old = await this.readIdentityVault(oldProvider)
       const current = await this.readIdentityVault(nextProvider)
       if (!old.complete || !current.complete) throw new Error('Could not read every relay; the identity vault was left unchanged.')
-      const merged = mergeIdentityVaults(
-        { v: 1, updatedAt: this.now(), entries: vault.entries() },
-        mergeIdentityVaults(old.doc, current.doc, this.now()),
-        this.now()
-      )
-      for (const entry of merged.entries) await vault.importSecret(entry.nsec)
+      const merged = await this.applyIdentityVault(vault, mergeIdentityVaults(old.doc, current.doc, this.now()))
       const pubkey = await nextProvider.getPublicKey()
       const relays = await this.deps.resolveRelays(pubkey)
       if (!relays.length) throw new Error('No relay is configured for identity sync.')
@@ -203,17 +297,33 @@ export class SyncService {
     if (!owner || !provider) throw new Error('Identity sync needs an available default identity.')
     const remote = await this.readIdentityVault(provider)
     if (!remote.complete) throw new Error('Could not read every relay for the identity vault.')
-    const merged = mergeIdentityVaults(
-      { v: 1, updatedAt: this.now(), entries: vault.entries() },
-      remote.doc,
-      this.now()
-    )
-    for (const entry of merged.entries) await vault.importSecret(entry.nsec)
+    const merged = await this.applyIdentityVault(vault, remote.doc)
     const pubkey = await provider.getPublicKey()
     const relays = await this.deps.resolveRelays(pubkey)
     if (!relays.length) throw new Error('No relay is configured for identity sync.')
-    if (!sameJson(merged, remote.doc)) await this.publish(provider, pubkey, relays, IDENTITIES_D, { ...merged, updatedAt: this.now() })
+    if (!sameIdentityVault(merged, remote.doc)) await this.publish(provider, pubkey, relays, IDENTITIES_D, { ...merged, updatedAt: this.now() })
     if (!this.deps.prefs.get().identityVaultOwnerId) this.deps.prefs.setIdentityVaultOwner(owner)
+  }
+
+  /** Save what the vault adds to this device, and return what it should now contain. */
+  private async applyIdentityVault(
+    vault: NonNullable<SyncDeps['identityVault']>,
+    remote: IdentityVaultDoc
+  ): Promise<IdentityVaultDoc> {
+    const plan = (): ReturnType<typeof planIdentitySync> =>
+      planIdentitySync(vault.entries(), remote, this.deps.prefs.get().identityState, this.now())
+    for (const entry of plan().imports) {
+      // Asked again for each key: the person may have removed one while this ran.
+      if (this.deps.prefs.get().identityState.excluded.includes(entry.pubkey)) continue
+      if (await vault.importSecret(entry.nsec)) this.identityRevision += 1
+    }
+    const done = plan()
+    const { excluded, marks } = this.deps.prefs.get().identityState
+    this.deps.prefs.setIdentityState({
+      excluded: excluded.filter((pubkey) => !done.unexclude.includes(pubkey)),
+      marks: mergeIdentityMarks(marks, done.marks)
+    })
+    return done.doc
   }
 
   private async readIdentityVault(provider: ProviderLike): Promise<{ doc: ReturnType<typeof normalizeIdentityVault>; complete: boolean }> {

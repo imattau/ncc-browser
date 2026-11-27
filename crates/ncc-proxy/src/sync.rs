@@ -17,8 +17,9 @@ use ncc_identity::{IdentityStore, KeyEnvelope};
 use ncc_vault::sync::{
     doc_kind, history_d, history_weeks, history_window_start, merge_bookmarks, merge_history,
     normalize_bookmarks, normalize_history, normalize_tabs, sync_filter, tabs_d, week_of,
-    BookmarkDoc, DeviceInfo, DocKind, HistoryDoc, SyncTab, SyncVisit, TabsDoc, BOOKMARKS_D,
-    DEVICE_STALE_MS, IDENTITIES_D, MAX_SYNCED_IDENTITIES, SYNC_CLIENT, SYNC_KIND, SYNC_TAG, SYNC_VERSION,
+    parse_identity_vault, plan_identity_sync, BookmarkDoc, DeviceInfo, DocKind, HistoryDoc,
+    IdentityPlan, IdentityState, IdentityVault, SyncTab, SyncVisit, TabsDoc, BOOKMARKS_D,
+    DEVICE_STALE_MS, IDENTITIES_D, SYNC_CLIENT, SYNC_KIND, SYNC_TAG, SYNC_VERSION,
 };
 
 use crate::own_relays::OwnRelays;
@@ -211,6 +212,20 @@ fn tabs_key(device: &DeviceInfo, tabs: &[SyncTab]) -> String {
     .to_string()
 }
 
+/// What the app is told after identity sync. Public keys only.
+#[derive(Debug, Clone, Serialize)]
+pub struct IdentityOutcome {
+    pub imported: usize,
+    pub marks: Vec<ncc_vault::sync::IdentityMark>,
+    pub unexclude: Vec<String>,
+}
+
+impl IdentityOutcome {
+    pub fn new(plan: IdentityPlan, imported: usize) -> Self {
+        Self { imported, marks: plan.vault.marks, unexclude: plan.unexclude }
+    }
+}
+
 fn now_ms() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default().as_millis().min(u128::from(u64::MAX)) as u64
@@ -253,62 +268,69 @@ impl SyncService {
 
     /// Merge locally stored identity keys with the dedicated encrypted identity vault.
     /// The envelope is used only inside native code; plaintext keys never reach the UI.
-    pub async fn sync_identities(&self, envelope: &dyn KeyEnvelope) -> Result<usize, String> {
+    pub async fn sync_identities(
+        &self,
+        envelope: &dyn KeyEnvelope,
+        state: &IdentityState,
+    ) -> Result<IdentityOutcome, String> {
         let _guard = self.busy.lock().await;
         let pubkey = self.pubkey()?;
         let relays = self.relays(&pubkey).await;
         if relays.is_empty() { return Err("No relay is configured for identity sync".into()); }
-        let remote_event = self.fetch_identity_event(&relays, &pubkey).await?;
-        if let Some(event) = &remote_event {
+        let remote = self.fetch_identity_vault(&relays, &pubkey).await?;
+        let (plan, imported) = self.apply_identity_vault(envelope, &remote, state)?;
+        // Compared by what they say, so an unchanged vault is not written again.
+        if plan.vault != remote {
+            let now = now_ms();
+            self.publish(&relays, &pubkey, IDENTITIES_D, &plan.vault.to_document(now), now).await?;
+        }
+        Ok(IdentityOutcome::new(plan, imported))
+    }
+
+    /// Save what a vault adds to this device, and work out what it should now contain.
+    pub fn apply_identity_vault(
+        &self,
+        envelope: &dyn KeyEnvelope,
+        remote: &IdentityVault,
+        state: &IdentityState,
+    ) -> Result<(IdentityPlan, usize), String> {
+        let local = || -> Result<std::collections::BTreeMap<String, String>, String> {
+            Ok(self.identity.export_profile_secrets(envelope).map_err(|error| error.to_string())?
+                .into_iter().collect())
+        };
+        let first = plan_identity_sync(&local()?, remote, state)?;
+        let mut imported = 0;
+        for id in &first.imports {
+            let secret = first.vault.entries.get(id).ok_or("An identity to import is missing")?;
+            if self.identity.import_synced_profile(envelope, id, secret).map_err(|error| error.to_string())? {
+                imported += 1;
+            }
+        }
+        // Planned again with the imported keys here, keeping the first answer about
+        // which exclusions the person had already undone.
+        let mut done = plan_identity_sync(&local()?, remote, state)?;
+        done.unexclude = first.unexclude;
+        Ok((done, imported))
+    }
+
+    /// Read a key owner's identity vault without changing its contents.
+    pub async fn read_identity_vault(&self) -> Result<IdentityVault, String> {
+        let pubkey = self.pubkey()?;
+        let relays = self.relays(&pubkey).await;
+        if relays.is_empty() { return Err("No relay is configured for identity sync".into()); }
+        self.fetch_identity_vault(&relays, &pubkey).await
+    }
+
+    async fn fetch_identity_vault(&self, relays: &[String], pubkey: &str) -> Result<IdentityVault, String> {
+        let event = self.fetch_identity_event(relays, pubkey).await?;
+        if let Some(event) = &event {
+            // The next write must be newer than the one just read.
             let mut created = self.last_created();
             let entry = created.entry(IDENTITIES_D.to_string()).or_insert(0);
             *entry = (*entry).max(event.created_at.as_secs());
         }
-        let mut entries = std::collections::BTreeMap::<String, String>::new();
-        if let Some(event) = &remote_event {
-            let value = self.decrypt(&pubkey, event)?;
-            let items = value.get("entries").and_then(Value::as_array)
-                .ok_or_else(|| "The identity vault has an invalid entries list".to_string())?;
-            if items.len() > MAX_SYNCED_IDENTITIES { return Err("The identity vault contains too many identities".into()); }
-            for item in items {
-                let id = item.get("pubkey").and_then(Value::as_str)
-                    .ok_or_else(|| "An identity vault entry has no public key".to_string())?;
-                let secret = item.get("nsec").and_then(Value::as_str)
-                    .ok_or_else(|| "An identity vault entry has no key".to_string())?;
-                if id.len() != 64 || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-                    return Err("The identity vault contains an invalid public key".into());
-                }
-                let id = id.to_ascii_lowercase();
-                if entries.get(&id).is_some_and(|existing| existing != secret) {
-                    return Err("The identity vault has conflicting keys for one public key".into());
-                }
-                entries.insert(id, secret.to_string());
-            }
-        }
-        let local = self.identity.export_profile_secrets(envelope).map_err(|error| error.to_string())?;
-        for (id, secret) in &local { entries.insert(id.to_ascii_lowercase(), secret.clone()); }
-        for (id, secret) in &entries {
-            self.identity.import_synced_profile(envelope, id, secret).map_err(|error| error.to_string())?;
-            if let Some((_, original)) = local.iter().find(|(local_id, _)| local_id.eq_ignore_ascii_case(id)) {
-                if original != secret { return Err("An identity vault key did not match its public key".into()); }
-            }
-        }
-        let synced_entries = entries.iter().map(|(pubkey, nsec)| json!({"pubkey":pubkey,"nsec":nsec})).collect::<Vec<_>>();
-        let document = json!({"v": SYNC_VERSION, "updatedAt": now_ms(), "entries": synced_entries});
-        let same = remote_event.as_ref().and_then(|event| self.decrypt(&pubkey, event).ok())
-            .and_then(|remote| remote.get("entries").cloned()) == document.get("entries").cloned();
-        if !same { self.publish(&relays, &pubkey, IDENTITIES_D, &document, now_ms()).await?; }
-        Ok(entries.len())
-    }
-
-    /// Read a key owner's identity vault without changing its contents.
-    pub async fn read_identity_vault(&self) -> Result<Value, String> {
-        let pubkey = self.pubkey()?;
-        let relays = self.relays(&pubkey).await;
-        if relays.is_empty() { return Err("No relay is configured for identity sync".into()); }
-        let event = self.fetch_identity_event(&relays, &pubkey).await?;
-        event.as_ref().map(|event| self.decrypt(&pubkey, event)).transpose()
-            .map(|value| value.unwrap_or_else(|| json!({"v":SYNC_VERSION,"updatedAt":0,"entries":[]})))
+        let value = event.as_ref().map(|event| self.decrypt(pubkey, event)).transpose()?;
+        parse_identity_vault(value.as_ref())
     }
 
     async fn fetch_identity_event(&self, relays: &[String], pubkey: &str) -> Result<Option<nostr::Event>, String> {

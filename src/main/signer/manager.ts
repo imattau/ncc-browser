@@ -1,5 +1,6 @@
 /** Manages the user's saved Nostr identities and the identity used by NIP-07. */
 
+import type { IdentityRemovalScope } from '@shared/sync-status'
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { generateSecretKey, nip19 } from 'nostr-tools'
@@ -376,8 +377,15 @@ export class IdentityManager {
     this.activeId = id; if (!this.defaultId) this.defaultId = id
     this.persistProfiles(); this.deps.onRelayEntriesChanged?.([]); return this.status()
   }
-  async remove(id: string): Promise<IdentityStatus> {
+  /** Told before a saved local key is removed; it may throw to stop the removal. */
+  setRemovalGuard(guard: (pubkey: string, scope: IdentityRemovalScope) => void): void {
+    this.removalGuard = guard
+  }
+  private removalGuard: ((pubkey: string, scope: IdentityRemovalScope) => void) | null = null
+  async remove(id: string, scope: IdentityRemovalScope = 'device'): Promise<IdentityStatus> {
     const item = this.require(id)
+    // Nothing may run between this and removing a local key below.
+    if (item.local?.status().persisted) this.removalGuard?.(item.id, scope)
     if (item.remote) { await item.remote.close().catch(() => undefined); item.sessionStore?.clear() }
     if (item.local) item.local.remove()
     this.profiles.delete(id)

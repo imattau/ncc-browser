@@ -3,6 +3,8 @@ export const PRIMARY_BUTTON =
   'inline-flex items-center gap-1.5 rounded-lg bg-[color:var(--color-accent)] px-3.5 py-2 text-ui-12 font-semibold text-[color:var(--color-on-accent)] disabled:opacity-50'
 export const SECONDARY_BUTTON =
   'inline-flex items-center gap-1.5 rounded-lg border border-[color:var(--color-line)] px-3.5 py-2 text-ui-12 text-[color:var(--color-text)] hover:bg-[color:var(--color-hover)] disabled:opacity-50'
+export const DANGER_BUTTON =
+  'inline-flex items-center gap-1.5 rounded-lg border border-[color:var(--color-danger)]/40 px-3.5 py-2 text-ui-12 text-[color:var(--color-danger)] hover:bg-[color:var(--color-danger)]/10 disabled:opacity-50'
 export const QUIET_BUTTON =
   'rounded-lg px-2.5 py-2 text-ui-11 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)] disabled:opacity-50'
 export const FIELD_LABEL = 'block text-ui-11 text-[color:var(--color-text)]'

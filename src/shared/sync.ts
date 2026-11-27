@@ -13,6 +13,8 @@
  * Nothing here touches Electron or the network.
  */
 
+import { getPublicKey, nip19 } from 'nostr-tools'
+
 export const SYNC_KIND = 30078
 export const SYNC_VERSION = 1
 export const SYNC_TAG = 'ncc-browser/sync'
@@ -87,10 +89,90 @@ export interface SyncedIdentity {
   nsec: string
 }
 
+/**
+ * Whether a key has been taken out of identity sync, or put back. The newer mark for
+ * a key wins; at the same moment, removal wins. A removed key is left out of the
+ * vault, but no device deletes its own copy because of a mark.
+ */
+export interface IdentityMark {
+  pubkey: string
+  removed: boolean
+  /** Epoch milliseconds the choice was made. */
+  at: number
+}
+
 export interface IdentityVaultDoc {
   v: 1
   updatedAt: number
   entries: SyncedIdentity[]
+  /** Left out when there are none, which is how older versions write the document. */
+  marks?: IdentityMark[]
+}
+
+const HEX_KEY = /^[0-9a-f]{64}$/i
+
+export function mergeIdentityMarks(...lists: IdentityMark[][]): IdentityMark[] {
+  const marks = new Map<string, IdentityMark>()
+  for (const mark of lists.flat()) {
+    const current = marks.get(mark.pubkey)
+    if (!current || mark.at > current.at || (mark.at === current.at && mark.removed)) {
+      marks.set(mark.pubkey, mark)
+    }
+  }
+  return [...marks.values()].sort((a, b) => a.pubkey.localeCompare(b.pubkey))
+}
+
+function normalizeIdentityMarks(value: unknown): IdentityMark[] {
+  if (value === undefined) return []
+  if (!Array.isArray(value) || value.length > MAX_SYNCED_IDENTITIES) {
+    throw new Error('The identity vault has an invalid list of removals.')
+  }
+  return mergeIdentityMarks(
+    value.map((raw) => {
+      if (!isRecord(raw) || typeof raw.pubkey !== 'string' || !HEX_KEY.test(raw.pubkey) ||
+        typeof raw.removed !== 'boolean' || !isU64(raw.at)) {
+        throw new Error('The identity vault contains an invalid removal.')
+      }
+      return { pubkey: raw.pubkey.toLowerCase(), removed: raw.removed, at: raw.at }
+    })
+  )
+}
+
+/** A vault in canonical form: sorted, with removed keys left out. */
+function identityVault(
+  updatedAt: number,
+  entries: Iterable<SyncedIdentity>,
+  marks: IdentityMark[]
+): IdentityVaultDoc {
+  const removed = new Set(marks.filter((mark) => mark.removed).map((mark) => mark.pubkey))
+  return {
+    v: 1,
+    updatedAt,
+    entries: [...entries]
+      .filter((entry) => !removed.has(entry.pubkey))
+      .sort((a, b) => a.pubkey.localeCompare(b.pubkey)),
+    ...(marks.length ? { marks } : {})
+  }
+}
+
+function collectIdentities(lists: SyncedIdentity[][]): Map<string, SyncedIdentity> {
+  const entries = new Map<string, SyncedIdentity>()
+  for (const entry of lists.flat()) {
+    const existing = entries.get(entry.pubkey)
+    if (existing && existing.nsec !== entry.nsec) throw new Error('The identity vault has conflicting keys for one public key.')
+    if (!existing) entries.set(entry.pubkey, entry)
+  }
+  return entries
+}
+
+/** The public key an nsec belongs to, or null if it is not a usable one. */
+function pubkeyOfNsec(nsec: string): string | null {
+  try {
+    const decoded = nip19.decode(nsec)
+    return decoded.type === 'nsec' ? getPublicKey(decoded.data) : null
+  } catch {
+    return null
+  }
 }
 
 export function normalizeIdentityVault(value: unknown, now = 0): IdentityVaultDoc {
@@ -98,32 +180,91 @@ export function normalizeIdentityVault(value: unknown, now = 0): IdentityVaultDo
   if (!isRecord(value) || value.v !== 1 || !Array.isArray(value.entries) || value.entries.length > MAX_SYNCED_IDENTITIES) {
     throw new Error('The identity vault has an unsupported or invalid format.')
   }
-  const entries = new Map<string, SyncedIdentity>()
-  for (const raw of value.entries) {
-    if (!isRecord(raw) || typeof raw.pubkey !== 'string' || !/^[0-9a-f]{64}$/i.test(raw.pubkey) ||
+  const parsed = value.entries.map((raw): SyncedIdentity => {
+    if (!isRecord(raw) || typeof raw.pubkey !== 'string' || !HEX_KEY.test(raw.pubkey) ||
       typeof raw.nsec !== 'string' || !/^nsec1.{20,90}$/i.test(raw.nsec)) {
       throw new Error('The identity vault contains an invalid key entry.')
     }
     const pubkey = raw.pubkey.toLowerCase()
-    const existing = entries.get(pubkey)
-    if (existing && existing.nsec !== raw.nsec) throw new Error('The identity vault has conflicting keys for one public key.')
-    if (!existing) entries.set(pubkey, { pubkey, nsec: raw.nsec })
-  }
+    // Removals go by public key, so an entry must really be the key it says it is.
+    if (pubkeyOfNsec(raw.nsec) !== pubkey) {
+      throw new Error('An identity vault key does not match its public key.')
+    }
+    return { pubkey, nsec: raw.nsec }
+  })
   const updatedAt = optionalU64(value.updatedAt)
   if (updatedAt === null) throw new Error('The identity vault timestamp is invalid.')
-  return { v: 1, updatedAt: value.updatedAt === undefined ? now : updatedAt, entries: [...entries.values()].sort((a, b) => a.pubkey.localeCompare(b.pubkey)) }
+  return identityVault(
+    value.updatedAt === undefined ? now : updatedAt,
+    collectIdentities([parsed]).values(),
+    normalizeIdentityMarks(value.marks)
+  )
 }
 
 export function mergeIdentityVaults(local: unknown, remote: unknown, now = 0): IdentityVaultDoc {
   const a = normalizeIdentityVault(local, now)
   const b = normalizeIdentityVault(remote, now)
-  const byPubkey = new Map(a.entries.map((entry) => [entry.pubkey, entry]))
-  for (const entry of b.entries) {
-    const existing = byPubkey.get(entry.pubkey)
-    if (existing && existing.nsec !== entry.nsec) throw new Error('The identity vault has conflicting keys for one public key.')
-    if (!existing) byPubkey.set(entry.pubkey, entry)
+  return identityVault(
+    Math.max(a.updatedAt, b.updatedAt),
+    collectIdentities([a.entries, b.entries]).values(),
+    mergeIdentityMarks(a.marks ?? [], b.marks ?? [])
+  )
+}
+
+/** Whether two vaults say the same thing, whenever they were written. */
+export function sameIdentityVault(a: IdentityVaultDoc, b: IdentityVaultDoc): boolean {
+  const content = (doc: IdentityVaultDoc): string =>
+    JSON.stringify([
+      doc.entries.map((entry) => [entry.pubkey, entry.nsec]),
+      (doc.marks ?? []).map((mark) => [mark.pubkey, mark.removed, mark.at])
+    ])
+  return content(a) === content(b)
+}
+
+/** What one device remembers about identity sync. */
+export interface IdentityLocalState {
+  /** Keys removed from this device only. They are not imported again. */
+  excluded: string[]
+  /**
+   * Every mark seen or made here. Remembering them puts one back if an older
+   * version, which does not know about marks, writes the vault without it.
+   */
+  marks: IdentityMark[]
+}
+
+export interface IdentityPlan {
+  /** The vault as it should now be on the relays. */
+  doc: IdentityVaultDoc
+  /** Keys to save on this device. */
+  imports: SyncedIdentity[]
+  marks: IdentityMark[]
+  /** Excluded keys that are on this device again, so the person has added them back. */
+  unexclude: string[]
+  /** Keys held here that have been removed from sync. Never deleted without asking. */
+  removals: IdentityMark[]
+}
+
+export function planIdentitySync(
+  local: SyncedIdentity[],
+  remote: unknown,
+  state: IdentityLocalState,
+  now: number
+): IdentityPlan {
+  const doc = mergeIdentityVaults(
+    { v: 1, updatedAt: now, entries: local, ...(state.marks.length ? { marks: state.marks } : {}) },
+    remote,
+    now
+  )
+  const held = new Set(local.map((entry) => entry.pubkey))
+  const excluded = new Set(state.excluded)
+  const marks = doc.marks ?? []
+  return {
+    doc,
+    imports: doc.entries.filter((entry) => !held.has(entry.pubkey) && !excluded.has(entry.pubkey)),
+    marks,
+    unexclude: state.excluded.filter((pubkey) => held.has(pubkey)),
+    removals: marks.filter((mark) => mark.removed && held.has(mark.pubkey))
   }
-  return { v: 1, updatedAt: Math.max(a.updatedAt, b.updatedAt), entries: [...byPubkey.values()].sort((x, y) => x.pubkey.localeCompare(y.pubkey)) }
 }
 
 export type DocKind =

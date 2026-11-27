@@ -804,7 +804,29 @@ body[data-bar='top'] .login-dock {
 }
 
 .identity-profile-actions button.danger {
-  color: var(--danger);
+  color: var(--bad);
+}
+
+.identity-remove-panel,
+.identity-removal {
+  margin-top: 10px;
+  font-size: calc(12px * var(--text-scale));
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.identity-remove-panel p {
+  margin: 6px 0 0;
+  color: var(--muted);
+}
+
+.identity-removal {
+  margin-top: 0;
+}
+
+#identity-removals:empty,
+#sync-identity-removals:empty {
+  display: none;
 }
 
 /* Forms */

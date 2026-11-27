@@ -729,6 +729,7 @@ function showPanel(name) {
   if (name === 'identity') {
     void identityFeature.refreshIdentity()
     void identityFeature.refreshBunker()
+    void syncFeature.refresh()
   }
   if (name === 'home') homeFeature.renderHome()
 
@@ -2615,6 +2616,7 @@ const homeFeature = createHome({
 })
 
 const identityFeature = createIdentity({
+  identitySync: () => syncFeature,
   byId, set, shortId, invoke, emptyState, confirm, content, applyLayout,
   getPanel: () => panel,
   getTabs: () => tabs,
@@ -2630,6 +2632,9 @@ const identityFeature = createIdentity({
 })
 
 const syncFeature = createSync({
+  onIdentitiesChanged: () => {
+    if (panel === 'identity') void identityFeature.refreshIdentity()
+  },
   readList, writeList, readNumber, writeNumber, invoke, set, byId, emptyState, icon,
   displayAddress, kindOf, renderBookmarks, renderHistory, renderTabGrid, applyLayout, submit,
   getTabs: () => tabs,

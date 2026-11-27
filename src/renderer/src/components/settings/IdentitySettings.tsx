@@ -5,6 +5,9 @@ import { SectionHeading } from './shared'
 import type { IdentityAdminApi } from './useIdentityAdmin'
 import { IdentityAvatar, IdentityLabels } from '../IdentityVisual'
 import { useIdentityProfileMetadata } from '../../hooks/useIdentityProfileMetadata'
+import { useSyncStatus } from '../../hooks/useSyncStatus'
+import { IdentityRemovals } from '../IdentityRemovals'
+import { RemoveIdentityPanel } from './RemoveIdentityPanel'
 
 /** The encryption-at-rest badge text for one identity row. */
 function encryptionLabel(profile: IdentityProfile, identity: IdentityStatus | null): string {
@@ -47,6 +50,17 @@ export function IdentitySettings({
   } = admin
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const profileMetadata = useIdentityProfileMetadata(identityList.identities)
+  const [sync, setSync] = useSyncStatus()
+  /** The saved key whose removal is being confirmed. */
+  const [removing, setRemoving] = useState<string | null>(null)
+
+  const askToRemove = (profile: IdentityProfile): void => {
+    // A saved key can be synced, so removing it needs more than yes or no.
+    if (profile.mode === 'local' && profile.persisted) return setRemoving(profile.id)
+    if (window.confirm('Remove this identity from Nostr Navigator?')) {
+      void updateIdentityProfile(() => window.ncc.identityRemove(profile.id))
+    }
+  }
 
   const copyProfileNpub = async (profile: IdentityProfile): Promise<void> => {
     if (!profile.npub) return
@@ -65,6 +79,8 @@ export function IdentitySettings({
         title="Identity (NIP-07)"
         hint="Choose which local key or remote signer pages use through window.nostr. The secret key never leaves the main process."
       />
+
+      <IdentityRemovals status={sync} apply={setSync} onRemoved={() => void admin.refresh()} />
 
       <div className="rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-4">
         <h3 className="text-ui-12 font-semibold text-[color:var(--color-text-strong)]">Your identities</h3>
@@ -102,7 +118,7 @@ export function IdentitySettings({
                     <button
                       type="button"
                       disabled={identityBusy}
-                      onClick={() => { if (window.confirm('Remove this identity from Nostr Navigator?')) void updateIdentityProfile(() => window.ncc.identityRemove(profile.id)) }}
+                      onClick={() => askToRemove(profile)}
                       className="inline-flex items-center gap-1 rounded-md border border-[color:var(--color-danger)]/30 px-2 py-1 text-ui-105 text-[color:var(--color-danger)] disabled:opacity-40"
                     >
                       <Trash2 className="h-3 w-3" />
@@ -114,6 +130,18 @@ export function IdentitySettings({
                   <ShieldCheck className="h-3.5 w-3.5 text-[color:var(--color-ok)]" />
                   {encryptionLabel(profile, identity)}
                 </p>
+                {removing === profile.id ? (
+                  <RemoveIdentityPanel
+                    syncing={sync?.categories.identities === true}
+                    protectsList={sync?.identityOwner === profile.id}
+                    busy={identityBusy}
+                    onCancel={() => setRemoving(null)}
+                    onRemove={(scope) => {
+                      setRemoving(null)
+                      void updateIdentityProfile(() => window.ncc.identityRemove(profile.id, scope))
+                    }}
+                  />
+                ) : null}
               </li>
             ))}
           </ul>

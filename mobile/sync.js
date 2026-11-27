@@ -1,3 +1,5 @@
+import { mergeIdentityMarks } from '../src/shared/sync.ts'
+
 const SYNC_KEY = 'ncc.sync'
 const SYNC_DEVICES_KEY = 'ncc.sync.devices'
 const SYNC_DEBOUNCE_MS = 15000
@@ -20,6 +22,19 @@ export function createSync(deps) {
   let syncTimer = null
   let syncStarted = false
   let syncState = { at: 0, error: '', identityMigrationFrom: null, defaultId: null }
+  /** Saved identities as last listed. */
+  let profiles = []
+  let identityQueue = Promise.resolve()
+
+  /**
+   * Identity sync and removal take turns. A sync that started before a removal must
+   * not finish after it, or it would save the key again.
+   */
+  function withIdentityLock(task) {
+    const run = identityQueue.then(task)
+    identityQueue = run.catch(() => undefined)
+    return run
+  }
 
   function isSyncable(address) {
     const value = String(address || '').trim()
@@ -46,6 +61,12 @@ export function createSync(deps) {
       history: saved.history === true,
       identities: saved.identities === true,
       identityVaultOwnerId: typeof saved.identityVaultOwnerId === 'string' ? saved.identityVaultOwnerId : '',
+      // Keys removed from this phone only, and every removal mark seen or made here.
+      identityState: {
+        excluded: Array.isArray(saved.identityState?.excluded) ? saved.identityState.excluded : [],
+        marks: Array.isArray(saved.identityState?.marks) ? saved.identityState.marks : []
+      },
+      identityKept: saved.identityKept && typeof saved.identityKept === 'object' ? saved.identityKept : {},
       deviceId: /^[0-9a-f]{16}$/.test(saved.deviceId || '') ? saved.deviceId : randomId(),
       deviceName:
         typeof saved.deviceName === 'string' && saved.deviceName.trim()
@@ -69,9 +90,10 @@ export function createSync(deps) {
   }
 
   async function refreshIdentityOwner() {
+    const listed = await invoke('identity_profiles').catch(() => null)
+    if (listed) profiles = listed.identities || []
     const prefs = syncPrefs()
-    const profiles = await invoke('identity_profiles').catch(() => null)
-    syncState.defaultId = profiles?.default_id || null
+    syncState.defaultId = listed?.default_id || null
     if (prefs.identities && !prefs.identityVaultOwnerId && syncState.defaultId) {
       prefs.identityVaultOwnerId = syncState.defaultId
       saveSyncPrefs(prefs)
@@ -79,7 +101,144 @@ export function createSync(deps) {
     syncState.identityMigrationFrom = prefs.identities && prefs.identityVaultOwnerId && syncState.defaultId && prefs.identityVaultOwnerId !== syncState.defaultId
       ? prefs.identityVaultOwnerId
       : null
+    syncState.identityOwnerMissing = Boolean(
+      listed && syncState.identityMigrationFrom && !profiles.some((profile) => profile.id === syncState.identityMigrationFrom)
+    )
     return prefs
+  }
+
+  const hexOf = (profileId) => profileId.replace(/^local:/, '')
+
+  function newMark(prefs, pubkey, removed) {
+    const previous = prefs.identityState.marks.find((mark) => mark.pubkey === pubkey)
+    // Always later than the choice it replaces, whatever the clocks say.
+    return { pubkey, removed, at: Math.max(Date.now(), (previous?.at || 0) + 1) }
+  }
+
+  /** What the native side returns after identity sync: public keys only. */
+  function applyIdentityOutcome(outcome) {
+    if (!outcome) return
+    const prefs = syncPrefs()
+    prefs.identityState = {
+      excluded: prefs.identityState.excluded.filter((id) => !(outcome.unexclude || []).includes(id)),
+      marks: mergeIdentityMarks(prefs.identityState.marks, outcome.marks || [])
+    }
+    saveSyncPrefs(prefs)
+    if (outcome.imported > 0) deps.onIdentitiesChanged?.()
+  }
+
+  /** What removing a saved key would mean right now. */
+  async function removalInfo(profileId) {
+    const prefs = await refreshIdentityOwner()
+    const owner = prefs.identityVaultOwnerId || (prefs.identities ? syncState.defaultId : '')
+    return { syncing: prefs.identities, protectsList: prefs.identities && owner === profileId }
+  }
+
+  /** Remove a saved key. `scope` is 'device' or 'everywhere'. */
+  async function removeIdentity(profileId, scope) {
+    await withIdentityLock(async () => {
+      const info = await removalInfo(profileId)
+      if (info.protectsList) {
+        throw new Error('This identity protects your synced identity list. First turn off identity sync, or make another identity the default and migrate the list in Sync.')
+      }
+      if (scope === 'everywhere' && !info.syncing) {
+        throw new Error('Turn on identity sync to stop syncing this identity everywhere.')
+      }
+      const before = syncPrefs()
+      const prefs = syncPrefs()
+      const pubkey = hexOf(profileId)
+      // Recorded before the key goes, so no sync can bring it straight back.
+      prefs.identityState = {
+        excluded: [...new Set([...prefs.identityState.excluded, pubkey])],
+        marks: scope === 'everywhere'
+          ? mergeIdentityMarks(prefs.identityState.marks, [newMark(prefs, pubkey, true)])
+          : prefs.identityState.marks
+      }
+      if (!info.syncing && prefs.identityVaultOwnerId === profileId) prefs.identityVaultOwnerId = ''
+      saveSyncPrefs(prefs)
+      try {
+        await invoke('identity_remove_profile', { id: profileId })
+      } catch (error) {
+        saveSyncPrefs(before)
+        throw error
+      }
+    })
+    await refreshIdentityOwner()
+    renderSync()
+    if (syncPrefs().identities) void syncNow()
+  }
+
+  /** Keys held here that were removed from sync. */
+  function identityRemovals() {
+    const prefs = syncPrefs()
+    if (!prefs.identities) return []
+    return prefs.identityState.marks.flatMap((mark) => {
+      const profile = mark.removed && profiles.find((entry) => entry.id === `local:${mark.pubkey}`)
+      if (!profile) return []
+      return [{ id: profile.id, pubkey: mark.pubkey, npub: profile.npub || mark.pubkey, kept: (prefs.identityKept[mark.pubkey] ?? -1) >= mark.at }]
+    })
+  }
+
+  async function resolveRemoval(pubkey, action) {
+    const prefs = syncPrefs()
+    const mark = prefs.identityState.marks.find((entry) => entry.pubkey === pubkey)
+    if (!mark?.removed) return
+    if (action === 'keep') {
+      prefs.identityKept = { ...prefs.identityKept, [pubkey]: mark.at }
+    } else {
+      prefs.identityState = {
+        excluded: prefs.identityState.excluded.filter((entry) => entry !== pubkey),
+        marks: mergeIdentityMarks(prefs.identityState.marks, [newMark(prefs, pubkey, false)])
+      }
+    }
+    saveSyncPrefs(prefs)
+    renderSync()
+    if (action === 'restore') await syncNow()
+  }
+
+  /** The removal prompts, shown on both the Sync and Identity screens. */
+  function renderRemovals() {
+    const removals = identityRemovals()
+    for (const containerId of ['sync-identity-removals', 'identity-removals']) {
+      const container = byId(containerId)
+      if (!container) continue
+      container.replaceChildren(...removals.map((removal) => {
+        const card = document.createElement('article')
+        card.className = 'identity-profile identity-removal'
+        const text = document.createElement('p')
+        const short = `${removal.npub.slice(0, 12)}…${removal.npub.slice(-6)}`
+        text.textContent = removal.kept
+          ? `${short} is on this phone but not synced.`
+          : `${short} was removed from identity sync. It is still on this phone. Nothing is deleted unless you choose to remove it.`
+        const actions = document.createElement('div')
+        actions.className = 'identity-profile-actions'
+        const action = (label, run, className = '') => {
+          const button = document.createElement('button')
+          button.type = 'button'
+          button.className = className
+          button.textContent = label
+          button.addEventListener('click', async () => {
+            button.disabled = true
+            try {
+              await run()
+            } catch (error) {
+              text.textContent = String(error)
+              button.disabled = false
+            }
+          })
+          actions.append(button)
+        }
+        if (!removal.kept) action('Keep it here', () => resolveRemoval(removal.pubkey, 'keep'))
+        action('Sync it again', () => resolveRemoval(removal.pubkey, 'restore'))
+        action('Remove from this phone', async () => {
+          if (!globalThis.confirm('Remove this identity from this phone? If this is the only copy of its key, it cannot be recovered.')) return
+          await removeIdentity(removal.id, 'device')
+          deps.onIdentitiesChanged?.()
+        }, 'danger')
+        card.append(text, actions)
+        return card
+      }))
+    }
   }
 
   function syncDevices() {
@@ -199,11 +358,15 @@ export function createSync(deps) {
             }
           })
         : { devices: [], bookmarks: null, history: null, errors: [] }
+      let identityError = ''
       if (prefs.identities && !syncState.identityMigrationFrom) {
         try {
-          await invoke('sync_identity_vault')
+          await withIdentityLock(async () => {
+            applyIdentityOutcome(await invoke('sync_identity_vault', { localState: syncPrefs().identityState }))
+          })
+          await refreshIdentityOwner()
         } catch (error) {
-          syncState.error = `Identities: ${String(error)}`
+          identityError = `Identities: ${String(error)}`
         }
       }
       if (rev === syncRev) {
@@ -215,8 +378,9 @@ export function createSync(deps) {
       }
       writeList(SYNC_DEVICES_KEY, prefs.tabs ? response.devices || [] : [])
       syncState = {
+        ...syncState,
         at: Date.now(),
-        error: (response.errors || []).join('; ')
+        error: [identityError, ...(response.errors || [])].filter(Boolean).join('; ')
       }
     } catch (error) {
       syncState = { ...syncState, error: String(error) }
@@ -243,6 +407,7 @@ export function createSync(deps) {
         ? ['bookmarks', 'tabs', 'history', 'identities'].filter((key) => prefs[key]).join(', ')
         : 'Bookmarks, tabs, history and identities'
     )
+    renderRemovals()
     if (getPanel() !== 'sync') return
 
     for (const key of ['bookmarks', 'tabs', 'history', 'identities']) byId(`sync-${key}`).checked = prefs[key]
@@ -262,6 +427,12 @@ export function createSync(deps) {
     const list = byId('sync-devices')
     const migration = byId('sync-identity-migration')
     migration.hidden = !syncState.identityMigrationFrom
+    byId('sync-identity-migration-text').textContent = syncState.identityOwnerMissing
+      ? 'Identity sync is paused. The identity that protected your synced list is no longer on this phone. To migrate that list, import its key again. Or start from the current default’s list: keys saved here are added to it, and the old encrypted copy stays on your relays.'
+      : 'The identity vault is still encrypted to the previous default. Migrate it to the current default to sync identities from this phone. The old encrypted copy stays available to devices that have not caught up.'
+    byId('sync-identity-migrate').textContent = syncState.identityOwnerMissing
+      ? 'Use the current default instead'
+      : 'Migrate identity vault'
     byId('sync-identity-migrate').disabled = syncRunning
     list.textContent = ''
     const devices = syncDevices()
@@ -362,13 +533,24 @@ export function createSync(deps) {
     }
     byId('sync-identity-migrate').addEventListener('click', async () => {
       if (!syncState.identityMigrationFrom || !syncState.defaultId || syncRunning) return
+      if (syncState.identityOwnerMissing) {
+        if (!globalThis.confirm('Continue with the current default identity’s list? Keys that are only in the old list, and not on this phone, will not be carried over.')) return
+        const prefs = syncPrefs()
+        prefs.identityVaultOwnerId = syncState.defaultId
+        saveSyncPrefs(prefs)
+        void syncNow()
+        return
+      }
       if (!globalThis.confirm('Migrate the identity vault to the current default identity? A new encrypted copy will be published; the previous copy will remain on its original identity.')) return
       syncRunning = true
       renderSync()
       try {
-        const migrated = await invoke('sync_identity_migrate', {
-          fromId: syncState.identityMigrationFrom,
-          toId: syncState.defaultId
+        await withIdentityLock(async () => {
+          applyIdentityOutcome(await invoke('sync_identity_migrate', {
+            fromId: syncState.identityMigrationFrom,
+            toId: syncState.defaultId,
+            localState: syncPrefs().identityState
+          }))
         })
         const prefs = syncPrefs()
         prefs.identityVaultOwnerId = syncState.defaultId
@@ -376,7 +558,6 @@ export function createSync(deps) {
         syncState.identityMigrationFrom = null
         syncState.error = ''
         syncState.at = Date.now()
-        void migrated
       } catch (error) {
         syncState.error = String(error)
       } finally {
@@ -421,5 +602,5 @@ export function createSync(deps) {
     }, SYNC_DEBOUNCE_MS)
   }
 
-  return { localChanged, renderSync, refresh: async () => { await refreshIdentityOwner(); renderSync() }, renderDeviceTabs, startSync }
+  return { removalInfo, removeIdentity, resolveRemoval, identityRemovals, syncNow, localChanged, renderSync, refresh: async () => { await refreshIdentityOwner(); renderSync() }, renderDeviceTabs, startSync }
 }

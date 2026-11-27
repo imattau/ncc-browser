@@ -898,12 +898,13 @@
           <input id="sync-history" class="switch" type="checkbox" role="switch" />
         </label>
         <label class="switch-row">
-          <span>Identities<small>Sync local Nostr keys in a separate encrypted vault. Other devices need the current default key already. Remote signer connections stay on this phone. Changing the default requires migration.</small></span>
+          <span>Identities<small>Sync local Nostr keys in a separate encrypted vault. Other devices need the current default key already. Remote signer connections stay on this phone. Changing the default requires migration. To stop syncing one key, remove it on the Identity screen.</small></span>
           <input id="sync-identities" class="switch" type="checkbox" role="switch" />
         </label>
+        <div id="sync-identity-removals" class="identity-profile-list" aria-live="polite"></div>
         <div id="sync-identity-migration" class="status" role="status" hidden>
-          <p>The identity vault is still encrypted to the previous default. Migrate it to the current default to sync identities from this phone. The old encrypted copy stays available to devices that have not caught up.</p>
-          <button id="sync-identity-migrate" class="btn tonal" type="button">Migrate identity vault</button>
+          <p id="sync-identity-migration-text"></p>
+        <button id="sync-identity-migrate" class="btn tonal" type="button">Migrate identity vault</button>
         </div>
         <button id="sync-now" class="btn tonal block" type="button">Sync now</button>
         <p id="sync-state" class="status" role="status"></p>
@@ -941,6 +942,7 @@
       <div class="body">
         <h3 class="group">Your identities</h3>
         <p class="hint">Choose which key new NIP-07 requests use. Your default identity stays first in the list and owns the Password Manager vault.</p>
+        <div id="identity-removals" class="identity-profile-list" aria-live="polite"></div>
         <div id="identity-profiles" class="identity-profile-list" aria-live="polite"></div>
         <p id="identity-state" class="hint">Checking…</p>
         <p id="identity-store" class="hint"></p>
