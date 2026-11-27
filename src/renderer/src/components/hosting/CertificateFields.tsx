@@ -29,8 +29,8 @@ export function CertificateFields({
           </p>
           <p className="text-ui-95 leading-relaxed text-[color:var(--color-muted)]">
             Only for a server that already uses HTTPS: import its certificate, or generate one
-            and install it in your server. For a plain HTTP server, skip this and use the HTTPS
-            button on the saved service instead.
+            and install it in your server. For a plain HTTP server, skip this and use Add HTTPS
+            on the saved service instead.
           </p>
         </div>
         <div className="flex flex-wrap gap-1.5">

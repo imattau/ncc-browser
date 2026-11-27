@@ -104,12 +104,14 @@ Limits worth knowing:
 
 ### Publishing a site
 
-**Settings → Sites** (or **Menu → Publish a site**) is the native publisher. Choose the
-built folder (the one with `index.html` at its root), set a site id or tick **root
-site**, and publish. The folder is scanned and hashed in the main process, every file
+**Settings → Sites** (or **Menu → Publish a site**) is the native publisher. It goes
+in four steps: choose the built folder (the one with `index.html` at its root), name
+the site (**Make this my main site**, under More options, publishes the root site),
+check what will become public and whether it replaces a live site, then publish with
+progress shown for uploading, signing and announcing. The folder is scanned and hashed in the main process, every file
 is uploaded to Blossom (BUD-02), and a NIP-5A manifest is signed by your identity and
 published through the relay pool. The result is `nsite://<your npub>/<site>/`; the
-Sites list can open, copy, verify or republish it.
+Sites list can open, copy, check or update it.
 
 Republishing with the same site id replaces the manifest. Files whose bytes did not
 change keep their hashes and are not uploaded again. This is the right path for a
@@ -169,7 +171,9 @@ ncc://<your-npub>/<service>
 
 No domain, certificate or reverse proxy. The browser signs an NCC-05 locator, encrypts
 it to your own key by default, publishes it to your relays and renews it while it runs.
-**Publish this page** (or **Find endpoints**) discovers endpoint candidates from this
+**Add service** walks through the app's address, who can open it, and a final check;
+one button then saves and publishes, showing each stage, and each saved service says
+what it needs next. **Publish this page** (or **Find addresses**) discovers endpoint candidates from this
 machine's interfaces, the router and an optional page: loopback, LAN addresses, global
 IPv6, the current HTTPS URL and any onion address, each with a confidence label. A service can be signed by an existing identity or a new one, saved or one-off, and
 HTTPS endpoints can import or generate a certificate whose SPKI is pinned with `k`.

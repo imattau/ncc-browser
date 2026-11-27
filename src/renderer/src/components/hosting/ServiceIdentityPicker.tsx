@@ -11,6 +11,8 @@ interface ServiceIdentityPickerProps {
   identityAdmin: HostingIdentityApi
   copied: string | null
   copy: (id: string, text: string) => Promise<void>
+  title?: string
+  description?: string
 }
 
 /** The identity that will sign a new service, including the one-off key flow. */
@@ -18,7 +20,9 @@ export function ServiceIdentityPicker({
   identity,
   identityAdmin,
   copied,
-  copy
+  copy,
+  title = 'Signing identity',
+  description = 'The active identity signs this service. Pick an existing one, or create a new one.'
 }: ServiceIdentityPickerProps) {
   const {
     identityList,
@@ -46,10 +50,10 @@ export function ServiceIdentityPicker({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
           <p className="text-ui-105 font-semibold text-[color:var(--color-text-strong)]">
-            Signing identity
+            {title}
           </p>
           <p className="text-ui-95 leading-relaxed text-[color:var(--color-muted)]">
-            The active identity signs this service. Pick an existing one, or create a new one.
+            {description}
           </p>
           {identityList && identityList.identities.length > 0 ? (
             <div className="relative mt-1 w-full max-w-md" data-service-identity>

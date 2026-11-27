@@ -1,4 +1,4 @@
-import { ExternalLink, Globe, Lock, Pencil, Radar, RefreshCw, ShieldCheck, Trash2, Users } from 'lucide-react'
+import { ExternalLink, Globe, LoaderCircle, Lock, Pencil, Radar, RefreshCw, ShieldCheck, Trash2, Users } from 'lucide-react'
 import {
   isLoopbackEndpoint,
   isTlsProxyEndpoint,
@@ -12,6 +12,7 @@ import {
 } from '@shared/hosting'
 import { cn } from '../../lib/cn'
 import { relativeSeconds } from '../../lib/format'
+import { serviceNextStep, type NextStep } from '../../lib/publish-flow'
 import { SharePanel } from './SharePanel'
 import { ServiceShares } from './ServiceShares'
 import type { HostingSharesApi } from './useHostingShares'
@@ -35,6 +36,10 @@ interface ServiceCardProps {
   onEdit: (service: HostedService) => void
   onRemove: (service: HostedService) => void
   sharesApi: HostingSharesApi
+  /** What is being done to this service right now. */
+  activity: string | null
+  /** Why the last action on it failed. */
+  failure: string | null
 }
 
 /** One hosted service, its onion endpoint, share panel and existing shares. */
@@ -56,7 +61,9 @@ export function ServiceCard({
   onRemoveTlsProxy,
   onEdit,
   onRemove,
-  sharesApi
+  sharesApi,
+  activity,
+  failure
 }: ServiceCardProps) {
   const serviceNpub = service.owner ? recipientNpub(service.owner) : npub
   const address = serviceNpub ? serviceAddress(serviceNpub, service.service) : ''
@@ -74,6 +81,20 @@ export function ServiceCard({
     service.lastPublishedAt &&
       service.lastPublishedAt + service.ttlSeconds <= Math.floor(Date.now() / 1000)
   )
+
+  const nextStep =
+    service.owner && npub && serviceNpub !== npub
+      ? null
+      : serviceNextStep(service, peopleWithAccess.length, Math.floor(Date.now() / 1000))
+  const takeStep = (action: NextStep['action']): void => {
+    if (action === 'edit') onEdit(service)
+    else if (action === 'publish') onPublish(service)
+    else if (action === 'onion') onPublishOnion(service)
+    else sharesApi.openShare(service.id)
+  }
+  // The share panel is the next step itself, so don't point at it while it is open.
+  const showNextStep =
+    nextStep && !activity && !(nextStep.action === 'people' && sharesApi.sharing === service.id)
 
   return (
     <div
@@ -239,7 +260,7 @@ export function ServiceCard({
               title="Create a Tor onion endpoint that works behind NAT"
               className="inline-flex items-center gap-1 rounded-lg border border-[color:var(--color-line)] px-2 py-1 text-ui-10 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)] disabled:opacity-40"
             >
-              <Radar className="h-3 w-3" /> Onion
+              <Radar className="h-3 w-3" /> Tor address
             </button>
           ) : null}
           {canHttps && !https ? (
@@ -251,7 +272,7 @@ export function ServiceCard({
               title="Let the browser add HTTPS in front of your HTTP server, with no server setup"
               className="inline-flex items-center gap-1 rounded-lg border border-[color:var(--color-line)] px-2 py-1 text-ui-10 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)] disabled:opacity-40"
             >
-              <ShieldCheck className="h-3 w-3" /> HTTPS
+              <ShieldCheck className="h-3 w-3" /> Add HTTPS
             </button>
           ) : null}
           <button
@@ -284,6 +305,41 @@ export function ServiceCard({
           </button>
         </div>
       </div>
+
+      {activity ? (
+        <p
+          role="status"
+          data-service-activity
+          className="mt-2.5 flex items-center gap-2 text-ui-11 text-[color:var(--color-text)]"
+        >
+          <LoaderCircle className="h-3.5 w-3.5 shrink-0 animate-spin text-[color:var(--color-accent)]" />
+          {activity}
+        </p>
+      ) : null}
+      {failure && failure !== service.lastPublishError ? (
+        <p role="alert" className="mt-2.5 break-words text-ui-11 text-[color:var(--color-danger)]">
+          {failure}
+        </p>
+      ) : null}
+      {showNextStep ? (
+        <div
+          data-service-next={nextStep.action}
+          className="mt-2.5 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[color:var(--color-accent)]/30 bg-[color:var(--color-accent)]/10 px-2.5 py-2"
+        >
+          <p className="text-ui-11 text-[color:var(--color-text)]">
+            <span className="font-semibold">Next: </span>
+            {nextStep.text}
+          </p>
+          <button
+            type="button"
+            onClick={() => takeStep(nextStep.action)}
+            disabled={busy || (nextStep.action === 'publish' && !identityConfigured)}
+            className="rounded-lg bg-[color:var(--color-accent)] px-2.5 py-1 text-ui-11 font-semibold text-[color:var(--color-on-accent)] disabled:opacity-50"
+          >
+            {nextStep.button}
+          </button>
+        </div>
+      ) : null}
 
       {sharesApi.sharing === service.id ? (
         <SharePanel

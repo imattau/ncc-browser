@@ -1,3 +1,4 @@
+import type { PublishDraftKind } from './publish-drafts'
 import type { MoneroWalletData } from './monero-wallet'
 import type { AutomationState } from './automation'
 import type { CommandId } from './commands'
@@ -186,6 +187,10 @@ export interface NccApi {
     nccSearchEnabled: boolean
   }): Promise<SetRelaysResult>
   setAppearance(appearance: Partial<AppearanceConfig>): Promise<SetAppearanceResult>
+  /** An unfinished publishing form kept on disk, or `null`. Chrome only. */
+  publishDraftLoad(kind: PublishDraftKind): Promise<unknown>
+  /** Keep a form, or forget it with `null`. */
+  publishDraftSave(kind: PublishDraftKind, value: unknown): Promise<void>
   hostingState(): Promise<HostingState>
   hostingCreate(draft: HostingDraft): Promise<HostingState>
   hostingUpdate(id: string, draft: HostingDraft): Promise<HostingState>

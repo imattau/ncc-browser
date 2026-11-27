@@ -15,6 +15,17 @@ import {
   type ReachabilityReport
 } from '@shared/reachability'
 import { messageOf } from '../../lib/format'
+import {
+  discardServiceDraft,
+  editServiceDraft,
+  openServiceDraft,
+  parkServiceDraft,
+  restoreServiceDraft,
+  serviceDraft,
+  setServiceDraftExtras,
+  type PrefillDraft,
+  type UnfinishedService
+} from './serviceDraft'
 import { EMPTY_DRAFT, type DraftState, type HostingFeedback } from './types'
 
 type Feedback = Pick<HostingFeedback, 'apply' | 'busy' | 'setBusy' | 'setError'>
@@ -28,12 +39,23 @@ interface Options {
   openShare: (serviceId: string) => void
   resetShares: () => void
   dismissPortAlert: (localPort: number) => void
-  initialDraft?: HostingDraft | null
+  initialDraft?: PrefillDraft | null
   onDraftUsed?: () => void
 }
 
 export interface HostingDraftApi {
   draft: DraftState | null
+  /** The kept form, whether it is open or set aside. */
+  unfinished: UnfinishedService | null
+  /** What may have changed since the form was last open. */
+  warnings: string[]
+  setStep: (step: number) => void
+  setWantTor: (wantTor: boolean) => void
+  /** Set the form aside without losing it. */
+  park: () => void
+  resume: () => void
+  /** Throw the form away, asking first if there is something in it. */
+  discard: () => void
   /** Set when "Publish this page" found services that already use that server. */
   existing: HostedService[]
   patchDraft: (patch: Partial<DraftState>) => void
@@ -71,6 +93,36 @@ export interface HostingDraftApi {
   clearCertificate: () => void
 }
 
+/** What saving a draft sends. Typed addresses without a scheme get `http://`. */
+export function servicePayload(draft: DraftState, strictAnchors: boolean): HostingDraft {
+  const endpoints = draft.endpoints
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const url = normalizeEndpointSeed(line) ?? line
+      const pin = draft.pins[line] ?? draft.pins[url]
+      return pin ? { url, k: pin, priority: 1000 } : url
+    })
+  return {
+    title: draft.title,
+    ...(draft.id ? {} : draft.service.trim() ? { service: draft.service } : {}),
+    endpoints,
+    ttlSeconds: Math.max(1, Number(draft.ttlDays) || 7) * 86_400,
+    visibility: draft.visibility,
+    anchor: strictAnchors ? true : draft.anchor,
+    notes: draft.notes
+  }
+}
+
+/** Before another form takes its place, ask about one with something in it. */
+function mayReplace(): boolean {
+  const entry = serviceDraft.get()
+  if (!entry?.dirty) return true
+  const name = entry.draft.title.trim() || 'Unnamed service'
+  return window.confirm(`You haven’t finished “${name}”. Discard it and start another?`)
+}
+
 /**
  * The service form: draft state, endpoint discovery, router port mapping and TLS
  * certificate pinning. All of these edit the same draft, so they share one hook.
@@ -89,7 +141,42 @@ export function useHostingDraft(options: Options): HostingDraftApi {
   } = options
   const { apply, setBusy, setError } = feedback
 
-  const [draft, setDraft] = useState<DraftState | null>(null)
+  const unfinished = serviceDraft.use()
+  const draft = unfinished && !unfinished.parked ? unfinished.draft : null
+  const [restored, setRestored] = useState(false)
+  /** Mapped ports that exist now; `null` until asked. */
+  const [mappings, setMappings] = useState<PortMapping[] | null>(null)
+  // Writes go to the kept form, so work that finishes after this screen has gone
+  // (a certificate, a port mapping) is not lost.
+  const setDraft = (change: (current: DraftState | null) => DraftState | null): void =>
+    editServiceDraft((current) => change(current) ?? current)
+
+  useEffect(() => {
+    let alive = true
+    void restoreServiceDraft().then(() => alive && setRestored(true))
+    void window.ncc
+      .hostingPortMappings()
+      .then((list) => {
+        if (!alive) return
+        setMappings(list)
+        // Show the controls again for a mapping this form made earlier.
+        const url = serviceDraft.get()?.mappedUrl
+        const live = list.find((entry) => entry.url === url)
+        if (live) setMapping(live)
+      })
+      .catch(() => undefined)
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  // An edit of a service that has since been removed has nothing to save to.
+  useEffect(() => {
+    const id = unfinished?.draft.id
+    if (state && id && !state.services.some((service) => service.id === id)) {
+      discardServiceDraft(unfinished.key)
+    }
+  }, [state, unfinished])
   const [existingIds, setExistingIds] = useState<string[]>([])
   const [discovery, setDiscovery] = useState<ReachabilityReport | null>(null)
   const [discoveryBusy, setDiscoveryBusy] = useState(false)
@@ -99,11 +186,8 @@ export function useHostingDraft(options: Options): HostingDraftApi {
   const [mapping, setMapping] = useState<PortMapping | null>(null)
   const [mappingBusy, setMappingBusy] = useState(false)
   const [verifyBusy, setVerifyBusy] = useState(false)
-  const [certificateInfo, setCertificateInfo] = useState<CertificateInfo | null>(null)
-  const [certificatePaths, setCertificatePaths] = useState<{
-    certPath: string
-    keyPath: string
-  } | null>(null)
+  const certificateInfo = unfinished?.certificate?.info ?? null
+  const certificatePaths = unfinished?.certificate?.paths ?? null
   const [certificateBusy, setCertificateBusy] = useState(false)
 
   const patchDraft = (patch: Partial<DraftState>): void => {
@@ -201,6 +285,7 @@ export function useHostingDraft(options: Options): HostingDraftApi {
         secure: url.protocol === 'https:'
       })
       setMapping(result)
+      setServiceDraftExtras({ mappedUrl: result.url })
       setDraft((current) => {
         if (!current) return current
         const lines = current.endpoints.split('\n').map((line) => line.trim()).filter(Boolean)
@@ -233,6 +318,7 @@ export function useHostingDraft(options: Options): HostingDraftApi {
           : current
       )
       setMapping(null)
+      setServiceDraftExtras({ mappedUrl: null })
     } catch (mappingError) {
       setError(messageOf(mappingError))
     } finally {
@@ -278,8 +364,7 @@ export function useHostingDraft(options: Options): HostingDraftApi {
       }
       return { ...current, endpoints: nextLines.join('\n'), pins }
     })
-    setCertificateInfo(info)
-    setCertificatePaths(null)
+    setServiceDraftExtras({ certificate: { info, paths: null } })
   }
 
   const importCertificate = async (): Promise<void> => {
@@ -324,7 +409,12 @@ export function useHostingDraft(options: Options): HostingDraftApi {
       })
       if (generated) {
         applyCertificate(generated)
-        setCertificatePaths({ certPath: generated.certPath, keyPath: generated.keyPath })
+        setServiceDraftExtras({
+          certificate: {
+            info: generated,
+            paths: { certPath: generated.certPath, keyPath: generated.keyPath }
+          }
+        })
       }
     } catch (certificateError) {
       setError(messageOf(certificateError))
@@ -335,8 +425,7 @@ export function useHostingDraft(options: Options): HostingDraftApi {
 
   const clearCertificate = (): void => {
     setDraft((current) => (current ? { ...current, pins: {} } : current))
-    setCertificateInfo(null)
-    setCertificatePaths(null)
+    setServiceDraftExtras({ certificate: null })
   }
 
   const verifyMapping = async (): Promise<void> => {
@@ -406,7 +495,8 @@ export function useHostingDraft(options: Options): HostingDraftApi {
   useEffect(() => {
     // Wait for the saved services and the identity, or the check below would miss a
     // service and a second one would be started for the same server.
-    if (!initialDraft || !state || owner === undefined) return
+    // The kept form has to be back first, or this could replace it without asking.
+    if (!initialDraft || !state || !restored || owner === undefined) return
     const draftEndpoints = initialDraft.endpoints ?? []
     const urls = draftEndpoints.map((endpoint) =>
       typeof endpoint === 'string' ? endpoint : endpoint.url
@@ -416,11 +506,19 @@ export function useHostingDraft(options: Options): HostingDraftApi {
     ]
     setExistingIds(matches)
     if (matches.length > 0) {
-      setDraft(null)
+      // Put any open form aside so the services it points to are in view.
+      parkServiceDraft(true)
+      if (!serviceDraft.get()?.dirty) discardServiceDraft()
       onDraftUsed?.()
       return
     }
-    setDraft({
+    if (!mayReplace()) {
+      parkServiceDraft(false)
+      onDraftUsed?.()
+      return
+    }
+    openServiceDraft(
+      {
       ...EMPTY_DRAFT,
       title: initialDraft.title,
       service: initialDraft.service ?? '',
@@ -438,80 +536,104 @@ export function useHostingDraft(options: Options): HostingDraftApi {
       visibility: initialDraft.visibility ?? 'private',
       anchor: initialDraft.anchor === true,
       notes: initialDraft.notes ?? ''
-    })
+      },
+      { memoryOnly: initialDraft.fromPrivateTab === true }
+    )
     const seed = urls.find(Boolean)
     if (seed && normalizeEndpointSeed(seed)) void discover(seed)
     onDraftUsed?.()
-  }, [initialDraft, state, owner, onDraftUsed, discover])
+  }, [initialDraft, state, restored, owner, onDraftUsed, discover])
 
-  const startCreate = (): void => {
-    setDraft({ ...EMPTY_DRAFT })
-    setExistingIds([])
+  const resetTools = (): void => {
     setError(null)
     resetShares()
     setDiscovery(null)
     setDiscoveryError(null)
+  }
+
+  const startCreate = (): void => {
+    if (!mayReplace()) return
+    openServiceDraft({ ...EMPTY_DRAFT })
+    setExistingIds([])
+    resetTools()
   }
 
   const startEdit = (service: HostedService): void => {
-    setDraft({
-      id: service.id,
-      title: service.title,
-      service: service.service,
-      endpoints: service.endpoints.map((endpoint) => endpoint.url).join('\n'),
-      pins: Object.fromEntries(
-        service.endpoints.flatMap((endpoint) => (endpoint.k ? [[endpoint.url, endpoint.k]] : []))
-      ),
-      ttlDays: String(Math.max(1, Math.round(service.ttlSeconds / 86_400))),
-      visibility: service.visibility,
-      anchor: service.anchor,
-      notes: service.notes ?? ''
-    })
-    setError(null)
-    resetShares()
-    setDiscovery(null)
-    setDiscoveryError(null)
+    // Going back to a service with unsaved changes picks them up again.
+    if (serviceDraft.get()?.draft.id === service.id) {
+      parkServiceDraft(false)
+      return
+    }
+    if (!mayReplace()) return
+    openServiceDraft(
+      {
+        id: service.id,
+        title: service.title,
+        service: service.service,
+        endpoints: service.endpoints.map((endpoint) => endpoint.url).join('\n'),
+        pins: Object.fromEntries(
+          service.endpoints.flatMap((endpoint) => (endpoint.k ? [[endpoint.url, endpoint.k]] : []))
+        ),
+        ttlDays: String(Math.max(1, Math.round(service.ttlSeconds / 86_400))),
+        visibility: service.visibility,
+        anchor: service.anchor,
+        notes: service.notes ?? ''
+      },
+      { baseUpdatedAt: service.updatedAt }
+    )
+    resetTools()
   }
 
+  const discard = (): void => {
+    const entry = serviceDraft.get()
+    if (!entry) return
+    const question = entry.draft.id
+      ? 'Discard your unsaved changes to this service?'
+      : 'Discard this unfinished service? What you entered will be lost.'
+    if (entry.dirty && !window.confirm(question)) return
+    discardServiceDraft(entry.key)
+  }
+
+  const warnings: string[] = []
+  if (unfinished) {
+    const edited = state?.services.find((service) => service.id === unfinished.draft.id)
+    if (edited && unfinished.baseUpdatedAt && edited.updatedAt !== unfinished.baseUpdatedAt) {
+      warnings.push(
+        'This service has changed since you started editing. Saving replaces those changes.'
+      )
+    }
+    const { mappedUrl } = unfinished
+    if (
+      mappedUrl &&
+      mappings &&
+      mapping?.url !== mappedUrl &&
+      !mappings.some((entry) => entry.url === mappedUrl) &&
+      unfinished.draft.endpoints.includes(mappedUrl)
+    ) {
+      warnings.push(
+        `The router no longer forwards ${mappedUrl}. Map the port again, or remove that address.`
+      )
+    }
+  }
+
+  /** Save changes to an existing service. New ones are saved by the wizard. */
   const submit = async (): Promise<void> => {
-    if (!draft) return
-    const endpoints = draft.endpoints
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => {
-        const pin = draft.pins[line]
-        return pin ? { url: line, k: pin, priority: 1000 } : line
-      })
+    if (!draft?.id) return
     if (!draft.title.trim()) return setError('Give the service a name')
     setBusy(true)
     setError(null)
     try {
-      const payload = {
-        title: draft.title,
-        ...(draft.id ? {} : draft.service.trim() ? { service: draft.service } : {}),
-        endpoints,
-        ttlSeconds: Math.max(1, Number(draft.ttlDays) || 7) * 86_400,
-        visibility: draft.visibility,
-        anchor: strictAnchors ? true : draft.anchor,
-        notes: draft.notes
-      }
-      const creating = !draft.id
-      const next = draft.id
-        ? await window.ncc.hostingUpdate(draft.id, payload)
-        : await window.ncc.hostingCreate(payload)
-      apply(next)
-      setDraft(null)
-      if (payload.visibility === 'private') {
-        // Show who has access after both adding and editing, so the contact list is
-        // there without a second trip to the card.
-        const saved = creating
-          ? next.services.find(
-              (service) => !state?.services.some((before) => before.id === service.id)
-            )?.id
-          : draft.id
-        if (saved) openShare(saved)
-      }
+      const payload = servicePayload(draft, strictAnchors)
+      const key = serviceDraft.get()?.key
+      apply(await window.ncc.hostingUpdate(draft.id, payload))
+      discardServiceDraft(key)
+      // Show who has access after editing a published service, so the contact list is
+      // there without a second trip to the card. An unpublished one needs publishing
+      // first, which its card says.
+      const published = state?.services.some(
+        (service) => service.id === draft.id && service.lastPublishedAt
+      )
+      if (published && payload.visibility === 'private') openShare(draft.id)
     } catch (submitError) {
       setError(messageOf(submitError))
     } finally {
@@ -521,9 +643,19 @@ export function useHostingDraft(options: Options): HostingDraftApi {
 
   return {
     draft,
+    unfinished,
+    warnings,
+    setStep: (step) => setServiceDraftExtras({ step }),
+    setWantTor: (wantTor) => setServiceDraftExtras({ wantTor }),
+    park: () => parkServiceDraft(true),
+    resume: () => {
+      resetTools()
+      parkServiceDraft(false)
+    },
+    discard,
     existing: state?.services.filter((service) => existingIds.includes(service.id)) ?? [],
     patchDraft,
-    cancelDraft: () => setDraft(null),
+    cancelDraft: () => discardServiceDraft(),
     startCreate,
     startEdit,
     submit,

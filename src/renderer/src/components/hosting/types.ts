@@ -1,15 +1,15 @@
 import {
   DEFAULT_HOSTED_TTL_SECONDS,
-  type HostingDraft,
   type HostingState,
   type HostingVisibility
 } from '@shared/hosting'
 import type { EndpointConfidence, EndpointKind } from '@shared/reachability'
 import type { IdentityStatus } from '@shared/types'
+import type { PrefillDraft } from './serviceDraft'
 
 export interface HostingSettingsProps {
   identity: IdentityStatus | null
-  initialDraft?: HostingDraft | null
+  initialDraft?: PrefillDraft | null
   onDraftUsed?: () => void
   onOpenIdentity: () => void
   onIdentityChange?: (status: IdentityStatus) => void

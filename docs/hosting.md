@@ -29,13 +29,38 @@ author, the `d` tag and when it changed; they do not see the endpoint.
 
 ## Publishing
 
-Settings → **Services** → **Add service**.
+Settings → **Services** → **Add service**. On desktop this is three steps:
+
+1. **Your app** — a name, and the address where the app is already running. **Find
+   addresses** looks for candidates. The address can be left empty and added later.
+2. **Access** — private (only you and people you choose) or public. For a private app
+   with a this-computer address, **Also create a Tor address** lets others reach it.
+   Public is not offered while such an address is listed.
+3. **Check & publish** — a summary and the signing identity. **Publish** saves the
+   service, creates the Tor address if chosen, and publishes, showing each stage.
+   **Save without publishing** stops after saving.
+
+If a stage fails, the earlier ones are kept: **Try again** repeats only what failed,
+and a failed Tor stage can be skipped. The progress stays available if you open another
+page or settings section. Each saved card shows the next thing it needs, such as
+publishing again or choosing people. **Edit** is a single form.
+
+An unfinished form is kept. Switching settings sections brings it straight back. **Finish
+later** sets it aside as a card with **Continue** and **Discard**, and the same card
+appears after the browser restarts or crashes, for a new service or unsaved edits.
+Anything that would replace or discard what you entered asks first. It is stored only on
+this computer, in `userData/publish-drafts.json` (mode `0600`), and removed once the
+service is saved or the form is discarded. A form started with **Publish this page…**
+from a private or Tor tab is never written to disk. There is one unfinished service at a
+time, shared by all windows; the window you typed in last wins.
+
+The fields, some of them under **More options**:
 
 | Field | Meaning |
 | --- | --- |
 | Name | Human label shown in the browser. |
 | Service id | The `d` tag, e.g. `photos`. Lowercase letters, digits and hyphens. Immutable after creation. |
-| Endpoints | Optional until publishing: one or more `http://`, `https://` or `.onion` URLs. A bare `IP:port` or `[IPv6]:port` is accepted and defaults to `http://`; an explicit `https://` keeps TLS (use it for a `k`-pinned endpoint). The first is preferred; the resolver falls back in order. **Find endpoints** proposes candidates from this machine, the current page and the router. |
+| Endpoints | Optional until publishing: one or more `http://`, `https://` or `.onion` URLs. A bare `IP:port` or `[IPv6]:port` is accepted and defaults to `http://`; an explicit `https://` keeps TLS (use it for a `k`-pinned endpoint). The first is preferred; the resolver falls back in order. **Find addresses** proposes candidates from this machine, the current page and the router. |
 | Visibility | **Private** encrypts the locator to you. **Public** publishes plaintext, so anyone with the address can resolve it. |
 | Locator lifetime | How long the signed hint is valid. Default 7 days, maximum 30. |
 | Anchor | Optional NCC-02 service record. A public service includes the endpoint; a private service omits `u` and `k` and anchors only the identity and expiry. |
@@ -57,7 +82,7 @@ reachable endpoint because a locator is only a pointer.
 
 ### Signing identity
 
-A service is signed by the **active Nostr identity**. The Add service form shows the
+A service is signed by the **active Nostr identity**. The last step of Add service shows the
 identity list and uses the selected one; choosing another entry switches the active
 identity for this and later services.
 
@@ -71,15 +96,15 @@ identity for this and later services.
   greys out the checkbox once its npub is present.
 - Replacing or switching away from a one-off asks for confirmation.
 
-Publishing never creates a signer implicitly: without an identity the submit is
-disabled and the panel says one is needed.
+Publishing never creates a signer implicitly: without an identity the publish and save
+buttons are disabled and the panel says one is needed.
 
 ### HTTPS without server setup
 
 For a server that only speaks plain HTTP, the browser can add HTTPS in front of it. Type
 the endpoints as you know them; you do not have to work out a second port or a pin.
 
-- Press **HTTPS** on the saved service. If one of this machine's saved `https://`
+- Press **Add HTTPS** on the saved service. If one of this machine's saved `https://`
   addresses turns out to be a plain HTTP server, **Publish** and **Share** turn it on
   for you.
 - The browser finds the server from the endpoint ports and listens for TLS on port 8443,
@@ -165,8 +190,9 @@ service card marks them: remove access, add the person again and send the new li
 start with it. The resolver treats a `share-` service as exact-only: a missing or
 expired share never falls back to the owner's generic `addr` record.
 
-Adding or editing a private service opens **People** automatically so the contact list
-is right there. You can also open it later from the service card; the button shows how
+After adding a private service that others can reach, **Choose people** opens the
+contact list; so does saving changes to a published one. You can also open it from the
+service card with **People**; the button shows how
 many people currently have a link.
 
 To add people:
@@ -226,7 +252,7 @@ A share with no non-loopback endpoint is refused.
 
 ## Endpoint discovery
 
-**Find endpoints** works without opening a page. It scans this machine's interfaces
+**Find addresses** works without opening a page. It scans this machine's interfaces
 using the **Port** field (or the first endpoint's port, or 80/443), checks whether a TLS
 pin is configured and whether Tor is running, and lists candidates as checkboxes. You
 can also seed it with a normal `http(s)://` page, a bare `IP:port`, an IPv4 address or a
@@ -268,7 +294,7 @@ stays **unverified** until a port mapping and a reachability check confirm it.
 ### Automatic onion endpoints
 
 A service with a loopback endpoint (for example `http://127.0.0.1:8080`) gets an
-**Onion** action. It asks the bundled Tor to create a hidden service:
+**Tor address** action. It asks the bundled Tor to create a hidden service:
 
 ```
 ADD_ONION NEW:ED25519-V3 Port=80,127.0.0.1:8080

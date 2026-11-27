@@ -31,15 +31,28 @@ For anything that needs a running HTTP endpoint, logins or server-side state, us
 1. Build the site so the folder contains `index.html` at its root (for example a Vite
    `dist/` folder).
 2. **Settings → Sites → Choose folder**. The folder is scanned in the main process:
-   dotfiles, `__MACOSX` and symlinks are skipped; every file is hashed locally.
-3. Set a site id (1–13 lowercase letters, digits and dashes), or tick **root site**.
-   Add a title, description and optional source URL.
-4. Choose the Blossom servers and relays. The defaults are public servers; the relay
-   list starts from Settings → General.
-5. **Upload and publish**. Every file is uploaded to every server, the manifest is
-   signed by the active identity, and published to the relays.
-6. **Copy** the `nsite://` address, or **Open** it. **Verify** downloads every file back
-   and checks its hash.
+   dotfiles, `__MACOSX` and symlinks are skipped; every file is hashed locally. A
+   folder with problems, such as no `index.html`, stays on this step with the reasons.
+3. **Name**: a title and a short name for the address (the site id: 1–13 lowercase
+   letters, digits and dashes), suggested from the title. **More options** holds **Make
+   this my main site** (the root site), the source URL, the Blossom servers and the
+   relays. The server defaults are public; the relay list starts from Settings → General.
+4. **Check**: the full address, the files, a reminder that everything becomes public,
+   the signing identity, and a warning if publishing replaces one of your sites.
+5. **Publish publicly**. Every file is uploaded to every server, the manifest is signed
+   by the active identity, and published to the relays. Each of those three stages
+   shows its state; **Cancel**, **Try again** and the progress stay available if you
+   open another page or settings section.
+6. **Copy address** or **Open site**. **Check uploaded files** (**Check files** in the
+   list) downloads every file back and checks its hash. **Update** in the list starts
+   at the check step with the site's saved details.
+
+An unfinished setup survives switching settings sections, and its details also survive a
+restart or crash (`userData/publish-drafts.json`, local only, mode `0600`). The folder
+is not stored, and the browser does not keep access to it, so after a restart choose it
+again; everything typed is still there. If the browser closed during a publish, the
+notice says to check **Published sites** first. Publishing or discarding removes the
+kept details.
 
 Republishing with the same site id replaces the manifest. Files whose bytes did not
 change keep their hash and are not uploaded again; only new or changed assets are

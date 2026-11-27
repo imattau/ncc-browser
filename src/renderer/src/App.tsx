@@ -414,7 +414,8 @@ export function App() {
         onPublishService={(url) => {
           setHostingDraft({
             title: state.title && state.title !== 'New tab' ? state.title : 'My service',
-            endpoints: [url]
+            endpoints: [url],
+            fromPrivateTab: state.tabKind !== 'normal'
           })
           openSettings('services')
         }}

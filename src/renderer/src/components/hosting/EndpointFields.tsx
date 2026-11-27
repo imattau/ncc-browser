@@ -65,12 +65,12 @@ export function EndpointFields({
   return (
     <div>
       <label className="block text-ui-105 text-[color:var(--color-muted)]">
-        Endpoints, one per line (optional until publishing)
+        App addresses (endpoints), one per line
         <textarea
           value={draft.endpoints}
           onChange={(event) => patchDraft({ endpoints: event.target.value })}
           rows={2}
-          placeholder={'https://photos.example\nhttp://abc.onion'}
+          placeholder="http://127.0.0.1:8080"
           className="mt-1 w-full resize-y rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-ink)] px-2.5 py-1.5 font-mono text-ui-11 text-[color:var(--color-text)] outline-none focus:border-[color:var(--color-accent)]"
         />
       </label>
@@ -101,7 +101,7 @@ export function EndpointFields({
           className="inline-flex items-center gap-1.5 rounded-lg border border-[color:var(--color-line)] px-2.5 py-1 text-ui-11 text-[color:var(--color-text)] hover:bg-[color:var(--color-hover)] disabled:opacity-50"
         >
           <Radar className={cn('h-3.5 w-3.5', discoveryBusy && 'animate-pulse')} />
-          {discoveryBusy ? 'Checking this machine…' : 'Find endpoints'}
+          {discoveryBusy ? 'Checking this machine…' : 'Find addresses'}
         </button>
         <label className="flex cursor-pointer items-center gap-1.5 text-ui-95 text-[color:var(--color-muted)]">
           <input
@@ -113,7 +113,7 @@ export function EndpointFields({
           Local network only
         </label>
         <span className="text-ui-10 text-[color:var(--color-faint)]">
-          Scans this machine and the router; checks the TLS pin and Tor status.
+          Looks on this computer and your router. Tick the ones to use.
         </span>
       </div>
       {discoveryError ? (

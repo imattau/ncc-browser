@@ -284,6 +284,13 @@ export class NsitePublishService {
       })
       for (const file of input.files) {
         throwIfCancelled(signal)
+        onProgress?.({
+          phase: 'uploading',
+          done,
+          total: input.files.length,
+          label: 'Uploading files',
+          current: file.path
+        })
         const bytes = await readFile(join(input.folder, file.path.replace(/^\/+/, '')))
         if (sha256Hex(bytes) !== file.hash) {
           throw new Error(`${file.path} changed on disk after it was scanned. Choose the folder again.`)
@@ -304,6 +311,7 @@ export class NsitePublishService {
             done,
             total: input.files.length,
             label: 'Uploading files',
+            current: file.path,
             log: `${file.path} → ${outcome.server}: ${outcome.message}`
           })
           if (outcome.ok) {
@@ -324,12 +332,7 @@ export class NsitePublishService {
       }
 
       throwIfCancelled(signal)
-      onProgress?.({
-        phase: 'publishing',
-        done: 0,
-        total: relays.length,
-        label: 'Signing the manifest'
-      })
+      onProgress?.({ phase: 'signing', done: 0, total: 1, label: 'Signing the manifest' })
       const manifest = await signNsiteManifest(
         {
           siteId,
@@ -343,6 +346,12 @@ export class NsitePublishService {
         createdAt
       )
       throwIfCancelled(signal)
+      onProgress?.({
+        phase: 'publishing',
+        done: 0,
+        total: relays.length,
+        label: 'Publishing the manifest'
+      })
       const reports = await this.deps.network.publish(manifest, relays, provider, signal)
       onProgress?.({
         phase: 'publishing',

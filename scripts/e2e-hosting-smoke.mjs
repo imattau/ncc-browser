@@ -10,6 +10,7 @@
  *
  * Run: npm run build && node scripts/e2e-hosting-smoke.mjs
  * Needs: Xvfb, nak, and free 10548 / 10550 / 9333 ports.
+ * Set `NCC_SMOKE_CDP_PORT` if something else is using 9333.
  * `NCC_NSITE_FOLDER` is a test-only hook that replaces the native folder dialog.
  */
 import { spawn } from 'node:child_process'
@@ -24,7 +25,7 @@ import { SimplePool, finalizeEvent, generateSecretKey, getPublicKey, nip19 } fro
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const SCRATCH = '/tmp/opencode/ncc-hosting-smoke'
 const DISPLAY = ':98'
-const CDP_PORT = 9333
+const CDP_PORT = Number(process.env.NCC_SMOKE_CDP_PORT) || 9333
 const RELAY_PORT = 10548
 const BLOSSOM_PORT = 10550
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -258,7 +259,7 @@ try {
     button?.click()
     return Boolean(button)
   })()`)
-  await waitFor(cdp, "Boolean(document.querySelector('[data-hosting-settings] form'))", 'service form')
+  await waitFor(cdp, "Boolean(document.querySelector('[data-service-wizard]'))", 'service wizard')
 
   await cdp.evaluate(`(() => {
     const form = document.querySelector('[data-hosting-settings] form')
@@ -312,23 +313,34 @@ try {
       Object.getOwnPropertyDescriptor(proto, 'value').set.call(element, value)
       element.dispatchEvent(new Event('input', { bubbles: true }))
     }
-    set(form.querySelector('input[placeholder="Photos"]'), 'Photos')
+    set(form.querySelector('[data-service-name]'), 'Photos')
     set(form.querySelector('textarea'), 'https://photos.example\\nhttp://127.0.0.1:${BLOSSOM_PORT}')
     return true
   })()`)
   await sleep(100)
-  await cdp.evaluate(`(() => {
-    const form = document.querySelector('[data-hosting-settings] form')
-    const button = [...form.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Add service')
-    button?.click()
-    return Boolean(button)
-  })()`)
+  // Your app → Access → Check and publish.
+  for (const step of ['1', '2']) {
+    await cdp.evaluate("document.querySelector('[data-wizard-next]').click()")
+    await waitFor(
+      cdp,
+      `document.querySelector('[data-service-wizard]')?.dataset.wizardStep === '${step}'`,
+      `wizard step ${step}`
+    )
+  }
+  await cdp.evaluate("document.querySelector('[data-wizard-publish]').click()")
+  await waitFor(
+    cdp,
+    "document.querySelector('[data-service-setup]')?.dataset.serviceSetup === 'done'",
+    'guided publish',
+    30000
+  )
+  await cdp.evaluate("document.querySelector('[data-setup-share]').click()")
   await waitFor(cdp, "Boolean(document.querySelector('[data-hosting-service=\"photos\"]'))", 'service card')
   const onionReady = await cdp.evaluate(
     "Boolean(document.querySelector('[data-hosting-service=\"photos\"] [data-publish-onion]'))"
   )
   if (!onionReady) throw new Error('the onion action was not offered for a loopback endpoint')
-  log('service created')
+  log('service created and published through the steps')
 
   await cdp.evaluate(`(() => {
     const card = document.querySelector('[data-hosting-service="photos"]')
@@ -350,7 +362,7 @@ try {
 
   await cdp.evaluate(`(() => {
     const card = document.querySelector('[data-hosting-service="photos"]')
-    // Adding a private service opens Share automatically; only click if it is closed.
+    // The setup's Choose people button opens Share; only click if it is closed.
     if (card.querySelector('[data-contact]')) return true
     const button = [...card.querySelectorAll('button')].find((b) => b.textContent.trim().startsWith('People'))
     button?.click()
@@ -368,7 +380,15 @@ try {
     }
     return true
   })()`)
-  await sleep(200)
+  // Create is disabled while the publish above is still running.
+  await waitFor(
+    cdp,
+    `[...document.querySelectorAll('[data-hosting-service="photos"] button')].some(
+      (b) => b.textContent.trim().startsWith('Create') && !b.disabled
+    )`,
+    'an enabled Create button',
+    30000
+  )
   await cdp.evaluate(`(() => {
     const card = document.querySelector('[data-hosting-service="photos"]')
     const button = [...card.querySelectorAll('button')].find((b) => b.textContent.trim().startsWith('Create'))
@@ -409,7 +429,7 @@ try {
   log('sites settings open')
 
   await cdp.evaluate("document.querySelector('[data-nsite-pick]').click()")
-  await waitFor(cdp, "Boolean(document.querySelector('[data-nsite-publish]'))", 'site scan', 15000)
+  await waitFor(cdp, "Boolean(document.querySelector('[data-nsite-title]'))", 'site scan', 15000)
   const setField = (selector, value) =>
     cdp.evaluate(`(() => {
       const element = document.querySelector(${JSON.stringify(selector)})
@@ -424,6 +444,8 @@ try {
   await setField('[data-nsite-servers]', `http://127.0.0.1:${BLOSSOM_PORT}`)
   await setField('[data-nsite-relays]', `ws://127.0.0.1:${RELAY_PORT}`)
   await sleep(200)
+  await cdp.evaluate("document.querySelector('[data-nsite-wizard] [data-wizard-next]').click()")
+  await waitFor(cdp, "Boolean(document.querySelector('[data-nsite-publish]'))", 'site check step')
   await cdp.evaluate("document.querySelector('[data-nsite-publish]').click()")
   await waitFor(
     cdp,

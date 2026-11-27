@@ -212,10 +212,12 @@ export interface NsiteCancelled {
 }
 
 export interface NsiteProgress {
-  phase: 'uploading' | 'publishing' | 'verifying'
+  phase: 'uploading' | 'signing' | 'publishing' | 'verifying'
   done: number
   total: number
   label: string
+  /** The file being uploaded. */
+  current?: string
   log?: string
 }
 

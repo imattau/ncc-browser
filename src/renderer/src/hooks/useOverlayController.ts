@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { HostingDraft } from '@shared/hosting'
+import type { PrefillDraft } from '../components/hosting/serviceDraft'
 import type { IdentityProfile, IdentityStatus, OverlayReason } from '@shared/types'
 import type { PopoverAnchor } from '../components/Popover'
 import type { SettingsSection } from '../components/SettingsPage'
@@ -16,8 +16,8 @@ export interface OverlayController {
   closeOverlay: () => void
   settingsSection: SettingsSection
   openSettings: (section?: SettingsSection) => void
-  hostingDraft: HostingDraft | null
-  setHostingDraft: (draft: HostingDraft | null) => void
+  hostingDraft: PrefillDraft | null
+  setHostingDraft: (draft: PrefillDraft | null) => void
   siteInfoAnchor: PopoverAnchor | null
   setSiteInfoAnchor: (anchor: PopoverAnchor | null) => void
   identityChooserProfiles: IdentityProfile[]
@@ -39,7 +39,7 @@ export function useOverlayController({
   const [overlay, setOverlay] = useState<OverlayReason | null>(null)
   const overlayRef = useRef<OverlayReason | null>(null)
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('general')
-  const [hostingDraft, setHostingDraft] = useState<HostingDraft | null>(null)
+  const [hostingDraft, setHostingDraft] = useState<PrefillDraft | null>(null)
   const [siteInfoAnchor, setSiteInfoAnchor] = useState<PopoverAnchor | null>(null)
   const [identityChooserProfiles, setIdentityChooserProfiles] = useState<IdentityProfile[]>([])
   const [identityChooserAnchor, setIdentityChooserAnchor] = useState<PopoverAnchor | null>(null)

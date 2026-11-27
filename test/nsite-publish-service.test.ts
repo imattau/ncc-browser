@@ -100,6 +100,34 @@ function setup() {
   }
 }
 
+describe('NsitePublishService progress', () => {
+  it('reports uploading, then signing, then sending to relays', async () => {
+    const { service } = setup()
+    const folder = tempFolder()
+    const { files } = await service.scanFolder(folder)
+    const seen: string[] = []
+    await service.publish(
+      {
+        token: 't',
+        folder,
+        files,
+        siteId: 'stages',
+        title: '',
+        description: '',
+        source: '',
+        servers: ['https://blossom.test'],
+        relays: []
+      },
+      (progress) => {
+        const stage = progress.current ? `${progress.phase} ${progress.current}` : progress.phase
+        if (seen.at(-1) !== stage) seen.push(stage)
+      }
+    )
+    expect(seen).toContain('uploading /index.html')
+    expect(seen.slice(-2)).toEqual(['signing', 'publishing'])
+  })
+})
+
 describe('NsitePublishService.scanFolder', () => {
   it('hashes files and skips hidden, macOS and symlink noise', async () => {
     const { service } = setup()

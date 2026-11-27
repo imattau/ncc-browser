@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { HostedService } from '@shared/hosting'
 import { messageOf } from '../../lib/format'
 import type { HostingFeedback } from './types'
@@ -11,6 +12,10 @@ interface Options {
 }
 
 export interface HostingServicesApi {
+  /** The service being worked on, and what is happening to it. */
+  activity: { id: string; label: string } | null
+  /** Why the last action on one service failed. */
+  failure: { id: string; message: string } | null
   publish: (service: HostedService) => Promise<void>
   remove: (service: HostedService) => Promise<void>
   publishOnion: (service: HostedService) => Promise<void>
@@ -27,19 +32,35 @@ export function useHostingServices({
 }: Options): HostingServicesApi {
   const { apply, setBusy, setError } = feedback
 
-  const publish = async (service: HostedService): Promise<void> => {
+  const [activity, setActivity] = useState<HostingServicesApi['activity']>(null)
+  const [failure, setFailure] = useState<HostingServicesApi['failure']>(null)
+
+  /** Run one slow action, reporting progress and errors on the service's own card. */
+  const track = async (
+    service: HostedService,
+    label: string,
+    action: () => Promise<void>
+  ): Promise<void> => {
     setBusy(true)
     setError(null)
+    setFailure(null)
+    setActivity({ id: service.id, label })
     try {
-      const result = await window.ncc.hostingPublish(service.id)
-      if (!result.ok) setError(`Published to ${result.accepted} of ${result.relays} relays`)
-      apply(await window.ncc.hostingState())
-    } catch (publishError) {
-      setError(messageOf(publishError))
+      await action()
+    } catch (actionError) {
+      setFailure({ id: service.id, message: messageOf(actionError) })
     } finally {
+      setActivity(null)
       setBusy(false)
     }
   }
+
+  const publish = (service: HostedService): Promise<void> =>
+    track(service, 'Publishing…', async () => {
+      const result = await window.ncc.hostingPublish(service.id)
+      apply(await window.ncc.hostingState())
+      if (!result.ok) throw new Error(`Published to ${result.accepted} of ${result.relays} relays`)
+    })
 
   const remove = async (service: HostedService): Promise<void> => {
     if (!window.confirm(`Remove "${service.title}" and its shares from this browser?`)) return
@@ -54,18 +75,10 @@ export function useHostingServices({
     }
   }
 
-  const publishOnion = async (service: HostedService): Promise<void> => {
-    setBusy(true)
-    setError(null)
-    try {
-      const result = await window.ncc.hostingPublishOnion(service.id)
-      apply(result.state)
-    } catch (onionError) {
-      setError(messageOf(onionError))
-    } finally {
-      setBusy(false)
-    }
-  }
+  const publishOnion = (service: HostedService): Promise<void> =>
+    track(service, 'Creating a Tor address. This can take a minute or two…', async () => {
+      apply((await window.ncc.hostingPublishOnion(service.id)).state)
+    })
 
   const removeOnion = async (service: HostedService): Promise<void> => {
     if (
@@ -85,18 +98,10 @@ export function useHostingServices({
     }
   }
 
-  const publishTlsProxy = async (service: HostedService): Promise<void> => {
-    setBusy(true)
-    setError(null)
-    try {
-      const result = await window.ncc.hostingPublishTlsProxy(service.id)
-      apply(result.state)
-    } catch (proxyError) {
-      setError(messageOf(proxyError))
-    } finally {
-      setBusy(false)
-    }
-  }
+  const publishTlsProxy = (service: HostedService): Promise<void> =>
+    track(service, 'Setting up HTTPS…', async () => {
+      apply((await window.ncc.hostingPublishTlsProxy(service.id)).state)
+    })
 
   const removeTlsProxy = async (service: HostedService): Promise<void> => {
     if (
@@ -116,5 +121,5 @@ export function useHostingServices({
     }
   }
 
-  return { publish, remove, publishOnion, removeOnion, publishTlsProxy, removeTlsProxy }
+  return { activity, failure, publish, remove, publishOnion, removeOnion, publishTlsProxy, removeTlsProxy }
 }

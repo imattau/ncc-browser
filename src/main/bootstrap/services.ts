@@ -13,6 +13,7 @@ import { registerIpc } from '../ipc'
 import { registerNsitePublishIpc } from '../nsite-publish/ipc'
 import { PasswordCache } from '../passwords/cache'
 import { electronClipboard, electronFileDialogs, registerPasswordIpc } from '../passwords/ipc'
+import { PublishDraftStore, registerPublishDraftIpc } from '../publish-drafts'
 import { PasswordService } from '../passwords/service'
 import { PaymentCardCache } from '../payment-cards/cache'
 import { createPaymentCardAuth } from '../payment-cards/auth'
@@ -326,6 +327,7 @@ export function createServices(
   })
 
   registerNsitePublishIpc(foundation.nsitePublish, shell)
+  registerPublishDraftIpc(new PublishDraftStore(join(app.getPath('userData'), 'publish-drafts.json')))
   registerContactsIpc(foundation.contacts, shell)
 
   const hostingRenewal = setInterval(() => void foundation.hosting.renewDue(), 6 * 3600_000)

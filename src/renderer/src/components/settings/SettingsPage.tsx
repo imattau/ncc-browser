@@ -14,7 +14,7 @@ import {
   SlidersHorizontal,
   Vault
 } from 'lucide-react'
-import type { HostingDraft } from '@shared/hosting'
+import type { PrefillDraft } from '../hosting/serviceDraft'
 import type { IdentityStatus } from '@shared/types'
 import { cn } from '../../lib/cn'
 import { AgentSettings } from '../AgentSettings'
@@ -53,7 +53,7 @@ interface SettingsPageProps {
   onIdentityChange?: (status: IdentityStatus) => void
   passwordDraftOrigin?: string | null
   onPasswordDraftUsed?: () => void
-  hostingDraft?: HostingDraft | null
+  hostingDraft?: PrefillDraft | null
   onHostingDraftUsed?: () => void
 }
 
