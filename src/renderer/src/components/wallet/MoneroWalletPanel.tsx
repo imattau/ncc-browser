@@ -1,21 +1,36 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import QRCode from 'qrcode'
 import { Copy, RefreshCw, ScanLine, Send } from 'lucide-react'
 import { DEFAULT_MONERO_DAEMON_URL, type MoneroWalletRecord } from '@shared/wallet'
-import { MoneroWalletSession, type MoneroSendPreview, type MoneroSnapshot } from '@shared/monero-wallet'
+import { MoneroSyncCancelled, MoneroWalletSession, resolveRestoreHeight, type MoneroSendPreview, type MoneroSnapshot, type MoneroWalletData } from '@shared/monero-wallet'
 import { LightningScannerDialog } from './LightningScannerDialog'
 import { useLightningScanner } from './useLightningScanner'
 
 function asError(error: unknown): string { return error instanceof Error ? error.message : String(error) }
 
+/** Outlives the panel, so a long scan carries on when it is closed and is rejoined, not restarted. */
+const session = new MoneroWalletSession()
+const saveCache = (data: MoneroWalletData) => window.ncc.walletSaveMoneroCache(data)
+
+function scanMessage(): string {
+  const { height, endHeight, percent } = session.progress
+  return endHeight > 0
+    ? `Scanning block ${height.toLocaleString()} of ${endHeight.toLocaleString()} (${Math.floor(percent)}%).`
+    : 'Connecting to the Monero node…'
+}
+
+function syncedMessage(): string {
+  return session.saveError ? `Monero wallet is synced, but the scan could not be saved: ${session.saveError}` : 'Monero wallet is synced.'
+}
+
 export function MoneroWalletPanel({ onOpenIdentitySettings }: { onOpenIdentitySettings: () => void }) {
-  const session = useRef<MoneroWalletSession | null>(null)
-  if (!session.current) session.current = new MoneroWalletSession()
   const [snapshot, setSnapshot] = useState<MoneroSnapshot | null>(null)
   const [record, setRecord] = useState<MoneroWalletRecord | null>(null)
   const [draftSeed, setDraftSeed] = useState('')
   const [restoreSeed, setRestoreSeed] = useState('')
-  const [restoreHeight, setRestoreHeight] = useState('0')
+  const [restoreHeight, setRestoreHeight] = useState(0)
+  const [restoreDate, setRestoreDate] = useState('')
+  const [restoreHeightText, setRestoreHeightText] = useState('')
   const [challengeIndex, setChallengeIndex] = useState(0)
   const [challengeAnswer, setChallengeAnswer] = useState('')
   const [syncChoice, setSyncChoice] = useState<'local' | 'encrypted-relay'>('local')
@@ -53,7 +68,7 @@ export function MoneroWalletPanel({ onOpenIdentitySettings }: { onOpenIdentitySe
       setRecord(found); setSyncChoice(found.syncChoice)
       await openAndSync(found)
     }).catch((error: unknown) => { if (alive) setMessage(asError(error)) })
-    return () => { alive = false; void session.current?.close() }
+    return () => { alive = false; session.release() }
   }, [])
 
   useEffect(() => {
@@ -61,23 +76,34 @@ export function MoneroWalletPanel({ onOpenIdentitySettings }: { onOpenIdentitySe
     void QRCode.toDataURL(`monero:${snapshot.address}`, { width: 220, margin: 1 }).then(setQr).catch((error: unknown) => setMessage(asError(error)))
   }, [snapshot?.address])
 
+  /** Opens (or rejoins) the wallet and catches it up, showing what is known meanwhile. */
+  async function scan(saved: MoneroWalletRecord) {
+    setScanning(true); setMessage('Opening the wallet…')
+    let timer: number | undefined
+    try {
+      setSnapshot(await session.open({ seed: saved.seed, daemonUrl, restoreHeight: saved.restoreHeight, address: saved.address, loadWalletData: () => window.ncc.walletLoadMoneroCache() }))
+      timer = window.setInterval(() => {
+        setMessage(scanMessage())
+        if (session.lastSnapshot) setSnapshot(session.lastSnapshot)
+      }, 1000)
+      setSnapshot(await session.sync(saveCache))
+      setMessage(syncedMessage()); localStorage.setItem('ncc.wallet.monero-daemon', daemonUrl)
+    } catch (error) { if (!(error instanceof MoneroSyncCancelled)) setMessage(asError(error)) }
+    finally { window.clearInterval(timer); setScanning(false) }
+  }
+
   async function openAndSync(saved: MoneroWalletRecord) {
     if (busy) return
-    setBusy(true); setScanning(true); setMessage('Opening wallet and scanning from its restore height. This can take a while.')
-    const timer = window.setInterval(() => setMessage(`Scanning block ${session.current?.progress.height.toLocaleString() ?? '…'} of ${session.current?.progress.endHeight.toLocaleString() ?? '…'} (${Math.floor(session.current?.progress.percent ?? 0)}%).`), 1000)
-    try {
-      await session.current!.open({ seed: saved.seed, daemonUrl, restoreHeight: saved.restoreHeight })
-      const next = await session.current!.sync()
-      setSnapshot(next); setMessage('Monero wallet is synced.'); localStorage.setItem('ncc.wallet.monero-daemon', daemonUrl)
-    } catch (error) { setMessage(asError(error)) }
-    finally { clearInterval(timer); setBusy(false); setScanning(false) }
+    setBusy(true)
+    try { await scan(saved) }
+    finally { setBusy(false) }
   }
 
   async function createDraft() {
     setBusy(true); setMessage('Creating a wallet on this device…')
     try {
-      const generated = await session.current!.create(daemonUrl)
-      setDraftSeed(generated.seed); setRestoreHeight(String(generated.restoreHeight)); setRestoreSeed('')
+      const generated = await session.create(daemonUrl)
+      setDraftSeed(generated.seed); setRestoreHeight(generated.restoreHeight); setRestoreSeed('')
       chooseChallenge(generated.seed)
     } catch (error) { setMessage(asError(error)) }
     finally { setBusy(false) }
@@ -92,7 +118,9 @@ export function MoneroWalletPanel({ onOpenIdentitySettings }: { onOpenIdentitySe
   function beginRestore() {
     const words = restoreSeed.trim().split(/\s+/)
     if (words.length !== 25) { setMessage('A Monero legacy seed has 25 words. Enter all 25 words to continue.'); return }
-    setDraftSeed(restoreSeed.trim()); setRestoreSeed(''); chooseChallenge(restoreSeed)
+    try { setRestoreHeight(resolveRestoreHeight({ date: restoreDate, height: restoreHeightText })) }
+    catch (error) { setMessage(asError(error)); return }
+    setDraftSeed(restoreSeed.trim()); setRestoreSeed(''); setRestoreDate(''); setRestoreHeightText(''); chooseChallenge(restoreSeed); setMessage('')
   }
 
   async function confirmBackup() {
@@ -100,29 +128,23 @@ export function MoneroWalletPanel({ onOpenIdentitySettings }: { onOpenIdentitySe
     if (challengeAnswer.trim().toLowerCase() !== words[challengeIndex]?.toLowerCase()) { setMessage(`Word ${challengeIndex + 1} does not match. Check your backup and try again.`); return }
     setBusy(true)
     try {
-      const address = await session.current!.deriveAddress(draftSeed)
-      const saved: MoneroWalletRecord = { version: 1, seed: draftSeed, address, restoreHeight: Number(restoreHeight), backupConfirmed: true, syncChoice }
+      const address = await session.deriveAddress(draftSeed)
+      const saved: MoneroWalletRecord = { version: 1, seed: draftSeed, address, restoreHeight, backupConfirmed: true, syncChoice }
       await window.ncc.walletSaveMoneroRecord(saved)
-      setRecord(saved); setDraftSeed(''); setMessage('Backup check passed. Scanning the Monero chain…'); setScanning(true)
+      setRecord(saved); setDraftSeed('')
       localStorage.setItem('ncc.wallet.monero-daemon', daemonUrl)
-      await session.current!.open({ seed: saved.seed, daemonUrl, restoreHeight: saved.restoreHeight })
-      const next = await session.current!.sync(); setSnapshot(next); setMessage('Monero wallet is synced.')
+      await scan(saved)
     } catch (error) { setMessage(asError(error)) }
-    finally { setBusy(false); setScanning(false) }
+    finally { setBusy(false) }
   }
 
   async function refresh() {
-    if (!record) return
-    setBusy(true); setScanning(true)
-    const timer = window.setInterval(() => setMessage(`Scanning block ${session.current?.progress.height.toLocaleString() ?? '…'} (${Math.floor(session.current?.progress.percent ?? 0)}%).`), 1000)
-    try { setSnapshot(await session.current!.sync()); setMessage('Monero wallet is synced.') }
-    catch (error) { setMessage(asError(error)) }
-    finally { clearInterval(timer); setBusy(false); setScanning(false) }
+    if (record) await openAndSync(record)
   }
 
   async function reviewSend() {
     setBusy(true)
-    try { setPreview(await session.current!.prepareSend(sendAddress, sendAmount)); setMessage('Review the actual wallet fee and destination before sending.') }
+    try { setPreview(await session.prepareSend(sendAddress, sendAmount)); setMessage('Review the actual wallet fee and destination before sending.') }
     catch (error) { setMessage(asError(error)) }
     finally { setBusy(false) }
   }
@@ -131,9 +153,11 @@ export function MoneroWalletPanel({ onOpenIdentitySettings }: { onOpenIdentitySe
     if (!preview) return
     setBusy(true)
     try {
-      const ids = await session.current!.confirmSend(preview.id)
+      const ids = await session.confirmSend(preview.id)
+      // The cache holds what only the sender knows about a send, so keep it now.
+      void session.exportWalletData().then(saveCache).catch(() => undefined)
       setPreview(null); setSendAddress(''); setSendAmount(''); setMessage(`Broadcast ${ids.length} Monero transaction${ids.length === 1 ? '' : 's'}.`)
-      setSnapshot(await session.current!.snapshot())
+      setSnapshot(await session.snapshot())
     } catch (error) { setMessage(asError(error)) }
     finally { setBusy(false) }
   }
@@ -143,7 +167,7 @@ export function MoneroWalletPanel({ onOpenIdentitySettings }: { onOpenIdentitySe
     <article className="wallet-monero-simple">
       <div className="flex items-center justify-end">{record ? <button aria-label="Refresh Monero wallet" disabled={busy} className="rounded-lg p-2 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)]" onClick={() => void refresh()}><RefreshCw className="h-4 w-4" /></button> : null}</div>
       {record ? <>
-        <div className="wallet-simple-balance"><p>{snapshot?.balance ?? '—'} XMR</p><span>Available{snapshot ? ` · ${snapshot.unlocked} XMR unlocked` : ''}{scanning ? ` · scanning ${session.current?.progress.percent.toFixed(0) ?? 0}%` : ''}</span></div>
+        <div className="wallet-simple-balance"><p>{snapshot?.balance ?? '—'} XMR</p><span>Available{snapshot ? ` · ${snapshot.unlocked} XMR unlocked` : ''}{scanning ? ` · scanning ${session.progress.percent.toFixed(0) ?? 0}%` : ''}</span></div>
         <button disabled={!snapshot || busy} className="wallet-primary-send" onClick={() => setPreview({ id: '', address: '', amount: '', fee: '', transactions: 0 })}><Send className="h-4 w-4" />Send</button>
         <div className="wallet-receive-simple"><h3 className="text-ui-12 font-semibold">Receive Monero</h3>{qr ? <img src={qr} alt="QR code for Monero receive address" className="wallet-receive-qr" /> : null}<button className="wallet-address-pill" onClick={() => { void navigator.clipboard.writeText(snapshot?.address ?? record.address).then(() => setMessage('Address copied.')).catch(() => setMessage('Could not copy the address.')) }}><span>{(snapshot?.address ?? record.address).slice(0, 12)}…{(snapshot?.address ?? record.address).slice(-8)}</span><Copy className="h-4 w-4 shrink-0" /></button></div>
       </> : draftSeed ? <>
@@ -157,7 +181,7 @@ export function MoneroWalletPanel({ onOpenIdentitySettings }: { onOpenIdentitySe
         {identityReady === false ? <button className="mt-3 rounded-lg border border-[color:var(--color-line)] px-4 py-2 text-ui-11" onClick={onOpenIdentitySettings}>Set up or unlock identity</button> : null}
         <label className="mt-3 block text-ui-11">Monero daemon URL<input className="mt-1 w-full rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-panel)] p-3 font-mono text-ui-10" value={daemonUrl} onChange={(event) => setDaemonUrl(event.target.value)} /></label>
         <button disabled={busy || !daemonUrl || !identityReady} className="mt-3 rounded-lg bg-[color:var(--color-accent)] px-4 py-2 text-ui-11 font-semibold text-white disabled:opacity-50" onClick={() => void createDraft()}>Create wallet</button>
-        <details className="mt-4"><summary className="cursor-pointer text-ui-11">Restore a wallet</summary><textarea className="mt-3 min-h-24 w-full rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-panel)] p-3 font-mono text-ui-10" placeholder="Enter the 25-word Monero recovery seed" value={restoreSeed} onChange={(event) => setRestoreSeed(event.target.value)} /><label className="mt-2 block text-ui-11">Restore from block height<input type="number" min="0" className="mt-1 w-full rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-panel)] p-3" value={restoreHeight} onChange={(event) => setRestoreHeight(event.target.value)} /></label><button disabled={busy || !identityReady} className="mt-3 rounded-lg border border-[color:var(--color-line)] px-4 py-2 text-ui-11" onClick={beginRestore}>Continue to backup check</button></details>
+        <details className="mt-4"><summary className="cursor-pointer text-ui-11">Restore a wallet</summary><textarea className="mt-3 min-h-24 w-full rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-panel)] p-3 font-mono text-ui-10" placeholder="Enter the 25-word Monero recovery seed" value={restoreSeed} onChange={(event) => setRestoreSeed(event.target.value)} /><label className="mt-2 block text-ui-11">Roughly when was this wallet created?<input type="date" min="2014-04-18" className="mt-1 w-full rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-panel)] p-3" value={restoreDate} onChange={(event) => setRestoreDate(event.target.value)} /></label><p className="mt-1 text-ui-10 text-[color:var(--color-muted)]">If unsure, pick an earlier date. Funds received more than a month before it may not show up.</p><details className="mt-2"><summary className="cursor-pointer text-ui-10">Use a block height instead</summary><label className="mt-2 block text-ui-11">Restore from block height<input type="number" min="0" className="mt-1 w-full rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-panel)] p-3" value={restoreHeightText} onChange={(event) => setRestoreHeightText(event.target.value)} /></label><p className="mt-1 text-ui-10 text-[color:var(--color-muted)]">Replaces the date. 0 scans the whole chain, which can take many hours.</p></details><button disabled={busy || !identityReady} className="mt-3 rounded-lg border border-[color:var(--color-line)] px-4 py-2 text-ui-11" onClick={beginRestore}>Continue to backup check</button></details>
       </>}
     </article>
     {record && <details className="wallet-transactions-simple"><summary>Transactions <span>⌄</span></summary>{snapshot?.transactions.length ? <ul className="mt-3 divide-y divide-[color:var(--color-line)]">{snapshot.transactions.map((tx) => <li key={tx.id} className="flex items-center justify-between gap-3 py-3"><div><p className="font-mono text-ui-10">{tx.id.slice(0, 12)}…{tx.id.slice(-8)}</p><p className="text-ui-10 text-[color:var(--color-muted)]">{tx.direction} · {tx.status} · {tx.confirmations} confirmations</p></div><span className="font-mono text-ui-11">{tx.direction === 'incoming' ? '+' : '−'}{tx.amount} XMR</span></li>)}</ul> : <p className="py-5 text-center text-ui-11 text-[color:var(--color-muted)]">{scanning ? 'Scanning…' : 'No transactions yet.'}</p>}</details>}

@@ -24,5 +24,7 @@ export function registerWalletIpc(service: WalletService, shell: BrowserShell): 
   })
   handle('ncc:wallet-xmr-load', () => service.loadMoneroRecord())
   handle('ncc:wallet-xmr-save', (record) => service.saveMoneroRecord(record as never))
+  handle('ncc:wallet-xmr-cache-load', () => service.loadMoneroCache())
+  handle('ncc:wallet-xmr-cache-save', (data) => service.saveMoneroCache(data as never))
   handle('ncc:wallet-xmr-delete', () => service.deleteMoneroRecord())
 }

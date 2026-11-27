@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileS
 import { dirname } from 'node:path'
 import { finalizeEvent, getPublicKey, type Event } from 'nostr-tools'
 import { DEFAULT_ESPLORA_URL, type BitcoinSendPreview, type MoneroWalletRecord, type WalletSnapshot, type WalletStatus } from '@shared/wallet'
+import type { MoneroWalletData } from '@shared/monero-wallet'
 import type { IdentityManager } from '../signer/manager'
 import type { IdentityStore } from '../signer/identity'
 import { decryptNip44, encryptNip44 } from '../signer/crypto'
@@ -10,6 +11,8 @@ import { BitcoinWallet, parseBtcAmount } from './bitcoin'
 
 interface WalletPrefs { version: 1; esploraUrl: string }
 const MONERO_D_TAG = 'ncc-browser/monero-wallet/v1'
+/** NIP-44 takes under 64 KiB at once, and a scan cache is larger. Same size as on Android. */
+const MONERO_CACHE_CHUNK = 24 * 1024
 
 export class WalletService {
   private prefs: WalletPrefs
@@ -119,6 +122,45 @@ export class WalletService {
     } finally { secret.fill(0) }
   }
 
+  /**
+   * What the wallet has scanned so far. It stays on this device, whatever the sync
+   * choice, and one that cannot be read only means scanning again.
+   */
+  loadMoneroCache(): MoneroWalletData | null {
+    const path = this.moneroCachePath()
+    if (!path || !existsSync(path)) return null
+    const secret = this.requireLocalSecret()
+    try {
+      const stored = JSON.parse(readFileSync(path, 'utf8')) as { version?: number; parts?: unknown }
+      if (stored.version !== 1 || !Array.isArray(stored.parts)) return null
+      const pubkey = getPublicKey(secret)
+      const data = JSON.parse(stored.parts.map((part) => decryptNip44(secret, pubkey, String(part))).join('')) as Partial<MoneroWalletData>
+      return isMoneroWalletData(data) ? { keysData: data.keysData, cacheData: data.cacheData } : null
+    } catch {
+      return null
+    } finally { secret.fill(0) }
+  }
+
+  saveMoneroCache(data: MoneroWalletData): void {
+    if (!isMoneroWalletData(data)) throw new Error('Monero wallet cache is incomplete')
+    const path = this.moneroCachePath()
+    if (!path) throw new Error('Local Monero storage is unavailable')
+    const secret = this.requireLocalSecret()
+    try {
+      const pubkey = getPublicKey(secret)
+      // Both fields are base64, so every character is one byte and any split is safe.
+      const plaintext = JSON.stringify({ keysData: data.keysData, cacheData: data.cacheData })
+      const parts: string[] = []
+      for (let offset = 0; offset < plaintext.length; offset += MONERO_CACHE_CHUNK) {
+        parts.push(encryptNip44(secret, pubkey, plaintext.slice(offset, offset + MONERO_CACHE_CHUNK)))
+      }
+      mkdirSync(dirname(path), { recursive: true })
+      const tmp = `${path}.tmp`
+      writeFileSync(tmp, JSON.stringify({ version: 1, parts }), { mode: 0o600 })
+      renameSync(tmp, path)
+    } finally { secret.fill(0) }
+  }
+
   async deleteMoneroRecord(): Promise<void> {
     const secret = this.requireLocalSecret()
     try {
@@ -131,7 +173,9 @@ export class WalletService {
           await this.relayPool.publishMany(relays, deletion)
         }
       }
-      if (this.moneroPath && existsSync(this.moneroPath)) unlinkSync(this.moneroPath)
+      for (const path of [this.moneroPath, this.moneroCachePath()]) {
+        if (path && existsSync(path)) unlinkSync(path)
+      }
     } finally { secret.fill(0) }
   }
 
@@ -184,6 +228,10 @@ export class WalletService {
     } finally { secret.fill(0) }
   }
 
+  private moneroCachePath(): string | null {
+    return this.moneroPath ? this.moneroPath.replace(/(\.json)?$/, '-cache.json') : null
+  }
+
   private readMoneroCiphertext(): string | null {
     if (!this.moneroPath || !existsSync(this.moneroPath)) return null
     try {
@@ -199,4 +247,8 @@ export class WalletService {
     writeFileSync(tmp, `${JSON.stringify({ version: 1, ciphertext })}\n`, { mode: 0o600 })
     renameSync(tmp, this.moneroPath)
   }
+}
+
+function isMoneroWalletData(data: Partial<MoneroWalletData> | null | undefined): data is MoneroWalletData {
+  return typeof data?.keysData === 'string' && data.keysData !== '' && typeof data.cacheData === 'string' && data.cacheData !== ''
 }

@@ -2,7 +2,7 @@ import * as btc from '@scure/btc-signer'
 import { hex } from '@scure/base'
 import QRCode from 'qrcode'
 import { parsePaymentQr, scanQr } from './qr-scan.js'
-import { MoneroWalletSession } from '../src/shared/monero-wallet.ts'
+import { MoneroSyncCancelled, MoneroWalletSession, resolveRestoreHeight } from '../src/shared/monero-wallet.ts'
 import { DEFAULT_MONERO_DAEMON_URL } from '../src/shared/wallet.ts'
 import { createMobileNwc } from './nwc.js'
 import { decodeBolt11Invoice } from '../src/shared/bolt11.ts'
@@ -16,6 +16,7 @@ let pendingPsbt = null
 let moneroSession = null
 let moneroRecord = null
 let moneroDraftSeed = ''
+let moneroDraftHeight = 0
 let moneroChallengeIndex = 0
 let moneroPreview = null
 let nwc = null
@@ -173,9 +174,8 @@ export async function loadWallet() {
 }
 
 export async function closeMoneroWallet() {
-  if (moneroSession && moneroRecord) await saveMoneroCache().catch(() => undefined)
-  if (moneroSession) await moneroSession.close()
-  moneroSession = null
+  // A scan carries on, saving as it goes, and opening the wallet again rejoins it.
+  moneroSession?.release()
   moneroRecord = null
   moneroPreview = null
 }
@@ -199,10 +199,13 @@ async function loadMoneroWallet() {
     byId('wallet-xmr-restore').disabled = false
     moneroRecord = await window.__TAURI__.core.invoke('wallet_monero_load')
     if (!moneroRecord) { byId('wallet-xmr-setup').hidden = false; byId('wallet-xmr-receive').hidden = true; return }
-    const walletData = await window.__TAURI__.core.invoke('wallet_monero_cache_load').catch(() => null)
     byId('wallet-xmr-setup').hidden = true; byId('wallet-xmr-backup').hidden = true; byId('wallet-xmr-receive').hidden = false
     let phase = 'Loading Monero engine…'
+    let shown = null
     const showProgress = () => {
+      // Balance and transactions found so far, as of the latest checkpoint.
+      const latest = moneroSession.lastSnapshot
+      if (latest && latest !== shown) { shown = latest; void renderMoneroSnapshot(latest).catch(() => undefined) }
       const { height, endHeight, percent } = moneroSession.progress
       byId('wallet-xmr-note').textContent = phase
         || (endHeight > 0
@@ -210,17 +213,14 @@ async function loadMoneroWallet() {
           : 'Connecting to the Monero node…')
     }
     timer = window.setInterval(() => showProgress(), 1000)
-    if (!moneroSession.isOpen) {
-      showProgress()
-      await moneroSession.open({ seed: moneroRecord.seed, daemonUrl: byId('wallet-xmr-daemon').value, restoreHeight: moneroRecord.restoreHeight, walletData: walletData ?? undefined })
-      // Show the address, QR code and any cached balance straight away while the scan catches up.
-      await renderMoneroSnapshot(await moneroSession.snapshot()).catch(() => undefined)
-    }
+    showProgress()
+    // Show the address, QR code and any cached balance straight away while the scan catches up.
+    shown = await moneroSession.open(moneroOpenOptions(moneroRecord, byId('wallet-xmr-daemon').value))
+    await renderMoneroSnapshot(shown).catch(() => undefined)
     phase = ''; showProgress()
-    await renderMoneroSnapshot(await moneroSession.sync())
-    await saveMoneroCache()
-    byId('wallet-xmr-note').textContent = 'Monero wallet is synced.'
-  } catch (error) { byId('wallet-xmr-note').textContent = error instanceof Error ? error.message : String(error) }
+    await renderMoneroSnapshot(await moneroSession.sync(saveMoneroCache))
+    byId('wallet-xmr-note').textContent = moneroSession.saveError ? `Monero wallet is synced, but the scan could not be saved: ${moneroSession.saveError}` : 'Monero wallet is synced.'
+  } catch (error) { if (!(error instanceof MoneroSyncCancelled)) byId('wallet-xmr-note').textContent = error instanceof Error ? error.message : String(error) }
   finally { if (timer) window.clearInterval(timer) }
 }
 
@@ -240,14 +240,19 @@ async function renderMoneroSnapshot(snapshot) {
   }
 }
 
-async function saveMoneroCache() {
-  if (!moneroSession || !moneroRecord) return
-  const data = await moneroSession.exportWalletData()
+function moneroOpenOptions(record, daemonUrl) {
+  return { seed: record.seed, daemonUrl, restoreHeight: record.restoreHeight, address: record.address, loadWalletData: () => window.__TAURI__.core.invoke('wallet_monero_cache_load') }
+}
+
+async function saveMoneroCache(data) {
   await window.__TAURI__.core.invoke('wallet_monero_cache_save', { data })
 }
 
-function startMoneroBackup(seed) {
+function startMoneroBackup(seed, restoreHeight) {
   moneroDraftSeed = seed
+  moneroDraftHeight = restoreHeight
+  byId('wallet-xmr-restore-date').value = ''
+  byId('wallet-xmr-restore-height').value = ''
   const words = seed.trim().split(/\s+/)
   moneroChallengeIndex = Math.floor(Math.random() * words.length)
   byId('wallet-xmr-words').replaceChildren(...words.map((word) => { const li = document.createElement('li'); li.textContent = word; return li }))
@@ -267,13 +272,14 @@ async function saveMoneroBackup() {
     message('Verifying the wallet address offline…')
     const daemonUrl = byId('wallet-xmr-daemon').value.trim()
     const address = await moneroSession.deriveAddress(moneroDraftSeed)
-    moneroRecord = { version: 1, seed: moneroDraftSeed, address, restoreHeight: Number(byId('wallet-xmr-restore-height').value), backupConfirmed: true, syncChoice: byId('wallet-xmr-sync').value }
+    moneroRecord = { version: 1, seed: moneroDraftSeed, address, restoreHeight: moneroDraftHeight, backupConfirmed: true, syncChoice: byId('wallet-xmr-sync').value }
     await window.__TAURI__.core.invoke('wallet_monero_save', { record: moneroRecord })
     localStorage.setItem('ncc.wallet.monero-daemon', daemonUrl)
     moneroDraftSeed = ''; byId('wallet-xmr-backup').hidden = true; byId('wallet-xmr-receive').hidden = false
     byId('wallet-xmr-words').replaceChildren(); byId('wallet-xmr-word-answer').value = ''
-    await moneroSession.open({ seed: moneroRecord.seed, daemonUrl, restoreHeight: moneroRecord.restoreHeight })
-    await renderMoneroSnapshot(await moneroSession.sync()); await saveMoneroCache(); byId('wallet-xmr-note').textContent = 'Backup checked. Monero wallet is synced.'
+    message('')
+    // The same path as reopening, so the first scan shows its progress too.
+    await loadMoneroWallet()
   } catch (error) { byId('wallet-xmr-note').textContent = error instanceof Error ? error.message : String(error) }
 }
 
@@ -455,13 +461,15 @@ export function wireWallet() {
 
   const xmr = (id, event, handler) => byId(id).addEventListener(event, handler)
   xmr('wallet-xmr-create', 'click', async () => {
-    try { const generated = await moneroSession.create(byId('wallet-xmr-daemon').value.trim()); byId('wallet-xmr-restore-height').value = String(generated.restoreHeight); startMoneroBackup(generated.seed) }
+    try { const generated = await moneroSession.create(byId('wallet-xmr-daemon').value.trim()); startMoneroBackup(generated.seed, generated.restoreHeight) }
     catch (error) { byId('wallet-xmr-note').textContent = error instanceof Error ? error.message : String(error) }
   })
   xmr('wallet-xmr-restore', 'click', () => {
     const seed = byId('wallet-xmr-restore-seed').value.trim()
     if (seed.split(/\s+/).length !== 25) { byId('wallet-xmr-note').textContent = 'Enter all 25 words of your Monero recovery seed.'; return }
-    startMoneroBackup(seed)
+    try { startMoneroBackup(seed, resolveRestoreHeight({ date: byId('wallet-xmr-restore-date').value, height: byId('wallet-xmr-restore-height').value })) }
+    catch (error) { byId('wallet-xmr-note').textContent = error instanceof Error ? error.message : String(error); return }
+    byId('wallet-xmr-note').textContent = ''
   })
   xmr('wallet-xmr-backup-confirm', 'click', () => void saveMoneroBackup())
   xmr('wallet-xmr-refresh', 'click', () => void loadMoneroWallet())
@@ -479,7 +487,7 @@ export function wireWallet() {
   })
   xmr('wallet-xmr-send-confirm', 'click', async () => {
     if (!moneroPreview) return
-    try { const ids = await moneroSession.confirmSend(moneroPreview.id); byId('wallet-xmr-note').textContent = `Broadcast ${ids.length} Monero transaction${ids.length === 1 ? '' : 's'}.`; moneroPreview = null; byId('wallet-xmr-send').hidden = true; await renderMoneroSnapshot(await moneroSession.snapshot()) }
+    try { const ids = await moneroSession.confirmSend(moneroPreview.id); void moneroSession.exportWalletData().then(saveMoneroCache).catch(() => undefined); byId('wallet-xmr-note').textContent = `Broadcast ${ids.length} Monero transaction${ids.length === 1 ? '' : 's'}.`; moneroPreview = null; byId('wallet-xmr-send').hidden = true; await renderMoneroSnapshot(await moneroSession.snapshot()) }
     catch (error) { byId('wallet-xmr-note').textContent = error instanceof Error ? error.message : String(error) }
   })
 }

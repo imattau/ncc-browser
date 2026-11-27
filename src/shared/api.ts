@@ -1,3 +1,4 @@
+import type { MoneroWalletData } from './monero-wallet'
 import type { AutomationState } from './automation'
 import type { CommandId } from './commands'
 import type { SyncPrefsPatch, SyncStatus } from './sync-status'
@@ -291,6 +292,8 @@ export interface NccApi {
   walletConfirmBitcoinSend(token: string): Promise<{ txid: string }>
   walletLoadMoneroRecord(): Promise<MoneroWalletRecord | null>
   walletSaveMoneroRecord(record: MoneroWalletRecord): Promise<void>
+  walletLoadMoneroCache(): Promise<MoneroWalletData | null>
+  walletSaveMoneroCache(data: MoneroWalletData): Promise<void>
   walletDeleteMoneroRecord(): Promise<void>
   nwcStatus(): Promise<NwcSnapshot>
   nwcConnect(uri: string): Promise<NwcSnapshot>
