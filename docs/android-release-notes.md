@@ -1,5 +1,16 @@
 # Nostr Navigator for Android
 
+## 0.47.23
+
+- The Monero wallet catches up much sooner. Wallets you create now start scanning about
+  a week back instead of about two years. Wallets created earlier keep their saved
+  starting point.
+- A long scan saves its progress about every 90 seconds, so closing the app no longer
+  loses all of it. The first scan now shows its progress too.
+- To restore a wallet, enter roughly when you created it. Scanning starts a month
+  before that date. If you are not sure, pick an earlier date. You can still enter a
+  block height instead.
+
 ## 0.47.22
 
 - Links that belong to an installed app, such as a Zapstore listing, now open in it

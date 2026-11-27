@@ -1,5 +1,26 @@
 # Release notes
 
+## 0.47.23 — faster Monero wallet catch-up
+
+### Changed
+
+- **Desktop and Android:** a long Monero scan now saves its progress about every 90
+  seconds, so closing the app no longer loses the whole scan. Opening the wallet again
+  while it is still scanning rejoins that scan. The balance and transactions update at
+  each save.
+- **Desktop and Android:** restoring a wallet asks roughly when it was created, and
+  starts scanning a month before that date. A block height can still be entered
+  instead. The scan no longer defaults to the whole chain; enter height 0 for that.
+
+### Fixed
+
+- **Desktop and Android:** wallets created in the browser started scanning about two
+  years before they needed to. New ones now start about a week back. Wallets created
+  earlier keep their saved starting point.
+- **Desktop:** the wallet now keeps what it has scanned, encrypted on this device,
+  instead of starting again each time it is opened.
+- **Android:** the first scan after the backup check now shows its progress.
+
 ## 0.47.22 — links open their apps on Android
 
 ### Added
