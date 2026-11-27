@@ -65,10 +65,15 @@ export class ApprovalGate implements AutomationGate {
       /** The agent this gate belongs to, so the request can be labelled and shown. */
       agentId?: string
       npub?: string
+      identity?: () => { agentId: string; pubkey: string; npub: string } | null
     } = {}
   ) {
     this.agentId = options.agentId
     this.npub = options.npub
+  }
+
+  identity(): { agentId: string; pubkey: string; npub: string } | null {
+    return this.options.identity?.() ?? null
   }
 
   async authorize(site: string, action: string): Promise<boolean> {

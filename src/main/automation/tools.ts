@@ -119,6 +119,18 @@ async function waitFor(
 
 export const TOOLS: ToolDefinition[] = [
   {
+    name: 'whoami',
+    description:
+      'Return the public Nostr identity bound to this authenticated MCP connection. Read-only; never returns secret key material. Use before signing to confirm which agent identity this connection uses.',
+    inputSchema: { type: 'object', properties: {} },
+    run: async (_host, _args, gate) => {
+      const identity = gate.identity?.()
+      return identity
+        ? json(identity)
+        : fail('This MCP connection has no dedicated Nostr identity. Do not sign until its identity is configured.')
+    }
+  },
+  {
     name: 'open_settings',
     description: 'Open a browser settings section. Requires a separate Browser development tools permission, shown in the browser Agent control popup.',
     inputSchema: { type: 'object', properties: { section: { type: 'string', enum: ['general', 'identity', 'passwords'] } }, required: ['section'] },

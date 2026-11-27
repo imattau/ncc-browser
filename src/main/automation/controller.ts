@@ -241,7 +241,13 @@ export class AutomationController {
       gate = new ApprovalGate(this.deps.approvals, {
         autoApprove: this.deps.autoApprove === true,
         agentId: id,
-        npub: this.deps.settings.agent(id)?.npub ?? undefined
+        npub: this.deps.settings.agent(id)?.npub ?? undefined,
+        identity: () => {
+          const agent = this.deps.settings.agent(id)
+          const signer = agent ? this.signerFor(id) : null
+          if (!agent || !signer || !agent.npub) return null
+          return { agentId: id, pubkey: signer.getPublicKey(), npub: agent.npub }
+        }
       })
       this.gates.set(id, gate)
     }

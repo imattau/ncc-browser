@@ -104,6 +104,8 @@ export interface PendingApproval {
 export interface AutomationGate {
   /** The agent this gate belongs to, so a tool can tag a tab it just created. */
   readonly agentId?: string
+  /** Public identity bound to this authenticated MCP connection. Never contains a secret key. */
+  identity?(): { agentId: string; pubkey: string; npub: string } | null
   authorize(site: string, action: string): Promise<boolean>
   pending?(): PendingApproval[]
   grants?(): string[]

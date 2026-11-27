@@ -67,7 +67,40 @@ describe('McpHandler', () => {
     const list = await handler.handle(rpc('tools/list'))
     const names = (list?.result as { tools: Array<{ name: string }> }).tools.map((t) => t.name)
     expect(names).toEqual(expect.arrayContaining(['tabs_list', 'screenshot', 'click', 'type']))
+    expect(names).toContain('whoami')
     expect(names).toContain('batch')
+  })
+
+  it('reports the identity belonging to this authenticated agent connection', async () => {
+    const agentGate = {
+      ...allowAll,
+      agentId: 'agent-one',
+      identity: () => ({
+        agentId: 'agent-one',
+        pubkey: 'a'.repeat(64),
+        npub: 'npub1agentone'
+      })
+    }
+    const handler = new McpHandler(fakeHost().host, allowAll, info)
+    const reply = await handler.handle(
+      rpc('tools/call', { name: 'whoami', arguments: {} }),
+      agentGate
+    )
+    const result = reply?.result as { content: Array<{ text: string }> }
+    expect(JSON.parse(result.content[0]!.text)).toEqual({
+      agentId: 'agent-one',
+      pubkey: 'a'.repeat(64),
+      npub: 'npub1agentone'
+    })
+    expect(result.content[0]!.text).not.toMatch(/nsec|secret/i)
+  })
+
+  it('fails closed when the connection has no configured identity', async () => {
+    const handler = new McpHandler(fakeHost().host, allowAll, info)
+    const reply = await handler.handle(
+      rpc('tools/call', { name: 'whoami', arguments: {} })
+    )
+    expect((reply?.result as { isError?: boolean }).isError).toBe(true)
   })
 
   it('runs batch calls in order and stops on the first error', async () => {
