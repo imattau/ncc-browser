@@ -1,5 +1,10 @@
 # Nostr Navigator for Android
 
+## 0.47.25
+
+- Identity sync is now an optional, separately encrypted part of the sync vault. It is
+  off by default; changing the key that signs the vault requires an explicit migration.
+
 ## 0.47.24
 
 - No Android changes. This version keeps Android in step with the desktop release,

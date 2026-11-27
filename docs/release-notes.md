@@ -1,5 +1,14 @@
 # Release notes
 
+## 0.47.25 — encrypted identity sync
+
+### Added
+
+- **Desktop and Android:** optionally sync local identities in a separately encrypted
+  Nostr vault alongside passwords, history and bookmarks. Identity sync is off by
+  default. Changing its signing identity requires an explicit migration because the
+  vault must be re-signed; the old encrypted copy remains available for older devices.
+
 ## 0.47.24 — guided publishing on desktop
 
 ### Changed
