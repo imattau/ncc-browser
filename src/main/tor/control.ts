@@ -66,14 +66,17 @@ export function onionServiceIdFromHost(host: string): string | null {
   return ONION_ID.test(value) ? value : null
 }
 
-/** Parse a `250-ServiceID=…` / `250-PrivateKey=…` reply body. */
-export function parseOnionReply(reply: TorReply): AddedOnion {
+/**
+ * Parse a `250-ServiceID=…` / `250-PrivateKey=…` reply body. Tor sends the key only
+ * when it generated one, so a request made with `suppliedKey` gets just the id back.
+ */
+export function parseOnionReply(reply: TorReply, suppliedKey?: string): AddedOnion {
   const serviceId = reply.lines
     .map((line) => /^ServiceID=(.+)$/.exec(line)?.[1]?.trim())
     .find(Boolean)
-  const privateKey = reply.lines
-    .map((line) => /^PrivateKey=(.+)$/.exec(line)?.[1]?.trim())
-    .find(Boolean)
+  const privateKey =
+    reply.lines.map((line) => /^PrivateKey=(.+)$/.exec(line)?.[1]?.trim()).find(Boolean) ??
+    suppliedKey
   if (!serviceId || !privateKey) {
     throw new TorControlError('Tor did not return the onion service id and key', reply.code)
   }
@@ -147,9 +150,11 @@ export class TorControl implements TorControlLike {
 
   addOnion(options: AddOnionOptions): Promise<AddedOnion> {
     const targetHost = options.targetHost ?? '127.0.0.1'
-    const key = options.privateKey ? `ED25519-V3:${normalizeKey(options.privateKey)}` : 'NEW:ED25519-V3'
-    const command = `ADD_ONION ${key} Port=${options.virtualPort},${targetHost}:${options.targetPort}`
-    return this.command(command).then(parseOnionReply)
+    const supplied = options.privateKey
+      ? `ED25519-V3:${normalizeKey(options.privateKey)}`
+      : undefined
+    const command = `ADD_ONION ${supplied ?? 'NEW:ED25519-V3'} Port=${options.virtualPort},${targetHost}:${options.targetPort}`
+    return this.command(command).then((reply) => parseOnionReply(reply, supplied))
   }
 
   async delOnion(serviceId: string): Promise<void> {

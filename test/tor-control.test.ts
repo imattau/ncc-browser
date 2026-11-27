@@ -97,18 +97,15 @@ describe('TorControl', () => {
     const seen: string[] = []
     const port = await serve((line) => {
       seen.push(line)
-      if (line.startsWith('ADD_ONION')) {
-        return '250-ServiceID=abcdefghijklmnop\r\n250-PrivateKey=ED25519-V3:secret\r\n250 OK\r\n'
-      }
+      // As real Tor does: no PrivateKey line when the caller supplied the key.
+      if (line.startsWith('ADD_ONION')) return '250-ServiceID=abcdefghijklmnop\r\n250 OK\r\n'
       return '250 OK\r\n'
     })
     const control = new TorControl({ port, password: 'pw' })
     await control.connect()
-    await control.addOnion({
-      virtualPort: 443,
-      targetPort: 8443,
-      privateKey: 'ED25519-V3:stored'
-    })
+    await expect(
+      control.addOnion({ virtualPort: 443, targetPort: 8443, privateKey: 'ED25519-V3:stored' })
+    ).resolves.toEqual({ serviceId: 'abcdefghijklmnop', privateKey: 'ED25519-V3:stored' })
     await control.delOnion('abcdefghijklmnop')
     expect(seen).toContain('AUTHENTICATE "pw"')
     expect(seen).toContain('ADD_ONION ED25519-V3:stored Port=443,127.0.0.1:8443')
