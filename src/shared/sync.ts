@@ -20,12 +20,14 @@ export const SYNC_CLIENT = 'ncc-browser'
 export const BOOKMARKS_D = 'ncc-browser/bookmarks/v1'
 export const HISTORY_D_PREFIX = 'ncc-browser/history/v1/'
 export const TABS_D_PREFIX = 'ncc-browser/tabs/v1/'
+export const IDENTITIES_D = 'ncc-browser/identities/v1'
 
 export const MAX_DOC_BYTES = 40_000
 export const MAX_URL = 4096
 export const MAX_TITLE = 300
 export const MAX_BOOKMARKS = 500
 export const MAX_TABS = 60
+export const MAX_SYNCED_IDENTITIES = 1000
 export const HISTORY_WINDOW_WEEKS = 8
 export const TOMBSTONE_TTL_MS = 90 * 24 * 60 * 60 * 1000
 export const DEVICE_STALE_MS = 60 * 24 * 60 * 60 * 1000
@@ -80,8 +82,53 @@ export interface TabsDoc {
   removed?: true
 }
 
+export interface SyncedIdentity {
+  pubkey: string
+  nsec: string
+}
+
+export interface IdentityVaultDoc {
+  v: 1
+  updatedAt: number
+  entries: SyncedIdentity[]
+}
+
+export function normalizeIdentityVault(value: unknown, now = 0): IdentityVaultDoc {
+  if (value === null || value === undefined) return { v: 1, updatedAt: now, entries: [] }
+  if (!isRecord(value) || value.v !== 1 || !Array.isArray(value.entries) || value.entries.length > MAX_SYNCED_IDENTITIES) {
+    throw new Error('The identity vault has an unsupported or invalid format.')
+  }
+  const entries = new Map<string, SyncedIdentity>()
+  for (const raw of value.entries) {
+    if (!isRecord(raw) || typeof raw.pubkey !== 'string' || !/^[0-9a-f]{64}$/i.test(raw.pubkey) ||
+      typeof raw.nsec !== 'string' || !/^nsec1.{20,90}$/i.test(raw.nsec)) {
+      throw new Error('The identity vault contains an invalid key entry.')
+    }
+    const pubkey = raw.pubkey.toLowerCase()
+    const existing = entries.get(pubkey)
+    if (existing && existing.nsec !== raw.nsec) throw new Error('The identity vault has conflicting keys for one public key.')
+    if (!existing) entries.set(pubkey, { pubkey, nsec: raw.nsec })
+  }
+  const updatedAt = optionalU64(value.updatedAt)
+  if (updatedAt === null) throw new Error('The identity vault timestamp is invalid.')
+  return { v: 1, updatedAt: value.updatedAt === undefined ? now : updatedAt, entries: [...entries.values()].sort((a, b) => a.pubkey.localeCompare(b.pubkey)) }
+}
+
+export function mergeIdentityVaults(local: unknown, remote: unknown, now = 0): IdentityVaultDoc {
+  const a = normalizeIdentityVault(local, now)
+  const b = normalizeIdentityVault(remote, now)
+  const byPubkey = new Map(a.entries.map((entry) => [entry.pubkey, entry]))
+  for (const entry of b.entries) {
+    const existing = byPubkey.get(entry.pubkey)
+    if (existing && existing.nsec !== entry.nsec) throw new Error('The identity vault has conflicting keys for one public key.')
+    if (!existing) byPubkey.set(entry.pubkey, entry)
+  }
+  return { v: 1, updatedAt: Math.max(a.updatedAt, b.updatedAt), entries: [...byPubkey.values()].sort((x, y) => x.pubkey.localeCompare(y.pubkey)) }
+}
+
 export type DocKind =
   | { kind: 'bookmarks' }
+  | { kind: 'identities' }
   | { kind: 'history'; week: number }
   | { kind: 'tabs'; deviceId: string }
 
@@ -255,6 +302,7 @@ export function parseTabsD(d: string): string | null {
 
 export function docKind(d: string): DocKind | null {
   if (d === BOOKMARKS_D) return { kind: 'bookmarks' }
+  if (d === IDENTITIES_D) return { kind: 'identities' }
   const week = parseHistoryD(d)
   if (week !== null) return { kind: 'history', week }
   const deviceId = parseTabsD(d)

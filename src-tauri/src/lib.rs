@@ -660,6 +660,60 @@ async fn sync_exchange(
     sync.0.exchange(request).await
 }
 
+#[tauri::command]
+async fn sync_identity_vault(state: tauri::State<'_, SignerState>) -> Result<usize, String> {
+    let default_id = identity_profiles_info(&state).default_id
+        .and_then(|id| id.strip_prefix("local:").map(str::to_string))
+        .ok_or_else(|| "Identity sync on Android requires a local default identity".to_string())?;
+    let identity = unlocked_identity_profile(&state, &default_id)?;
+    let service = ncc_proxy::sync::SyncService::new(identity, state.proxy.settings().clone());
+    service.sync_identities(envelope(None).as_ref()).await
+}
+
+#[tauri::command]
+async fn sync_identity_migrate(
+    state: tauri::State<'_, SignerState>,
+    from_id: String,
+    to_id: String,
+) -> Result<usize, String> {
+    let old_id = from_id.strip_prefix("local:").ok_or("The previous identity is not a local key")?;
+    let new_id = to_id.strip_prefix("local:").ok_or("The current default must be a local key")?;
+    let current = identity_profiles_info(&state).default_id.ok_or("No default identity is configured")?;
+    if current != to_id { return Err("The requested destination is no longer the default identity".into()); }
+    let old_identity = unlocked_identity_profile(&state, old_id)?;
+    let new_identity = unlocked_identity_profile(&state, new_id)?;
+    let settings = state.proxy.settings().clone();
+    let old_service = ncc_proxy::sync::SyncService::new(old_identity.clone(), settings.clone());
+    let new_service = ncc_proxy::sync::SyncService::new(new_identity.clone(), settings);
+    let old_doc = old_service.read_identity_vault().await?;
+    let new_doc = new_service.read_identity_vault().await?;
+    for document in [&old_doc, &new_doc] {
+        let entries = document.get("entries").and_then(serde_json::Value::as_array)
+            .ok_or("Identity vault has an invalid entries list")?;
+        if entries.len() > ncc_vault::sync::MAX_SYNCED_IDENTITIES {
+            return Err("Identity vault contains too many identities".into());
+        }
+        for entry in entries {
+            let id = entry.get("pubkey").and_then(serde_json::Value::as_str).ok_or("Identity vault entry has no public key")?;
+            let secret = entry.get("nsec").and_then(serde_json::Value::as_str).ok_or("Identity vault entry has no key material")?;
+            new_identity.import_synced_profile(envelope(None).as_ref(), id, secret).map_err(|error| error.to_string())?;
+        }
+    }
+    let entries = new_identity.export_profile_secrets(envelope(None).as_ref()).map_err(|error| error.to_string())?
+        .into_iter().map(|(pubkey, nsec)| serde_json::json!({"pubkey":pubkey,"nsec":nsec})).collect::<Vec<_>>();
+    let document = serde_json::json!({"v":1,"updatedAt":std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64,"entries":entries});
+    new_service.publish_identity_vault(&document).await?;
+    Ok(document["entries"].as_array().map_or(0, Vec::len))
+}
+
+fn unlocked_identity_profile(state: &SignerState, id: &str) -> Result<Arc<IdentityStore>, String> {
+    let root = state.identity.path().ok_or("No saved identity profiles are available")?.to_path_buf();
+    let identity = Arc::new(IdentityStore::open(root));
+    identity.select_profile_for_service(id).map_err(|error| error.to_string())?;
+    identity.unlock(envelope(None).as_ref()).map_err(|error| error.to_string())?;
+    Ok(identity)
+}
+
 /// Post a page to Nostr as a public note. Normal tabs only; the shell asks first.
 #[tauri::command]
 async fn share_nostr(
@@ -1819,6 +1873,8 @@ pub fn run() {
             payment_cards_remove,
             payment_cards_authenticate,
             sync_exchange,
+            sync_identity_vault,
+            sync_identity_migrate,
             sync_remove_device,
             share_nostr,
             profile_picture_data,

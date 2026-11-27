@@ -34,6 +34,7 @@ pub const SYNC_CLIENT: &str = "ncc-browser";
 pub const BOOKMARKS_D: &str = "ncc-browser/bookmarks/v1";
 pub const HISTORY_D_PREFIX: &str = "ncc-browser/history/v1/";
 pub const TABS_D_PREFIX: &str = "ncc-browser/tabs/v1/";
+pub const IDENTITIES_D: &str = "ncc-browser/identities/v1";
 
 /// Plaintext budget per document, so base64 and NIP-44 framing stay under 64 KB.
 pub const MAX_DOC_BYTES: usize = 40_000;
@@ -41,6 +42,7 @@ pub const MAX_URL: usize = 4096;
 pub const MAX_TITLE: usize = 300;
 pub const MAX_BOOKMARKS: usize = 500;
 pub const MAX_TABS: usize = 60;
+pub const MAX_SYNCED_IDENTITIES: usize = 1000;
 /// How many weeks of history leave the device.
 pub const HISTORY_WINDOW_WEEKS: u64 = 8;
 pub const TOMBSTONE_TTL_MS: u64 = 90 * 24 * 60 * 60 * 1000;
@@ -478,6 +480,7 @@ pub fn sync_filter(pubkey: &str) -> Value {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DocKind {
     Bookmarks,
+    Identities,
     History(u64),
     Tabs(String),
 }
@@ -485,6 +488,9 @@ pub enum DocKind {
 pub fn doc_kind(d: &str) -> Option<DocKind> {
     if d == BOOKMARKS_D {
         return Some(DocKind::Bookmarks);
+    }
+    if d == IDENTITIES_D {
+        return Some(DocKind::Identities);
     }
     if let Some(week) = parse_history_d(d) {
         return Some(DocKind::History(week));
@@ -616,6 +622,7 @@ mod tests {
     #[test]
     fn d_tags_round_trip() {
         assert_eq!(doc_kind(BOOKMARKS_D), Some(DocKind::Bookmarks));
+        assert_eq!(doc_kind(IDENTITIES_D), Some(DocKind::Identities));
         assert_eq!(doc_kind(&history_d(2900)), Some(DocKind::History(2900)));
         assert_eq!(
             doc_kind(&tabs_d("0123456789abcdef")),

@@ -9,6 +9,7 @@ export interface SyncPrefs {
   categories: SyncCategories
   deviceId: string
   deviceName: string
+  identityVaultOwnerId?: string
 }
 
 const FILE_VERSION = 1
@@ -31,7 +32,7 @@ export class SyncPrefsStore {
   update(patch: SyncPrefsPatch): SyncPrefs {
     const current = this.get()
     const categories = { ...current.categories }
-    for (const key of ['bookmarks', 'tabs', 'history'] as const) {
+    for (const key of ['bookmarks', 'tabs', 'history', 'identities'] as const) {
       const value = patch.categories?.[key]
       if (typeof value === 'boolean') categories[key] = value
     }
@@ -44,9 +45,15 @@ export class SyncPrefsStore {
     return this.prefs
   }
 
+  setIdentityVaultOwner(id: string | undefined): void {
+    const current = this.get()
+    this.prefs = { ...current, identityVaultOwnerId: id }
+    this.write()
+  }
+
   private read(): SyncPrefs {
     const fresh: SyncPrefs = {
-      categories: { bookmarks: false, tabs: false, history: false },
+      categories: { bookmarks: false, tabs: false, history: false, identities: false },
       deviceId: randomBytes(8).toString('hex'),
       deviceName: defaultDeviceName()
     }
@@ -57,19 +64,22 @@ export class SyncPrefsStore {
           categories: Partial<SyncCategories>
           deviceId: string
           deviceName: string
+          identityVaultOwnerId?: string
         }>
         if (parsed.version === FILE_VERSION) {
           return {
             categories: {
               bookmarks: parsed.categories?.bookmarks === true,
               tabs: parsed.categories?.tabs === true,
-              history: parsed.categories?.history === true
+              history: parsed.categories?.history === true,
+              identities: parsed.categories?.identities === true
             },
             deviceId: isDeviceId(parsed.deviceId) ? parsed.deviceId : fresh.deviceId,
             deviceName:
               typeof parsed.deviceName === 'string' && parsed.deviceName.trim()
                 ? parsed.deviceName.trim().slice(0, 80)
-                : fresh.deviceName
+                : fresh.deviceName,
+            ...(typeof parsed.identityVaultOwnerId === 'string' ? { identityVaultOwnerId: parsed.identityVaultOwnerId } : {})
           }
         }
       }

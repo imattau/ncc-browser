@@ -9,6 +9,8 @@ import {
   historyWeeks,
   mergeBookmarks,
   mergeHistory,
+  mergeIdentityVaults,
+  normalizeIdentityVault,
   normalizeBookmarks,
   normalizeHistory,
   normalizeTabs,
@@ -57,6 +59,28 @@ describe('sync vectors shared with the Rust implementation', () => {
 })
 
 describe('sync helpers', () => {
+  it('validates and merges identity vault entries by public key', () => {
+    const keyA = 'a'.repeat(64)
+    const keyB = 'b'.repeat(64)
+    expect(() => normalizeIdentityVault({ v: 1, entries: [
+      { pubkey: 'bad', nsec: 'not-a-key' }
+    ] })).toThrow()
+    const a = normalizeIdentityVault({ v: 1, entries: [
+      { pubkey: keyA, nsec: `nsec1${'a'.repeat(40)}` }
+    ] })
+    const merged = mergeIdentityVaults(a, { v: 1, entries: [
+      { pubkey: keyA, nsec: `nsec1${'a'.repeat(40)}` },
+      { pubkey: keyB, nsec: `nsec1${'b'.repeat(40)}` }
+    ] })
+    expect(merged.entries).toEqual([
+      { pubkey: keyA, nsec: `nsec1${'a'.repeat(40)}` },
+      { pubkey: keyB, nsec: `nsec1${'b'.repeat(40)}` }
+    ])
+    expect(() => mergeIdentityVaults(a, { v: 1, entries: [
+      { pubkey: keyA, nsec: `nsec1${'c'.repeat(40)}` }
+    ] })).toThrow(/conflicting keys/)
+  })
+
   it('starts weeks on Monday', () => {
     const day = 86_400_000
     expect(weekOf(0)).toBe(0)

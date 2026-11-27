@@ -336,6 +336,50 @@ impl IdentityStore {
         self.add_profile(keys, envelope)
     }
 
+    /// Import a synced identity without changing the active or default profile.
+    pub fn import_synced_profile(&self, envelope: &dyn KeyEnvelope, expected_id: &str, secret: &str) -> Result<bool, IdentityError> {
+        let root = self.path.as_ref().ok_or(IdentityError::NotInitialised)?;
+        let keys = parse_secret(secret.trim())?;
+        let id = keys.public_key().to_hex();
+        if !id.eq_ignore_ascii_case(expected_id) {
+            return Err(IdentityError::Codec("synced key does not match its public key".into()));
+        }
+        self.refresh_profile_ids();
+        if self.profile_ids.lock().expect("identity profile ids").contains(&id) { return Ok(false); }
+        write_sealed_at(&profile_path_for(root, &id), &keys, envelope)?;
+        self.profile_ids.lock().expect("identity profile ids").push(id);
+        self.persist_profile_index()?;
+        Ok(true)
+    }
+
+    /// Export locally stored profiles for the encrypted identity-sync document.
+    /// Secrets are returned only to native callers and must never cross into the UI.
+    pub fn export_profile_secrets(&self, envelope: &dyn KeyEnvelope) -> Result<Vec<(String, String)>, IdentityError> {
+        let Some(root) = self.path.as_ref() else { return Ok(Vec::new()) };
+        self.refresh_profile_ids();
+        let ids = self.profile_ids.lock().expect("identity profile ids").clone();
+        let mut result = Vec::new();
+        for id in ids {
+            let bytes = fs::read(profile_path_for(root, &id)).map_err(|error| IdentityError::Io(error.to_string()))?;
+            let secret = if let Ok(sealed) = serde_json::from_slice::<SealedFile>(&bytes) {
+                if sealed.version != VERSION_SEALED || !sealed.pubkey.eq_ignore_ascii_case(&id) {
+                    return Err(IdentityError::Codec("saved identity profile metadata is invalid".into()));
+                }
+                envelope.open(&sealed.sealed)?
+            } else if let Ok(legacy) = serde_json::from_slice::<LegacyFile>(&bytes) {
+                let passphrase = envelope.passphrase().ok_or(IdentityError::PassphraseRequired)?;
+                PassphraseEnvelope::new(passphrase).open(&format!("{}.{}.{}", legacy.salt, legacy.nonce, legacy.ciphertext))?
+            } else {
+                return Err(IdentityError::Codec("saved identity profile has an unknown format".into()));
+            };
+            let keys = parse_secret(&secret)?;
+            if keys.public_key().to_hex() != id { return Err(IdentityError::Codec("saved identity key does not match its profile".into())); }
+            let nsec = keys.secret_key().to_bech32().map_err(|error| IdentityError::Codec(error.to_string()))?;
+            result.push((id, nsec));
+        }
+        Ok(result)
+    }
+
     /// Generate and save another local key.
     pub fn create_profile(&self, envelope: &dyn KeyEnvelope) -> Result<String, IdentityError> {
         self.add_profile(Keys::generate(), envelope)
@@ -906,6 +950,27 @@ mod tests {
         event.verify().expect("signature must verify");
 
         let _ = fs::remove_file(dir.path().expect("path"));
+    }
+
+    #[test]
+    fn synced_profiles_import_without_changing_active_or_default() {
+        let store = store();
+        let envelope = PassphraseEnvelope::new("sync test");
+        let first_npub = store.create(&envelope).expect("first identity");
+        let first_id = store.profiles().into_iter().find(|profile| profile.npub == first_npub).unwrap().id;
+        let second = Keys::generate();
+        let second_id = second.public_key().to_hex();
+        let second_secret = hex_encode(&second.secret_key().secret_bytes());
+        assert!(store.import_synced_profile(&envelope, &second_id, &second_secret).unwrap());
+        assert!(!store.import_synced_profile(&envelope, &second_id, &second_secret).unwrap());
+        assert!(store.import_synced_profile(&envelope, &"0".repeat(64), &second_secret).is_err());
+
+        let profiles = store.profiles();
+        assert!(profiles.iter().any(|profile| profile.id == first_id && profile.active && profile.default));
+        let exported = store.export_profile_secrets(&envelope).unwrap();
+        assert_eq!(exported.len(), 2);
+        let second_nsec = second.secret_key().to_bech32().unwrap();
+        assert!(exported.iter().any(|(id, secret)| id == &second_id && secret == &second_nsec));
     }
 
     #[test]

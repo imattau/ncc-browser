@@ -13,12 +13,12 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use ncc_identity::IdentityStore;
+use ncc_identity::{IdentityStore, KeyEnvelope};
 use ncc_vault::sync::{
     doc_kind, history_d, history_weeks, history_window_start, merge_bookmarks, merge_history,
     normalize_bookmarks, normalize_history, normalize_tabs, sync_filter, tabs_d, week_of,
     BookmarkDoc, DeviceInfo, DocKind, HistoryDoc, SyncTab, SyncVisit, TabsDoc, BOOKMARKS_D,
-    DEVICE_STALE_MS, SYNC_CLIENT, SYNC_KIND, SYNC_TAG, SYNC_VERSION,
+    DEVICE_STALE_MS, IDENTITIES_D, MAX_SYNCED_IDENTITIES, SYNC_CLIENT, SYNC_KIND, SYNC_TAG, SYNC_VERSION,
 };
 
 use crate::own_relays::OwnRelays;
@@ -211,6 +211,11 @@ fn tabs_key(device: &DeviceInfo, tabs: &[SyncTab]) -> String {
     .to_string()
 }
 
+fn now_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default().as_millis().min(u128::from(u64::MAX)) as u64
+}
+
 fn zero_updated(doc: &BookmarkDoc) -> BookmarkDoc {
     let mut doc = doc.clone();
     doc.updated_at = 0;
@@ -244,6 +249,109 @@ impl SyncService {
             last_tabs_key: Mutex::new(None),
             busy: tokio::sync::Mutex::new(()),
         }
+    }
+
+    /// Merge locally stored identity keys with the dedicated encrypted identity vault.
+    /// The envelope is used only inside native code; plaintext keys never reach the UI.
+    pub async fn sync_identities(&self, envelope: &dyn KeyEnvelope) -> Result<usize, String> {
+        let _guard = self.busy.lock().await;
+        let pubkey = self.pubkey()?;
+        let relays = self.relays(&pubkey).await;
+        if relays.is_empty() { return Err("No relay is configured for identity sync".into()); }
+        let remote_event = self.fetch_identity_event(&relays, &pubkey).await?;
+        if let Some(event) = &remote_event {
+            let mut created = self.last_created();
+            let entry = created.entry(IDENTITIES_D.to_string()).or_insert(0);
+            *entry = (*entry).max(event.created_at.as_secs());
+        }
+        let mut entries = std::collections::BTreeMap::<String, String>::new();
+        if let Some(event) = &remote_event {
+            let value = self.decrypt(&pubkey, event)?;
+            let items = value.get("entries").and_then(Value::as_array)
+                .ok_or_else(|| "The identity vault has an invalid entries list".to_string())?;
+            if items.len() > MAX_SYNCED_IDENTITIES { return Err("The identity vault contains too many identities".into()); }
+            for item in items {
+                let id = item.get("pubkey").and_then(Value::as_str)
+                    .ok_or_else(|| "An identity vault entry has no public key".to_string())?;
+                let secret = item.get("nsec").and_then(Value::as_str)
+                    .ok_or_else(|| "An identity vault entry has no key".to_string())?;
+                if id.len() != 64 || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                    return Err("The identity vault contains an invalid public key".into());
+                }
+                let id = id.to_ascii_lowercase();
+                if entries.get(&id).is_some_and(|existing| existing != secret) {
+                    return Err("The identity vault has conflicting keys for one public key".into());
+                }
+                entries.insert(id, secret.to_string());
+            }
+        }
+        let local = self.identity.export_profile_secrets(envelope).map_err(|error| error.to_string())?;
+        for (id, secret) in &local { entries.insert(id.to_ascii_lowercase(), secret.clone()); }
+        for (id, secret) in &entries {
+            self.identity.import_synced_profile(envelope, id, secret).map_err(|error| error.to_string())?;
+            if let Some((_, original)) = local.iter().find(|(local_id, _)| local_id.eq_ignore_ascii_case(id)) {
+                if original != secret { return Err("An identity vault key did not match its public key".into()); }
+            }
+        }
+        let synced_entries = entries.iter().map(|(pubkey, nsec)| json!({"pubkey":pubkey,"nsec":nsec})).collect::<Vec<_>>();
+        let document = json!({"v": SYNC_VERSION, "updatedAt": now_ms(), "entries": synced_entries});
+        let same = remote_event.as_ref().and_then(|event| self.decrypt(&pubkey, event).ok())
+            .and_then(|remote| remote.get("entries").cloned()) == document.get("entries").cloned();
+        if !same { self.publish(&relays, &pubkey, IDENTITIES_D, &document, now_ms()).await?; }
+        Ok(entries.len())
+    }
+
+    /// Read a key owner's identity vault without changing its contents.
+    pub async fn read_identity_vault(&self) -> Result<Value, String> {
+        let pubkey = self.pubkey()?;
+        let relays = self.relays(&pubkey).await;
+        if relays.is_empty() { return Err("No relay is configured for identity sync".into()); }
+        let event = self.fetch_identity_event(&relays, &pubkey).await?;
+        event.as_ref().map(|event| self.decrypt(&pubkey, event)).transpose()
+            .map(|value| value.unwrap_or_else(|| json!({"v":SYNC_VERSION,"updatedAt":0,"entries":[]})))
+    }
+
+    async fn fetch_identity_event(&self, relays: &[String], pubkey: &str) -> Result<Option<nostr::Event>, String> {
+        let signer = self.signer();
+        let filter = sync_filter(pubkey);
+        let attempts = relays.iter().map(|url| relay::query_authed(url, &filter, RELAY_WAIT, &signer)).collect::<Vec<_>>();
+        let mut latest: Option<nostr::Event> = None;
+        let mut answered = 0;
+        let mut first_error = None;
+        for result in futures_util::future::join_all(attempts).await {
+            let events = match result {
+                Ok(events) => { answered += 1; events },
+                Err(error) => { first_error.get_or_insert(error); continue; }
+            };
+            for event in events {
+                let has_tag = |name: &str, wanted: &str| event.tags.iter().any(|tag| {
+                    let parts = tag.as_slice(); parts.len() >= 2 && parts[0] == name && parts[1] == wanted
+                });
+                if event.kind.as_u16() as u64 != SYNC_KIND || event.pubkey.to_hex() != pubkey
+                    || event.content.len() > MAX_EVENT_CONTENT || !has_tag("d", IDENTITIES_D)
+                    || !has_tag("t", SYNC_TAG) || event.verify().is_err() { continue; }
+                if latest.as_ref().map_or(true, |current| (event.created_at, std::cmp::Reverse(event.id.to_hex())) >
+                    (current.created_at, std::cmp::Reverse(current.id.to_hex()))) { latest = Some(event); }
+            }
+        }
+        if answered != relays.len() {
+            return Err(first_error.unwrap_or_else(|| "Could not read the identity vault from every relay".into()));
+        }
+        Ok(latest)
+    }
+
+    /// Publish a validated migration result under this service's key, leaving the old
+    /// owner's event untouched for devices that have not caught up yet.
+    pub async fn publish_identity_vault(&self, document: &Value) -> Result<(), String> {
+        if document.get("v").and_then(Value::as_u64) != Some(u64::from(SYNC_VERSION))
+            || !document.get("entries").is_some_and(Value::is_array)
+            || document.to_string().len() > MAX_EVENT_CONTENT {
+            return Err("The identity vault migration document is invalid".into());
+        }
+        let pubkey = self.pubkey()?;
+        let relays = self.relays(&pubkey).await;
+        if relays.is_empty() { return Err("No relay is configured for identity sync".into()); }
+        self.publish(&relays, &pubkey, IDENTITIES_D, document, now_ms()).await
     }
 
     /// Read or replace the single NIP-78 encrypted Monero wallet record. The record is
@@ -461,6 +569,7 @@ impl SyncService {
             let Some(kind) = doc_kind(d) else { continue };
             let wanted = match &kind {
                 DocKind::Bookmarks => request.bookmarks.is_some(),
+                DocKind::Identities => false,
                 DocKind::History(week) => {
                     request.history.is_some() && *week >= start && *week <= end
                 }
@@ -480,6 +589,7 @@ impl SyncService {
                 DocKind::Bookmarks => {
                     remote.bookmarks = Some(normalize_bookmarks(&value, request.now))
                 }
+                DocKind::Identities => {}
                 DocKind::History(week) => {
                     remote.history.insert(week, normalize_history(&value, week));
                 }

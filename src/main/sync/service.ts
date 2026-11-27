@@ -11,6 +11,9 @@ import {
   historyD,
   historyWeeks,
   historyWindowStart,
+  IDENTITIES_D,
+  mergeIdentityVaults,
+  normalizeIdentityVault,
   mergeBookmarks,
   mergeHistory,
   normalizeBookmarks,
@@ -36,6 +39,12 @@ const POLL_MS = 5 * 60_000
 export interface SyncDeps {
   prefs: SyncPrefsStore
   identity: { provider(): ProviderLike | null }
+  identityVault?: {
+    defaultId(): string | null
+    providerFor(id: string): ProviderLike | null
+    entries(): Array<{ pubkey: string; nsec: string }>
+    importSecret(secret: string): Promise<boolean>
+  }
   relays: PasswordRelayPoolLike
   resolveRelays(pubkey: string): Promise<string[]>
   bookmarks: BookmarkStore
@@ -74,15 +83,19 @@ export class SyncService {
 
   status(): SyncStatus {
     const prefs = this.deps.prefs.get()
+    const identityAvailable = this.deps.identity.provider() !== null || Boolean(
+      this.deps.identityVault?.defaultId() && this.deps.identityVault.providerFor(this.deps.identityVault.defaultId()!)
+    )
     return {
-      identity: this.deps.identity.provider() !== null,
+      identity: identityAvailable,
       categories: { ...prefs.categories },
       deviceId: prefs.deviceId,
       deviceName: prefs.deviceName,
       syncing: this.syncing,
       lastSyncedAt: this.lastSyncedAt,
       error: this.error,
-      devices: this.devices
+      devices: this.devices,
+      ...(this.identityMigrationFrom() ? { identityMigrationFrom: this.identityMigrationFrom()! } : {})
     }
   }
 
@@ -121,10 +134,101 @@ export class SyncService {
       (patch.categories?.bookmarks === true && !before.categories.bookmarks) ||
       (patch.categories?.tabs === true && !before.categories.tabs) ||
       (patch.categories?.history === true && !wasHistory)
+      || (patch.categories?.identities === true && !before.categories.identities)
+    if (patch.categories?.identities === true && !before.categories.identities) {
+      const owner = this.deps.identityVault?.defaultId()
+      if (owner && !this.deps.prefs.get().identityVaultOwnerId) this.deps.prefs.setIdentityVaultOwner(owner)
+    }
     if (patch.deviceName !== undefined) this.lastTabsKey = ''
     this.notify()
     if (turnedOn || patch.deviceName !== undefined) await this.syncNow()
     return this.status()
+  }
+
+  async migrateIdentities(): Promise<SyncStatus> {
+    const vault = this.deps.identityVault
+    const oldId = this.deps.prefs.get().identityVaultOwnerId
+    const nextId = vault?.defaultId()
+    const oldProvider = oldId ? vault?.providerFor(oldId) : null
+    const nextProvider = nextId ? vault?.providerFor(nextId) : null
+    if (!vault || !oldId || !nextId || oldId === nextId || !oldProvider || !nextProvider) {
+      this.error = 'Both the previous and current default identities must be available to migrate.'
+      this.notify()
+      return this.status()
+    }
+    if (this.syncing) {
+      this.error = 'Wait for the current sync to finish before migrating the identity vault.'
+      this.notify()
+      return this.status()
+    }
+    this.syncing = true
+    this.notify()
+    try {
+      const old = await this.readIdentityVault(oldProvider)
+      const current = await this.readIdentityVault(nextProvider)
+      if (!old.complete || !current.complete) throw new Error('Could not read every relay; the identity vault was left unchanged.')
+      const merged = mergeIdentityVaults(
+        { v: 1, updatedAt: this.now(), entries: vault.entries() },
+        mergeIdentityVaults(old.doc, current.doc, this.now()),
+        this.now()
+      )
+      for (const entry of merged.entries) await vault.importSecret(entry.nsec)
+      const pubkey = await nextProvider.getPublicKey()
+      const relays = await this.deps.resolveRelays(pubkey)
+      if (!relays.length) throw new Error('No relay is configured for identity sync.')
+      await this.publish(nextProvider, pubkey, relays, IDENTITIES_D, { ...merged, updatedAt: this.now() })
+      this.deps.prefs.setIdentityVaultOwner(nextId)
+      this.error = null
+    } catch (error) {
+      this.error = messageOf(error)
+    } finally {
+      this.syncing = false
+    }
+    this.notify()
+    return this.status()
+  }
+
+  private identityMigrationFrom(): string | null {
+    if (!this.deps.prefs.get().categories.identities) return null
+    const owner = this.deps.prefs.get().identityVaultOwnerId
+    const current = this.deps.identityVault?.defaultId()
+    return owner && current && owner !== current ? owner : null
+  }
+
+  private async syncIdentityVault(): Promise<void> {
+    const vault = this.deps.identityVault
+    if (!vault || this.identityMigrationFrom()) return
+    const owner = vault.defaultId()
+    const provider = owner ? vault.providerFor(owner) : null
+    if (!owner || !provider) throw new Error('Identity sync needs an available default identity.')
+    const remote = await this.readIdentityVault(provider)
+    if (!remote.complete) throw new Error('Could not read every relay for the identity vault.')
+    const merged = mergeIdentityVaults(
+      { v: 1, updatedAt: this.now(), entries: vault.entries() },
+      remote.doc,
+      this.now()
+    )
+    for (const entry of merged.entries) await vault.importSecret(entry.nsec)
+    const pubkey = await provider.getPublicKey()
+    const relays = await this.deps.resolveRelays(pubkey)
+    if (!relays.length) throw new Error('No relay is configured for identity sync.')
+    if (!sameJson(merged, remote.doc)) await this.publish(provider, pubkey, relays, IDENTITIES_D, { ...merged, updatedAt: this.now() })
+    if (!this.deps.prefs.get().identityVaultOwnerId) this.deps.prefs.setIdentityVaultOwner(owner)
+  }
+
+  private async readIdentityVault(provider: ProviderLike): Promise<{ doc: ReturnType<typeof normalizeIdentityVault>; complete: boolean }> {
+    const pubkey = await provider.getPublicKey()
+    const relays = await this.deps.resolveRelays(pubkey)
+    if (!relays.length) return { doc: normalizeIdentityVault(null), complete: false }
+    let events: Event[]
+    if (this.deps.relays.queryAuthReport) {
+      const report = await this.deps.relays.queryAuthReport(relays, syncFilter(pubkey), (template) => this.signAuth(provider, template))
+      if (report.answered !== relays.length) return { doc: normalizeIdentityVault(null), complete: false }
+      events = report.events
+    } else events = await this.deps.relays.queryAuth(relays, syncFilter(pubkey), (template) => this.signAuth(provider, template))
+    const latest = latestByD(events, pubkey).get(IDENTITIES_D)
+    if (!latest) return { doc: normalizeIdentityVault(null), complete: true }
+    return { doc: normalizeIdentityVault(await this.decrypt(provider, pubkey, latest), this.now()), complete: true }
   }
 
   /** Remove another device from the list: its next publish brings it back. */
@@ -132,7 +236,9 @@ export class SyncService {
     const prefs = this.deps.prefs.get()
     if (id === prefs.deviceId) return this.status()
     const device = this.devices.find((entry) => entry.id === id)
-    const provider = this.deps.identity.provider()
+    const provider = this.deps.identity.provider() ?? (this.deps.identityVault?.defaultId()
+      ? this.deps.identityVault.providerFor(this.deps.identityVault.defaultId()!)
+      : null)
     if (!device || !provider) return this.status()
     try {
       const pubkey = await provider.getPublicKey()
@@ -156,9 +262,13 @@ export class SyncService {
 
   async syncNow(): Promise<SyncStatus> {
     const prefs = this.deps.prefs.get()
-    const enabled = Object.values(prefs.categories).some(Boolean)
-    const provider = this.deps.identity.provider()
-    if (!enabled || !provider) {
+    const dataSyncEnabled = prefs.categories.bookmarks || prefs.categories.tabs || prefs.categories.history
+    const identitiesEnabled = prefs.categories.identities
+    const ownerId = this.deps.identityVault?.defaultId()
+    const provider = dataSyncEnabled
+      ? this.deps.identity.provider() ?? (ownerId ? this.deps.identityVault?.providerFor(ownerId) ?? null : null)
+      : null
+    if ((!dataSyncEnabled && !identitiesEnabled) || (dataSyncEnabled && !provider)) {
       this.notify()
       return this.status()
     }
@@ -169,7 +279,8 @@ export class SyncService {
     this.syncing = true
     this.notify()
     try {
-      await this.run(provider)
+      if (dataSyncEnabled && provider) await this.run(provider)
+      if (identitiesEnabled && !this.identityMigrationFrom()) await this.syncIdentityVault()
       this.error = null
       this.lastSyncedAt = this.now()
     } catch (error) {

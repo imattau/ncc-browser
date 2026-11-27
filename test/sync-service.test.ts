@@ -7,6 +7,7 @@ import {
   generateSecretKey,
   getPublicKey,
   nip44,
+  nip19,
   type Event,
   type EventTemplate,
   type Filter
@@ -27,6 +28,17 @@ const provider = {
   signEvent: async (template: EventTemplate) => finalizeEvent(template, sk),
   nip44Encrypt: async (_peer: string, plaintext: string) => nip44.encrypt(plaintext, key),
   nip44Decrypt: async (_peer: string, ciphertext: string) => nip44.decrypt(ciphertext, key)
+}
+
+function makeProvider(secret: Uint8Array) {
+  const pubkey = getPublicKey(secret)
+  const conversationKey = nip44.getConversationKey(secret, pubkey)
+  return {
+    getPublicKey: async () => pubkey,
+    signEvent: async (template: EventTemplate) => finalizeEvent(template, secret),
+    nip44Encrypt: async (_peer: string, plaintext: string) => nip44.encrypt(plaintext, conversationKey),
+    nip44Decrypt: async (_peer: string, ciphertext: string) => nip44.decrypt(ciphertext, conversationKey)
+  }
 }
 
 /** One in-memory relay shared by every "device", replacing events by `d` like a relay does. */
@@ -87,6 +99,105 @@ function device(
 const all = { bookmarks: true, tabs: true, history: true }
 
 describe('SyncService', () => {
+  it('migrates the identity vault only on request and retains the previous encrypted copy', async () => {
+    const clock = { now: 1_800_000_000_000 }
+    const oldProvider = makeProvider(generateSecretKey())
+    const newProvider = makeProvider(generateSecretKey())
+    const syncedKey = generateSecretKey()
+    const syncedPubkey = getPublicKey(syncedKey)
+    const syncedNsec = nip19.nsecEncode(syncedKey)
+    const events = new Map<string, Event>()
+    const pool = {
+      query: async (_relays: string[], filter: Filter) => [...events.values()].filter((event) =>
+        event.kind === filter.kinds?.[0] && event.pubkey === filter.authors?.[0] &&
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === filter['#t']?.[0])),
+      queryAuth: async (_relays: string[], filter: Filter) => [...events.values()].filter((event) =>
+        event.kind === filter.kinds?.[0] && event.pubkey === filter.authors?.[0] &&
+        event.tags.some((tag) => tag[0] === 't' && tag[1] === filter['#t']?.[0])),
+      publishWithAuth: async (_url: string, event: Event) => {
+        const d = event.tags.find((tag) => tag[0] === 'd')?.[1] ?? ''
+        events.set(`${event.pubkey}:${d}`, event)
+        return 'ok'
+      }
+    }
+    const oldPubkey = await oldProvider.getPublicKey()
+    const newPubkey = await newProvider.getPublicKey()
+    const oldEvent = await oldProvider.signEvent({
+      kind: 30078, created_at: 10, tags: [['d', 'ncc-browser/identities/v1'], ['t', 'ncc-browser/sync']],
+      content: await oldProvider.nip44Encrypt(oldPubkey, JSON.stringify({ v: 1, updatedAt: 1, entries: [{ pubkey: syncedPubkey, nsec: syncedNsec }] }))
+    })
+    events.set(`${oldPubkey}:ncc-browser/identities/v1`, oldEvent)
+    const dir = mkdtempSync(join(tmpdir(), 'ncc-sync-migration-'))
+    const prefs = new SyncPrefsStore(join(dir, 'sync.json'))
+    prefs.update({ categories: { identities: true } })
+    prefs.setIdentityVaultOwner(oldPubkey)
+    const imported: string[] = []
+    const vault = {
+      defaultId: () => newPubkey,
+      providerFor: (id: string) => id === oldPubkey ? oldProvider : id === newPubkey ? newProvider : null,
+      entries: () => [],
+      importSecret: async (secret: string) => { imported.push(secret); return true }
+    }
+    const service = new SyncService({
+      prefs, identity: { provider: () => newProvider }, identityVault: vault, relays: pool,
+      resolveRelays: async () => ['wss://relay.test'], bookmarks: new BookmarkStore(join(dir, 'bookmarks.json')),
+      history: new HistoryStore(join(dir, 'history.json')), tabs: () => [], notify: () => undefined,
+      platform: 'linux', now: () => clock.now
+    })
+
+    expect(service.status().identityMigrationFrom).toBe(oldPubkey)
+    await service.migrateIdentities()
+
+    expect(service.status().identityMigrationFrom).toBeUndefined()
+    expect(prefs.get().identityVaultOwnerId).toBe(newPubkey)
+    expect(imported).toContain(syncedNsec)
+    expect(events.has(`${oldPubkey}:ncc-browser/identities/v1`)).toBe(true)
+    expect(events.has(`${newPubkey}:ncc-browser/identities/v1`)).toBe(true)
+  })
+
+  it('syncs local identities only when the identity category is enabled', async () => {
+    const shared = relay()
+    const clock = { now: 1_800_000_000_000 }
+    const identityKey = generateSecretKey()
+    const secondPubkey = getPublicKey(identityKey)
+    const identityNsec = nip19.nsecEncode(identityKey)
+    const a = device(shared, 'Laptop', 'linux', clock)
+    const b = device(shared, 'Phone', 'android', clock)
+    const localA = [
+      { pubkey: pk, nsec: nip19.nsecEncode(sk) },
+      { pubkey: secondPubkey, nsec: identityNsec }
+    ]
+    const localB: Array<{ pubkey: string; nsec: string }> = []
+    const makeVault = (entries: Array<{ pubkey: string; nsec: string }>) => ({
+      defaultId: () => pk,
+      providerFor: () => provider,
+      entries: () => [...entries],
+      importSecret: async (secret: string) => {
+        if (secret === identityNsec && !entries.some((entry) => entry.pubkey === secondPubkey)) {
+          entries.push({ pubkey: secondPubkey, nsec: secret })
+          return true
+        }
+        return false
+      }
+    })
+    const aService = new SyncService({
+      prefs: a.prefs, identity: { provider: () => null }, identityVault: makeVault(localA),
+      relays: shared.pool, resolveRelays: async () => ['wss://relay.test'], bookmarks: a.bookmarks,
+      history: a.history, tabs: () => [], notify: () => undefined, platform: 'linux', now: () => clock.now
+    })
+    const bService = new SyncService({
+      prefs: b.prefs, identity: { provider: () => null }, identityVault: makeVault(localB),
+      relays: shared.pool, resolveRelays: async () => ['wss://relay.test'], bookmarks: b.bookmarks,
+      history: b.history, tabs: () => [], notify: () => undefined, platform: 'android', now: () => clock.now
+    })
+    a.prefs.update({ categories: { identities: true } })
+    b.prefs.update({ categories: { identities: true } })
+    await aService.syncNow()
+    await bService.syncNow()
+    expect(localB).toEqual([{ pubkey: secondPubkey, nsec: identityNsec }])
+    expect(shared.published).toContain('ncc-browser/identities/v1')
+  })
+
   it('does nothing until a category is switched on', async () => {
     const shared = relay()
     const clock = { now: 1_800_000_000_000 }

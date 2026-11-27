@@ -160,6 +160,11 @@ export class IdentityManager {
     if (!item) return null
     return item.remote ?? (item.local ? new LocalIdentityProvider(item.local) : null)
   }
+  defaultIdentityId(): string | null { return this.defaultId }
+  providerFor(id: string): IdentityProvider | null {
+    const item = this.profiles.get(id)
+    return item?.remote ?? (item?.local ? new LocalIdentityProvider(item.local) : null)
+  }
   defaultStatus(): IdentityStatus {
     return this.defaultProvider()?.status() ?? this.deps.local.status()
   }
@@ -188,6 +193,26 @@ export class IdentityManager {
       out.push({ npub: npubOf(secret), nsec: nsecOf(secret) })
     }
     return out
+  }
+  syncedLocalIdentitySecrets(): Array<{ pubkey: string; nsec: string }> {
+    return [...this.profiles.values()]
+      .filter((item) => item.mode === 'local' && item.local?.status().persisted && !!item.local.getSecret())
+      .map((item) => ({ pubkey: item.id, nsec: nsecOf(item.local!.getSecret()!) }))
+  }
+  async importSyncedLocalIdentity(secret: string): Promise<boolean> {
+    const parsed = parseSecretKey(secret.trim())
+    const id = hexPubkeyOf(parsed)
+    if (this.profiles.has(id)) return false
+    const store = await this.deps.localFactory?.(id)
+    if (!store) throw new Error('Multiple local identities are not available')
+    const status = await store.import(secret.trim())
+    if (!status.persisted) {
+      store.remove()
+      throw new Error('Secure local storage is unavailable, so this identity cannot be saved from sync.')
+    }
+    this.profiles.set(id, { id, mode: 'local', local: store })
+    this.persistProfiles()
+    return true
   }
   status(): IdentityStatus { return this.provider()?.status() ?? this.deps.local.status() }
 

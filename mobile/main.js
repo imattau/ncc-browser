@@ -718,7 +718,7 @@ function showPanel(name) {
   if (name === 'passwords') void passwordFeature.loadPasswords()
   if (name === 'payment-cards') void paymentFeature.load()
   if (name === 'wallet') void loadWallet()
-  if (name === 'sync') syncFeature.renderSync()
+  if (name === 'sync') void syncFeature.refresh()
   if (name === 'password-fill') void passwordFeature.renderPasswordFill()
   if (name === 'share-nostr') renderShareNostr()
   if (name === 'password-edit') passwordFeature.renderPasswordEdit()

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Bookmark, Clock, Laptop, Monitor, RefreshCw, Smartphone, Trash2 } from 'lucide-react'
+import { Bookmark, Clock, KeyRound, Laptop, Monitor, RefreshCw, Smartphone, Trash2 } from 'lucide-react'
 import type { IdentityStatus } from '@shared/types'
 import type { SyncCategory, SyncDevice, SyncStatus } from '@shared/sync-status'
 import { cn } from '../lib/cn'
@@ -32,6 +32,12 @@ const CATEGORIES: Array<{
     label: 'History',
     hint: 'The last eight weeks of normal-tab history, used for address-bar suggestions. Clearing history clears it on every device. Relays can see how big the document is and when it changes, though not what is in it.',
     icon: Clock
+  },
+  {
+    id: 'identities',
+    label: 'Identities',
+    hint: 'Sync locally stored Nostr keys in a separate encrypted vault. Other devices need the current default key already. Remote signer connections stay on this device. Changing the default requires migration.',
+    icon: KeyRound
   }
 ]
 
@@ -78,11 +84,24 @@ export function SyncSettings({ identity, onOpenIdentity }: SyncSettingsProps) {
       <div>
         <h2 className="text-ui-15 font-semibold text-[color:var(--color-text-strong)]">Sync</h2>
         <p className="mt-1 text-ui-115 leading-relaxed text-[color:var(--color-muted)]">
-          Keep bookmarks, open tabs and history in step across your devices. Everything is
+          Keep bookmarks, open tabs, history and local identities in step across your devices. Everything is
           encrypted to your own Nostr key before it leaves this device and stored on your relays,
           so only you can read it. Passwords sync separately, in their own vault.
         </p>
       </div>
+
+      {status.identityMigrationFrom ? (
+        <div className="rounded-xl border border-[color:var(--color-warn)]/40 bg-[color:var(--color-panel-raised)] p-4 text-ui-12 text-[color:var(--color-muted)]">
+          The identity vault is still encrypted to the previous default identity. Migrate it to the current default to sync identities from here. The previous encrypted copy will remain available to devices that have not caught up.
+          <button type="button" disabled={busy || status.syncing} onClick={() => {
+            if (!window.confirm('Migrate the identity vault to the current default identity? This publishes a new encrypted copy and keeps the previous copy on its original identity.')) return
+            setBusy(true)
+            void window.ncc.syncMigrateIdentities().then(apply).finally(() => setBusy(false))
+          }} className="mt-3 block rounded-lg border border-[color:var(--color-line)] px-3 py-1.5 text-ui-12 text-[color:var(--color-text-strong)] disabled:opacity-50">
+            Migrate identity vault
+          </button>
+        </div>
+      ) : null}
 
       {!status.identity ? (
         <div className="rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] p-4 text-ui-12 text-[color:var(--color-muted)]">

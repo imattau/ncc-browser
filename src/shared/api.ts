@@ -254,6 +254,7 @@ export interface NccApi {
   syncNow(): Promise<SyncStatus>
   syncConfigure(patch: SyncPrefsPatch): Promise<SyncStatus>
   syncRemoveDevice(id: string): Promise<SyncStatus>
+  syncMigrateIdentities(): Promise<SyncStatus>
   syncOpenTab(url: string): Promise<void>
   onSyncStatus(listener: (status: SyncStatus) => void): () => void
   passwordsStatus(): Promise<PasswordVaultStatus>

@@ -19,7 +19,7 @@ export function createSync(deps) {
   let syncAgain = false
   let syncTimer = null
   let syncStarted = false
-  let syncState = { at: 0, error: '' }
+  let syncState = { at: 0, error: '', identityMigrationFrom: null, defaultId: null }
 
   function isSyncable(address) {
     const value = String(address || '').trim()
@@ -44,6 +44,8 @@ export function createSync(deps) {
       bookmarks: saved.bookmarks === true,
       tabs: saved.tabs === true,
       history: saved.history === true,
+      identities: saved.identities === true,
+      identityVaultOwnerId: typeof saved.identityVaultOwnerId === 'string' ? saved.identityVaultOwnerId : '',
       deviceId: /^[0-9a-f]{16}$/.test(saved.deviceId || '') ? saved.deviceId : randomId(),
       deviceName:
         typeof saved.deviceName === 'string' && saved.deviceName.trim()
@@ -63,7 +65,21 @@ export function createSync(deps) {
   }
 
   function syncEnabled(prefs = syncPrefs()) {
-    return prefs.bookmarks || prefs.tabs || prefs.history
+    return prefs.bookmarks || prefs.tabs || prefs.history || prefs.identities
+  }
+
+  async function refreshIdentityOwner() {
+    const prefs = syncPrefs()
+    const profiles = await invoke('identity_profiles').catch(() => null)
+    syncState.defaultId = profiles?.default_id || null
+    if (prefs.identities && !prefs.identityVaultOwnerId && syncState.defaultId) {
+      prefs.identityVaultOwnerId = syncState.defaultId
+      saveSyncPrefs(prefs)
+    }
+    syncState.identityMigrationFrom = prefs.identities && prefs.identityVaultOwnerId && syncState.defaultId && prefs.identityVaultOwnerId !== syncState.defaultId
+      ? prefs.identityVaultOwnerId
+      : null
+    return prefs
   }
 
   function syncDevices() {
@@ -157,7 +173,7 @@ export function createSync(deps) {
   }
 
   async function syncNow() {
-    const prefs = syncPrefs()
+    const prefs = await refreshIdentityOwner()
     if (!syncEnabled(prefs)) {
       renderSync()
       return
@@ -171,15 +187,25 @@ export function createSync(deps) {
     renderSync()
     const rev = syncRev
     try {
-      const response = await invoke('sync_exchange', {
-        request: {
-          device: { id: prefs.deviceId, name: prefs.deviceName, platform: 'android' },
-          now: Date.now(),
-          bookmarks: prefs.bookmarks ? bookmarkDoc() : null,
-          history: prefs.history ? historyInput() : null,
-          tabs: prefs.tabs ? syncTabs() : null
+      const hasBrowserData = prefs.bookmarks || prefs.history || prefs.tabs
+      const response = hasBrowserData
+        ? await invoke('sync_exchange', {
+            request: {
+              device: { id: prefs.deviceId, name: prefs.deviceName, platform: 'android' },
+              now: Date.now(),
+              bookmarks: prefs.bookmarks ? bookmarkDoc() : null,
+              history: prefs.history ? historyInput() : null,
+              tabs: prefs.tabs ? syncTabs() : null
+            }
+          })
+        : { devices: [], bookmarks: null, history: null, errors: [] }
+      if (prefs.identities && !syncState.identityMigrationFrom) {
+        try {
+          await invoke('sync_identity_vault')
+        } catch (error) {
+          syncState.error = `Identities: ${String(error)}`
         }
-      })
+      }
       if (rev === syncRev) {
         if (response.bookmarks) applyBookmarkDoc(response.bookmarks)
         if (response.history) applyHistory(response.history)
@@ -214,12 +240,12 @@ export function createSync(deps) {
     set(
       'sub-sync',
       on
-        ? ['bookmarks', 'tabs', 'history'].filter((key) => prefs[key]).join(', ')
-        : 'Bookmarks, tabs and history'
+        ? ['bookmarks', 'tabs', 'history', 'identities'].filter((key) => prefs[key]).join(', ')
+        : 'Bookmarks, tabs, history and identities'
     )
     if (getPanel() !== 'sync') return
 
-    for (const key of ['bookmarks', 'tabs', 'history']) byId(`sync-${key}`).checked = prefs[key]
+    for (const key of ['bookmarks', 'tabs', 'history', 'identities']) byId(`sync-${key}`).checked = prefs[key]
     byId('sync-now').disabled = !on || syncRunning
     byId('sync-state').textContent = syncRunning
       ? 'Syncing…'
@@ -234,6 +260,9 @@ export function createSync(deps) {
     if (document.activeElement !== name) name.value = prefs.deviceName
 
     const list = byId('sync-devices')
+    const migration = byId('sync-identity-migration')
+    migration.hidden = !syncState.identityMigrationFrom
+    byId('sync-identity-migrate').disabled = syncRunning
     list.textContent = ''
     const devices = syncDevices()
     if (devices.length === 0) {
@@ -322,7 +351,7 @@ export function createSync(deps) {
     syncStarted = true
     renderSync()
 
-    for (const key of ['bookmarks', 'tabs', 'history']) {
+    for (const key of ['bookmarks', 'tabs', 'history', 'identities']) {
       byId(`sync-${key}`).addEventListener('change', (event) => {
         const prefs = syncPrefs()
         prefs[key] = event.target.checked
@@ -331,6 +360,31 @@ export function createSync(deps) {
         void syncNow()
       })
     }
+    byId('sync-identity-migrate').addEventListener('click', async () => {
+      if (!syncState.identityMigrationFrom || !syncState.defaultId || syncRunning) return
+      if (!globalThis.confirm('Migrate the identity vault to the current default identity? A new encrypted copy will be published; the previous copy will remain on its original identity.')) return
+      syncRunning = true
+      renderSync()
+      try {
+        const migrated = await invoke('sync_identity_migrate', {
+          fromId: syncState.identityMigrationFrom,
+          toId: syncState.defaultId
+        })
+        const prefs = syncPrefs()
+        prefs.identityVaultOwnerId = syncState.defaultId
+        saveSyncPrefs(prefs)
+        syncState.identityMigrationFrom = null
+        syncState.error = ''
+        syncState.at = Date.now()
+        void migrated
+      } catch (error) {
+        syncState.error = String(error)
+      } finally {
+        syncRunning = false
+        renderSync()
+        if (!syncState.error) void syncNow()
+      }
+    })
     byId('sync-now').addEventListener('click', () => void syncNow())
     const rename = () => {
       const value = byId('sync-device-name').value.trim()
@@ -367,5 +421,5 @@ export function createSync(deps) {
     }, SYNC_DEBOUNCE_MS)
   }
 
-  return { localChanged, renderSync, renderDeviceTabs, startSync }
+  return { localChanged, renderSync, refresh: async () => { await refreshIdentityOwner(); renderSync() }, renderDeviceTabs, startSync }
 }

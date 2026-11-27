@@ -877,7 +877,7 @@
       </header>
       <div class="body">
         <p class="hint">
-          Keep bookmarks, open tabs and history in step with your other devices. Everything is
+          Keep bookmarks, open tabs, history and local identities in step with your other devices. Everything is
           encrypted to your own Nostr key before it leaves this phone and stored on your relays,
           so only you can read it. Private and Tor tabs are never shared. Passwords sync
           separately, in their own vault.
@@ -897,6 +897,14 @@
           <span>History<small>The last eight weeks. Clearing history clears it on every device. Relays can see when it changes, not what is in it.</small></span>
           <input id="sync-history" class="switch" type="checkbox" role="switch" />
         </label>
+        <label class="switch-row">
+          <span>Identities<small>Sync local Nostr keys in a separate encrypted vault. Other devices need the current default key already. Remote signer connections stay on this phone. Changing the default requires migration.</small></span>
+          <input id="sync-identities" class="switch" type="checkbox" role="switch" />
+        </label>
+        <div id="sync-identity-migration" class="status" role="status" hidden>
+          <p>The identity vault is still encrypted to the previous default. Migrate it to the current default to sync identities from this phone. The old encrypted copy stays available to devices that have not caught up.</p>
+          <button id="sync-identity-migrate" class="btn tonal" type="button">Migrate identity vault</button>
+        </div>
         <button id="sync-now" class="btn tonal block" type="button">Sync now</button>
         <p id="sync-state" class="status" role="status"></p>
 

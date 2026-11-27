@@ -181,6 +181,7 @@ const api: NccApi = {
   syncNow: () => ipcRenderer.invoke('ncc:sync-now'),
   syncConfigure: (patch) => ipcRenderer.invoke('ncc:sync-configure', patch),
   syncRemoveDevice: (id) => ipcRenderer.invoke('ncc:sync-remove-device', id),
+  syncMigrateIdentities: () => ipcRenderer.invoke('ncc:sync-migrate-identities'),
   syncOpenTab: (url) => ipcRenderer.invoke('ncc:sync-open-tab', url),
   onSyncStatus: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, status: SyncStatus): void =>

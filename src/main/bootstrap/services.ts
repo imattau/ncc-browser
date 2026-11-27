@@ -182,6 +182,12 @@ export function createServices(
   const syncService = new SyncService({
     prefs: new SyncPrefsStore(join(userData, 'sync.json')),
     identity,
+    identityVault: {
+      defaultId: () => identity.defaultIdentityId(),
+      providerFor: (id) => identity.providerFor(id),
+      entries: () => identity.syncedLocalIdentitySecrets(),
+      importSecret: (secret) => identity.importSyncedLocalIdentity(secret)
+    },
     relays: relayPool,
     resolveRelays: (pubkey) => passwordService.relaysFor(pubkey),
     bookmarks: shellStack.bookmarks,

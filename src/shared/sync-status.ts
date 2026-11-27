@@ -4,6 +4,7 @@ export interface SyncCategories {
   bookmarks: boolean
   tabs: boolean
   history: boolean
+  identities: boolean
 }
 
 export type SyncCategory = keyof SyncCategories
@@ -34,6 +35,8 @@ export interface SyncStatus {
   error: string | null
   /** Other devices that publish their tabs. */
   devices: SyncDevice[]
+  /** Previous default-key owner, when an identity vault migration needs confirmation. */
+  identityMigrationFrom?: string
 }
 
 export interface SyncPrefsPatch {

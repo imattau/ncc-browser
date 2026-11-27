@@ -622,7 +622,7 @@ ships Tor's BSD licence and a source notice alongside the binary.
 
 ## Sync
 
-Settings → Sync keeps **bookmarks**, **open tabs** and **history** in step across the
+Settings → Sync keeps **bookmarks**, **open tabs**, **history** and optionally **local identities** in step across the
 desktop and Android builds. Each is its own switch, and all of them are off until you
 turn them on. Passwords sync separately, in their own vault.
 
@@ -635,6 +635,9 @@ turn them on. Passwords sync separately, in their own vault.
   works on desktop, a locally stored identity on Android.
 - **Separate documents.** Bookmarks are `ncc-browser/bookmarks/v1`. History is one
   document per week, `ncc-browser/history/v1/<week>`, for the last eight weeks only.
+  Local identities are `ncc-browser/identities/v1`, a separate encrypted list of local
+  keypairs. Other devices need the current default key already to decrypt it;
+  NIP-46 remote-signer connections stay on each device.
   Open tabs are `ncc-browser/tabs/v1/<device id>`, one per device and written only by
   that device, so two devices never overwrite each other.
 - **Merging.** Bookmarks merge by address and the newer edit wins; a removal is kept as
@@ -653,6 +656,10 @@ turn them on. Passwords sync separately, in their own vault.
   seconds), every five minutes, and about fifteen seconds after a change. Nothing is
   queued: what still needs sending is whatever differs from the relays at the next
   sync.
+- **Changing the default identity.** Identity vaults are encrypted to the default
+  identity. Changing the default on one device does not change other devices. Sync
+  asks you to migrate that device's vault; it publishes under the new key and retains
+  the old encrypted copy so devices that have not caught up can still read it.
 - **Checking it works.** `test/sync-live.test.ts` and the ignored Rust test
   `sync::tests::live_round_trip_with_the_desktop_build` run the two builds against a
   real relay (`nak serve`); their doc comments give the commands.
