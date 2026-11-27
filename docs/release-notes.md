@@ -1,5 +1,26 @@
 # Release notes
 
+## 0.47.28 — sidebar tabs and bookmarks toolbar
+
+### Added
+
+- **Desktop:** an optional left sidebar with your tabs above your bookmarks. It can
+  shrink to a strip of icons, and the window buttons move to the address bar row.
+- **Desktop:** an optional bookmarks toolbar when tabs are along the top. Bookmarks
+  that do not fit are listed in a menu.
+- **Desktop:** switch layouts in **Settings → Appearance** or from the browser menu.
+  **Ctrl+Shift+B** shows or hides bookmarks.
+- **Desktop:** right-click a bookmark to open it in a new, private or Tor tab, copy its
+  address or remove it. A middle-click opens a new tab of the same kind as the current
+  one.
+
+### Fixed
+
+- **Desktop:** adding or removing a bookmark now updates every open window.
+
+Tabs stay along the top, with the bookmarks toolbar hidden, until you change them.
+**Reset appearance** also restores this layout. Android is unchanged.
+
 ## 0.47.27 — identity sync and Tor address fixes
 
 ### Fixed

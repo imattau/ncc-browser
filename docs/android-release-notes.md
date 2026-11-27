@@ -1,5 +1,10 @@
 # Nostr Navigator for Android
 
+## 0.47.28
+
+- No changes to the Android app. This release adds a sidebar and a bookmarks toolbar
+  to the desktop app.
+
 ## 0.47.27
 
 - Identity sync no longer stops for good when one relay does not answer. If no relay
