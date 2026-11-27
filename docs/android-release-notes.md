@@ -1,5 +1,10 @@
 # Nostr Navigator for Android
 
+## 0.47.24
+
+- No Android changes. This version keeps Android in step with the desktop release,
+  which adds guided publishing.
+
 ## 0.47.23
 
 - The Monero wallet catches up much sooner. Wallets you create now start scanning about

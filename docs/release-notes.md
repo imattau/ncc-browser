@@ -1,5 +1,35 @@
 # Release notes
 
+## 0.47.24 — guided publishing on desktop
+
+### Changed
+
+- **Desktop:** publishing a site is now four steps: folder, name, check and publish. The
+  check step shows what will become public, which identity signs and whether a live site
+  will be replaced.
+- **Desktop:** adding a service is now three steps: your app, access, then check and
+  publish. One button saves, optionally creates a Tor address and publishes. Each saved
+  service shows what it needs next.
+- **Desktop:** publishing shows each stage, and a failed stage can be retried. A failed
+  Tor stage can be skipped. Progress stays available if you open another page.
+- **Desktop:** less common settings are under **More options**. Some buttons are
+  renamed: Republish is now **Update**, Verify is **Check files**, Onion is **Tor
+  address**, HTTPS is **Add HTTPS** and Find endpoints is **Find addresses**.
+
+### Added
+
+- **Desktop:** an unfinished service, unsaved service edits and a site's details are
+  kept on this computer after a restart or crash. For a site, choose its folder again.
+  A service form started from a private or Tor tab is not written to disk.
+
+### Fixed
+
+- **Desktop:** a new service no longer asks you to connect an identity when you already
+  have one.
+- **Desktop:** the suggested short name for a site keeps whole words.
+- **Desktop:** leaving the Sites page during a publish no longer hides its progress and
+  Cancel button.
+
 ## 0.47.23 — faster Monero wallet catch-up
 
 ### Changed
