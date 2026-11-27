@@ -18,6 +18,10 @@ describe.skipIf(!live)('RelayPool.queryAuthReport', () => {
     expect(down.answered).toBe(0)
     const mixed = await pool.queryAuthReport([live as string, 'ws://127.0.0.1:1'], filter)
     expect(mixed.answered).toBe(1)
+    expect(mixed.unanswered).toEqual(['ws://127.0.0.1:1'])
+    // One relay written two ways is one relay, not one that failed to answer.
+    const twice = await pool.queryAuthReport([live as string, `${live}/`], filter)
+    expect(twice).toMatchObject({ asked: 1, answered: 1 })
     pool.closeAll()
   }, 30_000)
 })

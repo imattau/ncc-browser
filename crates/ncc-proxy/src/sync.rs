@@ -17,7 +17,7 @@ use ncc_identity::{IdentityStore, KeyEnvelope};
 use ncc_vault::sync::{
     doc_kind, history_d, history_weeks, history_window_start, merge_bookmarks, merge_history,
     normalize_bookmarks, normalize_history, normalize_tabs, sync_filter, tabs_d, week_of,
-    parse_identity_vault, plan_identity_sync, BookmarkDoc, DeviceInfo, DocKind, HistoryDoc,
+    merge_identity_vaults, parse_identity_vault, plan_identity_sync, BookmarkDoc, DeviceInfo, DocKind, HistoryDoc,
     IdentityPlan, IdentityState, IdentityVault, SyncTab, SyncVisit, TabsDoc, BOOKMARKS_D,
     DEVICE_STALE_MS, IDENTITIES_D, SYNC_CLIENT, SYNC_KIND, SYNC_TAG, SYNC_VERSION,
 };
@@ -254,6 +254,45 @@ pub struct SyncService {
     busy: tokio::sync::Mutex<()>,
 }
 
+/// How much of the identity vault could be read.
+#[derive(Debug, Default)]
+struct VaultRead {
+    found: bool,
+    asked: usize,
+    unanswered: Vec<String>,
+}
+
+struct RemoteVault {
+    /// Every copy seen, merged.
+    merged: IdentityVault,
+    /// What the newest copy says on its own.
+    newest: IdentityVault,
+    read: VaultRead,
+}
+
+impl VaultRead {
+    fn answered(&self) -> usize {
+        self.asked.saturating_sub(self.unanswered.len())
+    }
+
+    fn complete(&self) -> bool {
+        self.unanswered.is_empty()
+    }
+
+    /// Enough was read to sync. One relay being down must not stop sync for good, so
+    /// a copy from any relay will do. Without one, at least half have to say there is none.
+    fn usable(&self) -> bool {
+        self.found || self.complete() || (self.answered() > 0 && self.answered() * 2 >= self.asked)
+    }
+
+    fn unreadable(&self) -> String {
+        format!(
+            "Could not read the identity vault: {} of {} relays answered and none had a copy (no answer from {}).",
+            self.answered(), self.asked, self.unanswered.join(", ")
+        )
+    }
+}
+
 impl SyncService {
     pub fn new(identity: Arc<IdentityStore>, settings: Arc<SettingsStore>) -> Self {
         Self {
@@ -278,9 +317,16 @@ impl SyncService {
         let relays = self.relays(&pubkey).await;
         if relays.is_empty() { return Err("No relay is configured for identity sync".into()); }
         let remote = self.fetch_identity_vault(&relays, &pubkey).await?;
-        let (plan, imported) = self.apply_identity_vault(envelope, &remote, state)?;
-        // Compared by what they say, so an unchanged vault is not written again.
-        if plan.vault != remote {
+        if !remote.read.usable() {
+            return Err(format!("{} Sync will try again.", remote.read.unreadable()));
+        }
+        let (plan, imported) = self.apply_identity_vault(envelope, &remote.merged, state)?;
+        // With some relays silent and no copy seen, a list holding only the key that
+        // protects it adds nothing, and could replace a fuller one that was missed.
+        let nothing_to_add = !remote.read.found && !remote.read.complete()
+            && plan.vault.marks.is_empty() && plan.vault.entries.keys().all(|key| *key == pubkey);
+        // Compared with the newest copy: anything only an older one still had is sent again.
+        if !nothing_to_add && plan.vault != remote.newest {
             let now = now_ms();
             self.publish(&relays, &pubkey, IDENTITIES_D, &plan.vault.to_document(now), now).await?;
         }
@@ -313,37 +359,56 @@ impl SyncService {
         Ok((done, imported))
     }
 
-    /// Read a key owner's identity vault without changing its contents.
-    pub async fn read_identity_vault(&self) -> Result<IdentityVault, String> {
+    /// Read a key owner's identity vault for a migration, without changing it. With
+    /// `replaced`, the list will not be read again, so it must really have been seen.
+    pub async fn read_identity_vault(&self, replaced: bool) -> Result<IdentityVault, String> {
         let pubkey = self.pubkey()?;
         let relays = self.relays(&pubkey).await;
         if relays.is_empty() { return Err("No relay is configured for identity sync".into()); }
-        self.fetch_identity_vault(&relays, &pubkey).await
+        let remote = self.fetch_identity_vault(&relays, &pubkey).await?;
+        let enough = if replaced { remote.read.found || remote.read.complete() } else { remote.read.usable() };
+        if !enough {
+            return Err(format!("{} The identity vault was left unchanged.", remote.read.unreadable()));
+        }
+        Ok(remote.merged)
     }
 
-    async fn fetch_identity_vault(&self, relays: &[String], pubkey: &str) -> Result<IdentityVault, String> {
-        let event = self.fetch_identity_event(relays, pubkey).await?;
-        if let Some(event) = &event {
+    /// Every copy the relays return is merged, not only the newest: a relay that was
+    /// away may hold keys that a later copy, written without it, does not. Merging
+    /// only adds keys, and removal marks still apply.
+    async fn fetch_identity_vault(&self, relays: &[String], pubkey: &str) -> Result<RemoteVault, String> {
+        let (copies, read) = self.fetch_identity_events(relays, pubkey).await;
+        let mut newest = IdentityVault::default();
+        if let Some(event) = copies.first() {
             // The next write must be newer than the one just read.
             let mut created = self.last_created();
             let entry = created.entry(IDENTITIES_D.to_string()).or_insert(0);
             *entry = (*entry).max(event.created_at.as_secs());
+            drop(created);
+            newest = parse_identity_vault(Some(&self.decrypt(pubkey, event)?))?;
         }
-        let value = event.as_ref().map(|event| self.decrypt(pubkey, event)).transpose()?;
-        parse_identity_vault(value.as_ref())
+        let mut merged = newest.clone();
+        for older in copies.iter().skip(1) {
+            // A damaged old copy must not stop sync; the newest one has been read.
+            let copy = self.decrypt(pubkey, older).and_then(|value| parse_identity_vault(Some(&value)));
+            if let Ok(next) = copy.and_then(|copy| merge_identity_vaults(&merged, &copy)) {
+                merged = next;
+            }
+        }
+        Ok(RemoteVault { merged, newest, read })
     }
 
-    async fn fetch_identity_event(&self, relays: &[String], pubkey: &str) -> Result<Option<nostr::Event>, String> {
+    /// The copies of the identity vault the relays hold, newest first.
+    async fn fetch_identity_events(&self, relays: &[String], pubkey: &str) -> (Vec<nostr::Event>, VaultRead) {
         let signer = self.signer();
         let filter = sync_filter(pubkey);
         let attempts = relays.iter().map(|url| relay::query_authed(url, &filter, RELAY_WAIT, &signer)).collect::<Vec<_>>();
-        let mut latest: Option<nostr::Event> = None;
-        let mut answered = 0;
-        let mut first_error = None;
-        for result in futures_util::future::join_all(attempts).await {
+        let mut copies: Vec<nostr::Event> = Vec::new();
+        let mut read = VaultRead { asked: relays.len(), ..VaultRead::default() };
+        for (url, result) in relays.iter().zip(futures_util::future::join_all(attempts).await) {
             let events = match result {
-                Ok(events) => { answered += 1; events },
-                Err(error) => { first_error.get_or_insert(error); continue; }
+                Ok(events) => events,
+                Err(_) => { read.unanswered.push(url.clone()); continue; }
             };
             for event in events {
                 let has_tag = |name: &str, wanted: &str| event.tags.iter().any(|tag| {
@@ -351,15 +416,14 @@ impl SyncService {
                 });
                 if event.kind.as_u16() as u64 != SYNC_KIND || event.pubkey.to_hex() != pubkey
                     || event.content.len() > MAX_EVENT_CONTENT || !has_tag("d", IDENTITIES_D)
-                    || !has_tag("t", SYNC_TAG) || event.verify().is_err() { continue; }
-                if latest.as_ref().map_or(true, |current| (event.created_at, std::cmp::Reverse(event.id.to_hex())) >
-                    (current.created_at, std::cmp::Reverse(current.id.to_hex()))) { latest = Some(event); }
+                    || !has_tag("t", SYNC_TAG) || event.verify().is_err()
+                    || copies.iter().any(|copy| copy.id == event.id) { continue; }
+                copies.push(event);
             }
         }
-        if answered != relays.len() {
-            return Err(first_error.unwrap_or_else(|| "Could not read the identity vault from every relay".into()));
-        }
-        Ok(latest)
+        copies.sort_by(|a, b| b.created_at.cmp(&a.created_at).then_with(|| a.id.to_hex().cmp(&b.id.to_hex())));
+        read.found = !copies.is_empty();
+        (copies, read)
     }
 
     /// Publish a validated migration result under this service's key, leaving the old
@@ -682,6 +746,21 @@ impl SyncService {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn one_silent_relay_does_not_stop_identity_sync() {
+        let read = |found: bool, asked: usize, silent: usize| VaultRead {
+            found,
+            asked,
+            unanswered: (0..silent).map(|index| format!("wss://down-{index}.test")).collect(),
+        };
+        assert!(read(true, 5, 4).usable());
+        assert!(read(false, 3, 1).usable());
+        assert!(read(false, 2, 1).usable());
+        assert!(!read(false, 3, 2).usable());
+        assert!(!read(false, 1, 1).usable());
+        assert!(read(false, 3, 2).unreadable().contains("1 of 3 relays answered"));
+    }
 
     const NOW: u64 = 1_800_000_000_000;
 

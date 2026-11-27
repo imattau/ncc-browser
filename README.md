@@ -656,6 +656,11 @@ turn them on. Passwords sync separately, in their own vault.
   seconds), every five minutes, and about fifteen seconds after a change. Nothing is
   queued: what still needs sending is whatever differs from the relays at the next
   sync.
+- **When some relays are down.** Sync does not need every relay. For the identity
+  list it merges every copy the answering relays return, so a key that only an older
+  copy still has comes back (removal markers still apply). If no relay returns a copy,
+  at least half must answer before a first list is written. Migrating the list needs a
+  copy of the old one, or an answer from every relay.
 - **Changing the default identity.** Identity vaults are encrypted to the default
   identity. Changing the default on one device does not change other devices. Sync
   asks you to migrate that device's vault; it publishes under the new key and retains

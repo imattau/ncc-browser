@@ -6,6 +6,7 @@
  */
 
 import { SimplePool, type Event, type EventTemplate, type Filter } from 'nostr-tools'
+import { normalizeURL } from 'nostr-tools/utils'
 import { SocksProxyAgent } from 'socks-proxy-agent'
 import type { Agent } from 'node:http'
 import WebSocket from 'ws'
@@ -13,6 +14,32 @@ import WebSocket from 'ws'
 import { isOnionRelayUrl } from '@shared/relays'
 import type { QueryFn } from '../ncc/resolver'
 import { createRelayWebSocket, RelayPinStore } from './socket'
+
+export interface RelayReport {
+  events: Event[]
+  answered: number
+  /** Relays actually asked, after removing repeats. */
+  asked: number
+  unanswered: string[]
+}
+
+/** The same for every way of writing one relay. Anything unreadable is left as typed. */
+function uniqueKey(url: string): string {
+  try {
+    return normalizeURL(url)
+  } catch {
+    return url
+  }
+}
+
+function uniqueRelays(relays: string[]): string[] {
+  const unique = new Map<string, string>()
+  for (const url of relays) {
+    const key = uniqueKey(url)
+    if (!unique.has(key)) unique.set(key, url)
+  }
+  return [...unique.values()]
+}
 
 export interface RelayPoolOptions {
   pins: RelayPinStore
@@ -26,6 +53,7 @@ export class RelayPool {
   private proxy: string | null = null
   private initialized = false
   private readonly known = new Set<string>()
+  private readonly publishing = new Map<string, Promise<string>>()
 
   constructor(private readonly options: RelayPoolOptions) {}
 
@@ -75,35 +103,57 @@ export class RelayPool {
   }
 
   /**
-   * Like `queryAuth`, but also says how many relays actually answered (reached the end
+   * Like `queryAuth`, but also says which relays actually answered (reached the end
    * of their stored events). Zero means none was reachable, which is different from
    * "reachable and holding nothing": a caller that treats the two alike reports a dead
    * relay as an up-to-date copy.
+   *
+   * Each relay is read on its own, so one that is slow cannot hide the answers of the
+   * others. One relay written two ways is asked, and counted, once.
    */
   async queryAuthReport(
     relays: string[],
     filter: Filter,
     onauth?: (event: EventTemplate) => Promise<Event>
-  ): Promise<{ events: Event[]; answered: number }> {
+  ): Promise<RelayReport> {
     this.track(relays)
+    const asked = uniqueRelays(relays)
+    const events = new Map<string, Event>()
+    const results = await Promise.all(
+      asked.map((url) => this.readRelay(url, filter, (event) => events.set(event.id, event), onauth))
+    )
+    const unanswered = asked.filter((_url, index) => !results[index])
+    return {
+      events: [...events.values()],
+      answered: asked.length - unanswered.length,
+      asked: asked.length,
+      unanswered
+    }
+  }
+
+  /** True once one relay has sent everything it holds for the filter. */
+  private readRelay(
+    url: string,
+    filter: Filter,
+    onevent: (event: Event) => void,
+    onauth?: (event: EventTemplate) => Promise<Event>
+  ): Promise<boolean> {
     return new Promise((resolve) => {
-      const events: Event[] = []
-      let answered = 0
       let finished = false
-      const finish = (): void => {
+      const finish = (answered: boolean): void => {
         if (finished) return
         finished = true
-        resolve({ events, answered })
+        clearTimeout(timeout)
+        resolve(answered)
       }
-      const timeout = setTimeout(finish, 6_000)
+      const timeout = setTimeout(() => {
+        finish(false)
+        void subscription.close('timed out')
+      }, 6_000)
       timeout.unref?.()
-      this.instance().subscribeEose(relays, filter, {
-        onevent: (event) => events.push(event),
-        onclose: (reasons) => {
-          clearTimeout(timeout)
-          answered = countAnswered(reasons)
-          finish()
-        },
+      const subscription = this.instance().subscribeEose([url], filter, {
+        onevent,
+        onclose: (reasons) => finish(countAnswered(reasons) > 0),
         ...(onauth ? { onauth: onauth as never } : {})
       })
     })
@@ -116,13 +166,29 @@ export class RelayPool {
     onauth?: (event: EventTemplate) => Promise<Event>
   ): Promise<string> {
     this.track([url])
-    return this.instance().publish([url], event, onauth ? { onauth: onauth as never } : undefined)[0]
+    return this.once(url, event, () =>
+      this.instance().publish([url], event, onauth ? { onauth: onauth as never } : undefined)[0])
   }
 
   /** Publish to one relay, returning the relay's own acceptance message. */
   publish(url: string, event: Event): Promise<string> {
     this.track([url])
-    return this.instance().publish([url], event)[0]
+    return this.once(url, event, () => this.instance().publish([url], event)[0])
+  }
+
+  /**
+   * nostr-tools keeps one waiter for each event on a connection, so sending an event
+   * again while it is in flight (one relay written two ways) leaves the first send
+   * unfinished for ever. The second caller shares the first's result instead.
+   */
+  private once(url: string, event: Event, send: () => Promise<string>): Promise<string> {
+    const key = `${uniqueKey(url)} ${event.id}`
+    let pending = this.publishing.get(key)
+    if (!pending) {
+      pending = send().finally(() => this.publishing.delete(key))
+      this.publishing.set(key, pending)
+    }
+    return pending
   }
 
   /** Publish to every relay; fails only when all of them reject. */

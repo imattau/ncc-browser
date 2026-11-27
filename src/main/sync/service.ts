@@ -265,7 +265,11 @@ export class SyncService {
     try {
       const old = await this.readIdentityVault(oldProvider)
       const current = await this.readIdentityVault(nextProvider)
-      if (!old.complete || !current.complete) throw new Error('Could not read every relay; the identity vault was left unchanged.')
+      // The old list is not read again after this, so it must really have been seen.
+      if (!old.complete && !old.found) {
+        throw new Error(`${unreadable(old)} The identity vault was left unchanged.`)
+      }
+      if (!usable(current)) throw new Error(`${unreadable(current)} The identity vault was left unchanged.`)
       const merged = await this.applyIdentityVault(vault, mergeIdentityVaults(old.doc, current.doc, this.now()))
       const pubkey = await nextProvider.getPublicKey()
       const relays = await this.deps.resolveRelays(pubkey)
@@ -296,12 +300,19 @@ export class SyncService {
     const provider = owner ? vault.providerFor(owner) : null
     if (!owner || !provider) throw new Error('Identity sync needs an available default identity.')
     const remote = await this.readIdentityVault(provider)
-    if (!remote.complete) throw new Error('Could not read every relay for the identity vault.')
+    if (!usable(remote)) throw new Error(`${unreadable(remote)} Sync will try again.`)
     const merged = await this.applyIdentityVault(vault, remote.doc)
     const pubkey = await provider.getPublicKey()
     const relays = await this.deps.resolveRelays(pubkey)
     if (!relays.length) throw new Error('No relay is configured for identity sync.')
-    if (!sameIdentityVault(merged, remote.doc)) await this.publish(provider, pubkey, relays, IDENTITIES_D, { ...merged, updatedAt: this.now() })
+    // With some relays silent and no copy seen, a list holding only the key that
+    // protects it adds nothing, and could replace a fuller one that was missed.
+    const nothingToAdd =
+      !remote.found && !remote.complete && !merged.marks?.length && merged.entries.every((entry) => entry.pubkey === pubkey)
+    // Compared with the newest copy: anything only an older one still had is sent again.
+    if (!nothingToAdd && !sameIdentityVault(merged, remote.newest)) {
+      await this.publish(provider, pubkey, relays, IDENTITIES_D, { ...merged, updatedAt: this.now() })
+    }
     if (!this.deps.prefs.get().identityVaultOwnerId) this.deps.prefs.setIdentityVaultOwner(owner)
   }
 
@@ -326,19 +337,49 @@ export class SyncService {
     return done.doc
   }
 
-  private async readIdentityVault(provider: ProviderLike): Promise<{ doc: ReturnType<typeof normalizeIdentityVault>; complete: boolean }> {
+  /**
+   * Every copy the relays return is merged, not only the newest: a relay that was
+   * away may hold keys that a later copy, written without it, does not. Merging only
+   * adds keys, and removal marks still apply.
+   */
+  private async readIdentityVault(provider: ProviderLike): Promise<IdentityVaultRead> {
     const pubkey = await provider.getPublicKey()
     const relays = await this.deps.resolveRelays(pubkey)
-    if (!relays.length) return { doc: normalizeIdentityVault(null), complete: false }
+    const empty = normalizeIdentityVault(null)
+    if (!relays.length) {
+      return { doc: empty, newest: empty, found: false, complete: false, answered: 0, asked: 0, unanswered: [] }
+    }
+    const onauth = (template: EventTemplate): Promise<Event> => this.signAuth(provider, template)
     let events: Event[]
+    let reach = { answered: relays.length, asked: relays.length, unanswered: [] as string[] }
     if (this.deps.relays.queryAuthReport) {
-      const report = await this.deps.relays.queryAuthReport(relays, syncFilter(pubkey), (template) => this.signAuth(provider, template))
-      if (report.answered !== relays.length) return { doc: normalizeIdentityVault(null), complete: false }
+      const report = await this.deps.relays.queryAuthReport(relays, syncFilter(pubkey), onauth)
       events = report.events
-    } else events = await this.deps.relays.queryAuth(relays, syncFilter(pubkey), (template) => this.signAuth(provider, template))
-    const latest = latestByD(events, pubkey).get(IDENTITIES_D)
-    if (!latest) return { doc: normalizeIdentityVault(null), complete: true }
-    return { doc: normalizeIdentityVault(await this.decrypt(provider, pubkey, latest), this.now()), complete: true }
+      reach = {
+        answered: report.answered,
+        asked: report.asked ?? relays.length,
+        unanswered: report.unanswered ?? []
+      }
+    } else events = await this.deps.relays.queryAuth(relays, syncFilter(pubkey), onauth)
+
+    const copies = events
+      .filter((event) => isSyncEvent(event, pubkey) && dTag(event) === IDENTITIES_D)
+      .sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id))
+    const complete = reach.answered >= reach.asked
+    const latest = copies[0]
+    if (!latest) return { doc: empty, newest: empty, found: false, complete, ...reach }
+    // The next write must be newer than the copy just read, whatever its device's clock said.
+    this.lastCreated.set(IDENTITIES_D, Math.max(this.lastCreated.get(IDENTITIES_D) ?? 0, latest.created_at))
+    const newest = normalizeIdentityVault(await this.decrypt(provider, pubkey, latest), this.now())
+    let doc = newest
+    for (const older of copies.slice(1)) {
+      try {
+        doc = mergeIdentityVaults(doc, await this.decrypt(provider, pubkey, older), this.now())
+      } catch {
+        // A damaged old copy must not stop sync; the newest one has been read.
+      }
+    }
+    return { doc, newest, found: true, complete, ...reach }
   }
 
   /** Remove another device from the list: its next publish brings it back. */
@@ -607,16 +648,50 @@ export class SyncService {
   }
 }
 
+interface IdentityVaultRead {
+  /** Every copy seen, merged. */
+  doc: IdentityVaultDoc
+  /** What the newest copy says on its own. */
+  newest: IdentityVaultDoc
+  found: boolean
+  /** Every relay answered. */
+  complete: boolean
+  answered: number
+  asked: number
+  unanswered: string[]
+}
+
+/**
+ * Enough was read to sync. One relay being down must not stop sync for good, so a
+ * copy from any relay will do. Without one, at least half have to say there is none.
+ */
+function usable(read: IdentityVaultRead): boolean {
+  return read.found || read.complete || (read.answered > 0 && read.answered * 2 >= read.asked)
+}
+
+function unreadable(read: IdentityVaultRead): string {
+  if (!read.asked) return 'No relay is configured for identity sync.'
+  const silent = read.unanswered.length ? ` (no answer from ${read.unanswered.join(', ')})` : ''
+  return `Could not read the identity vault: ${read.answered} of ${read.asked} relays answered and none had a copy${silent}.`
+}
+
+function dTag(event: Event): string | undefined {
+  return event.tags.find((tag) => tag[0] === 'd')?.[1]
+}
+
+function isSyncEvent(event: Event, pubkey: string): boolean {
+  if (event.kind !== SYNC_KIND || event.pubkey !== pubkey) return false
+  if (event.content.length > MAX_EVENT_CONTENT) return false
+  if (!event.tags.some((tag) => tag[0] === 't' && tag[1] === SYNC_TAG)) return false
+  return verifyEvent(event)
+}
+
 /** Newest valid event for every `d` tag. */
 export function latestByD(events: Event[], pubkey: string): Map<string, Event> {
   const latest = new Map<string, Event>()
   for (const event of events) {
-    if (event.kind !== SYNC_KIND || event.pubkey !== pubkey) continue
-    if (event.content.length > MAX_EVENT_CONTENT) continue
-    if (!event.tags.some((tag) => tag[0] === 't' && tag[1] === SYNC_TAG)) continue
-    const d = event.tags.find((tag) => tag[0] === 'd')?.[1]
-    if (typeof d !== 'string' || !docKind(d)) continue
-    if (!verifyEvent(event)) continue
+    const d = dTag(event)
+    if (typeof d !== 'string' || !docKind(d) || !isSyncEvent(event, pubkey)) continue
     const current = latest.get(d)
     if (
       !current ||

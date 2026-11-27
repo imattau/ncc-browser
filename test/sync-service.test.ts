@@ -198,6 +198,125 @@ describe('SyncService', () => {
     expect(shared.published).toContain('ncc-browser/identities/v1')
   })
 
+  describe('identity sync when not every relay answers', () => {
+    const IDENTITIES = 'ncc-browser/identities/v1'
+    const now = 1_800_000_000_000
+    const ownerNsec = nip19.nsecEncode(sk)
+
+    function identity() {
+      const secret = generateSecretKey()
+      return { pubkey: getPublicKey(secret), nsec: nip19.nsecEncode(secret) }
+    }
+
+    async function copy(createdAt: number, entries: Array<{ pubkey: string; nsec: string }>, marks?: unknown[]) {
+      return finalizeEvent(
+        {
+          kind: 30078,
+          created_at: createdAt,
+          tags: [['d', IDENTITIES], ['t', 'ncc-browser/sync']],
+          content: await provider.nip44Encrypt(pk, JSON.stringify({ v: 1, updatedAt: 1, entries, ...(marks ? { marks } : {}) }))
+        },
+        sk
+      )
+    }
+
+    function setup(events: Event[], answered: number, asked: number, held: Array<{ pubkey: string; nsec: string }> = []) {
+      const entries = [{ pubkey: pk, nsec: ownerNsec }, ...held]
+      const published: Event[] = []
+      const dir = mkdtempSync(join(tmpdir(), 'ncc-sync-partial-'))
+      const prefs = new SyncPrefsStore(join(dir, 'sync.json'))
+      prefs.update({ categories: { identities: true } })
+      const report = async () => ({
+        events,
+        answered,
+        asked,
+        unanswered: Array.from({ length: asked - answered }, (_, index) => `wss://down-${index}.test`)
+      })
+      const service = new SyncService({
+        prefs,
+        identity: { provider: () => provider },
+        identityVault: {
+          defaultId: () => pk,
+          providerFor: () => provider,
+          entries: () => [...entries],
+          importSecret: async (secret: string) => {
+            const decoded = nip19.decode(secret)
+            if (decoded.type !== 'nsec') return false
+            entries.push({ pubkey: getPublicKey(decoded.data), nsec: secret })
+            return true
+          }
+        },
+        relays: {
+          query: async () => events,
+          queryAuth: async () => events,
+          queryAuthReport: report,
+          publishWithAuth: async (_url: string, event: Event) => {
+            published.push(event)
+            return 'ok'
+          }
+        },
+        resolveRelays: async () => Array.from({ length: asked }, (_, index) => `wss://relay-${index}.test`),
+        bookmarks: new BookmarkStore(join(dir, 'b.json')),
+        history: new HistoryStore(join(dir, 'h.json')),
+        tabs: () => [],
+        notify: () => undefined,
+        platform: 'linux',
+        now: () => now
+      })
+      const sent = async () =>
+        Promise.all(published.map(async (event) => JSON.parse(await provider.nip44Decrypt(pk, event.content))))
+      return { service, entries, published, sent }
+    }
+
+    it('syncs from a copy even when only one relay answers', async () => {
+      const other = identity()
+      const mine = identity()
+      const a = setup([await copy(10, [other])], 1, 5, [mine])
+      const status = await a.service.syncNow()
+      expect(status.error).toBeNull()
+      expect(status.lastSyncedAt).toBe(now)
+      expect(a.entries.map((entry) => entry.pubkey)).toContain(other.pubkey)
+      const [doc] = await a.sent()
+      expect(doc.entries.map((entry: { pubkey: string }) => entry.pubkey).sort()).toEqual(
+        [pk, other.pubkey, mine.pubkey].sort()
+      )
+    })
+
+    it('recovers keys that only an older copy has, and keeps removals', async () => {
+      const lost = identity()
+      const removed = identity()
+      const newer = await copy(20, [], [{ pubkey: removed.pubkey, removed: true, at: 5 }])
+      const older = await copy(10, [lost, removed])
+      const a = setup([older, newer], 3, 3)
+      await a.service.syncNow()
+      expect(a.entries.map((entry) => entry.pubkey).sort()).toEqual([pk, lost.pubkey].sort())
+      const [doc] = await a.sent()
+      expect(doc.entries.map((entry: { pubkey: string }) => entry.pubkey).sort()).toEqual([pk, lost.pubkey].sort())
+      expect(doc.marks).toHaveLength(1)
+      expect(a.published[0].created_at).toBeGreaterThan(20)
+    })
+
+    it('writes the first list when at least half the relays say there is none', async () => {
+      const a = setup([], 1, 2, [identity()])
+      expect((await a.service.syncNow()).error).toBeNull()
+      expect(a.published.length).toBeGreaterThan(0)
+    })
+
+    it('does not write a list with nothing to add while a relay is silent', async () => {
+      const a = setup([], 2, 3)
+      expect((await a.service.syncNow()).error).toBeNull()
+      expect(a.published).toEqual([])
+    })
+
+    it('stops, naming the relays, when too few answer and none has a copy', async () => {
+      const a = setup([], 1, 3, [identity()])
+      const status = await a.service.syncNow()
+      expect(status.error).toContain('1 of 3 relays answered')
+      expect(status.error).toContain('wss://down-0.test')
+      expect(a.published).toEqual([])
+    })
+  })
+
   it('does nothing until a category is switched on', async () => {
     const shared = relay()
     const clock = { now: 1_800_000_000_000 }

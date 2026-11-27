@@ -88,7 +88,7 @@ export interface PasswordRelayPoolLike {
     relays: string[],
     filter: Filter,
     onauth?: (event: EventTemplate) => Promise<Event>
-  ): Promise<{ events: Event[]; answered: number }>
+  ): Promise<{ events: Event[]; answered: number; asked?: number; unanswered?: string[] }>
   publishWithAuth(
     url: string,
     event: Event,

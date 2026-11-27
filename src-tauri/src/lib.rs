@@ -689,8 +689,8 @@ async fn sync_identity_migrate(
     let settings = state.proxy.settings().clone();
     let old_service = ncc_proxy::sync::SyncService::new(old_identity.clone(), settings.clone());
     let new_service = ncc_proxy::sync::SyncService::new(new_identity.clone(), settings);
-    let old_vault = old_service.read_identity_vault().await?;
-    let new_vault = new_service.read_identity_vault().await?;
+    let old_vault = old_service.read_identity_vault(true).await?;
+    let new_vault = new_service.read_identity_vault(false).await?;
     let remote = ncc_vault::sync::merge_identity_vaults(&old_vault, &new_vault)?;
     let (plan, imported) = new_service.apply_identity_vault(envelope(None).as_ref(), &remote, &local_state)?;
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;

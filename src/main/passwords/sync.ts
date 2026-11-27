@@ -447,7 +447,7 @@ export class PasswordSync {
 
     const relays = await this.resolveRelays(pubkey, true)
     if (relays.length === 0) return { vault, complete: false }
-    let remote: { events: Map<number, Event>; answered: number }
+    let remote: { events: Map<number, Event>; answered: number; asked: number }
     try {
       remote = await this.fetchRemoteReport(provider, pubkey, relays)
     } catch {
@@ -456,7 +456,7 @@ export class PasswordSync {
     for (const [index, event] of remote.events) await absorb(index, event)
     return {
       vault,
-      complete: remote.answered >= relays.length && !isVaultIncomplete(layout, declared)
+      complete: remote.answered >= remote.asked && !isVaultIncomplete(layout, declared)
     }
   }
 
@@ -565,12 +565,13 @@ export class PasswordSync {
     provider: ProviderLike,
     pubkey: string,
     relays: string[]
-  ): Promise<{ events: Map<number, Event>; answered: number }> {
-    if (relays.length === 0) return { events: new Map(), answered: 0 }
+  ): Promise<{ events: Map<number, Event>; answered: number; asked: number }> {
+    if (relays.length === 0) return { events: new Map(), answered: 0, asked: 0 }
     const onauth = (template: EventTemplate): Promise<Event> => this.signAuth(provider, template)
     const filter = passwordVaultFilter(pubkey, VAULT_PART_DS)
     let events: Event[]
     let answered = relays.length
+    let asked = relays.length
     if (this.ctx.relays.queryAuthReport) {
       const report = await this.ctx.relays.queryAuthReport(relays, filter, onauth)
       // Nothing answered: say so, rather than treating it as a relay with no vault.
@@ -579,6 +580,7 @@ export class PasswordSync {
       }
       events = report.events
       answered = report.answered
+      asked = report.asked ?? relays.length
     } else {
       events = await this.ctx.relays.queryAuth(relays, filter, onauth)
     }
@@ -598,7 +600,7 @@ export class PasswordSync {
         newest.set(index, event)
       }
     }
-    return { events: new Map([...newest].sort(([a], [b]) => a - b)), answered }
+    return { events: new Map([...newest].sort(([a], [b]) => a - b)), answered, asked }
   }
 
   async decryptEvent(provider: ProviderLike, event: Event): Promise<PasswordVault> {
