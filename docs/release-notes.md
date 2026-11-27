@@ -1,5 +1,35 @@
 # Release notes
 
+## 0.47.26 — identity removal sync and wallet connect fix
+
+### Changed
+
+- **Desktop and Android:** removing a saved identity now asks what you mean. **This
+  device only** stops sync adding the key back here. **Also stop syncing it
+  everywhere** takes it out of your synced list, and other devices ask before deleting
+  their own copy.
+- **Desktop and Android:** the identity that protects your synced list cannot be
+  removed while identity sync is on. Turn sync off, or migrate the list to another
+  default first.
+- **Update every device.** Older versions can put a removed identity back into the
+  synced list until an updated device syncs again. Removals made before this version
+  were not recorded; if such a key returns, remove it again. Removing a key does not
+  revoke it or erase old encrypted copies.
+
+### Fixed
+
+- **Desktop and Android:** a removed identity no longer returns at the next sync.
+- **Desktop and Android:** open identity lists reload when sync adds a key (on Android,
+  the Identity screen).
+- **Desktop:** an unchanged identity list is no longer published again on every sync.
+- **Desktop and Android:** if the key that protected your synced list is already gone,
+  you can continue with the current default's list.
+- **Desktop and Android:** a valid Nostr Wallet Connect address is accepted when the
+  pasted text has quotes, a label, spaces or invisible characters around or inside it.
+
+Version 0.47.24 was never published. Its guided publishing changes first shipped in
+0.47.25.
+
 ## 0.47.25 — encrypted identity sync
 
 ### Added

@@ -1,5 +1,15 @@
 # Nostr Navigator for Android
 
+## 0.47.26
+
+- Removing an identity now sticks. Choose to remove it from this phone only, or also
+  stop syncing it everywhere. Other devices ask before deleting their copy. Update all
+  your devices, because older versions can add a removed key back for a time.
+- The identity that protects your synced list cannot be removed while identity sync
+  is on.
+- A valid Nostr Wallet Connect address is now accepted even when the pasted text has
+  quotes, a label, spaces or hidden characters.
+
 ## 0.47.25
 
 - Identity sync is now an optional, separately encrypted part of the sync vault. It is
