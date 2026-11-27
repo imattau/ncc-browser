@@ -1,5 +1,13 @@
 # Nostr Navigator for Android
 
+## 0.47.27
+
+- Identity sync no longer stops for good when one relay does not answer. If no relay
+  returns a copy of your list, at least half of them must answer, and the error names
+  those that did not.
+- Moving the identity list to a new default identity no longer needs every relay when
+  the old list has been found.
+
 ## 0.47.26
 
 - Removing an identity now sticks. Choose to remove it from this phone only, or also

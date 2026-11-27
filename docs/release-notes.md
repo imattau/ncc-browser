@@ -1,5 +1,26 @@
 # Release notes
 
+## 0.47.27 — identity sync and Tor address fixes
+
+### Fixed
+
+- **Desktop and Android:** identity sync no longer stops for good when one relay does
+  not answer. A copy of the list from any relay is enough, and every copy returned is
+  merged. If none returns a copy, at least half the relays must answer, and the error
+  names those that did not.
+- **Desktop and Android:** moving the identity list to a new default identity no longer
+  needs every relay when the old list has been found.
+- **Desktop:** the same relay written two ways is counted once, and a slow relay no
+  longer hides the answers of the others.
+- **Desktop:** sync can no longer be left unfinished when the same update is sent to one
+  relay twice at once.
+- **Desktop:** publishing a service with a Tor address no longer reports "Tor did not
+  return the onion service id and key" when the saved address is used again.
+
+If the only relay holding your latest change is unavailable, a device can sync from an
+older copy, so a removed identity can briefly be added back. When the removal arrives,
+the app asks before deleting anything.
+
 ## 0.47.26 — identity removal sync and wallet connect fix
 
 ### Changed
