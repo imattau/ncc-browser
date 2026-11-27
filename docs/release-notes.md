@@ -1,5 +1,13 @@
 # Release notes
 
+## 0.47.29 — MCP identity check
+
+### Added
+
+- **Desktop:** the browser control MCP now has a read-only `whoami` tool. It reports
+  the Nostr identity tied to the authenticated agent connection, so an agent can check
+  its own npub before signing.
+
 ## 0.47.28 — sidebar tabs and bookmarks toolbar
 
 ### Added

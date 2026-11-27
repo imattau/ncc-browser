@@ -1,5 +1,10 @@
 # Nostr Navigator for Android
 
+## 0.47.29
+
+- No Android changes. This release adds an identity check to the desktop browser-control
+  MCP.
+
 ## 0.47.28
 
 - No changes to the Android app. This release adds a sidebar and a bookmarks toolbar
