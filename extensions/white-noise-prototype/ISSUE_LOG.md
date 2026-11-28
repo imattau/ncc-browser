@@ -7,18 +7,16 @@ Use this file to record issues reported during prototype work. Move entries to
 
 ### Partial relay publication is presented as failure
 
-- **Status:** Per-relay publish results are already independent and an
-  acknowledged relay is sufficient. The success message now describes failed
-  relays as partial availability, but the updated message still needs a live
-  publish check with one unavailable relay.
+- **Status:** Fixed and live verified in the isolated temporary profile.
 - **Change:** KeyPackage publication feedback keeps success when one or more
   relays acknowledge and reports unavailable relays as a warning. It remains an
   error only when no relay acknowledges. Warning text follows the light/dark
   theme colors.
-- **Check:** Companion bundle built; JavaScript syntax and diff checks passed.
-  Opened the companion in an isolated temporary profile and confirmed the
-  signer and relay session connected. The actual invite-key publication result
-  was not captured in this run.
+- **Check:** In the isolated temporary profile, the companion remained connected
+  while publishing an invite key with `relay.damus.io` failing its authenticated
+  connection retry. The other two selected relays acknowledged publication; the
+  UI reported the invite available on 2 relays, incoming invites on 2 relays,
+  and one unavailable relay as a warning. The operation stayed successful.
 
 ### Android group details parity
 
