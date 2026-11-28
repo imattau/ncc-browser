@@ -121,31 +121,6 @@ Use this file to record issues reported during prototype work. Move entries to
 - **Next:** Continue testing remaining companion features and cross-device
   interoperability.
 
-### Android reply reference shows an unresolved event preview
-
-- **Status:** Fixed and cross-device verified on White Noise Android
-  `2026.11.17-dev-debug`.
-- **Observed:** The companion's NIP-C7 reply displayed its quote correctly in
-  White Noise Android, plus a separate preview for the `nostr:nevent` reference
-  that said the event could not be found. The Android reply in the reverse
-  direction rendered its quote correctly in the companion.
-- **Protocol check:** NIP-C7's prose defines a reply by its `q` tag; its example
-  also puts a `nostr:nevent` in content. The referenced kind-9 rumor is carried
-  inside MLS and is not independently retrievable as a public relay event, so
-  that inline reference can trigger an unresolvable public link preview.
-- **Change:** Replies now keep the single NIP-C7 `q` tag and plain reply text,
-  omitting the inline event reference that caused the preview. The companion
-  still renders a contextual quote from the `q` tag and loaded history.
-- **Check:** A bundled-runtime check confirmed a reply is kind 9, contains the
-  reply text, and has one `q` tag with the correct id and author and no public
-  relay hint. On a fresh isolated Android API 37 emulator with White Noise
-  `2026.11.17-dev-debug`, accepted a companion-created group invite, sent an
-  Android message, then replied from the companion. Android displayed the
-  contextual quote `Replying to You: Android test prompt` and the reply text
-  `q-only reply interop check`; it showed no unresolved `Event not found`
-  preview. Both the companion and Android profile used temporary identities
-  and data directories.
-
 ### 1. Cross-device Marmot compatibility
 
 - **Status:** Core text and media interoperability verified; protocol edge cases remain.
@@ -220,6 +195,31 @@ Use this file to record issues reported during prototype work. Move entries to
   releases and group-management operations.
 
 ## Fixed
+
+### Android reply reference showed an unresolved event preview
+
+- **Reported:** 2026-11-28
+- **Observed:** The companion's NIP-C7 reply displayed its quote correctly in
+  White Noise Android, plus a separate preview for the `nostr:nevent` reference
+  that said the event could not be found. The Android reply in the reverse
+  direction rendered its quote correctly in the companion.
+- **Protocol check:** NIP-C7's prose defines a reply by its `q` tag; its example
+  also puts a `nostr:nevent` in content. The referenced kind-9 rumor is carried
+  inside MLS and is not independently retrievable as a public relay event, so
+  that inline reference can trigger an unresolvable public link preview.
+- **Change:** Replies now keep the single NIP-C7 `q` tag and plain reply text,
+  omitting the inline event reference that caused the preview. The companion
+  still renders a contextual quote from the `q` tag and loaded history.
+- **Check:** A bundled-runtime check confirmed a reply is kind 9, contains the
+  reply text, and has one `q` tag with the correct id and author and no public
+  relay hint. On a fresh isolated Android API 37 emulator with White Noise
+  `2026.11.17-dev-debug`, accepted a companion-created group invite, sent an
+  Android message, then replied from the companion. Android displayed the
+  contextual quote `Replying to You: Android test prompt` and the reply text
+  `q-only reply interop check`; it showed no unresolved `Event not found`
+  preview. After a full restart, the companion reconnected and restored the
+  two-member group and both messages. Both apps used temporary identities and
+  data directories.
 
 ### Android in-chat contact cards and polls
 
