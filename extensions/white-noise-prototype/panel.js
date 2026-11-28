@@ -120,6 +120,7 @@ function withWhiteNoiseFallbacks(primaryRelays) {
 
 function renderGroups(filter = '') {
   const list = $('chatList')
+  for (const image of list.querySelectorAll('[data-image-url]')) URL.revokeObjectURL(image.dataset.imageUrl)
   list.replaceChildren()
   const query = filter.trim().toLowerCase()
   const matching = groups
@@ -152,6 +153,7 @@ function renderGroups(filter = '') {
     const row = document.createElement('button')
     row.className = `chat-row${group.unread ? ' unread' : ''}`
     row.innerHTML = `<span class="chat-avatar">${escapeHtml((group.name || 'W').slice(0, 1).toUpperCase())}</span><span class="chat-copy"><strong>${escapeHtml(group.name || 'Untitled group')}<span class="chat-flags">${group.pinned ? '<span title="Pinned">◆</span>' : ''}${group.muted ? '<span title="Muted">🔕</span>' : ''}</span></strong><small>${group.memberCount || 1} members · epoch ${group.epoch ?? '—'}${group.unread ? ' · Unread' : ''}</small><span class="last-message"></span></span><span class="row-menu" role="button" tabindex="0" aria-label="Chat options">⋯</span>`
+    void loadGroupPhoto(group, row.querySelector('.chat-avatar'))
     if (group.last) row.querySelector('.last-message').textContent = group.last.content.slice(0, 48)
     row.addEventListener('click', event => {
       if (event.target.closest('.row-menu')) {
@@ -779,6 +781,10 @@ function retentionLabel(value) {
 function openGroupSettings(group) {
   $('editGroupName').value = group.instance.snapshot.groupData?.name || group.name
   $('editGroupDescription').value = group.instance.snapshot.groupData?.description || ''
+  $('editGroupPhoto').value = ''
+  $('editGroupPhotoPreview').classList.add('hidden')
+  $('clearGroupPhoto').disabled = false
+  void loadGroupPhoto(group, $('editGroupPhotoPreview'))
   const retention = String(group.instance.snapshot.groupData?.messageRetention ?? 0n)
   const select = $('editGroupRetention')
   if (![...select.options].some(option => option.value === retention)) {
@@ -790,6 +796,21 @@ function openGroupSettings(group) {
   select.value = retention
   $('groupSettingsForm').dataset.groupId = group.idStr
   $('groupSettingsDialog').classList.remove('hidden')
+}
+
+async function loadGroupPhoto(group, image) {
+  if (!connection || !image) return
+  try {
+    const result = await window.MarmotCompanion.readGroupImage(connection.client, group.id, connection.blossomServers)
+    if (result.kind !== 'available' || !image.isConnected) return
+    const url = URL.createObjectURL(new Blob([result.bytes], { type: result.mediaType }))
+    if (image.dataset.imageUrl) URL.revokeObjectURL(image.dataset.imageUrl)
+    image.dataset.imageUrl = url
+    if (image instanceof HTMLImageElement) image.src = url
+    else image.style.backgroundImage = `url("${url}")`
+    image.classList.remove('hidden')
+    if (image.classList.contains('chat-avatar')) image.textContent = ''
+  } catch (error) { console.debug('[white-noise] group image unavailable:', error?.message || error) }
 }
 
 async function enableGroupMedia(group) {
@@ -915,6 +936,19 @@ $('groupMenu').addEventListener('click', event => {
 })
 $('closeGroupDetails').addEventListener('click', () => $('groupDetailsDialog').classList.add('hidden'))
 $('cancelGroupSettings').addEventListener('click', () => $('groupSettingsDialog').classList.add('hidden'))
+$('clearGroupPhoto').addEventListener('click', async () => {
+  const group = groups.find(item => item.idStr === $('groupSettingsForm').dataset.groupId)
+  if (!group || !connection) return
+  const button = $('clearGroupPhoto')
+  button.disabled = true
+  try {
+    await window.MarmotCompanion.clearGroupImage(connection.client, group.id)
+    $('editGroupPhotoPreview').classList.add('hidden')
+    await refreshGroups()
+    message('Group photo removed.')
+  } catch (error) { message(error?.message || String(error), true) }
+  finally { button.disabled = false }
+})
 $('groupSettingsForm').addEventListener('submit', async event => {
   event.preventDefault()
   const form = event.currentTarget
@@ -923,6 +957,11 @@ $('groupSettingsForm').addEventListener('submit', async event => {
   const submit = form.querySelector('button[type="submit"]')
   submit.disabled = true
   try {
+    const photo = $('editGroupPhoto').files?.[0]
+    if (photo) {
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(photo.type) || photo.size > 5 * 1024 * 1024) throw new Error('Choose a JPEG, PNG or WebP image smaller than 5 MB.')
+      await window.MarmotCompanion.replaceGroupImage(connection.client, group.id, new Uint8Array(await photo.arrayBuffer()), photo.type, connection.blossomServers)
+    }
     await window.MarmotCompanion.updateGroupMetadata(connection.client, group.id, {
       name: $('editGroupName').value,
       description: $('editGroupDescription').value,

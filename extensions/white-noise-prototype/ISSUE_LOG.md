@@ -23,9 +23,22 @@ Use this file to record issues reported during prototype work. Move entries to
   setting a two-second timer on that one-member test group, a new message left
   the transcript at expiry while its encrypted rumor remained in Marmot history.
   The test group was deleted from the temporary profile afterward.
-- **Limit:** Group photo editing and the Android member step-down action are not
-  implemented yet. Expiration hides messages in this device's view but does not
-  securely erase cached or saved copies.
+- **Limit:** The Android member step-down action is not implemented yet.
+  Expiration hides messages in this device's view but does not securely erase
+  cached or saved copies.
+
+### Group photos are not yet interop-verified
+
+- **Status:** UI and Marmot upload/read/clear wiring implemented; runtime check
+  remains open.
+- **Change:** Admins can choose or remove a group photo in group settings. The
+  companion accepts JPEG, PNG and WebP up to 5 MB, calls Marmot's encrypted
+  group-image APIs, uses the account's Blossom server list, and shows available
+  photos in the chat list and editor.
+- **Check:** Extension build, JavaScript syntax checks and diff whitespace
+  checks passed. The `npm run dev` process started, but the browser MCP showed a
+  blank renderer and did not expose the companion panel, so upload, relay
+  publication and cross-device image reads were not exercised.
 
 ### Group and chat management parity
 

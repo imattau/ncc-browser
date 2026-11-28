@@ -57,6 +57,7 @@
         <section class="modal-card" aria-labelledby="groupSettingsTitle">
           <h2 id="groupSettingsTitle">Edit group</h2>
           <form id="groupSettingsForm" class="poll-form">
+            <label>Group photo</label><div class="group-photo-editor"><img id="editGroupPhotoPreview" class="group-photo-preview hidden" alt="Current group photo"><input id="editGroupPhoto" type="file" accept="image/jpeg,image/png,image/webp" aria-label="Choose group photo"><button id="clearGroupPhoto" type="button" class="secondary">Remove photo</button></div><p class="field-hint">JPEG, PNG or WebP, up to 5 MB. The image is encrypted before it is uploaded.</p>
             <label for="editGroupName">Group name</label><input id="editGroupName" maxlength="100" required>
             <label for="editGroupDescription">Description <span class="optional">(optional)</span></label><textarea id="editGroupDescription" rows="3" maxlength="500"></textarea>
             <label for="editGroupRetention">Disappearing messages</label>

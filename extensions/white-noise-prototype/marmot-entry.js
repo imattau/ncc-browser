@@ -1,7 +1,7 @@
 import { MarmotClient, createApplicationMessageIntent, createChatRumor } from '@internet-privacy/marmot-ts'
 import { makeKeyValueRumorHistoryFactory } from '@internet-privacy/marmot-ts/extra'
 import { createInboxRelayListEvent, deserializeApplicationData, encryptedMediaBlossomDefaultV2, getInboxRelays, getMediaAttachments } from '@internet-privacy/marmot-ts/core'
-import { createBlossomMediaTransport, createInviteIntent, downloadMessageMedia, prepareMediaMessage, Proposals } from '@internet-privacy/marmot-ts/client'
+import { createBlossomMediaTransport, createInviteIntent, downloadMessageMedia, fetchGroupImageTransport, prepareMediaMessage, Proposals } from '@internet-privacy/marmot-ts/client'
 import { getEventHash, nip19, verifyEvent } from 'nostr-tools'
 
 class ExtensionStore {
@@ -340,6 +340,36 @@ const api = {
       throw new Error('The group details update was not applied.')
     }
     return updated
+  },
+  async readGroupImage(client, groupId, endpoints) {
+    const group = await client.groups.get(groupId)
+    const result = await group.image.read({
+      endpoints: normalizeBlossomServers(endpoints),
+      transport: fetchGroupImageTransport,
+      maxDownloadBytes: 5 * 1024 * 1024,
+      contactPolicy: ({ url, method }) => method === 'GET' && normalizeBlossomServers(endpoints).some(endpoint => new URL(url).origin === new URL(endpoint).origin)
+    })
+    return result.kind === 'available' ? { kind: 'available', bytes: result.bytes, mediaType: result.mediaType } : result
+  },
+  async replaceGroupImage(client, groupId, bytes, mediaType, endpoints) {
+    const group = await client.groups.get(groupId)
+    const ownPubkey = await client.signer.getPublicKey()
+    if (!(group.snapshot.groupData?.adminPubkeys || []).includes(ownPubkey)) throw new Error('Only a group admin can change the group photo.')
+    if (!(bytes instanceof Uint8Array) || bytes.byteLength > 5 * 1024 * 1024) throw new Error('Choose an image smaller than 5 MB.')
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(mediaType)) throw new Error('Choose a JPEG, PNG or WebP image.')
+    const servers = normalizeBlossomServers(endpoints)
+    const profile = { endpoints: servers, transport: fetchGroupImageTransport, maxUploadBytes: 5 * 1024 * 1024, contactPolicy: ({ url, method }) => method === 'PUT' && servers.some(endpoint => new URL(url).origin === new URL(endpoint).origin) }
+    const result = await client.groups.replaceGroupImage(groupId, bytes, mediaType, profile)
+    if (result.kind !== 'published') throw new Error(`Group photo could not be saved (${result.reason}).`)
+    return result
+  },
+  async clearGroupImage(client, groupId) {
+    const group = await client.groups.get(groupId)
+    const ownPubkey = await client.signer.getPublicKey()
+    if (!(group.snapshot.groupData?.adminPubkeys || []).includes(ownPubkey)) throw new Error('Only a group admin can change the group photo.')
+    const result = await client.groups.clearGroupImage(groupId)
+    if (result.kind !== 'published') throw new Error(`Group photo could not be removed (${result.reason}).`)
+    return result
   },
   async removeGroupMember(client, groupId, memberPubkey) {
     const group = await client.groups.get(groupId)
