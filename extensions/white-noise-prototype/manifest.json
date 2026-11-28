@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "White Noise Companion (Prototype)",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "An experimental desktop Marmot messenger companion for NCC Browser.",
   "permissions": ["storage", "notifications", "nostr:pubkey", "nostr:profile", "nostr:sign", "nostr:nip44", "blossom:group-image", "contacts:read"],
   "host_permissions": ["https://relay.eu.whitenoise.chat/*", "https://relay.us.whitenoise.chat/*", "https://relay.damus.io/*", "https://relay.primal.net/*", "https://relay.ditto.pub/*", "https://nos.lol/*", "https://blossom.divine.video/*", "https://cdn.divine.video/*", "https://blossom.ditto.pub/*", "https://blossom.primal.net/*"],

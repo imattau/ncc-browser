@@ -116,8 +116,8 @@ Use this file to record issues reported during prototype work. Move entries to
 
 ### Discovering groups created before the companion
 
-- **Status:** Marmot local-state limitation; empty-state explanation corrected
-  and build checked. Runtime UX check remains pending.
+- **Status:** Marmot local-state limitation; empty-state explanation corrected,
+  packaged and runtime checked.
 - **Observed:** Groups created on another device do not appear automatically
   after connecting the companion.
 - **Cause:** Marmot's group registry enumerates local stored MLS group state;
@@ -137,8 +137,13 @@ Use this file to record issues reported during prototype work. Move entries to
   and cross-checked the duplicate-member rejection in
   `evaluateKeyPackageForGroup()`. A new temporary member did not receive a note
   sent before its Welcome; messages sent after joining were delivered and
-  persisted locally. The corrected empty-state copy is build checked; runtime
-  UX check remains pending.
+  persisted locally. In a disposable NCC profile, installed the current
+  companion through `NCC_EXTENSION_DIR`, connected the existing QA signer with
+  extension chat storage cleared, and confirmed the empty state explains that
+  linked-device restoration is still in development. It no longer suggests
+  asking a member to invite the same account. The checked-in `.nccx` had been
+  stale at version 0.1.0, so it was rebuilt as 0.1.1 from the current source.
+  The original disposable chat storage was restored after the check.
 
 ### Received image and video presentation
 
