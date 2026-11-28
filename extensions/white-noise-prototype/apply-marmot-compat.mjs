@@ -125,3 +125,179 @@ if (!welcomeSource.includes('Welcome account-devices component 0x800d must not c
   welcomeSource = welcomeSource.replace('    for (const id of required) {', `${welcomeDataGuard}\n    for (const id of required) {`)
 }
 writeFileSync(welcomeJoin, welcomeSource)
+
+// Blossom servers can be unavailable or reject an opaque encrypted image.
+// Upload the same ciphertext to every approved endpoint for redundancy, but
+// commit MLS metadata if at least one upload passes Marmot's descriptor checks.
+// Downloads try each authorized endpoint in order and stop at the first image
+// whose response decrypts and validates.
+const groupsManager = resolve(import.meta.dirname, 'node_modules/@internet-privacy/marmot-ts/dist/client/groups-manager.js')
+let groupsManagerSource = readFileSync(groupsManager, 'utf8')
+const oldImageUpload = [
+  '                    const endpoint = endpoints[0];',
+  '                    const hash = bytesToHex(encrypted.metadata.imageHash);',
+  '                    const response = await requestGroupImage(profile, {',
+  '                        url: `${endpoint}/upload`,',
+  '                        method: "PUT",',
+  '                        headers: {',
+  '                            "Content-Type": "application/octet-stream",',
+  '                            "X-SHA-256": hash,',
+  '                            Authorization: createGroupImageUploadAuthorization(endpoint, encrypted.metadata),',
+  '                        },',
+  '                        body: encrypted.ciphertext,',
+  '                        maxBytes: groupImageLimit(profile.maxDescriptorBytes, 16 * 1024),',
+  '                    }, { signal });',
+  '                    validateGroupImageUploadResponse(response, endpoint, hash, encrypted.ciphertext.length);'
+].join('\n')
+const previousRetryImageUpload = [
+  '                    const hash = bytesToHex(encrypted.metadata.imageHash);',
+  '                    let lastUploadError;',
+  '                    for (const endpoint of endpoints) {',
+  '                        try {',
+  '                            const response = await requestGroupImage(profile, {',
+  '                                url: `${endpoint}/upload`,',
+  '                                method: "PUT",',
+  '                                headers: {',
+  '                                    "Content-Type": "application/octet-stream",',
+  '                                    "X-SHA-256": hash,',
+  '                                    Authorization: createGroupImageUploadAuthorization(endpoint, encrypted.metadata),',
+  '                                },',
+  '                                body: encrypted.ciphertext,',
+  '                                maxBytes: groupImageLimit(profile.maxDescriptorBytes, 16 * 1024),',
+  '                            }, { signal });',
+  '                            validateGroupImageUploadResponse(response, endpoint, hash, encrypted.ciphertext.length);',
+  '                            lastUploadError = undefined;',
+  '                            break;',
+  '                        } catch (error) {',
+  '                            if (signal.aborted)',
+  '                                throw error;',
+  '                            lastUploadError = error;',
+  '                        }',
+  '                    }',
+  '                    if (lastUploadError)',
+  '                        throw lastUploadError;'
+].join('\n')
+const newImageUpload = [
+  '                    const hash = bytesToHex(encrypted.metadata.imageHash);',
+  '                    const uploadResults = await Promise.allSettled(endpoints.map(async (endpoint) => {',
+  '                        const response = await requestGroupImage(profile, {',
+  '                                url: `${endpoint}/upload`,',
+  '                                method: "PUT",',
+  '                                headers: {',
+  '                                    "Content-Type": "application/octet-stream",',
+  '                                    "X-SHA-256": hash,',
+  '                                    Authorization: createGroupImageUploadAuthorization(endpoint, encrypted.metadata),',
+  '                                },',
+  '                                body: encrypted.ciphertext,',
+  '                                maxBytes: groupImageLimit(profile.maxDescriptorBytes, 16 * 1024),',
+  '                        }, { signal });',
+  '                        validateGroupImageUploadResponse(response, endpoint, hash, encrypted.ciphertext.length);',
+  '                        return endpoint;',
+  '                    }));',
+  '                    if (signal.aborted)',
+  '                        throw new GroupImageRequestError("cancelled");',
+  '                    const successfulUploads = uploadResults.filter((result) => result.status === "fulfilled");',
+  '                    if (successfulUploads.length === 0) {',
+  '                        const lastFailure = uploadResults.at(-1);',
+  '                        throw lastFailure?.status === "rejected" ? lastFailure.reason : new GroupImageRequestError("transport");',
+  '                    }'
+].join('\n')
+const imageUploadMarker = 'const successfulUploads = uploadResults.filter((result) => result.status === "fulfilled");'
+if (groupsManagerSource.includes(oldImageUpload)) groupsManagerSource = groupsManagerSource.replace(oldImageUpload, newImageUpload)
+else if (groupsManagerSource.includes(previousRetryImageUpload)) groupsManagerSource = groupsManagerSource.replace(previousRetryImageUpload, newImageUpload)
+if (!groupsManagerSource.includes(imageUploadMarker)) {
+  throw new Error('Unsupported marmot-ts version: group image redundancy boundary was not found')
+}
+writeFileSync(groupsManager, groupsManagerSource)
+
+const groupImageService = resolve(import.meta.dirname, 'node_modules/@internet-privacy/marmot-ts/dist/client/group/group-image-service.js')
+let groupImageServiceSource = readFileSync(groupImageService, 'utf8')
+const oldImageFetch = [
+  '    async fetch(profile, source, effective, signal) {',
+  '        try {',
+  '            const endpoint = effective.endpoints.find((_, index) => effective.authorization[index]);',
+  '            if (!endpoint)',
+  '                throw new GroupImageRequestError("contact-denied");',
+  '            const response = await requestGroupImage(profile, {',
+  '                url: `${endpoint}/${bytesToHex(source.metadata.imageHash)}`,',
+  '                method: "GET",',
+  '                headers: {},',
+  '                maxBytes: effective.maxDownloadBytes,',
+  '            }, { signal });',
+  '            this.current(source);',
+  '            if (response.status === 404)',
+  '                throw new GroupImageReadError("missing-blob");',
+  '            if (response.status !== 200)',
+  '                throw new GroupImageRequestError("invalid-response");',
+  '            const bytes = decryptGroupImage(response.body, source.metadata);',
+  '            if (bytes.length > effective.maxUploadBytes) {',
+  '                bytes.fill(0);',
+  '                throw new GroupImageRequestError("byte-limit");',
+  '            }',
+  '            this.current(source);',
+  '            this.plaintext.add(bytes);',
+  '            return {',
+  '                kind: "available",',
+  '                bytes,',
+  '                mediaType: source.metadata.mediaType,',
+  '                snapshotIdentity: source.snapshotIdentity,',
+  '                ciphertextBytes: response.body.length,',
+  '            };',
+  '        }',
+  '        catch (error) {',
+  '            return groupImageUnavailable(error);',
+  '        }',
+  '    }'
+].join('\n')
+const newImageFetch = [
+  '    async fetch(profile, source, effective, signal) {',
+  '        try {',
+  '            const endpoints = effective.endpoints.filter((_, index) => effective.authorization[index]);',
+  '            if (!endpoints.length)',
+  '                throw new GroupImageRequestError("contact-denied");',
+  '            let lastError;',
+  '            for (const endpoint of endpoints) {',
+  '                try {',
+  '                    const response = await requestGroupImage(profile, {',
+  '                        url: `${endpoint}/${bytesToHex(source.metadata.imageHash)}`,',
+  '                        method: "GET",',
+  '                        headers: {},',
+  '                        maxBytes: effective.maxDownloadBytes,',
+  '                    }, { signal });',
+  '                    this.current(source);',
+  '                    if (response.status === 404)',
+  '                        throw new GroupImageReadError("missing-blob");',
+  '                    if (response.status !== 200)',
+  '                        throw new GroupImageRequestError("invalid-response");',
+  '                    const bytes = decryptGroupImage(response.body, source.metadata);',
+  '                    if (bytes.length > effective.maxUploadBytes) {',
+  '                        bytes.fill(0);',
+  '                        throw new GroupImageRequestError("byte-limit");',
+  '                    }',
+  '                    this.current(source);',
+  '                    this.plaintext.add(bytes);',
+  '                    return {',
+  '                        kind: "available",',
+  '                        bytes,',
+  '                        mediaType: source.metadata.mediaType,',
+  '                        snapshotIdentity: source.snapshotIdentity,',
+  '                        ciphertextBytes: response.body.length,',
+  '                    };',
+  '                } catch (error) {',
+  '                    if (signal.aborted || error instanceof GroupImageReadError && (error.reason === "closed" || error.reason === "stale"))',
+  '                        throw error;',
+  '                    lastError = error;',
+  '                }',
+  '            }',
+  '            throw lastError ?? new GroupImageRequestError("contact-denied");',
+  '        } catch (error) {',
+  '            return groupImageUnavailable(error);',
+  '        }',
+  '    }'
+].join('\n')
+const imageFetchMarker = 'const endpoints = effective.endpoints.filter((_, index) => effective.authorization[index]);'
+if (groupImageServiceSource.includes(oldImageFetch)) groupImageServiceSource = groupImageServiceSource.replace(oldImageFetch, newImageFetch)
+if (!groupImageServiceSource.includes(imageFetchMarker)) {
+  throw new Error('Unsupported marmot-ts version: group image download fallback boundary was not found')
+}
+writeFileSync(groupImageService, groupImageServiceSource)
