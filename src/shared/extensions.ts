@@ -16,7 +16,7 @@ export const MAX_ICON_BYTES = 256 * 1024
 export const MAX_NAME = 100
 export const MAX_DESCRIPTION = 500
 
-export type ExtensionSource = 'folder' | 'zip' | 'store' | 'test'
+export type ExtensionSource = 'folder' | 'zip' | 'bundled' | 'store' | 'test'
 export type ExtensionRunAt = 'document_start' | 'document_end' | 'document_idle'
 export type ExtensionStorageArea = 'local' | 'sync' | 'session' | 'private'
 

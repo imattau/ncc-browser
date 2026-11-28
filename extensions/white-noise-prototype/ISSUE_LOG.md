@@ -5,6 +5,29 @@ Use this file to record issues reported during prototype work. Move entries to
 
 ## Open / in progress
 
+### White Noise Companion is available in desktop app settings
+
+- **Status:** Bundled in desktop packaging and dev-runtime checked.
+- **Change:** The desktop build now includes the current `.nccx` package. The
+  Extensions settings page offers **Install White Noise Companion** and stages
+  it through the existing extension permission review; the app does not install
+  or enable it silently. Private-tab access starts unchecked. The bundled update
+  path recognizes an existing local companion package by its manifest name so
+  it can replace that install while preserving its extension ID and local
+  storage instead of creating a duplicate.
+- **Check:** In an isolated `npm run dev` profile, the install action opened the
+  permission review and listed the companion's requested permissions. Private
+  tabs were unchecked. After approval, the companion appeared as a toolbar
+  action, opened its 380 px panel, and had no panel-console errors. Registry
+  tests verify the review gate and that upgrading an existing `.nccx` install
+  preserves its ID and local storage. `npx electron-vite build`, typecheck,
+  lint, and 17 focused registry/migration tests passed. A Linux directory
+  package was built with the local Electron distribution and contains
+  `resources/extensions/white-noise-companion.nccx`. The packaged app was
+  launched with a disposable config profile; its bundled install action opened
+  the permission review and again showed private-tab access unchecked. Both
+  temporary QA profiles were removed after the checks.
+
 ### Group creation cannot be cancelled
 
 - **Status:** Fixed and runtime checked.

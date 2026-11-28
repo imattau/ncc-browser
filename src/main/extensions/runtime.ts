@@ -48,6 +48,8 @@ export interface ExtensionServiceDeps {
   partition: string
   backgroundIdleMs?: number
   requestTimeoutMs?: number
+  /** App-shipped White Noise package; still requires a normal user review. */
+  bundledCompanionPath?: string
 }
 
 interface BackgroundHost {
@@ -118,6 +120,12 @@ export class ExtensionService {
 
   prepareZip(path: string): ExtensionPrepareResult {
     return this.deps.registry.prepareZip(path)
+  }
+
+  prepareBundledCompanion(): ExtensionPrepareResult {
+    const path = this.deps.bundledCompanionPath
+    if (!path) return { ok: false, error: 'The bundled White Noise Companion package is unavailable.' }
+    return this.deps.registry.prepareZip(path, 'bundled')
   }
 
   async prepareRelease(reference: string): Promise<ExtensionPrepareResult> {

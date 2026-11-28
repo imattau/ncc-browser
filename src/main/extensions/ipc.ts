@@ -55,6 +55,7 @@ export function registerExtensionIpc(service: ExtensionService, deps: ExtensionI
   handle('ncc:extensions-prepare-release', (reference) =>
     service.prepareRelease(typeof reference === 'string' ? reference.slice(0, 1024) : '')
   )
+  handle('ncc:extensions-prepare-bundled-companion', () => service.prepareBundledCompanion())
   handle('ncc:extensions-check-update', (id) =>
     service.checkUpdate(typeof id === 'string' ? id : '')
   )

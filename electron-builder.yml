@@ -25,6 +25,8 @@ extraResources:
     to: nccsearch
   - from: resources/site-publisher
     to: site-publisher
+  - from: extensions/white-noise-prototype.nccx
+    to: extensions/white-noise-companion.nccx
 
 asar: true
 asarUnpack:

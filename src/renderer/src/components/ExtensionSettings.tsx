@@ -90,6 +90,21 @@ export function ExtensionSettings() {
     }
   }
 
+  const prepareBundledCompanion = async (): Promise<void> => {
+    setBusy(true)
+    setError(null)
+    setNotice(null)
+    try {
+      const result = await window.ncc.extensionsPrepareBundledCompanion()
+      if (result.ok) setReview(result.review)
+      else setError(result.error)
+    } catch (prepareError) {
+      setError(messageOf(prepareError))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   /** Run a network step that may end in a review. */
   const fromNostr = async (label: string, step: () => Promise<void>): Promise<void> => {
     setBusy(true)
@@ -161,6 +176,11 @@ export function ExtensionSettings() {
     )
   }
 
+  const bundledCompanion = state.extensions.find(
+    (extension) => extension.name === 'White Noise Companion (Prototype)'
+  )
+  const companionFromStore = bundledCompanion?.source === 'store'
+
   return (
     <>
       <Heading />
@@ -178,6 +198,21 @@ export function ExtensionSettings() {
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              data-extension-install-companion
+              disabled={busy || companionFromStore}
+              onClick={() => void prepareBundledCompanion()}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[color:var(--color-accent)]/40 px-2.5 py-1.5 text-ui-11 font-semibold text-[color:var(--color-accent)] hover:bg-[color:var(--color-accent)]/10 disabled:opacity-40"
+              title={companionFromStore
+                ? 'White Noise Companion is already installed from Nostr; update that installation instead'
+                : 'Review and install the White Noise Companion included with NCC Browser'}
+            >
+              <Puzzle className="h-3.5 w-3.5" />
+              {companionFromStore
+                ? 'Installed from Nostr'
+                : bundledCompanion ? 'Update bundled companion' : 'Install White Noise Companion'}
+            </button>
             <button
               type="button"
               disabled={busy || !state.developerMode}

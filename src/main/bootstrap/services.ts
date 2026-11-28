@@ -253,7 +253,10 @@ export function createServices(
       download: downloadPublic
     }),
     preloadPath: join(__dirname, '../preload/content.js'),
-    partition: EXTENSION_PARTITION
+    partition: EXTENSION_PARTITION,
+    bundledCompanionPath: app.isPackaged
+      ? join(process.resourcesPath, 'extensions', 'white-noise-companion.nccx')
+      : join(app.getAppPath(), 'extensions', 'white-noise-prototype.nccx')
   })
   runtime.extensions = extensionService
   registerExtensionIpc(extensionService, { shell })

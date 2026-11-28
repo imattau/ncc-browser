@@ -147,11 +147,11 @@ export class ExtensionRegistry {
     })
   }
 
-  prepareZip(zipPath: string): ExtensionPrepareResult {
-    let source: string
+  prepareZip(zipPath: string, installSource: 'zip' | 'bundled' = 'zip'): ExtensionPrepareResult {
+    let sourcePath: string
     try {
-      source = realpathSync(resolve(zipPath))
-      if (!statSync(source).isFile()) throw new Error('Choose a .zip or .nccx package')
+      sourcePath = realpathSync(resolve(zipPath))
+      if (!statSync(sourcePath).isFile()) throw new Error('Choose a .zip or .nccx package')
     } catch (error) {
       return { ok: false, error: messageOf(error) }
     }
@@ -159,8 +159,8 @@ export class ExtensionRegistry {
     const temp = join(this.baseDir, `${UNPACK_PREFIX}${randomBytes(8).toString('hex')}`)
     try {
       mkdirSync(temp, { recursive: true })
-      extractZip(readFileSync(source), temp)
-      return this.stage(temp, { source: 'zip', sourcePath: source })
+      extractZip(readFileSync(sourcePath), temp)
+      return this.stage(temp, { source: installSource, sourcePath })
     } catch (error) {
       return { ok: false, error: messageOf(error) }
     } finally {
@@ -253,7 +253,7 @@ export class ExtensionRegistry {
       sourcePath: pending.sourcePath,
       source: pending.source,
       enabled: previous?.enabled ?? true,
-      privateTabs: choices.privateTabs ?? previous?.privateTabs ?? !pending.store,
+      privateTabs: choices.privateTabs ?? previous?.privateTabs ?? (pending.source !== 'bundled' && !pending.store),
       installedAt: previous?.installedAt ?? now,
       updatedAt: now,
       manifest,
@@ -298,16 +298,29 @@ export class ExtensionRegistry {
       const manifest = normalized.manifest
       validatePackageFiles(staging, manifest)
 
+      if (options.source === 'bundled' && Object.values(this.data.extensions).some(
+        (entry) => entry.store && entry.manifest.name === manifest.name
+      )) {
+        rmSync(staging, { recursive: true, force: true })
+        return { ok: false, error: `${manifest.name} is already installed from Nostr. Update that installation instead.` }
+      }
+
       // A signed install is matched by publisher and name; a local one by path.
       // Neither can replace the other.
       const existing = options.store
         ? this.findRelease(options.store.publisher, options.store.name)
-        : Object.values(this.data.extensions).find(
-            (entry) =>
-              !entry.store &&
-              entry.sourcePath === options.sourcePath &&
-              (options.source !== 'zip' || entry.source === 'zip')
-          )
+        : options.source === 'bundled'
+          ? Object.values(this.data.extensions).find(
+              (entry) => !entry.store && entry.sourcePath === options.sourcePath
+            ) ?? Object.values(this.data.extensions).find(
+              (entry) => !entry.store && entry.manifest.name === manifest.name
+            )
+          : Object.values(this.data.extensions).find(
+              (entry) =>
+                !entry.store &&
+                entry.sourcePath === options.sourcePath &&
+                (options.source !== 'zip' || entry.source === 'zip')
+            )
       const id = existing?.id ?? randomBytes(16).toString('hex')
       this.prepared.set(token, {
         staging,
@@ -335,7 +348,7 @@ export class ExtensionRegistry {
           ...reviewAccess(manifest, existing?.manifest ?? null),
           signed: options.store ? signerOf(options.store) : null,
           notices: [...(options.notices ?? []), ...normalized.warnings],
-          privateTabs: existing?.privateTabs ?? !options.store
+          privateTabs: existing?.privateTabs ?? (options.source !== 'bundled' && !options.store)
         }
       }
     } catch (error) {

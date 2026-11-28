@@ -53,6 +53,39 @@ function copyFixture(): { base: string; source: string; registry: ExtensionRegis
 }
 
 describe('extension install review', () => {
+  it('stages the bundled White Noise package for normal permission review', () => {
+    const { registry } = copyFixture()
+    const packagePath = join(process.cwd(), 'extensions/white-noise-prototype.nccx')
+    const pending = registry.prepareZip(packagePath, 'bundled')
+    expect(pending.ok).toBe(true)
+    if (!pending.ok) return
+
+    expect(pending.review.name).toBe('White Noise Companion (Prototype)')
+    expect(pending.review.source).toBe('bundled')
+    expect(pending.review.privateTabs).toBe(false)
+    expect(pending.review.permissions.map((permission) => permission.id)).toContain('nostr:sign')
+    expect(registry.state().extensions).toHaveLength(0)
+    expect(registry.commit(pending.review.token).ok).toBe(true)
+  })
+
+  it('updates an existing local companion install instead of adding a duplicate', () => {
+    const { registry } = copyFixture()
+    const packagePath = join(process.cwd(), 'extensions/white-noise-prototype.nccx')
+    const previousPath = join(root(), 'previous-companion.nccx')
+    cpSync(packagePath, previousPath)
+    const previous = registry.prepareZip(previousPath)
+    if (!previous.ok) throw new Error(previous.error)
+    const installed = registry.commit(previous.review.token).extension!
+    writeFileSync(join(installed.installPath, 'storage-local.json'), JSON.stringify({ chatState: { saved: true } }))
+
+    const bundled = registry.prepareZip(packagePath, 'bundled')
+    if (!bundled.ok) throw new Error(bundled.error)
+    expect(bundled.review.replaces).toEqual({ name: 'White Noise Companion (Prototype)', version: '0.1.3' })
+    expect(registry.commit(bundled.review.token).extension?.id).toBe(installed.id)
+    expect(registry.state().extensions).toHaveLength(1)
+    expect(JSON.parse(readFileSync(join(installed.installPath, 'storage-local.json'), 'utf8'))).toEqual({ chatState: { saved: true } })
+  })
+
   it('installs nothing until the review is approved', () => {
     const { source, registry } = copyFixture()
     const pending = review(registry, source)

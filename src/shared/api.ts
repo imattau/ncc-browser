@@ -329,6 +329,8 @@ export interface NccApi {
   extensionsSetDeveloper(value: boolean): Promise<ExtensionsState>
   /** Choose a package and stage it for review. Installs nothing. */
   extensionsPrepare(kind: 'folder' | 'zip'): Promise<ExtensionPrepareResult>
+  /** Stage the app-shipped White Noise package for the normal permission review. */
+  extensionsPrepareBundledCompanion(): Promise<ExtensionPrepareResult>
   /** Fetch and verify a signed release, then stage it for review. */
   extensionsPrepareRelease(reference: string): Promise<ExtensionPrepareResult>
   /** Check a signed install for a newer release or a revocation. */
