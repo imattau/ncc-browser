@@ -375,7 +375,14 @@ export function App() {
         passwordStatus={passwordStatus}
         passwordContext={passwordContext}
         extensionActions={extensions?.actions ?? []}
-        onExtensionAction={(id, anchor) => void window.ncc.extensionsAction(id, anchor)}
+        onExtensionAction={(id, anchor) => {
+          void window.ncc.extensionsAction(id, anchor)
+            .then(() => setHint(null))
+            .catch((error: unknown) => {
+              const detail = error instanceof Error ? error.message : String(error)
+              setHint(`Could not open extension: ${detail}`)
+            })
+        }}
         onNavigate={navigate}
         onBack={back}
         onForward={forward}

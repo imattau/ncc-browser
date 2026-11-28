@@ -419,23 +419,25 @@ Use this file to record issues reported during prototype work. Move entries to
 
 ### 8. Signer reconnect required after reopening the companion
 
-- **Status:** Partially fixed; full browser-restart persistence needs runtime
-  verification.
+- **Status:** Fixed for remembered signer approval; session-only approvals will
+  ask again after a full browser restart by design.
 - **Observed:** Closing the panel clears its connection. Reopening required
   clicking **Connect NCC signer** again.
 - **Change:** After the first successful connection, the companion remembers
   the signer's public key and reconnects on open through NCC's normal approval
   flow. While open, it follows the active NCC profile and loads that profile's
   isolated chat state.
-- **Verified scope:** Closing and reopening the panel in the same browser
-  process restored the Relay session and saved chats without clicking Connect.
-  This does not verify persistence across a full browser restart.
+- **Check:** In the isolated dev profile, selected **Always allow** for the
+  companion signer request, created a Note to self group, and sent an encrypted
+  message. Closed and reopened the panel, then restarted the full dev browser.
+  It reconnected without another signer prompt, restored the group list, and
+  reopened the conversation with both the initial note and sent message.
 - **Persistence note:** NCC's signer prompt has an unchecked **Always allow this
   service** option. Without that choice, signer approval is session-scoped and
   can prompt again after restarting NCC Browser. The companion's saved public
   key is only a reconnect hint; it is not a persistent signer authorization.
-- **Next check:** Test a full browser restart with both the session-only and
-  remembered approval paths, using the isolated development profile.
+- **Scope:** These checks used only the disposable local signer/profile. They
+  verify local account and chat-state persistence, not cross-device delivery.
 
 ### Companion panel close button was rejected
 
@@ -447,7 +449,8 @@ Use this file to record issues reported during prototype work. Move entries to
   panel.
 - **Check:** Closed the companion with its own close action, reopened it from
   the toolbar action, and confirmed the current profile and all 13 chats
-  returned without another signer connection in the same browser process.
+  returned without another signer connection in the same browser process. The
+  isolated-profile full-restart check above also restored the conversation.
 
 ### 7. Android key-package decode error was reported as a lifetime failure
 

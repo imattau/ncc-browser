@@ -52,7 +52,7 @@ function fakeHost() {
     contents: (id) => (id === 't1' ? contents : null),
     tagAgentTab: (tabId, agentId) => void calls.push(`tag ${tabId} ${agentId}`)
   }
-  return { host, calls, setDialog: (dialog: PendingDialogInfo | null) => (dialogState = dialog) }
+  return { host, calls, contents, setDialog: (dialog: PendingDialogInfo | null) => (dialogState = dialog) }
 }
 
 const rpc = (method: string, params?: unknown, id = 1) => ({ jsonrpc: '2.0', id, method, params })
@@ -93,6 +93,88 @@ describe('McpHandler', () => {
       npub: 'npub1agentone'
     })
     expect(result.content[0]!.text).not.toMatch(/nsec|secret/i)
+  })
+
+  it('reads the active extension panel under browser-development access', async () => {
+    const { host, calls, contents } = fakeHost()
+    host.chromeContents = () => contents
+    host.extensionPanelContents = () => ({
+      ...contents,
+      evaluate: async (code) => {
+        calls.push('panel eval')
+        return code === 'location.href'
+          ? 'ncc-ext://white-noise/panel.html'
+          : { url: 'ncc-ext://white-noise/panel.html', elements: [] }
+      }
+    })
+    const sites: string[] = []
+    const gate: AutomationGate = { authorize: async (site) => { sites.push(site); return true } }
+    const handler = new McpHandler(host, allowAll, info)
+    const reply = await handler.handle(
+      rpc('tools/call', { name: 'extension_panel_read_page', arguments: {} }),
+      gate
+    )
+    const result = reply?.result as { content: Array<{ text: string }> }
+    expect(sites).toEqual(['browser://development'])
+    expect(JSON.parse(result.content[0]!.text)).toMatchObject({
+      url: 'ncc-ext://white-noise/panel.html',
+      elements: []
+    })
+    expect(calls).toContain('panel eval')
+  })
+
+  it('captures the active extension panel only after verifying its scheme', async () => {
+    const { host, contents } = fakeHost()
+    host.chromeContents = () => contents
+    host.extensionPanelContents = () => ({
+      ...contents,
+      evaluate: async (code) => code === 'location.href' ? 'ncc-ext://white-noise/panel.html' : { ok: true }
+    })
+    const handler = new McpHandler(host, allowAll, info)
+    const reply = await handler.handle(
+      rpc('tools/call', { name: 'extension_panel_screenshot', arguments: {} })
+    )
+    const result = reply?.result as { content: Array<{ type: string; data?: string }> }
+    expect(result.content[0]).toMatchObject({ type: 'image', data: Buffer.from('png').toString('base64') })
+  })
+
+  it('refuses to inspect or capture a non-extension side panel', async () => {
+    const { host, contents, calls } = fakeHost()
+    host.chromeContents = () => contents
+    host.extensionPanelContents = () => ({
+      ...contents,
+      evaluate: async () => 'https://example.com/',
+      screenshot: async () => { calls.push('panel screenshot'); return Buffer.from('png') }
+    })
+    const handler = new McpHandler(host, allowAll, info)
+    const reply = await handler.handle(
+      rpc('tools/call', { name: 'extension_panel_screenshot', arguments: {} })
+    )
+    const result = reply?.result as { content: Array<{ text: string }>; isError?: boolean }
+    expect(result.isError).toBe(true)
+    expect(result.content[0]!.text).toContain('not an extension page')
+    expect(calls).not.toContain('panel screenshot')
+  })
+
+  it('clicks only within the active extension panel after browser-development access', async () => {
+    const { host, calls, contents } = fakeHost()
+    host.chromeContents = () => contents
+    host.extensionPanelContents = () => ({
+      ...contents,
+      evaluate: async (code) => code === 'location.href' ? 'ncc-ext://white-noise/panel.html' : { ok: true }
+    })
+    const sites: string[] = []
+    const gate: AutomationGate = { authorize: async (site) => { sites.push(site); return true } }
+    const handler = new McpHandler(host, allowAll, info)
+    await handler.handle(
+      rpc('tools/call', {
+        name: 'extension_panel_click',
+        arguments: { x: 24, y: 90 }
+      }),
+      gate
+    )
+    expect(sites).toEqual(['browser://development'])
+    expect(calls).toContain('click 24,90')
   })
 
   it('fails closed when the connection has no configured identity', async () => {

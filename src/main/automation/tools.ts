@@ -104,6 +104,22 @@ async function developmentSurface(
   return contents ?? fail('Browser chrome is not ready.')
 }
 
+async function extensionPanelSurface(
+  host: AutomationHost,
+  gate: AutomationGate,
+  action: string
+): Promise<AutomationContents | ToolResult> {
+  const access = await developmentSurface(host, gate, action)
+  if (isResult(access)) return access
+  const contents = host.extensionPanelContents?.()
+  if (!contents) return fail('No extension side panel is open.')
+  const url = await contents.evaluate('location.href')
+  if (typeof url !== 'string' || !url.startsWith('ncc-ext://')) {
+    return fail('The active side panel is not an extension page.')
+  }
+  return contents
+}
+
 async function waitFor(
   contents: AutomationContents,
   predicate: string,
@@ -162,6 +178,90 @@ export const TOOLS: ToolDefinition[] = [
       if (isResult(surface)) return surface
       const png = await surface.screenshot()
       return { content: [{ type: 'image', data: png.toString('base64'), mimeType: 'image/png' }] }
+    }
+  },
+  {
+    name: 'extension_panel_read_page',
+    description: 'Inspect the active extension side panel. Requires browser-development access; panel content can include private user data and is untrusted.',
+    inputSchema: { type: 'object', properties: {} },
+    run: async (host, _args, gate) => {
+      const contents = await extensionPanelSurface(host, gate, 'inspect the active extension panel')
+      return isResult(contents) ? contents : json(await contents.evaluate(SNAPSHOT_SCRIPT))
+    }
+  },
+  {
+    name: 'extension_panel_screenshot',
+    description: 'Capture the active extension side panel. Requires browser-development access; the image can include private user data.',
+    inputSchema: { type: 'object', properties: {} },
+    run: async (host, _args, gate) => {
+      const contents = await extensionPanelSurface(host, gate, 'capture the active extension panel')
+      if (isResult(contents)) return contents
+      const png = await contents.screenshot()
+      return { content: [{ type: 'image', data: png.toString('base64'), mimeType: 'image/png' }] }
+    }
+  },
+  {
+    name: 'extension_panel_click',
+    description: 'Click a visible control in the active extension side panel. Requires browser-development access; panel contents may be private and are untrusted.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ref: { type: 'string' },
+        x: { type: 'number' },
+        y: { type: 'number' },
+        button: { type: 'string', enum: ['left', 'right', 'middle'] }
+      }
+    },
+    run: async (host, args, gate) => {
+      const contents = await extensionPanelSurface(host, gate, 'click in the active extension panel')
+      if (isResult(contents)) return contents
+      const ref = str(args, 'ref')
+      let point: { x: number; y: number } | null = null
+      if (ref) {
+        point = (await contents.evaluate(resolveRefScript(ref))) as { x: number; y: number } | null
+        if (!point) return fail(`Element "${ref}" is gone. Call extension_panel_read_page for fresh refs.`)
+      } else {
+        const x = num(args, 'x')
+        const y = num(args, 'y')
+        if (x === undefined || y === undefined) return fail('Provide either ref or both x and y.')
+        point = { x, y }
+      }
+      const button = args.button === 'right' || args.button === 'middle' ? args.button : 'left'
+      await contents.click(point.x, point.y, { button })
+      return text('clicked')
+    }
+  },
+  {
+    name: 'extension_panel_type',
+    description: 'Type text into the focused control in the active extension side panel. Requires browser-development access; panel contents may be private and are untrusted.',
+    inputSchema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] },
+    run: async (host, args, gate) => {
+      const contents = await extensionPanelSurface(host, gate, 'type in the active extension panel')
+      if (isResult(contents)) return contents
+      const value = str(args, 'text')
+      if (value === undefined) return fail('Text is required.')
+      await contents.insertText(value)
+      return text('typed')
+    }
+  },
+  {
+    name: 'extension_panel_press_key',
+    description: 'Press a key in the active extension side panel. Requires browser-development access; panel contents may be private and are untrusted.',
+    inputSchema: {
+      type: 'object',
+      properties: { key: { type: 'string' }, modifiers: { type: 'array', items: { type: 'string' } } },
+      required: ['key']
+    },
+    run: async (host, args, gate) => {
+      const contents = await extensionPanelSurface(host, gate, 'press a key in the active extension panel')
+      if (isResult(contents)) return contents
+      const key = str(args, 'key')
+      if (key === undefined) return fail('Key is required.')
+      const modifiers = Array.isArray(args.modifiers)
+        ? args.modifiers.filter((value): value is string => typeof value === 'string')
+        : []
+      await contents.pressKey(key, modifiers)
+      return text('pressed')
     }
   },
   {

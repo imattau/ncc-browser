@@ -494,7 +494,9 @@ export class ExtensionService {
 
   async clickAction(id: string, anchor: { top: number; left: number }): Promise<void> {
     const record = this.deps.registry.get(id)
-    if (!record?.enabled || !record.manifest.action) return
+    if (!record?.enabled || !record.manifest.action) {
+      throw new Error('This extension action is no longer available. Refresh the browser window and try again.')
+    }
     if (record.manifest.ncc.side_panel) {
       this.deps.host.toggleExtensionPanel(record.id, record.manifest.ncc.side_panel)
       return

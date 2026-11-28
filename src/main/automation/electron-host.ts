@@ -250,6 +250,10 @@ export function createElectronHost(shell: BrowserShell): AutomationHost {
       const contents = shell.window.webContents
       return contents.isDestroyed() ? null : wrap(contents)
     },
+    extensionPanelContents: () => {
+      const contents = shell.automationExtensionPanelContents()
+      return contents ? wrap(contents) : null
+    },
     openSettings: (section) => shell.openAutomationSettings(section),
     tagAgentTab: (tabId, agentId) => {
       const contents = shell.automationContents(tabId)

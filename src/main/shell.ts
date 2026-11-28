@@ -604,6 +604,12 @@ export class BrowserShell {
     }
   }
 
+  /** Current side-panel contents, exposed only through the browser-development MCP scope. */
+  automationExtensionPanelContents(): WebContents | null {
+    const contents = this.extensionPanel?.webContents
+    return contents && !contents.isDestroyed() ? contents : null
+  }
+
   setExtensionPanelWidth(owner: string, width: number): void {
     if (this.extensionPanelOwner !== owner) return
     this.extensionPanelWidth = Math.max(280, Math.min(600, Math.round(width)))

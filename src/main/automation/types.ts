@@ -63,6 +63,8 @@ export interface AutomationHost {
   contents(tabId: string): AutomationContents | null
   /** Trusted browser chrome, kept separate from site contents and permission scope. */
   chromeContents?(): AutomationContents | null
+  /** Current extension side panel for browser-development diagnostics only. */
+  extensionPanelContents?(): AutomationContents | null
   openSettings?(section: 'general' | 'identity' | 'passwords'): void
   /** Marks a tab as belonging to this agent, so its NIP-07 calls use the agent's own identity. */
   tagAgentTab?(tabId: string, agentId: string): void

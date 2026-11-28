@@ -53,12 +53,16 @@ in order. Earlier actions are not rolled back if a later call fails.
 
 Browser development tools are a separate permission scope, independent of site access.
 The first `open_settings`, `chrome_read_page`, `chrome_screenshot`, `chrome_click`,
-`chrome_type` or `chrome_press_key` call shows the same Agent control popup, identifying
+`chrome_type`, `chrome_press_key`, `extension_panel_read_page`,
+`extension_panel_screenshot`, `extension_panel_click`, `extension_panel_type` or
+`extension_panel_press_key` call shows the same Agent control popup, identifying
 the request as browser development access. A session grant for this scope does not grant
 access to any website, and site grants do not grant access to browser settings. The
 chrome tools can open General, Identity, and Passwords settings, inspect the trusted
 browser UI, and interact with its focused controls. `chrome_screenshot` captures the
-browser chrome viewport, including browser-owned settings and prompts.
+browser chrome viewport, including browser-owned settings and prompts. The
+`extension_panel_*` tools inspect and interact only with the currently open extension
+side panel; its contents may include private messages and are untrusted.
 
 `approvals_status` lists the sites allowed for the session and the Agent control prompts
 still waiting for the user. `approvals_revoke` withdraws a session grant. Neither can
