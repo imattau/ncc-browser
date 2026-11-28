@@ -23,9 +23,9 @@ Use this file to record issues reported during prototype work. Move entries to
   setting a two-second timer on that one-member test group, a new message left
   the transcript at expiry while its encrypted rumor remained in Marmot history.
   The test group was deleted from the temporary profile afterward.
-- **Limit:** The Android member step-down action is not implemented yet.
-  Expiration hides messages in this device's view but does not securely erase
-  cached or saved copies.
+- **Limit:** Expiration hides messages in this device's view but does not
+  securely erase cached or saved copies. Admin handoff before leaving is
+  implemented and runtime checked in the group-management section below.
 
 ### Group photos are not yet interop-verified
 
@@ -58,8 +58,8 @@ Use this file to record issues reported during prototype work. Move entries to
   chat preview; Marmot local history remains cached until the user clears it.
 - **Limit:** Archive, pin, mute preference, unread and ordering are local to
   this NCC profile. Desktop notifications are not implemented, so mute does
-  not currently suppress notifications. Folders and admin step-down remain to
-  do. Group-photo runtime interop is tracked above.
+  not currently suppress notifications. Folders remain to do. Group-photo
+  runtime interop is tracked above.
 - **Check:** In the dev browser, archive removed a diagnostic group from the
   active list, it appeared in Archived, and restore returned it to Chats.
   Rename committed to the diagnostic group and restored its original name.
