@@ -66,12 +66,13 @@ Use this file to record issues reported during prototype work. Move entries to
   inactive chats unread and opening a chat clears unread. Added group name,
   description and disappearing-message configuration at creation and from
   group details. Added per-profile chat folders with create, rename, delete,
-  assignment, and folder filtering. Expired messages are hidden from the companion transcript and
-  chat preview; Marmot local history remains cached until the user clears it.
-- **Limit:** Archive, pin, mute preference, unread and ordering are local to
-  this NCC profile. Desktop notifications are not implemented, so mute does
-  not currently suppress notifications. Folders are also local to this NCC
-  profile. Group-photo runtime interop is tracked above.
+  assignment, and folder filtering. Added opt-in generic desktop alerts for new
+  messages; alerts omit chat names and content, skip the open conversation, and
+  respect the per-chat mute preference. Expired messages are hidden from the
+  companion transcript and chat preview; Marmot local history remains cached
+  until the user clears it.
+- **Limit:** Archive, pin, mute preference, unread, ordering and folders are
+  local to this NCC profile. Group-photo runtime interop is tracked above.
 - **Check:** In the dev browser, archive removed a diagnostic group from the
   active list, it appeared in Archived, and restore returned it to Chats.
   Rename committed to the diagnostic group and restored its original name.
@@ -89,7 +90,10 @@ Use this file to record issues reported during prototype work. Move entries to
   disposable QA chat, filtered to the folder, restarted the dev browser, then
   selected the folder again and confirmed its chat still appeared. Renamed the
   folder and confirmed the assignment stayed intact; deleting it returned the
-  chat to All without deleting the chat.
+  chat to All without deleting the chat. In the isolated profile, the
+  notification option was off by default, persisted after restart, and was
+  turned off again after verification. A synthetic incoming message produced
+  one generic alert in an unmuted chat; a second produced no alert after mute.
 - **Next:** Continue testing remaining companion features and cross-device
   interoperability.
 

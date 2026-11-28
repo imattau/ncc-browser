@@ -1,4 +1,4 @@
-const defaults = { relays: ['wss://relay.damus.io', 'wss://relay.primal.net', 'wss://relay.ditto.pub'], useBrowserIdentity: false, keyPackageEncoding: 'framed' }
+const defaults = { relays: ['wss://relay.damus.io', 'wss://relay.primal.net', 'wss://relay.ditto.pub'], useBrowserIdentity: false, desktopNotifications: false, keyPackageEncoding: 'framed' }
 const previousDefaults = [
   ['wss://relay.damus.io', 'wss://relay.primal.net', 'wss://nos.lol'],
   ['wss://relay.damus.io', 'wss://nos.lol'],
@@ -11,6 +11,8 @@ const mainView = $('mainView')
 const settingsView = $('settingsView')
 let connection = null
 let connectionAttempt = false
+let desktopNotifications = false
+const notifiedEventIds = new Set()
 let groups = []
 let activeGroup = null
 const observedGroupInstances = new WeakSet()
@@ -102,6 +104,8 @@ async function load() {
   if (!sameRelays(selectedRelays, savedRelays)) await chrome.storage.local.set({ relays: selectedRelays })
   $('relayInput').value = selectedRelays.join('\n')
   $('useBrowserIdentity').checked = Boolean(saved.useBrowserIdentity)
+  desktopNotifications = Boolean(saved.desktopNotifications)
+  $('desktopNotifications').checked = desktopNotifications
   $('accountName').textContent = connection ? 'NCC signer connected' : 'Not connected'
   $('accountKey').textContent = connection ? `${connection.pubkey.slice(0, 12)}…${connection.pubkey.slice(-8)}` : 'Connect the NCC signer to begin'
   $('connectButton').textContent = connection ? 'Connected' : 'Connect NCC signer'
@@ -291,6 +295,7 @@ async function refreshGroups() {
       group.history.on('rumor', rumor => {
         if (activeGroup?.idStr !== group.idStr && (rumor?.kind === 9 || rumor?.kind === 1068) && rumorIsRetained(group, rumor)) {
           void setChatUiState(group.idStr, { unread: true })
+          if (rumor.pubkey !== connection?.pubkey) void notifyIncomingMessage(rumor, group)
         }
         void refreshGroups()
         if (activeGroup?.idStr === group.idStr) void showMessages(activeGroup)
@@ -303,6 +308,18 @@ async function refreshGroups() {
     return { id: group.snapshot.id, idStr: group.idStr, name: group.snapshot.groupData?.name || 'Encrypted group', memberCount: group.snapshot.members?.length, epoch: String(group.snapshot.epoch ?? '—'), instance: group, last: lastChatMessage ? { ...lastChatMessage, content: preview } : null, archived: Boolean(uiState.archived), pinned: Boolean(uiState.pinned), muted: Boolean(uiState.muted), unread: Boolean(uiState.unread), folderId: typeof uiState.folderId === 'string' ? uiState.folderId : null, order: Number.isFinite(uiState.order) ? uiState.order : loaded.indexOf(group) }
   }))
   renderGroups($('search').value)
+}
+
+function notifyIncomingMessage(rumor, group) {
+  if (!desktopNotifications || !rumor?.id || notifiedEventIds.has(rumor.id)) return
+  if (activeGroup?.idStr === group.idStr) return
+  notifiedEventIds.add(rumor.id)
+  if (notifiedEventIds.size > 500) notifiedEventIds.delete(notifiedEventIds.values().next().value)
+  const key = `marmot:chat-ui:${connection.pubkey}:${group.idStr}`
+  void chrome.storage.local.get(key).then(saved => {
+    if (saved[key]?.muted) return
+    return chrome.notifications.create({ title: 'White Noise', message: 'New encrypted message' })
+  }).catch(error => console.debug('[white-noise] notification unavailable:', error?.message || error))
 }
 
 async function refreshInvites() {
@@ -1324,7 +1341,8 @@ $('saveButton').addEventListener('click', async () => {
   }))]
   const keyPackageEncoding = $('keyPackageEncoding').value === 'mdk08-raw' ? 'mdk08-raw' : 'framed'
   window.__NCC_WHITE_NOISE_KEY_PACKAGE_ENCODING__ = keyPackageEncoding
-  await chrome.storage.local.set({ relays: normalizedRelays, relaysConfigured: true, useBrowserIdentity: $('useBrowserIdentity').checked, keyPackageEncoding })
+  desktopNotifications = $('desktopNotifications').checked
+  await chrome.storage.local.set({ relays: normalizedRelays, relaysConfigured: true, useBrowserIdentity: $('useBrowserIdentity').checked, desktopNotifications, keyPackageEncoding })
   selectedRelays = normalizedRelays
   if (connection) {
     liveConnection?.unsubscribe()
