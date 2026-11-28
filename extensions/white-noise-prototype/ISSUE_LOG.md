@@ -233,6 +233,15 @@ Use this file to record issues reported during prototype work. Move entries to
   asking a member to invite the same account. The checked-in `.nccx` had been
   stale at version 0.1.0, so it was rebuilt as 0.1.1 from the current source.
   The original disposable chat storage was restored after the check.
+- **Reactive group-list updates (2026-11-29):** Replaced the companion's list
+  of manually subscribed group lifecycle event names with Marmot TS 0.9.0's
+  `groups.watch({ includeStateChanges: true })` API. The watcher refreshes the
+  visible local group list and is aborted when the signer/account disconnects.
+  The `loadAll()` hydration step still runs before watching. This helps the
+  companion reflect local groups and group snapshot changes during the current
+  session; it does not discover remote-only groups or restore another device's
+  MLS state. Focused watcher tests, the runtime suite, typecheck, lint, and
+  extension bundle build passed; the packaged `.nccx` validates.
 
 ### Local extension storage quota limits long-term chat state
 

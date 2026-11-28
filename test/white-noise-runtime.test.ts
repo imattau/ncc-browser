@@ -17,8 +17,55 @@ import { selectUsableKeyPackage } from '../extensions/white-noise-prototype/key-
 // @ts-expect-error The extension is plain JavaScript without type declarations.
 import { planGroupRelayUpdates } from '../extensions/white-noise-prototype/group-relay-updates.js'
 
+// @ts-expect-error The extension is plain JavaScript without type declarations.
+import { watchGroups } from '../extensions/white-noise-prototype/group-watch.js'
+
 beforeEach(() => vi.useFakeTimers({ now: 1_800_000_000_000 }))
 afterEach(() => vi.useRealTimers())
+
+describe('Marmot group watcher', () => {
+  it('forwards reactive group snapshots and aborts its iterator on cleanup', async () => {
+    let options: { includeStateChanges?: boolean; signal?: AbortSignal } | undefined
+    const snapshots = [[{ id: 'first' }], [{ id: 'second' }]]
+    const groups = {
+      async *watch(received: typeof options) {
+        options = received
+        yield* snapshots
+      }
+    }
+    const onChange = vi.fn()
+    const stop = watchGroups(groups, onChange)
+
+    await vi.waitFor(() => expect(onChange).toHaveBeenCalledTimes(2))
+    expect(options?.includeStateChanges).toBe(true)
+    expect(onChange.mock.calls.map(([value]) => value)).toEqual(snapshots)
+    stop()
+    expect(options?.signal?.aborted).toBe(true)
+  })
+
+  it('reports watcher failures but ignores failures after cleanup', async () => {
+    const failure = new Error('watch failed')
+    const groups = { watch: async function* () { throw failure } }
+    const onError = vi.fn()
+    watchGroups(groups, vi.fn(), onError)
+    await vi.waitFor(() => expect(onError).toHaveBeenCalledWith(failure))
+
+    const pending = {
+      watch: async function* ({ signal }: { signal?: AbortSignal }) {
+        await new Promise<void>((resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(failure), { once: true })
+        })
+        yield []
+      }
+    }
+    const ignoredError = vi.fn()
+    const stop = watchGroups(pending, vi.fn(), ignoredError)
+    await Promise.resolve()
+    stop()
+    await Promise.resolve()
+    expect(ignoredError).not.toHaveBeenCalled()
+  })
+})
 
 describe('Marmot extension storage', () => {
   function memoryStorage() {

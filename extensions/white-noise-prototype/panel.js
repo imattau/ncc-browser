@@ -17,6 +17,7 @@ let groups = []
 let activeGroup = null
 const observedGroupInstances = new WeakSet()
 let liveConnection = null
+let groupWatchStop = null
 let selectedRelays = defaults.relays
 let groupRefreshTimer = null
 let showArchived = false
@@ -416,9 +417,10 @@ async function timed(label, task) {
 }
 
 function watchClient(client) {
-  for (const event of ['created', 'joined', 'imported', 'loaded', 'updated', 'removed', 'destroyed', 'left', 'disbanded', 'unloaded']) {
-    client.groups.on(event, () => void refreshGroups())
-  }
+  groupWatchStop?.()
+  groupWatchStop = window.MarmotCompanion.watchGroups(client, () => {
+    if (connection?.client === client) void refreshGroups()
+  }, error => console.warn('[white-noise] group watcher failed', error))
   client.invites.on('decrypted', () => void refreshInvites())
   client.invites.on('read', () => void refreshInvites())
 }
@@ -583,6 +585,8 @@ async function connect() {
 }
 
 async function disconnectCurrentAccount() {
+  groupWatchStop?.()
+  groupWatchStop = null
   liveConnection?.unsubscribe()
   connection?.inviteListener?.unsubscribe()
   liveConnection = null

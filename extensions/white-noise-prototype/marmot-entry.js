@@ -8,6 +8,7 @@ import { selectUsableKeyPackage } from './key-package-selection.js'
 import { planGroupRelayUpdates } from './group-relay-updates.js'
 import { planLegacyAccountMigration } from './legacy-storage-migration.js'
 import { ExtensionStore, restoreStoredValue } from './extension-store.js'
+import { watchGroups } from './group-watch.js'
 import { MarmotClient, createApplicationMessageIntent, createChatRumor } from '@internet-privacy/marmot-ts'
 import { createInboxRelayListEvent, deserializeApplicationData, encryptedMediaBlossomDefaultV2, getInboxRelays, getMediaAttachments } from '@internet-privacy/marmot-ts/core'
 import { createBlossomMediaTransport, createInviteIntent, downloadMessageMedia, prepareMediaMessage, Proposals } from '@internet-privacy/marmot-ts/client'
@@ -407,6 +408,7 @@ const api = {
   },
   leaveGroup(client, groupId) { return client.groups.leave(groupId) },
   async listGroups(client) { return client.groups.loadAll() },
+  watchGroups(client, onChange, onError) { return watchGroups(client.groups, onChange, onError) },
   async history(group) { return group.history.queryRumors({ limit: 200 }) },
   decodeContactNpub(value) {
     try {
