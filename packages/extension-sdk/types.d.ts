@@ -40,7 +40,7 @@ export interface NccManifest {
   options_page?: string
   icons?: Record<string, string>
   web_accessible_resources?: Array<string | { resources: string[]; matches: string[] }>
-  ncc?: { min_version?: string }
+  ncc?: { min_version?: string; side_panel?: string }
 }
 
 export function defineManifest<T extends NccManifest>(manifest: T): T
@@ -190,6 +190,8 @@ export interface NccApi {
     getPublicKey(): Promise<string>
     signEvent(event: EventTemplate): Promise<NostrEvent>
     getRelays(): Promise<Record<string, { read: boolean; write: boolean }>>
+    requestEvents(relays: string[], filters: Array<Record<string, unknown>>): Promise<NostrEvent[]>
+    publishEvent(relays: string[], event: NostrEvent): Promise<Record<string, { from: string; ok: boolean; message?: string }>>
     nip04: {
       encrypt(peer: string, plaintext: string): Promise<string>
       decrypt(peer: string, ciphertext: string): Promise<string>
@@ -199,7 +201,11 @@ export interface NccApi {
       decrypt(peer: string, ciphertext: string): Promise<string>
     }
   }
-  runtime: { getURL(path: string): string }
+  runtime: {
+    getURL(path: string): string
+    closePanel(): Promise<void>
+    setPanelWidth(width: number): Promise<void>
+  }
   storage: { private: StorageArea }
 }
 

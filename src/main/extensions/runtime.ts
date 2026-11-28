@@ -21,6 +21,7 @@ import {
 import type { TabKind } from '@shared/types'
 import type { BrowserShell } from '../shell'
 import type { Nip07Service } from '../signer/service'
+import type { RelayPool } from '../relay/pool'
 import type { ExtensionRegistry } from './registry'
 import { extensionPageUrl } from './protocol'
 import type { ExtensionStorage, StorageChanges } from './storage'
@@ -30,6 +31,7 @@ export interface ExtensionServiceDeps {
   storage: ExtensionStorage
   host: BrowserShell
   nip07: () => Nip07Service | null
+  relays: RelayPool
   preloadPath: string
   partition: string
   backgroundIdleMs?: number
@@ -230,6 +232,19 @@ export class ExtensionService {
     const manifest = record.manifest
 
     switch (method) {
+      case 'ncc.panel.resize': {
+        if (sender.from !== 'page') throw new Error('Only extension pages can resize a browser panel')
+        this.deps.host.setExtensionPanelWidth(extensionId, Number(args[0]))
+        return undefined
+      }
+      case 'ncc.panel.close': {
+        if (sender.from !== 'page') throw new Error('Only extension pages can close a browser panel')
+        if (sender.tab?.kind !== 'normal' || sender.incognito) throw new Error('The companion panel is only available in a normal browser window')
+        if (!this.deps.registry.get(extensionId)?.manifest.ncc.side_panel) throw new Error('This extension has no browser side panel')
+        // Let Electron send the IPC response before destroying the calling page.
+        setTimeout(() => this.deps.host.closeExtensionPanel(extensionId), 0)
+        return undefined
+      }
       case 'runtime.sendMessage':
         return this.sendRuntimeMessage(record.id, args[0], sender)
       case 'storage.get': {
@@ -328,6 +343,20 @@ export class ExtensionService {
       case 'nostr.getRelays':
         this.require(manifest, 'nostr:pubkey')
         return this.nostr().getRelays()
+      case 'nostr.requestEvents': {
+        const relays = this.allowedRelays(record.manifest, args[0])
+        const filters = Array.isArray(args[1]) ? args[1] : [args[1]]
+        if (!filters.length || filters.some((filter) => !filter || typeof filter !== 'object' || Array.isArray(filter))) throw new Error('Invalid Nostr relay filters')
+        return Promise.all(relays.flatMap((relay) => filters.map((filter) => this.deps.relays.query([relay], filter as never))))
+          .then((results) => [...new Map(results.flat().map((event) => [event.id, event])).values()])
+      }
+      case 'nostr.publishEvent': {
+        const relays = this.allowedRelays(record.manifest, args[0])
+        const event = args[1]
+        if (!event || typeof event !== 'object' || !Number.isInteger((event as { kind?: unknown }).kind) || typeof (event as { id?: unknown }).id !== 'string') throw new Error('Invalid signed Nostr event')
+        return Promise.allSettled(relays.map((relay) => this.deps.relays.publish(relay, event as never)))
+          .then((results) => Object.fromEntries(results.map((result, index) => [relays[index], result.status === 'fulfilled' ? { from: relays[index], ok: true, message: result.value } : { from: relays[index], ok: false, message: errorMessage(result.reason) }])))
+      }
       case 'nostr.nip04Encrypt':
         this.require(manifest, 'nostr:nip04')
         return this.nostr().nip04Encrypt(this.caller(record, sender), String(args[0]), args[1])
@@ -348,6 +377,10 @@ export class ExtensionService {
   async clickAction(id: string, anchor: { top: number; left: number }): Promise<void> {
     const record = this.deps.registry.get(id)
     if (!record?.enabled || !record.manifest.action) return
+    if (record.manifest.ncc.side_panel) {
+      this.deps.host.toggleExtensionPanel(record.id, record.manifest.ncc.side_panel)
+      return
+    }
     if (record.manifest.action.default_popup) {
       this.openPopup(record.id, record.manifest.action.default_popup, anchor)
       return
@@ -477,6 +510,18 @@ export class ExtensionService {
       ephemeral: kind !== 'normal',
       torTab: false
     }
+  }
+
+  private allowedRelays(manifest: ExtensionManifest, input: unknown): string[] {
+    if (!Array.isArray(input) || input.length === 0 || input.length > 12) throw new Error('Choose between one and twelve permitted relays')
+    return [...new Set(input.map((value) => {
+      if (typeof value !== 'string') throw new Error('Invalid relay URL')
+      const url = new URL(value)
+      if (url.protocol !== 'wss:' || url.username || url.password || url.hash) throw new Error('Only secure WebSocket relays are allowed')
+      const matchUrl = `https://${url.host}/`
+      if (!matchesAny(manifest.host_permissions, matchUrl)) throw new Error(`The extension has no permission for relay ${url.host}`)
+      return url.toString()
+    }))]
   }
 
   private queryTabs(extensionId: string, query: unknown): unknown[] {
@@ -947,6 +992,10 @@ function storageArea(value: unknown): ExtensionStorageArea {
     return value
   }
   return 'local'
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 function earliest(

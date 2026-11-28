@@ -1,0 +1,11 @@
+{
+  "name": "ncc-white-noise-companion",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "build": "node apply-marmot-compat.mjs && vite build --config vite.config.mjs && node build.mjs"
+  },
+  "dependencies": {
+    "@internet-privacy/marmot-ts": "0.9.0"
+  }
+}

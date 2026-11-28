@@ -49,6 +49,8 @@ export const EXTENSION_SHIM = String.raw`
       if (typeof callback === 'function') { callback(info); return }
       return Promise.resolve(info)
     },
+    closePanel: function () { return bridge.invoke('ncc.panel.close', []) },
+    setPanelWidth: function (width) { return bridge.invoke('ncc.panel.resize', [width]) },
     sendMessage: function (message, callback) {
       return finish(bridge.invoke('runtime.sendMessage', [message]), callback)
     },
@@ -206,6 +208,8 @@ export const EXTENSION_SHIM = String.raw`
     getPublicKey: function () { return bridge.invoke('nostr.getPublicKey', []) },
     signEvent: function (event) { return bridge.invoke('nostr.signEvent', [event]) },
     getRelays: function () { return bridge.invoke('nostr.getRelays', []) },
+    requestEvents: function (relays, filters) { return bridge.invoke('nostr.requestEvents', [relays, filters]) },
+    publishEvent: function (relays, event) { return bridge.invoke('nostr.publishEvent', [relays, event]) },
     nip04: {
       encrypt: function (peer, plaintext) {
         return bridge.invoke('nostr.nip04Encrypt', [peer, plaintext])
@@ -227,7 +231,11 @@ export const EXTENSION_SHIM = String.raw`
   var ncc = {
     version: 1,
     nostr: nostr,
-    runtime: { getURL: runtime.getURL },
+    runtime: {
+      getURL: runtime.getURL,
+      closePanel: runtime.closePanel,
+      setPanelWidth: runtime.setPanelWidth
+    },
     storage: { private: storageArea('private') }
   }
 

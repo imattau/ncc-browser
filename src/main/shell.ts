@@ -111,6 +111,9 @@ export class BrowserShell {
   private readonly deps: ShellDeps
   private readonly internals: ShellInternals
   private readonly tabs: Tab[] = []
+  private extensionPanel: WebContentsView | null = null
+  private extensionPanelOwner: string | null = null
+  private extensionPanelWidth = 380
   private activeId: string | null = null
   private nextTabId = 1
   private readonly overlays = new Set<string>()
@@ -366,6 +369,7 @@ export class BrowserShell {
 
     const index = this.tabs.indexOf(target)
     this.tabs.splice(index, 1)
+    if (target.kind !== 'normal') this.closeExtensionPanel()
 
     try {
       // A tab whose page closed itself (e.g. an SSO popup after `window.close()`)
@@ -510,6 +514,7 @@ export class BrowserShell {
     if (wasHidden === hidden) return
 
     if (hidden) {
+      this.extensionPanel?.setVisible(false)
       for (const tab of this.tabs) {
         try {
           tab.view.setVisible(false)
@@ -521,14 +526,78 @@ export class BrowserShell {
     }
 
     const activeTab = this.activeTab()
+    this.layoutContentViews()
     if (!activeTab) return
     if (activeTab.mode === 'blank') return
-    activeTab.view.setBounds(this.contentBounds())
+    activeTab.view.setBounds(this.pageContentBounds())
     try {
       activeTab.view.setVisible(true)
     } catch {
       // Fallback handled by showOnly on the next activation.
     }
+  }
+
+  /** Show a sandboxed extension page in the browser-owned right side panel. */
+  toggleExtensionPanel(id: string, page: string): void {
+    const current = this.extensionPanel
+    if (current && !current.webContents.isDestroyed() && current.webContents.getURL().includes(`://${id}/`)) {
+      this.closeExtensionPanel()
+      return
+    }
+    this.closeExtensionPanel()
+    const view = new WebContentsView({
+      webPreferences: {
+        preload: this.deps.contentPreloadPath,
+        partition: this.deps.partitionFor('normal'),
+        sandbox: true,
+        contextIsolation: true,
+        nodeIntegration: false,
+        spellcheck: false,
+        safeDialogs: true
+      }
+    })
+    this.extensionPanel = view
+    this.extensionPanelOwner = id
+    this.window.contentView.addChildView(view)
+    view.webContents.on('preload-error', (_event, preloadPath, error) => {
+      console.warn('[shell] extension panel preload failed:', preloadPath, error.message)
+    })
+    view.webContents.setWindowOpenHandler(({ url }) => {
+      if (/^(https?|ncc):\/\//i.test(url)) this.newTab(url)
+      return { action: 'deny' }
+    })
+    view.webContents.on('will-navigate', (event, url) => {
+      if (!url.startsWith(`ncc-ext://${id}/`)) event.preventDefault()
+    })
+    view.webContents.on('destroyed', () => {
+      if (this.extensionPanel === view) { this.extensionPanel = null; this.extensionPanelOwner = null }
+      if (!this.window.isDestroyed()) this.layoutContentViews()
+    })
+    view.webContents.loadURL(`ncc-ext://${id}/${page.replace(/^\/+/, '')}`).catch((error) => {
+      console.warn('[shell] could not open extension panel:', error)
+    })
+    this.layoutContentViews()
+  }
+
+  closeExtensionPanel(owner?: string): void {
+    if (owner !== undefined && this.extensionPanelOwner !== owner) return
+    const view = this.extensionPanel
+    if (!view) return
+    this.extensionPanel = null
+    this.extensionPanelOwner = null
+    if (!this.window.isDestroyed()) {
+      try {
+        this.window.contentView.removeChildView(view)
+        if (!view.webContents.isDestroyed()) view.webContents.close()
+      } catch { /* already destroyed with the window */ }
+      this.layoutContentViews()
+    }
+  }
+
+  setExtensionPanelWidth(owner: string, width: number): void {
+    if (this.extensionPanelOwner !== owner) return
+    this.extensionPanelWidth = Math.max(280, Math.min(600, Math.round(width)))
+    this.layoutContentViews()
   }
 
   private clearOverlays(): void {
@@ -1042,22 +1111,38 @@ export class BrowserShell {
       this.cancelInsecurePrompt()
     }
     this.activeId = id
+    if (this.activeTab()?.kind !== 'normal') this.closeExtensionPanel()
     this.showOnly(id)
     this.scheduleSessionSave()
     this.syncState()
   }
 
   private showOnly(id: string): void {
-    const bounds = this.contentBounds()
+    this.layoutContentViews()
+    const bounds = this.pageContentBounds()
     for (const tab of this.tabs) {
       const isActive = tab.id === id
-      if (isActive) tab.view.setBounds(bounds)
+      if (isActive) tab.view.setBounds(this.pageContentBounds())
       const visible = isActive && tab.mode !== 'blank' && this.overlays.size === 0
       try {
         tab.view.setVisible(visible)
       } catch {
         tab.view.setBounds(visible ? bounds : { x: bounds.x, y: bounds.y, width: 0, height: 0 })
       }
+    }
+  }
+
+  private layoutContentViews(): void {
+    if (this.window.isDestroyed()) return
+    const pageBounds = this.pageContentBounds()
+    const active = this.activeTab()
+    if (active) active.view.setBounds(pageBounds)
+    const panel = this.extensionPanel
+    if (panel && !panel.webContents.isDestroyed()) {
+      const fullBounds = this.contentBounds()
+      const width = Math.min(this.extensionPanelWidth, Math.max(280, fullBounds.width - 300))
+      panel.setBounds({ x: fullBounds.x + fullBounds.width - width, y: fullBounds.y, width, height: fullBounds.height })
+      panel.setVisible(this.overlays.size === 0 && active?.kind === 'normal')
     }
   }
 
@@ -1140,8 +1225,7 @@ export class BrowserShell {
 
   private wireWindow(): void {
     const layout = (): void => {
-      const active = this.activeTab()
-      if (active) active.view.setBounds(this.contentBounds())
+      this.layoutContentViews()
     }
 
     this.window.on('resize', () => {
@@ -1158,6 +1242,7 @@ export class BrowserShell {
 
     this.window.on('closed', () => {
       unregisterShell(this.chromeWebContentsId)
+      this.closeExtensionPanel()
       if (this.saveTimer) {
         clearTimeout(this.saveTimer)
         this.saveTimer = null
@@ -1205,6 +1290,12 @@ export class BrowserShell {
       width: Math.max(0, width - left),
       height: Math.max(0, height - top - banner)
     }
+  }
+
+  private pageContentBounds(): { x: number; y: number; width: number; height: number } {
+    const bounds = this.contentBounds()
+    if (!this.extensionPanel) return bounds
+    return { ...bounds, width: Math.max(300, bounds.width - this.extensionPanelWidth) }
   }
 
   private bannerFor(tab: Tab | null): { tone: 'warn'; title: string; detail: string } | null {

@@ -49,6 +49,14 @@ settings page shows the package origin; only install code you trust.
 `ncc` is optional metadata. `manifest_version` must be 3; MV2 manifests are rejected with
 a porting error.
 
+Desktop extensions can opt into a browser-owned right side panel with
+`"ncc": { "side_panel": "panel.html" }`. The toolbar action toggles that packaged page
+in a sandboxed `WebContentsView`; its width can be changed through
+`ncc.runtime.setPanelWidth(280..600)` and it can close itself with
+`ncc.runtime.closePanel()`. These panel controls are available only to the extension
+that currently owns the panel. The panel uses the normal browser session and closes
+when a private or Tor tab is selected.
+
 ### Match patterns
 
 The normal Chromium grammar is supported for `http`, `https` and the wildcard scheme

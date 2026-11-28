@@ -41,6 +41,12 @@
     "action": { "type": "object" },
     "options_ui": { "type": "object" },
     "icons": { "type": "object" },
-    "ncc": { "type": "object" }
+    "ncc": {
+      "type": "object",
+      "properties": {
+        "min_version": { "type": "string" },
+        "side_panel": { "type": "string" }
+      }
+    }
   }
 }

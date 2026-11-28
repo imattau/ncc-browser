@@ -48,7 +48,7 @@ export interface ExtensionManifest {
   options_page: string | null
   icons: Record<string, string>
   web_accessible_resources: string[]
-  ncc: { min_version?: string }
+  ncc: { min_version?: string; side_panel?: string }
 }
 
 export interface NormalizedManifest {
@@ -282,10 +282,15 @@ export function normalizeExtensionManifest(input: unknown): NormalizedManifest {
   const icons = normalizeIcons(raw.icons)
   const webAccessible = normalizeWebAccessible(raw.web_accessible_resources)
 
-  const ncc =
-    raw.ncc && typeof raw.ncc === 'object'
-      ? { ...(raw.ncc as { min_version?: string }) }
-      : {}
+  const rawNcc = raw.ncc && typeof raw.ncc === 'object'
+    ? raw.ncc as Record<string, unknown>
+    : {}
+  const ncc: ExtensionManifest['ncc'] = {
+    ...(typeof rawNcc.min_version === 'string' ? { min_version: rawNcc.min_version } : {}),
+    ...(typeof rawNcc.side_panel === 'string'
+      ? { side_panel: safeRelativePath(rawNcc.side_panel, 'ncc.side_panel') }
+      : {})
+  }
 
   return {
     manifest: {
