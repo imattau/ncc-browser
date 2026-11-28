@@ -1,4 +1,4 @@
-const defaults = { relays: ['wss://relay.damus.io', 'wss://relay.primal.net', 'wss://relay.ditto.pub'], useBrowserIdentity: false, desktopNotifications: false, keyPackageEncoding: 'framed' }
+const defaults = { relays: ['wss://relay.damus.io', 'wss://relay.primal.net', 'wss://relay.ditto.pub'], desktopNotifications: false, keyPackageEncoding: 'framed' }
 const previousDefaults = [
   ['wss://relay.damus.io', 'wss://relay.primal.net', 'wss://nos.lol'],
   ['wss://relay.damus.io', 'wss://nos.lol'],
@@ -36,9 +36,10 @@ function setStatus(text, connected = false) {
   $('statusDot').classList.toggle('connected', connected)
 }
 
-function message(text, error = false) {
+function message(text, error = false, warning = false) {
   $('message').textContent = text
   $('message').classList.toggle('error', error)
+  $('message').classList.toggle('warning', warning)
 }
 
 function showSettings() { mainView.classList.add('hidden'); settingsView.classList.remove('hidden') }
@@ -103,12 +104,12 @@ async function load() {
     : savedRelays
   if (!sameRelays(selectedRelays, savedRelays)) await chrome.storage.local.set({ relays: selectedRelays })
   $('relayInput').value = selectedRelays.join('\n')
-  $('useBrowserIdentity').checked = Boolean(saved.useBrowserIdentity)
   desktopNotifications = Boolean(saved.desktopNotifications)
   $('desktopNotifications').checked = desktopNotifications
-  $('accountName').textContent = connection ? 'NCC signer connected' : 'Not connected'
-  $('accountKey').textContent = connection ? `${connection.pubkey.slice(0, 12)}…${connection.pubkey.slice(-8)}` : 'Connect the NCC signer to begin'
-  $('connectButton').textContent = connection ? 'Connected' : 'Connect NCC signer'
+  $('accountName').textContent = connection ? 'Connected account' : 'Not connected'
+  $('accountKey').textContent = connection ? `Public key · ${connection.pubkey.slice(0, 12)}…${connection.pubkey.slice(-8)}` : 'Connect your browser account to begin'
+  $('connectButton').textContent = 'Connect account'
+  $('connectButton').classList.toggle('hidden', Boolean(connection))
   $('connectButton').disabled = Boolean(connection || connectionAttempt)
   $('switchAccountButton').classList.toggle('hidden', !connection)
   if (connection) setStatus('Relay session active', true)
@@ -134,21 +135,21 @@ function renderGroups(filter = '') {
     .filter(group => Boolean(group.archived) === showArchived && (showArchived || selectedFolderId === 'all' || group.folderId === selectedFolderId) && (group.name || 'Untitled group').toLowerCase().includes(query))
     .sort((left, right) => Number(right.pinned) - Number(left.pinned) || left.order - right.order)
   $('toggleArchived').textContent = showArchived ? 'Chats' : 'Archived'
-  $('chatSectionTitle').textContent = showArchived ? 'ARCHIVED' : 'CHATS'
+  $('chatSectionTitle').textContent = showArchived ? 'Archived chats' : 'Chats'
   if (!matching.length) {
     const empty = document.createElement('div')
     empty.className = 'empty'
-    const title = query ? 'No chats match your search' : !showArchived && selectedFolderId !== 'all' ? 'This folder is empty' : connection ? 'No conversations yet' : 'Connect to get started'
-    const description = query ? 'Try a different name.' : !showArchived && selectedFolderId !== 'all' ? 'Move a chat here from its chat options.' : connection ? 'Create a key package so contacts can invite you to an encrypted group.' : 'Connect the NCC signer to load your Marmot conversations.'
+    const title = query ? 'No chats match your search' : !showArchived && selectedFolderId !== 'all' ? 'This folder is empty' : connection ? 'No chats yet' : 'Connect to get started'
+    const description = query ? 'Try a different name.' : !showArchived && selectedFolderId !== 'all' ? 'Move a chat here from its chat options.' : connection ? 'Set up invitations so people can add you to a group.' : 'Connect your browser account to load your chats.'
     empty.innerHTML = `<div class="empty-icon">◌</div><strong>${title}</strong><p>${description}</p>`
     if (!query) {
       const button = document.createElement('button')
       button.className = 'primary'
       if (connection) {
-        button.textContent = 'Create invite key package'
+        button.textContent = 'Set up invitations'
         button.addEventListener('click', () => void publishKeyPackage())
       } else {
-        button.textContent = 'Connect NCC signer'
+        button.textContent = 'Connect account'
         button.addEventListener('click', () => void connect())
       }
       empty.append(button)
@@ -215,7 +216,7 @@ function renderFolderManager() {
   if (!folders.length) {
     const empty = document.createElement('p')
     empty.className = 'field-hint'
-    empty.textContent = 'Create folders to organize chats on this profile.'
+    empty.textContent = 'Create folders to organize your chats.'
     list.append(empty)
     return
   }
@@ -349,7 +350,7 @@ function renderInvites() {
     const detail = document.createElement('small')
     detail.textContent = item.canJoin
       ? `${item.preview.group?.relays?.length || item.preview.relays?.length || 0} group relays`
-      : 'This invite does not match a saved key package.'
+      : 'This account no longer has the information needed to accept this invite.'
     const actions = document.createElement('div')
     actions.className = 'invite-card-actions'
     const join = document.createElement('button')
@@ -389,7 +390,7 @@ async function connect() {
   connectionAttempt = true
   try {
     await load()
-    setStatus('Connecting to NCC signer…')
+    setStatus('Connecting account…')
     const configured = $('relayInput').value.split(/\r?\n/).map(value => value.trim()).filter(Boolean)
     if (!configured.length) throw new Error('Add at least one relay in Settings first.')
     const relays = [...new Set(configured.map(value => {
@@ -411,7 +412,7 @@ async function connect() {
     signerWatchTimer = setInterval(() => { void checkActiveSigner() }, 5000)
     await chrome.storage.local.set({ connectedSignerPubkey: runtime.pubkey })
     setStatus(`Connected · ${relays.length} relays`, true)
-    message('Signer approved. Chats and incoming group invitations are listening on the selected relays.')
+    message('Account connected. Your chats and group invitations are ready.')
   } catch (error) {
     setStatus('Connection failed')
     message(error?.message || String(error), true)
@@ -447,10 +448,10 @@ async function checkActiveSigner() {
     const currentPubkey = await ncc.nostr.getPublicKey()
     if (currentPubkey === connection.pubkey) return
     await disconnectCurrentAccount()
-    message('NCC profile changed. Loading chats for the active profile…')
+    message('Browser account changed. Loading its chats…')
     await connect()
   } catch (error) {
-    message(`Could not refresh the active NCC profile: ${error?.message || String(error)}`, true)
+    message(`Could not refresh the browser account: ${error?.message || String(error)}`, true)
   }
 }
 
@@ -459,16 +460,16 @@ async function publishKeyPackage() {
   const button = $('newChat')
   button.disabled = true
   try {
-    message('Publishing your invite key and inbox relay list. NCC will ask you to approve the Nostr signatures.')
+    message('Setting up group invitations. Approve the request in your browser when prompted.')
     const entry = await window.MarmotCompanion.createKeyPackage(connection.client, connection.relays)
     const responses = Object.entries(entry.publication?.responses || {})
     const accepted = responses.filter(([, result]) => result.ok).map(([relay]) => new URL(relay).hostname)
     const failed = responses.filter(([, result]) => !result.ok).map(([relay, result]) => `${new URL(relay).hostname}${result.message ? ` (${result.message})` : ''}`)
     const inboxAccepted = Object.values(entry.inboxPublication || {}).filter(result => result.ok).length
     if (!accepted.length) {
-      message(`Key package created locally, but no relay acknowledged publication.${failed.length ? ` Failed: ${failed.join('; ')}` : ' No relay response was received.'}`, true)
+      message(`Could not make invitations available. No relay accepted them.${failed.length ? ` ${failed.join('; ')}` : ' No relay response was received.'}`, true)
     } else {
-      message(`Invite key package published to ${accepted.length} relay(s); inbox relay list is available on ${inboxAccepted} relay(s). Share your public key with a contact so they can invite you.${failed.length ? ` Failed: ${failed.join('; ')}` : ''}`, failed.length > 0)
+      message(`You can now be invited to a group. Your invitation is available on ${accepted.length} relay(s), and incoming invites are set to ${inboxAccepted} relay(s). Share your profile address with a contact.${failed.length ? ` Some relays are unavailable: ${failed.join('; ')}` : ''}`, false, failed.length > 0)
     }
   } catch (error) { message(error?.message || String(error), true) }
   finally { button.disabled = false }
@@ -502,7 +503,7 @@ async function showMessages(group) {
   if (!matches.length) {
     const empty = document.createElement('p')
     empty.className = 'field-hint'
-    empty.textContent = query ? 'No messages match this search.' : allHistory.length > history.length ? 'No messages remain under this group’s disappearing-message timer.' : 'No messages yet. Messages are end-to-end encrypted with MLS.'
+    empty.textContent = query ? 'No messages match this search.' : allHistory.length > history.length ? 'No messages remain under this group’s disappearing-message timer.' : 'No messages yet. Messages are end-to-end encrypted.'
     list.append(empty)
     return
   }
@@ -618,12 +619,12 @@ function renderContactCard(row, rumor) {
   const copy = document.createElement('button')
   copy.type = 'button'
   copy.className = 'secondary contact-copy'
-  copy.textContent = 'Copy npub'
+  copy.textContent = 'Copy profile address'
   copy.addEventListener('click', async () => {
     try {
       await navigator.clipboard.writeText(npub)
-      message('Contact npub copied.')
-    } catch (error) { message(error?.message || 'Could not copy the npub.', true) }
+      message('Contact profile address copied.')
+    } catch (error) { message(error?.message || 'Could not copy the profile address.', true) }
   })
   card.append(title, address, copy)
   row.append(card)
@@ -688,7 +689,7 @@ function renderPoll(row, poll, history, group) {
       try {
         await window.MarmotCompanion.votePoll(connection.client, group.id, poll.id, next)
         await showMessages(group)
-        message('Vote sent through MLS.')
+        message('Vote sent.')
       } catch (error) { message(error?.message || String(error), true) }
       finally { choice.disabled = false }
     })
@@ -714,6 +715,17 @@ function renderPoll(row, poll, history, group) {
 $('messageSearch').addEventListener('input', () => {
   if (activeGroup) void showMessages(activeGroup)
 })
+$('openMessageSearch').addEventListener('click', () => {
+  const search = $('chatSearch')
+  const opening = search.classList.contains('hidden')
+  search.classList.toggle('hidden', !opening)
+  $('openMessageSearch').setAttribute('aria-expanded', String(opening))
+  if (opening) $('messageSearch').focus()
+  else {
+    $('messageSearch').value = ''
+    if (activeGroup) void showMessages(activeGroup)
+  }
+})
 $('clearMessageSearch').addEventListener('click', () => {
   $('messageSearch').value = ''
   if (activeGroup) void showMessages(activeGroup)
@@ -728,6 +740,8 @@ async function openGroup(group) {
   pendingAttachments = []
   renderPendingAttachments()
   $('messageSearch').value = ''
+  $('chatSearch').classList.add('hidden')
+  $('openMessageSearch').setAttribute('aria-expanded', 'false')
   $('conversationTitle').textContent = group.name || 'Encrypted group'
   $('conversationView').classList.remove('hidden')
   mainView.classList.add('hidden')
@@ -800,7 +814,7 @@ async function manageGroup(group, action) {
         openAdminHandoff(group)
         return
       }
-      if (!confirm(`Leave "${group.name}"? Its local MLS state will be removed after a relay acknowledges the leave request.`)) return
+      if (!confirm(`Leave “${group.name}”? Its chat data will be removed from this device after the request is delivered.`)) return
       await window.MarmotCompanion.leaveGroup(connection.client, group.id)
       if (activeGroup?.idStr === group.idStr) {
         activeGroup = null
@@ -852,7 +866,7 @@ function showGroupDetails(group) {
   }
   addDetail('Group', group.name)
   addDetail('Description', snapshot.groupData?.description || 'No description')
-  addDetail('MLS epoch', String(snapshot.epoch ?? '—'))
+  addDetail('Group version', String(snapshot.epoch ?? '—'))
   addDetail('Members', String(snapshot.members.length))
   addDetail('Relays', (snapshot.groupData?.relays || []).join(', ') || 'No group relays')
   addDetail('Disappearing messages', retentionLabel(snapshot.groupData?.messageRetention))
@@ -1052,7 +1066,8 @@ $('settingsButton').addEventListener('click', showSettings)
 $('toggleArchived').addEventListener('click', () => { showArchived = !showArchived; selectedFolderId = 'all'; renderGroups($('search').value) })
 $('groupActions').addEventListener('click', () => {
   if (activeGroup) updateGroupMenu(activeGroup)
-  $('groupMenu').classList.toggle('hidden')
+  const open = $('groupMenu').classList.toggle('hidden') === false
+  $('groupActions').setAttribute('aria-expanded', String(open))
 })
 $('groupMenu').addEventListener('click', event => {
   const action = event.target.closest('[data-group-action]')?.dataset.groupAction
@@ -1135,8 +1150,27 @@ $('groupSettingsForm').addEventListener('submit', async event => {
   }
 })
 document.addEventListener('click', event => {
-  if (!event.target.closest('#groupMenu, #groupActions, .row-menu')) $('groupMenu').classList.add('hidden')
-  if (!event.target.closest('#newChatMenu, #newChat')) $('newChatMenu').classList.add('hidden')
+  if (!event.target.closest('#groupMenu, #groupActions, .row-menu')) {
+    $('groupMenu').classList.add('hidden')
+    $('groupActions').setAttribute('aria-expanded', 'false')
+  }
+  if (!event.target.closest('#newChatMenu, #newChat')) {
+    $('newChatMenu').classList.add('hidden')
+    $('newChat').setAttribute('aria-expanded', 'false')
+  }
+  if (!event.target.closest('#composerMenu, #plusButton')) {
+    $('composerMenu').classList.add('hidden')
+    $('plusButton').setAttribute('aria-expanded', 'false')
+  }
+})
+document.addEventListener('keydown', event => {
+  if (event.key !== 'Escape') return
+  $('groupMenu').classList.add('hidden')
+  $('groupActions').setAttribute('aria-expanded', 'false')
+  $('newChatMenu').classList.add('hidden')
+  $('newChat').setAttribute('aria-expanded', 'false')
+  $('composerMenu').classList.add('hidden')
+  $('plusButton').setAttribute('aria-expanded', 'false')
 })
 $('closeButton').addEventListener('click', () => void ncc.runtime.closePanel())
 const resizeHandle = $('resizeHandle')
@@ -1172,7 +1206,7 @@ $('connectButton').addEventListener('click', () => void connect())
 $('switchAccountButton').addEventListener('click', () => {
   void (async () => {
     if (connection && await ncc.nostr.getPublicKey() === connection.pubkey) {
-      message('Switch the active NCC profile in the browser. The companion will load its chats automatically.')
+      message('Switch the active browser account. Its chats will load automatically.')
       return
     }
     await disconnectCurrentAccount()
@@ -1180,20 +1214,24 @@ $('switchAccountButton').addEventListener('click', () => {
   })()
 })
 $('connectButtonSettings').addEventListener('click', () => { showMain(); void connect() })
-$('newChat').addEventListener('click', () => $('newChatMenu').classList.toggle('hidden'))
+$('newChat').addEventListener('click', () => {
+  const open = $('newChatMenu').classList.toggle('hidden') === false
+  $('newChat').setAttribute('aria-expanded', String(open))
+})
 $('newChatMenu').addEventListener('click', event => {
   const action = event.target.closest('[data-new-action]')?.dataset.newAction
   $('newChatMenu').classList.add('hidden')
+  $('newChat').setAttribute('aria-expanded', 'false')
   if (action === 'group') $('createGroupForm').classList.toggle('hidden')
   else if (action === 'keypackage') void publishKeyPackage()
 })
 $('createGroupButton').addEventListener('click', async () => {
-  if (!connection) { message('Connect the NCC signer first.', true); return }
+  if (!connection) { message('Connect your browser account first.', true); return }
   const name = $('groupName').value.trim()
   if (!name) { message('Enter a group name.', true); return }
   $('createGroupButton').disabled = true
   try {
-    message(`Creating “${name}” and publishing the initial encrypted note… NCC will ask you to approve signatures.`)
+    message(`Creating “${name}” and sending the first encrypted message. Approve the request in your browser when prompted.`)
     const group = await window.MarmotCompanion.createGroup(connection.client, connection.relays, name, $('groupDescription').value, Number($('groupRetention').value))
     $('createGroupForm').classList.add('hidden')
     $('groupDescription').value = ''
@@ -1201,7 +1239,7 @@ $('createGroupButton').addEventListener('click', async () => {
     await refreshGroups()
     const entry = groups.find(item => item.id === group.snapshot.id)
     if (entry) await openGroup(entry)
-    message('Group created and initial note sent through MLS.')
+    message('Group created.')
   } catch (error) { message(error?.message || String(error), true) }
   finally { $('createGroupButton').disabled = false }
 })
@@ -1222,7 +1260,7 @@ $('inviteContactButton').addEventListener('click', () => {
   $('composerMenu').classList.add('hidden')
   $('plusButton').setAttribute('aria-expanded', 'false')
   contactAction = 'invite'
-  $('contactAddressLabel').textContent = 'Contact public key'
+  $('contactAddressLabel').textContent = 'Member’s profile address'
   $('inviteForm').querySelector('button[type="submit"]').textContent = 'Invite'
   $('inviteForm').classList.remove('hidden')
   $('contactAddress').focus()
@@ -1231,19 +1269,24 @@ $('shareContactButton').addEventListener('click', () => {
   $('composerMenu').classList.add('hidden')
   $('plusButton').setAttribute('aria-expanded', 'false')
   contactAction = 'share'
-  $('contactAddressLabel').textContent = 'Contact to share'
+  $('contactAddressLabel').textContent = 'Profile address to share'
   $('inviteForm').querySelector('button[type="submit"]').textContent = 'Share contact'
   $('inviteForm').classList.remove('hidden')
   $('contactAddress').focus()
 })
-$('addAttachmentButton').addEventListener('click', () => {
+function chooseAttachments(accept = '') {
   $('composerMenu').classList.add('hidden')
   $('plusButton').setAttribute('aria-expanded', 'false')
-  $('attachmentInput').click()
-})
+  const input = $('attachmentInput')
+  input.accept = accept
+  input.click()
+}
+$('addMediaButton').addEventListener('click', () => chooseAttachments('image/*,video/*'))
+$('addFileButton').addEventListener('click', () => chooseAttachments())
 $('attachmentInput').addEventListener('change', event => {
   addAttachments(event.currentTarget.files || [])
   event.currentTarget.value = ''
+  event.currentTarget.accept = ''
 })
 $('composer').addEventListener('paste', event => {
   const files = [...(event.clipboardData?.files || [])]
@@ -1267,7 +1310,7 @@ $('addPollOption').addEventListener('click', () => addPollOption())
 $('cancelPoll').addEventListener('click', () => $('pollDialog').classList.add('hidden'))
 $('pollForm').addEventListener('submit', async event => {
   event.preventDefault()
-  if (!connection || !activeGroup) { message('Open a group and connect the NCC signer first.', true); return }
+  if (!connection || !activeGroup) { message('Open a group and connect your browser account first.', true); return }
   const button = $('pollForm').querySelector('button[type="submit"]')
   const options = [...$('pollOptions').querySelectorAll('input')].map(input => input.value)
   button.disabled = true
@@ -1275,7 +1318,7 @@ $('pollForm').addEventListener('submit', async event => {
     await window.MarmotCompanion.createPoll(connection.client, activeGroup.id, $('pollQuestion').value, options, $('pollType').value)
     $('pollDialog').classList.add('hidden')
     await showMessages(activeGroup)
-    message('Poll posted through MLS.')
+    message('Poll posted.')
   } catch (error) { message(error?.message || String(error), true) }
   finally { button.disabled = false }
 })
@@ -1287,17 +1330,17 @@ $('inviteForm').addEventListener('submit', async event => {
   try {
     let outcome
     if (contactAction === 'share') {
-      message('Sharing the contact card through MLS…')
+      message('Sharing the contact card…')
       outcome = await window.MarmotCompanion.shareContact(connection.client, activeGroup.id, $('contactAddress').value)
     } else {
-      message('Looking up the contact key package and sending an encrypted group invite…')
+      message('Finding their invitation and adding them to the group…')
       outcome = await window.MarmotCompanion.inviteContact(connection.client, activeGroup.id, $('contactAddress').value, connection.relays)
     }
     $('inviteForm').classList.add('hidden')
     $('contactAddress').value = ''
     if (contactAction === 'share') {
       await showMessages(activeGroup)
-      message('Contact card sent through MLS.')
+      message('Contact shared.')
       return
     }
     const delivery = outcome?.kind === 'attempted' ? outcome.outcomes[0] : null
@@ -1326,7 +1369,7 @@ $('sendButton').addEventListener('click', async () => {
     pendingAttachments = []
     renderPendingAttachments()
     await showMessages(activeGroup)
-    message(window.MarmotCompanion.mediaAttachments(rumor).length ? 'Encrypted attachment sent through MLS.' : wasReply ? 'Reply sent through MLS.' : 'Message sent through MLS.')
+    message(window.MarmotCompanion.mediaAttachments(rumor).length ? 'Attachment sent.' : wasReply ? 'Reply sent.' : 'Message sent.')
   } catch (error) { message(error?.message || String(error), true) }
   finally { $('sendButton').disabled = false }
 })
@@ -1342,7 +1385,7 @@ $('saveButton').addEventListener('click', async () => {
   const keyPackageEncoding = $('keyPackageEncoding').value === 'mdk08-raw' ? 'mdk08-raw' : 'framed'
   window.__NCC_WHITE_NOISE_KEY_PACKAGE_ENCODING__ = keyPackageEncoding
   desktopNotifications = $('desktopNotifications').checked
-  await chrome.storage.local.set({ relays: normalizedRelays, relaysConfigured: true, useBrowserIdentity: $('useBrowserIdentity').checked, desktopNotifications, keyPackageEncoding })
+  await chrome.storage.local.set({ relays: normalizedRelays, relaysConfigured: true, desktopNotifications, keyPackageEncoding })
   selectedRelays = normalizedRelays
   if (connection) {
     liveConnection?.unsubscribe()
@@ -1374,10 +1417,9 @@ $('saveButton').addEventListener('click', async () => {
     const summary = [`Relay list saved and active group subscriptions refreshed. ${changedRelayGroups.length} group(s) updated.`]
     if (failedRelayGroups.length) summary.push(`Failed: ${failedRelayGroups.join('; ')}`)
     message(summary.join(' '), failedRelayGroups.length > 0)
-  } else message('Relay list saved. It will be used when the NCC signer connects.')
+  } else message('Relay list saved. It will be used when you connect your browser account.')
 })
 $('relayInput').setAttribute('placeholder', 'Primary relays, one per line. White Noise EU/US are appended as fallbacks.')
-$('openWhiteNoise').addEventListener('click', () => message('White Noise desktop is not installed in this development profile.'))
 $('search').addEventListener('input', () => renderGroups($('search').value))
 async function initialize() {
   const { connectedSignerPubkey } = await chrome.storage.local.get('connectedSignerPubkey')

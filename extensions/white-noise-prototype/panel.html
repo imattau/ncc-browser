@@ -10,30 +10,33 @@
   <main class="app">
     <button id="resizeHandle" class="resize-handle" aria-label="Resize companion panel" title="Drag to resize panel"><span></span></button>
     <header class="topbar">
-      <div class="brand"><span class="mark">W</span><div><strong>White Noise</strong><small>Marmot companion</small></div></div>
+      <div class="brand"><span class="mark">W</span><div><strong>White Noise</strong><small>Encrypted group chats</small></div></div>
       <button id="closeButton" class="icon-button" aria-label="Close panel" title="Close panel">×</button><button id="settingsButton" class="icon-button" aria-label="Settings" title="Settings">⚙</button>
     </header>
     <section id="mainView">
       <div class="account">
         <div class="avatar">●</div>
-        <div class="account-copy"><strong id="accountName">Not connected</strong><small id="accountKey">Connect the NCC signer to begin</small></div>
+        <div class="account-copy"><strong id="accountName">Not connected</strong><small id="accountKey">Connect your browser account to begin</small></div>
         <span id="statusDot" class="status-dot" title="Connection status"></span>
       </div>
-      <div class="connection-row"><span id="statusText">Not connected</span><button id="switchAccountButton" class="text-button hidden" title="Switch the active NCC profile in the browser; the companion will reload its chats automatically.">Reload profile</button><button id="connectButton" class="text-button">Connect</button></div>
+      <div class="connection-row"><span id="statusText">Not connected</span><button id="switchAccountButton" class="text-button hidden" title="Switch the active browser account. Your chats will load automatically.">Switch account</button><button id="connectButton" class="text-button">Connect account</button></div>
       <div class="search"><span>⌕</span><input id="search" placeholder="Search chats" autocomplete="off"><kbd>⌘ K</kbd></div>
       <section id="incomingInvites" class="incoming-invites hidden" aria-live="polite"></section>
-      <div class="section-heading"><span id="chatSectionTitle">CHATS</span><button id="toggleArchived" class="text-button">Archived</button><button id="newChat" class="text-button">＋ New</button></div>
+      <div class="section-heading"><span id="chatSectionTitle">Chats</span><button id="toggleArchived" class="text-button">Archived</button><button id="newChat" class="text-button" aria-haspopup="menu" aria-expanded="false">＋ New</button></div>
       <div id="folderBar" class="folder-bar" aria-label="Chat folders"></div>
-      <div id="newChatMenu" class="new-chat-menu hidden" role="menu"><button data-new-action="group" role="menuitem">Create group</button><button data-new-action="keypackage" role="menuitem">Publish invite key</button></div>
-      <div id="createGroupForm" class="create-group hidden"><input id="groupName" value="Note to self" aria-label="Group name"><textarea id="groupDescription" rows="2" placeholder="Description (optional)" aria-label="Group description"></textarea><select id="groupRetention" aria-label="Disappearing messages"><option value="0">Messages stay</option><option value="3600">1 hour</option><option value="86400">1 day</option><option value="604800">1 week</option><option value="2419200">4 weeks</option></select><button id="createGroupButton" class="primary">Create</button></div>
-      <div id="chatList" class="chat-list">
-        <div class="empty"><div class="empty-icon">◌</div><strong>Connect to get started</strong><p>Connect the NCC signer to load your Marmot conversations.</p><button id="setupButton" class="primary">Open settings</button></div>
+      <div id="newChatMenu" class="new-chat-menu hidden" role="menu">
+        <button class="menu-item" data-new-action="group" role="menuitem"><span aria-hidden="true">＋</span><span><strong>New group</strong><small>Start an encrypted group chat</small></span></button>
+        <button class="menu-item" data-new-action="keypackage" role="menuitem"><span aria-hidden="true">↗</span><span><strong>Set up invitations</strong><small>Let others invite you to a group</small></span></button>
       </div>
-      <footer><span class="lock">▣</span> Marmot MLS · local extension storage</footer>
+      <div id="createGroupForm" class="create-group hidden"><input id="groupName" value="Note to self" aria-label="Group name"><textarea id="groupDescription" rows="2" placeholder="Description (optional)" aria-label="Group description"></textarea><select id="groupRetention" aria-label="Disappearing messages"><option value="0">Messages stay</option><option value="3600">1 hour</option><option value="86400">1 day</option><option value="604800">1 week</option><option value="2419200">4 weeks</option></select><button id="createGroupButton" class="primary">Create group</button></div>
+      <div id="chatList" class="chat-list">
+        <div class="empty"><div class="empty-icon">◌</div><strong>Connect to get started</strong><p>Connect your browser account to load your chats.</p><button id="setupButton" class="primary">Open settings</button></div>
+      </div>
+      <footer><span class="lock">▣</span> End-to-end encrypted chats</footer>
     </section>
     <section id="conversationView" class="hidden">
-      <div class="view-heading"><button id="backConversation" class="icon-button" aria-label="Back">←</button><h1 id="conversationTitle">Encrypted group</h1><button id="groupActions" class="icon-button" aria-label="Group options">⋯</button></div>
-      <div class="chat-search"><input id="messageSearch" type="search" placeholder="Search messages in this chat" aria-label="Search messages in this chat"><button id="clearMessageSearch" class="icon-button" aria-label="Clear message search">×</button></div>
+      <div class="view-heading"><button id="backConversation" class="icon-button" aria-label="Back">←</button><h1 id="conversationTitle">Encrypted group</h1><button id="openMessageSearch" class="icon-button" aria-label="Search messages" title="Search messages" aria-controls="chatSearch" aria-expanded="false">⌕</button><button id="groupActions" class="icon-button" aria-label="Group options" aria-haspopup="menu" aria-expanded="false">⋯</button></div>
+      <div id="chatSearch" class="chat-search hidden"><input id="messageSearch" type="search" placeholder="Search this chat" aria-label="Search this chat"><button id="clearMessageSearch" class="icon-button" aria-label="Clear search">×</button></div>
       <div id="groupMenu" class="group-menu hidden" role="menu">
         <button data-group-action="details" role="menuitem">Group details</button>
         <button data-group-action="rename" role="menuitem">Rename group</button>
@@ -72,9 +75,10 @@
       <div id="messageList" class="message-list"></div>
       <div class="composer-wrap">
         <div id="composerMenu" class="composer-menu hidden" role="menu">
-          <button id="inviteContactButton" class="menu-item" role="menuitem"><span>＋</span><span><strong>Add contact</strong><small>Invite by npub or public key</small></span></button>
-          <button id="shareContactButton" class="menu-item" role="menuitem"><span>◉</span><span><strong>Share contact</strong><small>Send a public npub card</small></span></button>
-          <button id="addAttachmentButton" class="menu-item" role="menuitem"><span>▧</span><span><strong>Photo or file</strong><small>Encrypted before upload</small></span></button>
+          <button id="inviteContactButton" class="menu-item" role="menuitem"><span>＋</span><span><strong>Invite member</strong><small>Enter their profile address</small></span></button>
+          <button id="shareContactButton" class="menu-item" role="menuitem"><span>◉</span><span><strong>Share user</strong><small>Send their profile</small></span></button>
+          <button id="addMediaButton" class="menu-item" role="menuitem"><span>▧</span><span><strong>Photos &amp; videos</strong><small>Choose from your photo library</small></span></button>
+          <button id="addFileButton" class="menu-item" role="menuitem"><span>▤</span><span><strong>Document</strong><small>Choose a file to send</small></span></button>
           <button id="createPollButton" class="menu-item" role="menuitem"><span>☷</span><span><strong>Create poll</strong><small>Single or multiple choice</small></span></button>
         </div>
         <input id="attachmentInput" type="file" multiple hidden>
@@ -82,7 +86,7 @@
         <div id="attachmentTray" class="attachment-tray hidden" aria-live="polite"></div>
         <div class="composer"><div class="composer-field"><button id="plusButton" class="plus-button" aria-label="More chat actions" aria-expanded="false" title="More chat actions">＋</button><textarea id="composer" rows="1" placeholder="Message"></textarea><button id="sendButton" class="send-button" aria-label="Send message" title="Send message">↑</button></div></div>
       </div>
-      <form id="inviteForm" class="invite-form hidden"><label for="contactAddress" id="contactAddressLabel">Contact public key</label><input id="contactAddress" autocomplete="off" placeholder="npub1… or hex public key"><div class="invite-actions"><button type="button" id="cancelInvite" class="secondary">Cancel</button><button class="primary" type="submit">Invite</button></div></form>
+      <form id="inviteForm" class="invite-form hidden"><label for="contactAddress" id="contactAddressLabel">Member’s profile address</label><input id="contactAddress" autocomplete="off" placeholder="Paste their profile address"><div class="invite-actions"><button type="button" id="cancelInvite" class="secondary">Cancel</button><button class="primary" type="submit">Invite</button></div></form>
       <div id="pollDialog" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="pollDialogTitle">
         <form id="pollForm" class="modal-card poll-form">
           <h2 id="pollDialogTitle">Create poll</h2>
@@ -96,28 +100,26 @@
       </div>
     </section>
     <section id="settingsView" class="hidden">
-      <div class="view-heading"><button id="backButton" class="icon-button" aria-label="Back">←</button><h1>Messenger setup</h1></div>
-      <div class="notice"><strong>Experimental Marmot client</strong><p>This uses marmot-ts 0.9.0 alpha. NCC keeps signing keys; MLS state stays in this extension profile.</p></div>
-      <label for="relayInput">Nostr relays</label>
+      <div class="view-heading"><button id="backButton" class="icon-button" aria-label="Back">←</button><h1>Settings</h1></div>
+      <div class="notice"><strong>Experimental messaging client</strong><p>Your account keys stay in the browser. Group encryption data is saved on this device.</p></div>
+      <label for="relayInput">Chat relays</label>
       <textarea id="relayInput" rows="3" placeholder="wss://relay.example"></textarea>
-      <div class="field-hint">One relay URL per line. Stored in this extension profile.</div>
-      <label for="keyPackageEncoding">Key package interop</label>
+      <div class="field-hint">Enter one relay address per line. Saved on this device.</div>
+      <label for="keyPackageEncoding">Invitation compatibility</label>
       <select id="keyPackageEncoding" class="settings-select">
-        <option value="framed">Current Marmot MLSMessage framing (recommended)</option>
-        <option value="mdk08-raw">Raw MDK/0.8 legacy format</option>
+        <option value="framed">Recommended (current White Noise version)</option>
+        <option value="mdk08-raw">Legacy (older White Noise versions)</option>
       </select>
-      <div class="field-hint">The installed White Noise Android build publishes framed KeyPackages. Raw mode is only for older MDK/0.8 clients. The companion can read both formats.</div>
-      <label class="check"><input id="useBrowserIdentity" type="checkbox" checked><span>Use NCC signer for Nostr signatures</span></label>
-      <p class="field-hint">Signing uses NCC’s approval dialog. Private keys are never exposed to the extension.</p>
+      <div class="field-hint">Change this only if you need to invite someone using an older White Noise version.</div>
+      <p class="field-hint">Messages and invitations are signed with your connected browser account.</p>
       <label class="check"><input id="desktopNotifications" type="checkbox"><span>Show desktop notifications</span></label>
       <p class="field-hint">Optional generic alerts for incoming messages. Message text and chat names are not shown. Muted chats stay silent.</p>
-      <button id="connectButtonSettings" class="secondary full">Connect NCC signer</button>
-      <button id="saveButton" class="primary full">Save setup</button>
+      <button id="connectButtonSettings" class="secondary full">Connect account</button>
+      <button id="saveButton" class="primary full">Save settings</button>
       <div class="divider"></div>
-      <div class="status-row"><span>Messaging engine</span><b class="badge">marmot-ts 0.9.0 alpha</b></div>
-      <p class="field-hint">Includes White Noise’s EU and US relays. Other permitted defaults are relay.damus.io, relay.primal.net, and relay.ditto.pub.</p>
-      <p class="field-hint">Encrypted media uses your published Blossom servers (kind 10063), or blossom.ditto.pub and blossom.primal.net as fallbacks. Uploads are sent to all configured servers; downloads try each server until one succeeds.</p>
-      <button id="openWhiteNoise" class="secondary full">Open White Noise app ↗</button>
+      <div class="status-row"><span>Messaging engine</span><b class="badge">Experimental</b></div>
+      <p class="field-hint">White Noise’s EU and US relays are used as backups after your selected relays.</p>
+      <p class="field-hint">Media uploads go to each saved media server. Downloads try each server until one works.</p>
     </section>
     <div id="adminHandoffDialog" class="modal-backdrop hidden">
       <form id="adminHandoffForm" class="modal-card">

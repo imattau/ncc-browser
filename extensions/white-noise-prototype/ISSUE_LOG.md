@@ -5,6 +5,21 @@ Use this file to record issues reported during prototype work. Move entries to
 
 ## Open / in progress
 
+### Partial relay publication is presented as failure
+
+- **Status:** Per-relay publish results are already independent and an
+  acknowledged relay is sufficient. The success message now describes failed
+  relays as partial availability, but the updated message still needs a live
+  publish check with one unavailable relay.
+- **Change:** KeyPackage publication feedback keeps success when one or more
+  relays acknowledge and reports unavailable relays as a warning. It remains an
+  error only when no relay acknowledges. Warning text follows the light/dark
+  theme colors.
+- **Check:** Companion bundle built; JavaScript syntax and diff checks passed.
+  Opened the companion in an isolated temporary profile and confirmed the
+  signer and relay session connected. The actual invite-key publication result
+  was not captured in this run.
+
 ### Android group details parity
 
 - **Status:** Core metadata and member controls implemented and runtime checked.
