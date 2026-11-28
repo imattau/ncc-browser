@@ -19,9 +19,9 @@
         <div class="account-copy"><strong id="accountName">Not connected</strong><small id="accountKey">Connect the NCC signer to begin</small></div>
         <span id="statusDot" class="status-dot" title="Connection status"></span>
       </div>
-      <div class="connection-row"><span id="statusText">Not connected</span><button id="connectButton" class="text-button">Connect</button></div>
+      <div class="connection-row"><span id="statusText">Not connected</span><button id="switchAccountButton" class="text-button hidden">Switch account</button><button id="connectButton" class="text-button">Connect</button></div>
       <div class="search"><span>⌕</span><input id="search" placeholder="Search chats" autocomplete="off"><kbd>⌘ K</kbd></div>
-      <div class="section-heading"><span>CHATS</span><button id="newChat" class="text-button">＋ New</button></div>
+      <div class="section-heading"><span id="chatSectionTitle">CHATS</span><button id="toggleArchived" class="text-button">Archived</button><button id="newChat" class="text-button">＋ New</button></div>
       <div id="createGroupForm" class="create-group hidden"><input id="groupName" value="Note to self" aria-label="Group name"><button id="createGroupButton" class="primary">Create</button></div>
       <div id="chatList" class="chat-list">
         <div class="empty"><div class="empty-icon">◌</div><strong>Connect to get started</strong><p>Connect the NCC signer to load your Marmot conversations.</p><button id="setupButton" class="primary">Open settings</button></div>
@@ -29,7 +29,24 @@
       <footer><span class="lock">▣</span> Marmot MLS · local extension storage</footer>
     </section>
     <section id="conversationView" class="hidden">
-      <div class="view-heading"><button id="backConversation" class="icon-button" aria-label="Back">←</button><h1 id="conversationTitle">Encrypted group</h1></div>
+      <div class="view-heading"><button id="backConversation" class="icon-button" aria-label="Back">←</button><h1 id="conversationTitle">Encrypted group</h1><button id="groupActions" class="icon-button" aria-label="Group options">⋯</button></div>
+      <div class="chat-search"><input id="messageSearch" type="search" placeholder="Search messages in this chat" aria-label="Search messages in this chat"><button id="clearMessageSearch" class="icon-button" aria-label="Clear message search">×</button></div>
+      <div id="groupMenu" class="group-menu hidden" role="menu">
+        <button data-group-action="details" role="menuitem">Group details</button>
+        <button data-group-action="rename" role="menuitem">Rename group</button>
+        <button data-group-action="archive" role="menuitem">Archive chat</button>
+        <button data-group-action="restore" role="menuitem">Restore chat</button>
+        <button data-group-action="clear" role="menuitem">Clear local history</button>
+        <button data-group-action="delete" role="menuitem">Delete local chat</button>
+        <button data-group-action="leave" role="menuitem">Leave group</button>
+      </div>
+      <div id="groupDetailsDialog" class="modal-backdrop hidden">
+        <section class="modal-card" aria-labelledby="groupDetailsTitle">
+          <h2 id="groupDetailsTitle">Group details</h2>
+          <div id="groupDetailsContent"></div>
+          <div class="invite-actions"><button id="closeGroupDetails" class="secondary">Close</button></div>
+        </section>
+      </div>
       <div id="messageList" class="message-list"></div>
       <div class="composer-wrap">
         <div id="composerMenu" class="composer-menu hidden" role="menu">
@@ -55,6 +72,18 @@
       <p class="field-hint">Includes White Noise’s EU and US relays. Other permitted defaults are relay.damus.io, relay.primal.net, and relay.ditto.pub.</p>
       <button id="openWhiteNoise" class="secondary full">Open White Noise app ↗</button>
     </section>
+    <div id="adminHandoffDialog" class="modal-backdrop hidden">
+      <form id="adminHandoffForm" class="modal-card">
+        <h2>Transfer admin and leave</h2>
+        <p id="adminHandoffDescription"></p>
+        <label for="adminSuccessor">New admin</label>
+        <select id="adminSuccessor" required></select>
+        <div class="invite-actions">
+          <button type="button" id="cancelAdminHandoff" class="secondary">Cancel</button>
+          <button type="submit" class="primary">Transfer and leave</button>
+        </div>
+      </form>
+    </div>
     <p id="message" class="message" role="status"></p>
   </main>
   <script src="marmot.bundle.js"></script>

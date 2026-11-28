@@ -7,6 +7,7 @@
 import { BrowserWindow, Notification, screen } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
+import { verifyEvent, type Event, type EventTemplate } from 'nostr-tools'
 import {
   matchesAny,
   type ExtensionInstallResult,
@@ -21,6 +22,7 @@ import {
 import type { TabKind } from '@shared/types'
 import type { BrowserShell } from '../shell'
 import type { Nip07Service } from '../signer/service'
+import type { IdentityProvider } from '../signer/provider'
 import type { RelayPool } from '../relay/pool'
 import type { ExtensionRegistry } from './registry'
 import { extensionPageUrl } from './protocol'
@@ -31,6 +33,7 @@ export interface ExtensionServiceDeps {
   storage: ExtensionStorage
   host: BrowserShell
   nip07: () => Nip07Service | null
+  identity: () => IdentityProvider | null
   relays: RelayPool
   preloadPath: string
   partition: string
@@ -354,7 +357,16 @@ export class ExtensionService {
         const relays = this.allowedRelays(record.manifest, args[0])
         const event = args[1]
         if (!event || typeof event !== 'object' || !Number.isInteger((event as { kind?: unknown }).kind) || typeof (event as { id?: unknown }).id !== 'string') throw new Error('Invalid signed Nostr event')
-        return Promise.allSettled(relays.map((relay) => this.deps.relays.publish(relay, event as never)))
+        const identity = this.deps.identity()
+        const expectedPubkey = identity ? await identity.getPublicKey() : null
+        const onauth = identity && expectedPubkey
+          ? async (template: EventTemplate): Promise<Event> => {
+              const signed = await identity.signEvent(template)
+              if (!verifyEvent(signed) || signed.pubkey !== expectedPubkey) throw new Error('The active signer returned an invalid relay authentication event')
+              return signed
+            }
+          : undefined
+        return Promise.allSettled(relays.map((relay) => this.deps.relays.publishWithAuth(relay, event as never, onauth)))
           .then((results) => Object.fromEntries(results.map((result, index) => [relays[index], result.status === 'fulfilled' ? { from: relays[index], ok: true, message: result.value } : { from: relays[index], ok: false, message: errorMessage(result.reason) }])))
       }
       case 'nostr.nip04Encrypt':

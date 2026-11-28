@@ -1,8 +1,8 @@
 import { MarmotClient, createApplicationMessageIntent, createChatRumor } from '@internet-privacy/marmot-ts'
 import { makeKeyValueRumorHistoryFactory } from '@internet-privacy/marmot-ts/extra'
 import { deserializeApplicationData, getInboxRelays } from '@internet-privacy/marmot-ts/core'
-import { Proposals } from '@internet-privacy/marmot-ts/client'
-import { nip19 } from 'nostr-tools'
+import { createInviteIntent, Proposals } from '@internet-privacy/marmot-ts/client'
+import { nip19, verifyEvent } from 'nostr-tools'
 
 class ExtensionStore {
   constructor(prefix) { this.prefix = `marmot:${prefix}:` }
@@ -126,7 +126,7 @@ const network = {
 }
 
 const api = {
-  async connect(relays) {
+  async connect(relays, expectedPubkey) {
     relayConfig = relays
     // Chromium extension contexts do not expose crypto.randomUUID() on all supported builds.
     if (!crypto.randomUUID) crypto.randomUUID = () => [...crypto.getRandomValues(new Uint8Array(16))].map((byte, index) => `${[4, 6, 8, 10].includes(index) ? '-' : ''}${byte.toString(16).padStart(2, '0')}`).join('')
@@ -138,20 +138,24 @@ const api = {
         decrypt: (peer, ciphertext) => ncc.nostr.nip44.decrypt(peer, ciphertext)
       }
     }
-    const clientIdKey = 'marmot:clientId'
+    const pubkey = await signer.getPublicKey()
+    if (expectedPubkey && pubkey !== expectedPubkey) throw new Error('The active NCC account has changed. Select the previous account to reopen its chats.')
+    const accountPrefix = `account:${pubkey}:`
+    await migrateLegacyAccountData(pubkey, accountPrefix)
+    const clientIdKey = `marmot:${accountPrefix}clientId`
     let clientId = (await chrome.storage.local.get(clientIdKey))[clientIdKey]
     if (!clientId) { clientId = [...crypto.getRandomValues(new Uint8Array(32))].map(byte => byte.toString(16).padStart(2, '0')).join(''); await chrome.storage.local.set({ [clientIdKey]: clientId }) }
-    const keyStore = new ExtensionStore('keypackages')
-    const client = new MarmotClient({ signer, network, groupStateStore: new ExtensionStore('groups'), keyPackageStore: keyStore, clientId, historyFactory: makeKeyValueRumorHistoryFactory(groupId => new ExtensionStore(`history:${[...groupId].map(byte => byte.toString(16).padStart(2, '0')).join('')}`)), getSignatureKeyPair: async ciphersuite => {
+    const keyStore = new ExtensionStore(`${accountPrefix}keypackages`)
+    const client = new MarmotClient({ signer, network, groupStateStore: new ExtensionStore(`${accountPrefix}groups`), keyPackageStore: keyStore, clientId, historyFactory: makeKeyValueRumorHistoryFactory(groupId => new ExtensionStore(`${accountPrefix}history:${[...groupId].map(byte => byte.toString(16).padStart(2, '0')).join('')}`)), getSignatureKeyPair: async ciphersuite => {
       const saved = await keyStore.getItem('local-signature-key')
       if (saved?.signKey && saved?.publicKey) return { signKey: saved.signKey, publicKey: saved.publicKey }
       const pair = await ciphersuite.signature.keygen()
       await keyStore.setItem('local-signature-key', pair)
       return pair
-    }, inviteStore: new ExtensionStore('invites'), ingestStateStore: new ExtensionStore('ingest') })
+    }, inviteStore: new ExtensionStore(`${accountPrefix}invites`), ingestStateStore: new ExtensionStore(`${accountPrefix}ingest`) })
     await client.groups.loadAll()
     const live = client.groups.connectAll({ fallbackRelays: relays })
-    return { client, live, pubkey: await signer.getPublicKey() }
+    return { client, live, pubkey }
   },
   // This is an explicit user action. ensurePublished() may reuse an old local
   // package without publishing it to the currently selected relays. Create a
@@ -172,6 +176,48 @@ const api = {
     await group.propose(Proposals.proposeUpdateMetadata({ relays }))
     return client.groups.commit(groupId)
   },
+  async renameGroup(client, groupId, name) {
+    const group = await client.groups.get(groupId)
+    await group.propose(Proposals.proposeUpdateMetadata({ name }))
+    return client.groups.commit(groupId)
+  },
+  async removeGroupMember(client, groupId, memberPubkey) {
+    const group = await client.groups.get(groupId)
+    const ownPubkey = await client.signer.getPublicKey()
+    if (!(group.snapshot.groupData?.adminPubkeys || []).includes(ownPubkey)) {
+      throw new Error('Only a group admin can remove members.')
+    }
+    if (memberPubkey === ownPubkey || !(group.snapshot.members || []).includes(memberPubkey)) {
+      throw new Error('Choose another current member of this group.')
+    }
+    await group.propose(Proposals.proposeRemoveUser(memberPubkey))
+    await client.groups.commit(groupId)
+    const updated = await client.groups.get(groupId)
+    if ((updated.snapshot.members || []).includes(memberPubkey)) {
+      throw new Error('The removal was not applied. The member is still in the group.')
+    }
+    return updated
+  },
+  async transferAdminAndLeave(client, groupId, successorPubkey) {
+    const group = await client.groups.get(groupId)
+    const ownPubkey = await client.signer.getPublicKey()
+    const currentAdmins = group.snapshot.groupData?.adminPubkeys || []
+    const members = group.snapshot.members || []
+    if (!members.includes(successorPubkey) || successorPubkey === ownPubkey) {
+      throw new Error('Choose another existing group member as the new admin.')
+    }
+    if (!currentAdmins.includes(ownPubkey)) throw new Error('You are no longer an admin of this group.')
+    const nextAdmins = [...new Set([...currentAdmins.filter(pubkey => pubkey !== ownPubkey), successorPubkey])]
+    if (!nextAdmins.length) throw new Error('The group must keep at least one admin.')
+    await group.propose(Proposals.proposeUpdateMetadata({ adminPubkeys: nextAdmins }))
+    await client.groups.commit(groupId)
+    const updated = await client.groups.get(groupId)
+    if (!updated.snapshot.groupData?.adminPubkeys?.includes(successorPubkey)) {
+      throw new Error('Admin transfer was not applied. The group was not left.')
+    }
+    return client.groups.leave(groupId)
+  },
+  leaveGroup(client, groupId) { return client.groups.leave(groupId) },
   async listGroups(client) { return client.groups.loadAll() },
   async history(group) { return group.history.queryRumors({ limit: 200 }) },
   async send(client, groupId, text) {
@@ -192,7 +238,13 @@ const api = {
     const keyPackage = keyPackages.sort((left, right) => right.created_at - left.created_at)[0]
     if (!keyPackage) throw new Error('No invite key package found. Ask this contact to connect and publish one first.')
     try {
-      return await client.groups.invite(groupId, keyPackage)
+      const intent = createInviteIntent({
+        keyPackageEvent: keyPackage,
+        actorPubkey: await client.signer.getPublicKey(),
+        verifyEvent
+      })
+      const [result] = await client.groups.send(groupId, intent)
+      return result.welcomeDelivery
     } catch (error) {
       if (error instanceof Error && error.message.includes('leaf carries no app_data_dictionary extension')) {
         throw new Error('This White Noise profile’s key package predates the account identity proof required by this Marmot v2 group. Update White Noise to a compatible release, then publish a fresh key package.')
@@ -204,5 +256,24 @@ const api = {
     }
   },
   decode: deserializeApplicationData
+}
+
+async function migrateLegacyAccountData(pubkey, accountPrefix) {
+  const marker = `marmot:account-migrated:${pubkey}`
+  if ((await chrome.storage.local.get(marker))[marker]) return
+  const { connectedSignerPubkey } = await chrome.storage.local.get('connectedSignerPubkey')
+  if (connectedSignerPubkey && connectedSignerPubkey !== pubkey) return
+  const legacyPrefixes = ['groups', 'keypackages', 'invites', 'ingest', 'history:']
+  const all = await chrome.storage.local.get(null)
+  const migrated = {}
+  for (const [key, value] of Object.entries(all)) {
+    const prefix = legacyPrefixes.find(item => key.startsWith(`marmot:${item}`))
+    if (!prefix) continue
+    const suffix = key.slice(`marmot:${prefix}`.length)
+    migrated[`marmot:${accountPrefix}${prefix}${suffix}`] = value
+  }
+  if (all['marmot:clientId']) migrated[`marmot:${accountPrefix}clientId`] = all['marmot:clientId']
+  if (Object.keys(migrated).length) await chrome.storage.local.set(migrated)
+  await chrome.storage.local.set({ [marker]: true })
 }
 window.MarmotCompanion = api

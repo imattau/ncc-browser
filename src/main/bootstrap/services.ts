@@ -242,6 +242,7 @@ export function createServices(
     storage: foundation.extensionStorage,
     host: shell,
     nip07: () => runtime.nip07Service,
+    identity: () => identity.provider(),
     relays: foundation.relayPool,
     preloadPath: join(__dirname, '../preload/content.js'),
     partition: EXTENSION_PARTITION

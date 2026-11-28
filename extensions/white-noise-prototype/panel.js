@@ -13,6 +13,7 @@ let activeGroup = null
 let liveConnection = null
 let selectedRelays = defaults.relays
 let groupRefreshTimer = null
+let showArchived = false
 
 function setStatus(text, connected = false) {
   $('statusText').textContent = text
@@ -28,11 +29,11 @@ function showSettings() { mainView.classList.add('hidden'); settingsView.classLi
 function showMain() { settingsView.classList.add('hidden'); mainView.classList.remove('hidden') }
 
 async function load() {
-  const saved = await chrome.storage.local.get(defaults)
+  const saved = await chrome.storage.local.get({ ...defaults, relaysConfigured: false })
   const savedRelays = saved.relays || defaults.relays
-  selectedRelays = previousDefaults.some(relays => sameRelays(savedRelays, relays))
+  selectedRelays = !saved.relaysConfigured && previousDefaults.some(relays => sameRelays(savedRelays, relays))
     ? defaults.relays
-    : savedRelays.map(relay => relay === 'wss://nos.lol' ? 'wss://relay.ditto.pub' : relay)
+    : savedRelays
   if (!sameRelays(selectedRelays, savedRelays)) await chrome.storage.local.set({ relays: selectedRelays })
   $('relayInput').value = selectedRelays.join('\n')
   $('useBrowserIdentity').checked = Boolean(saved.useBrowserIdentity)
@@ -40,6 +41,7 @@ async function load() {
   $('accountKey').textContent = connection ? `${connection.pubkey.slice(0, 12)}…${connection.pubkey.slice(-8)}` : 'Connect the NCC signer to begin'
   $('connectButton').textContent = connection ? 'Connected' : 'Connect NCC signer'
   $('connectButton').disabled = Boolean(connection || connectionAttempt)
+  $('switchAccountButton').classList.toggle('hidden', !connection)
   if (connection) setStatus('Relay session active', true)
   else setStatus('Not connected')
   renderGroups()
@@ -53,7 +55,9 @@ function renderGroups(filter = '') {
   const list = $('chatList')
   list.replaceChildren()
   const query = filter.trim().toLowerCase()
-  const matching = groups.filter(group => (group.name || 'Untitled group').toLowerCase().includes(query))
+  const matching = groups.filter(group => Boolean(group.archived) === showArchived && (group.name || 'Untitled group').toLowerCase().includes(query))
+  $('toggleArchived').textContent = showArchived ? 'Chats' : 'Archived'
+  $('chatSectionTitle').textContent = showArchived ? 'ARCHIVED' : 'CHATS'
   if (!matching.length) {
     const empty = document.createElement('div')
     empty.className = 'empty'
@@ -79,9 +83,17 @@ function renderGroups(filter = '') {
   for (const group of matching) {
     const row = document.createElement('button')
     row.className = 'chat-row'
-    row.innerHTML = `<span class="chat-avatar">${escapeHtml((group.name || 'W').slice(0, 1).toUpperCase())}</span><span class="chat-copy"><strong>${escapeHtml(group.name || 'Untitled group')}</strong><small>${group.memberCount || 1} members · epoch ${group.epoch ?? '—'}</small><span class="last-message"></span></span>`
+    row.innerHTML = `<span class="chat-avatar">${escapeHtml((group.name || 'W').slice(0, 1).toUpperCase())}</span><span class="chat-copy"><strong>${escapeHtml(group.name || 'Untitled group')}</strong><small>${group.memberCount || 1} members · epoch ${group.epoch ?? '—'}</small><span class="last-message"></span></span><span class="row-menu" role="button" tabindex="0" aria-label="Chat options">⋯</span>`
     if (group.last) row.querySelector('.last-message').textContent = group.last.content.slice(0, 48)
-    row.addEventListener('click', () => openGroup(group))
+    row.addEventListener('click', event => {
+      if (event.target.closest('.row-menu')) {
+        activeGroup = group
+        $('groupMenu').classList.remove('hidden')
+        return
+      }
+      openGroup(group)
+    })
+    row.addEventListener('contextmenu', event => { event.preventDefault(); activeGroup = group; $('groupMenu').classList.remove('hidden') })
     list.append(row)
   }
 }
@@ -99,30 +111,34 @@ async function refreshGroups() {
     const history = await window.MarmotCompanion.history(group)
     group.on('changed', () => void refreshGroups())
     group.history.on('rumor', () => { void refreshGroups(); if (activeGroup?.id === group.snapshot.id) void showMessages(group) })
-    return { id: group.snapshot.id, name: group.snapshot.groupData?.name || 'Encrypted group', memberCount: group.snapshot.members?.length, epoch: String(group.snapshot.epoch ?? '—'), instance: group, last: history[0] }
+    const key = `marmot:chat-ui:${connection.pubkey}:${group.idStr}`
+    const uiState = (await chrome.storage.local.get(key))[key] || {}
+    return { id: group.snapshot.id, idStr: group.idStr, name: group.snapshot.groupData?.name || 'Encrypted group', memberCount: group.snapshot.members?.length, epoch: String(group.snapshot.epoch ?? '—'), instance: group, last: history[0], archived: Boolean(uiState.archived) }
   }))
   renderGroups($('search').value)
 }
 
-async function connect() {
+async function connect(expectedPubkey, allowAccountChange = false) {
   if (connection || connectionAttempt) return
   connectionAttempt = true
-  await load()
-  setStatus('Requesting signer approval…')
   try {
+    await load()
+    setStatus('Connecting to NCC signer…')
     const configured = $('relayInput').value.split(/\r?\n/).map(value => value.trim()).filter(Boolean)
     if (!configured.length) throw new Error('Add at least one relay in Settings first.')
     const relays = [...new Set(configured.map(value => {
       const url = new URL(value)
-      if (url.protocol !== 'wss:' || !['relay.eu.whitenoise.chat', 'relay.us.whitenoise.chat', 'relay.damus.io', 'relay.primal.net', 'relay.ditto.pub'].includes(url.hostname) || url.port || url.username || url.password || url.pathname !== '/' || url.search || url.hash) throw new Error(`Relay host is not permitted by this prototype: ${url.hostname}`)
+      if (url.protocol !== 'wss:' || !['relay.eu.whitenoise.chat', 'relay.us.whitenoise.chat', 'relay.damus.io', 'relay.primal.net', 'relay.ditto.pub', 'nos.lol'].includes(url.hostname) || url.port || url.username || url.password || url.pathname !== '/' || url.search || url.hash) throw new Error(`Relay host is not permitted by this prototype: ${url.hostname}`)
       return url.toString().replace(/\/$/, '')
     }))]
-    const runtime = await window.MarmotCompanion.connect(relays)
+    const { connectedSignerPubkey } = await chrome.storage.local.get('connectedSignerPubkey')
+    const runtime = await window.MarmotCompanion.connect(relays, expectedPubkey || (allowAccountChange ? null : connectedSignerPubkey))
     connection = { ...runtime, relays }
     liveConnection = runtime.live
     await refreshGroups()
     if (groupRefreshTimer) clearInterval(groupRefreshTimer)
     groupRefreshTimer = setInterval(() => { void refreshGroups() }, 5000)
+    await chrome.storage.local.set({ connectedSignerPubkey: runtime.pubkey })
     setStatus(`Connected · ${relays.length} relays`, true)
     message('Signer approved. Marmot client loaded and listening for group traffic.')
   } catch (error) {
@@ -149,15 +165,17 @@ async function publishKeyPackage() {
 async function showMessages(group) {
   const history = await window.MarmotCompanion.history(group.instance)
   const list = $('messageList')
+  const query = $('messageSearch').value.trim().toLowerCase()
+  const matches = history.filter(rumor => !query || rumor.content.toLowerCase().includes(query))
   list.replaceChildren()
-  if (!history.length) {
+  if (!matches.length) {
     const empty = document.createElement('p')
     empty.className = 'field-hint'
-    empty.textContent = 'No messages yet. Messages are end-to-end encrypted with MLS.'
+    empty.textContent = query ? 'No messages match this search.' : 'No messages yet. Messages are end-to-end encrypted with MLS.'
     list.append(empty)
     return
   }
-  for (const rumor of [...history].reverse()) {
+  for (const rumor of [...matches].reverse()) {
     const row = document.createElement('article')
     row.className = 'message-bubble'
     row.innerHTML = `<strong>${rumor.pubkey === connection.pubkey ? 'You' : escapeHtml(rumor.pubkey.slice(0, 12) + '…')}</strong><p></p><time>${new Date(rumor.created_at * 1000).toLocaleString()}</time>`
@@ -167,15 +185,196 @@ async function showMessages(group) {
   list.scrollTop = list.scrollHeight
 }
 
+$('messageSearch').addEventListener('input', () => {
+  if (activeGroup) void showMessages(activeGroup)
+})
+$('clearMessageSearch').addEventListener('click', () => {
+  $('messageSearch').value = ''
+  if (activeGroup) void showMessages(activeGroup)
+})
+
 async function openGroup(group) {
   activeGroup = group
+  $('messageSearch').value = ''
   $('conversationTitle').textContent = group.name || 'Encrypted group'
   $('conversationView').classList.remove('hidden')
   mainView.classList.add('hidden')
   await showMessages(group)
 }
 
+async function manageGroup(group, action) {
+  $('groupMenu').classList.add('hidden')
+  if (action === 'details') {
+    showGroupDetails(group)
+    return
+  }
+  try {
+    if (action === 'rename') {
+    const name = prompt('New group name', group.name)?.trim()
+    if (!name) return
+    await window.MarmotCompanion.renameGroup(connection.client, group.id, name)
+    await refreshGroups()
+    message('Group renamed.')
+    } else if (action === 'archive' || action === 'restore') {
+    const key = `marmot:chat-ui:${connection.pubkey}:${group.idStr}`
+    await chrome.storage.local.set({ [key]: { archived: action === 'archive' } })
+    await refreshGroups()
+    message(action === 'archive' ? 'Chat archived.' : 'Chat restored.')
+    } else if (action === 'clear') {
+    if (!confirm(`Clear local message history for "${group.name}"? This cannot be undone.`)) return
+    await group.instance.history.purgeMessages()
+    await refreshGroups()
+    if (activeGroup?.idStr === group.idStr) await showMessages(group)
+    message('Local message history cleared.')
+    } else if (action === 'delete') {
+    if (!confirm(`Delete "${group.name}" from this device? This only removes local chat data.`)) return
+    await connection.client.groups.destroy(group.id)
+    activeGroup = null
+    $('conversationView').classList.add('hidden')
+    mainView.classList.remove('hidden')
+    await refreshGroups()
+    message('Local chat data deleted from this device.')
+    } else if (action === 'leave') {
+    const ownPubkey = connection.pubkey
+    const admins = group.instance.snapshot.groupData?.adminPubkeys || []
+    if (admins.includes(ownPubkey)) {
+      openAdminHandoff(group)
+      return
+    }
+    if (!confirm(`Leave "${group.name}"? Its local MLS state will be removed after a relay acknowledges the leave request.`)) return
+    await window.MarmotCompanion.leaveGroup(connection.client, group.id)
+    if (activeGroup?.idStr === group.idStr) {
+      activeGroup = null
+      $('conversationView').classList.add('hidden')
+      mainView.classList.remove('hidden')
+    }
+    await refreshGroups()
+    message('Leave request acknowledged. Local group data removed.')
+    }
+  } catch (error) {
+    message(error?.message || String(error), true)
+  }
+}
+
+function showGroupDetails(group) {
+  const snapshot = group.instance.snapshot
+  const admins = new Set(snapshot.groupData?.adminPubkeys || [])
+  const content = $('groupDetailsContent')
+  content.replaceChildren()
+  const addDetail = (label, value) => {
+    const row = document.createElement('div')
+    row.className = 'detail-row'
+    const heading = document.createElement('strong')
+    heading.textContent = label
+    const text = document.createElement('span')
+    text.textContent = value
+    row.append(heading, text)
+    content.append(row)
+  }
+  addDetail('Group', group.name)
+  addDetail('MLS epoch', String(snapshot.epoch ?? '—'))
+  addDetail('Members', String(snapshot.members.length))
+  addDetail('Relays', (snapshot.groupData?.relays || []).join(', ') || 'No group relays')
+  const memberHeading = document.createElement('h3')
+  memberHeading.textContent = 'Members'
+  content.append(memberHeading)
+  for (const pubkey of snapshot.members) {
+    const row = document.createElement('div')
+    row.className = 'member-row'
+    const key = document.createElement('code')
+    key.textContent = pubkey
+    const role = document.createElement('span')
+    role.textContent = admins.has(pubkey) ? 'Admin' : 'Member'
+    row.append(key, role)
+    if (pubkey !== connection.pubkey && admins.has(connection.pubkey)) {
+      const remove = document.createElement('button')
+      remove.className = 'text-button member-remove'
+      remove.type = 'button'
+      remove.textContent = 'Remove'
+      remove.setAttribute('aria-label', `Remove member ${pubkey}`)
+      remove.addEventListener('click', () => void removeGroupMember(group, pubkey))
+      row.append(remove)
+    }
+    content.append(row)
+  }
+  $('groupDetailsDialog').classList.remove('hidden')
+}
+
+async function removeGroupMember(group, pubkey) {
+  if (!confirm(`Remove ${pubkey.slice(0, 12)}… from “${group.name}”? They will lose access to future group messages.`)) return
+  try {
+    await window.MarmotCompanion.removeGroupMember(connection.client, group.id, pubkey)
+    const current = await connection.client.groups.get(group.id)
+    const updated = { ...group, instance: current, name: current.snapshot.groupData?.name || group.name }
+    groups = groups.map(item => item.idStr === group.idStr ? updated : item)
+    await refreshGroups()
+    const refreshed = groups.find(item => item.idStr === group.idStr)
+    if (refreshed) showGroupDetails(refreshed)
+    message('Member removed from the group.')
+  } catch (error) {
+    message(error?.message || String(error), true)
+  }
+}
+
+function openAdminHandoff(group) {
+  const members = group.instance.snapshot.members || []
+  const admins = group.instance.snapshot.groupData?.adminPubkeys || []
+  const candidates = members.filter(pubkey => pubkey !== connection.pubkey)
+  if (!candidates.length) {
+    message('You are the only group member and admin. This group cannot be left through a member handoff.', true)
+    return
+  }
+  const select = $('adminSuccessor')
+  select.replaceChildren()
+  for (const pubkey of candidates) {
+    const option = document.createElement('option')
+    option.value = pubkey
+    option.textContent = `${pubkey.slice(0, 12)}…${admins.includes(pubkey) ? ' (current admin)' : ''}`
+    select.append(option)
+  }
+  $('adminHandoffDescription').textContent = `Choose a member to retain admin access for “${group.name}”. The companion first publishes the admin change, then requests your removal.`
+  $('adminHandoffDialog').classList.remove('hidden')
+  $('adminHandoffForm').dataset.groupId = group.idStr
+}
+
+$('cancelAdminHandoff').addEventListener('click', () => $('adminHandoffDialog').classList.add('hidden'))
+$('adminHandoffForm').addEventListener('submit', async event => {
+  event.preventDefault()
+  const form = event.currentTarget
+  const group = groups.find(item => item.idStr === form.dataset.groupId)
+  if (!group) return
+  const submit = form.querySelector('button[type="submit"]')
+  submit.disabled = true
+  try {
+    await window.MarmotCompanion.transferAdminAndLeave(connection.client, group.id, $('adminSuccessor').value)
+    $('adminHandoffDialog').classList.add('hidden')
+    activeGroup = null
+    $('conversationView').classList.add('hidden')
+    mainView.classList.remove('hidden')
+    await refreshGroups()
+    message('Admin transferred and leave request acknowledged.')
+  } catch (error) {
+    message(error?.message || String(error), true)
+  } finally {
+    submit.disabled = false
+  }
+})
+
 $('settingsButton').addEventListener('click', showSettings)
+$('toggleArchived').addEventListener('click', () => { showArchived = !showArchived; renderGroups($('search').value) })
+$('groupActions').addEventListener('click', () => $('groupMenu').classList.toggle('hidden'))
+$('groupMenu').addEventListener('click', event => {
+  const action = event.target.closest('[data-group-action]')?.dataset.groupAction
+  if (activeGroup && action) {
+    if (action === 'archive' && activeGroup.archived) return
+    if (action === 'restore' && !activeGroup.archived) return
+    void manageGroup(activeGroup, action)
+  }
+})
+$('closeGroupDetails').addEventListener('click', () => $('groupDetailsDialog').classList.add('hidden'))
+document.addEventListener('click', event => {
+  if (!event.target.closest('#groupMenu, #groupActions, .row-menu')) $('groupMenu').classList.add('hidden')
+})
 $('closeButton').addEventListener('click', () => void ncc.runtime.closePanel())
 const resizeHandle = $('resizeHandle')
 let resizeStartX = 0
@@ -207,6 +406,18 @@ resizeHandle.addEventListener('keydown', event => {
 $('setupButton').addEventListener('click', showSettings)
 $('backButton').addEventListener('click', showMain)
 $('connectButton').addEventListener('click', () => void connect())
+$('switchAccountButton').addEventListener('click', () => {
+  liveConnection?.unsubscribe()
+  liveConnection = null
+  if (groupRefreshTimer) clearInterval(groupRefreshTimer)
+  groupRefreshTimer = null
+  connection = null
+  activeGroup = null
+  groups = []
+  $('conversationView').classList.add('hidden')
+  mainView.classList.remove('hidden')
+  void connect(null, true)
+})
 $('connectButtonSettings').addEventListener('click', () => { showMain(); void connect() })
 $('newChat').addEventListener('click', () => void publishKeyPackage())
 $('newChat').addEventListener('contextmenu', event => { event.preventDefault(); $('createGroupForm').classList.toggle('hidden') })
@@ -249,7 +460,9 @@ $('inviteForm').addEventListener('submit', async event => {
     const outcome = await window.MarmotCompanion.inviteContact(connection.client, activeGroup.id, $('contactAddress').value, connection.relays)
     $('inviteForm').classList.add('hidden')
     $('contactAddress').value = ''
-    message(`Invite sent. Relay acknowledgements: ${Object.keys(outcome || {}).length}.`)
+    const delivery = outcome?.kind === 'attempted' ? outcome.outcomes[0] : null
+    if (delivery?.kind === 'succeeded') message('An inbox relay accepted the invite.')
+    else message(delivery?.error || 'Invite delivery could not be confirmed.', true)
     await refreshGroups()
   } catch (error) { message(error?.message || String(error), true) }
   finally { button.disabled = false }
@@ -273,10 +486,10 @@ $('saveButton').addEventListener('click', async () => {
   if (!relays.length || !relays.every(value => /^wss:\/\//i.test(value))) { message('Relay addresses must start with wss://.', true); return }
   const normalizedRelays = [...new Set(relays.map(value => {
     const url = new URL(value)
-    if (url.protocol !== 'wss:' || !['relay.eu.whitenoise.chat', 'relay.us.whitenoise.chat', 'relay.damus.io', 'relay.primal.net', 'relay.ditto.pub'].includes(url.hostname) || url.port || url.username || url.password || url.pathname !== '/' || url.search || url.hash) throw new Error(`Relay host is not permitted by this prototype: ${url.hostname}`)
+    if (url.protocol !== 'wss:' || !['relay.eu.whitenoise.chat', 'relay.us.whitenoise.chat', 'relay.damus.io', 'relay.primal.net', 'relay.ditto.pub', 'nos.lol'].includes(url.hostname) || url.port || url.username || url.password || url.pathname !== '/' || url.search || url.hash) throw new Error(`Relay host is not permitted by this prototype: ${url.hostname}`)
     return url.toString().replace(/\/$/, '')
   }))]
-  await chrome.storage.local.set({ relays: normalizedRelays, useBrowserIdentity: $('useBrowserIdentity').checked })
+  await chrome.storage.local.set({ relays: normalizedRelays, relaysConfigured: true, useBrowserIdentity: $('useBrowserIdentity').checked })
   selectedRelays = normalizedRelays
   if (connection) {
     liveConnection?.unsubscribe()
@@ -307,4 +520,10 @@ $('saveButton').addEventListener('click', async () => {
 })
 $('openWhiteNoise').addEventListener('click', () => message('White Noise desktop is not installed in this development profile.'))
 $('search').addEventListener('input', () => renderGroups($('search').value))
-void load()
+async function initialize() {
+  const { connectedSignerPubkey } = await chrome.storage.local.get('connectedSignerPubkey')
+  if (connectedSignerPubkey) await connect(connectedSignerPubkey)
+  else await load()
+}
+
+void initialize()
