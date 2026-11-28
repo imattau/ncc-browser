@@ -753,7 +753,7 @@ async function manageGroup(group, action) {
       message(field === 'pinned'
         ? (value ? 'Chat pinned.' : 'Chat unpinned.')
         : field === 'muted'
-          ? (value ? 'Notification preference saved. Desktop notifications are not available yet.' : 'Chat unmuted on this device.')
+          ? (value ? 'Notifications muted for this chat.' : 'Chat unmuted on this device.')
           : (value ? 'Chat marked unread.' : 'Chat marked read.'))
     } else if (action === 'move-up' || action === 'move-down') {
       const peers = groups

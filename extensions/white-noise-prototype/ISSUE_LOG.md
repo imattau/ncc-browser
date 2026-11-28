@@ -280,7 +280,7 @@ Use this file to record issues reported during prototype work. Move entries to
 - **Change:** Connected marmot-ts 0.9.0's encrypted-media policy, Blossom
   transport, media preparation/download, and `imeta` parsing. New groups use
   the account's published kind-10063 Blossom server list, falling back to
-  `https://blossom.primal.net`; admins can enable media in older groups. Added
+  `https://blossom.ditto.pub` then `https://blossom.primal.net`; admins can enable media in older groups. Added
   explicit host permissions for the tested White Noise Blossom/CDN endpoints.
   The chat plus menu opens a multi-file picker, clipboard image/file pastes
   stage files beside the composer, and received attachments download on demand
