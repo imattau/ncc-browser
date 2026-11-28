@@ -1318,7 +1318,7 @@ $('sendButton').addEventListener('click', async () => {
   try {
     const rumor = pendingAttachments.length
       ? await window.MarmotCompanion.sendMedia(connection.client, activeGroup.id, pendingAttachments.map(file => ({ blob: file, metadata: { filename: file.name, type: file.type || 'application/octet-stream' } })), text, connection.mediaTransport)
-      : await window.MarmotCompanion.send(connection.client, activeGroup.id, text, replyTarget, activeGroup.instance.snapshot.groupData?.relays || [])
+      : await window.MarmotCompanion.send(connection.client, activeGroup.id, text, replyTarget)
     $('composer').value = ''
     const wasReply = Boolean(replyTarget)
     clearReplyTarget()

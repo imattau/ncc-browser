@@ -486,15 +486,14 @@ const api = {
     await group.history.saveRumor(rumor)
     return rumor
   },
-  async send(client, groupId, text, replyTo = null, groupRelays = []) {
+  async send(client, groupId, text, replyTo = null) {
     const pubkey = await client.signer.getPublicKey()
     let rumor
     if (replyTo?.id && replyTo?.pubkey) {
-      // The parent is an MLS rumor, not a standalone Nostr event on a relay.
-      // Do not put the group's encrypted-event relays in a public nevent hint.
-      const pointer = nip19.neventEncode({ id: replyTo.id, author: replyTo.pubkey, kind: replyTo.kind || 9 })
-      const tag = ['q', replyTo.id, '', replyTo.pubkey]
-      rumor = createRumor({ pubkey, kind: 9, content: `nostr:${pointer}\n${text}`, tags: [tag] })
+      // NIP-C7's q tag is the reply reference. The parent rumor is MLS-only,
+      // so an inline nevent would invite public-relay link preview lookups that
+      // cannot resolve it (and show a spurious "event not found" card).
+      rumor = createRumor({ pubkey, kind: 9, content: text, tags: [['q', replyTo.id, '', replyTo.pubkey]] })
     } else {
       rumor = createChatRumor({ pubkey, content: text })
     }

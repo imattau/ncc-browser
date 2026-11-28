@@ -110,27 +110,26 @@ Use this file to record issues reported during prototype work. Move entries to
 
 ### Android reply reference shows an unresolved event preview
 
-- **Status:** Open; quote rendering works, but Android showed an extra
-  `Event not found` link preview in one check.
+- **Status:** Candidate companion fix implemented; Android confirmation still
+  needed. Quote rendering worked, but Android showed an extra `Event not found`
+  link preview in one check.
 - **Observed:** The companion's NIP-C7 reply displayed its quote correctly in
   White Noise Android, plus a separate preview for the `nostr:nevent` reference
   that said the event could not be found. The Android reply in the reverse
   direction rendered its quote correctly in the companion.
-- **Next:** Recheck against the Android release currently installed in the
-  emulator and determine whether White Noise should resolve the q-tagged event
-  from MLS history or whether the companion's reference needs adjustment. The
-  current outgoing event follows NIP-C7's single `q` tag plus `nevent` format.
-- **Protocol check:** The current NIP-C7 example uses exactly a kind-9 message
-  whose content begins with `nostr:nevent1...` and whose only reply tag is
-  `q`. In Marmot, that referenced kind-9 rumor is carried inside MLS and is not
-  independently retrievable as a public relay event. The companion had copied
-  the group's relay list into the `nevent` hint, although those relays serve
-  encrypted Marmot events rather than the referenced plaintext rumor. It now
-  omits the misleading relay hint while keeping the NIP-C7 reference shape. A
-  bundled-runtime check confirmed the sent kind-9 rumor contains exactly one
-  `q` tag and a `nostr:nevent` reference, with the relay slot empty. On the next
-  isolated Android interop run, verify whether the Android link preview still
-  reports the rumor as missing before closing this issue.
+- **Protocol check:** NIP-C7's prose defines a reply by its `q` tag; its example
+  also puts a `nostr:nevent` in content. The referenced kind-9 rumor is carried
+  inside MLS and is not independently retrievable as a public relay event, so
+  that inline reference can trigger an unresolvable public link preview.
+- **Change:** Replies now keep the single NIP-C7 `q` tag and plain reply text,
+  omitting the inline event reference that caused the preview. The companion
+  still renders a contextual quote from the `q` tag and loaded history.
+- **Check:** A bundled-runtime check confirmed a reply is kind 9, contains the
+  reply text, and has one `q` tag with the correct id and author and no public
+  relay hint. The `/tmp/whitenoise.apk` used in the attempted isolated Android
+  run was version `2026.5.22`, not the target `2026.11.17`; the fresh QA AVD
+  also had no network route and was deleted. Verify the q-only reply on an
+  online isolated Android profile before closing this issue.
 
 ### 1. Cross-device Marmot compatibility
 
@@ -230,13 +229,13 @@ Use this file to record issues reported during prototype work. Move entries to
 
 - **Status:** Implemented and verified in both directions with White Noise
   Android.
-- **Change:** Replies are kind-9 rumors with one `q` tag and a
-  `nostr:nevent` reference followed by the reply text. The panel previews the
-  reply target, supports cancelling, and renders a contextual quote when the
-  parent is in loaded history. Attachment replies are currently disabled.
+- **Change:** Replies are kind-9 rumors with one `q` tag. The panel previews
+  the reply target, supports cancelling, and renders a contextual quote when
+  the parent is in loaded history. Attachment replies are currently disabled.
 - **Check:** Android displayed the companion reply in the expected quote
   context. An Android reply to a companion message rendered with its matching
-  quote in the companion.
+  quote in the companion. The q-only content change is pending a fresh Android
+  interop check (tracked above).
 
 ### 3. Drag-resize the companion panel
 
