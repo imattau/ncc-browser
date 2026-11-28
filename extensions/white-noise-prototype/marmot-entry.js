@@ -1,5 +1,9 @@
+import { GroupRumorHistory } from '@internet-privacy/marmot-ts/client'
+import { KeyValueRumorHistoryBackend } from '@internet-privacy/marmot-ts/extra'
+import { createMediaCache, legacyMediaKeys } from './media-cache.js'
+import { coalesce } from './refresh-queue.js'
+import { createLiveRelays } from './relay-live.js'
 import { MarmotClient, createApplicationMessageIntent, createChatRumor } from '@internet-privacy/marmot-ts'
-import { makeKeyValueRumorHistoryFactory } from '@internet-privacy/marmot-ts/extra'
 import { createInboxRelayListEvent, deserializeApplicationData, encryptedMediaBlossomDefaultV2, getInboxRelays, getMediaAttachments } from '@internet-privacy/marmot-ts/core'
 import { createBlossomMediaTransport, createInviteIntent, downloadMessageMedia, prepareMediaMessage, Proposals } from '@internet-privacy/marmot-ts/client'
 import { getEventHash, nip19, verifyEvent } from 'nostr-tools'
@@ -18,7 +22,34 @@ class ExtensionStore {
   async removeItem(key) { await chrome.storage.local.remove(this.prefix + key) }
   async clear() { for (const key of await this.keys()) await this.removeItem(key) }
   async keys() { return Object.keys(await chrome.storage.local.get(null)).filter(key => key.startsWith(this.prefix)).map(key => key.slice(this.prefix.length)) }
+  async entries() { return new Map(Object.entries(await chrome.storage.local.get(null)).filter(([key]) => key.startsWith(this.prefix)).map(([key, value]) => [key.slice(this.prefix.length), value])) }
 }
+
+// The library's query asks for the keys and then for each message. Each call copies
+// data between processes (listing keys copies the whole store), so read it all once.
+class SnapshotHistoryBackend extends KeyValueRumorHistoryBackend {
+  async queryRumors(filters) {
+    const entries = await this.store.entries()
+    return new KeyValueRumorHistoryBackend({
+      keys: async () => [...entries.keys()],
+      getItem: async key => restore(entries.get(key))
+    }).queryRumors(filters)
+  }
+}
+
+const historyFactory = accountPrefix => GroupRumorHistory.makeFactory(groupId => new SnapshotHistoryBackend(new ExtensionStore(`${accountPrefix}history:${[...groupId].map(byte => byte.toString(16).padStart(2, '0')).join('')}`)))
+
+const mediaCache = createMediaCache()
+
+async function signRelayAuth(relay, challenge) {
+  const now = Math.floor(Date.now() / 1000)
+  const signed = await ncc.nostr.signEvent({ kind: 22242, created_at: now, tags: [['relay', relay], ['challenge', challenge], ['expiration', String(now + 600)]], content: '' })
+  if (!verifyEvent(signed) || signed.pubkey !== activeSignerPubkey) throw new Error('The active NCC profile changed during relay authentication.')
+  return signed
+}
+
+const liveRelays = createLiveRelays({ signAuth: signRelayAuth })
+globalThis.addEventListener?.('online', () => liveRelays.reconnect())
 
 const groupImageTransport = async request => {
   const response = await ncc.blossom.groupImageRequest({ url: request.url, method: request.method, headers: request.headers, body: request.body, maxBytes: request.maxBytes })
@@ -149,9 +180,7 @@ function relayRequest(url, filters) {
         if (message[0] === 'AUTH') {
           void (async () => {
             try {
-              const now = Math.floor(Date.now() / 1000)
-              const signed = await ncc.nostr.signEvent({ kind: 22242, created_at: now, tags: [['relay', url], ['challenge', message[1]], ['expiration', String(now + 600)]], content: '' })
-              if (!verifyEvent(signed) || signed.pubkey !== activeSignerPubkey) throw new Error('The active NCC profile changed during relay authentication.')
+              const signed = await signRelayAuth(url, message[1])
               authEventId = signed.id
               requestSent = false
               socket.send(JSON.stringify(['AUTH', signed]))
@@ -199,21 +228,10 @@ const network = {
     return [...new Map(successful.flatMap(result => result.value).map(event => [event.id, event])).values()]
   },
   subscription(relays, filters) {
-    let active = true
+    const filterList = Array.isArray(filters) ? filters : [filters]
     return { subscribe(observer) {
-      const known = new Set()
-      const filterList = Array.isArray(filters) ? filters : [filters]
-      const poll = async () => {
-        if (!active) return
-        try {
-          const events = await network.request(relays, filterList)
-          if (!active) return
-          for (const event of events) if (!known.has(event.id)) { known.add(event.id); observer.next?.(event) }
-        } catch (error) { if (active) observer.error?.(error) }
-      }
-      void poll()
-      const timer = setInterval(() => void poll(), 8000)
-      return { unsubscribe() { active = false; clearInterval(timer) } }
+      const unsubscribe = liveRelays.subscribe(relays, filterList, observer)
+      return { unsubscribe }
     } }
   },
   async getUserInboxRelays(pubkey) {
@@ -240,13 +258,17 @@ const api = {
     activeSignerPubkey = pubkey
     if (expectedPubkey && pubkey !== expectedPubkey) throw new Error('The active NCC account has changed. Select the previous account to reopen its chats.')
     const accountPrefix = `account:${pubkey}:`
+    // Nothing decrypted or signed in for a previous account may carry over.
+    mediaCache.clear()
+    liveRelays.reconnect()
+    await removeStoredMedia()
     await migrateLegacyAccountData(pubkey, accountPrefix)
     const blossomServers = await resolveBlossomServers(pubkey, relays)
     const clientIdKey = `marmot:${accountPrefix}clientId`
     let clientId = (await chrome.storage.local.get(clientIdKey))[clientIdKey]
     if (!clientId) { clientId = [...crypto.getRandomValues(new Uint8Array(32))].map(byte => byte.toString(16).padStart(2, '0')).join(''); await chrome.storage.local.set({ [clientIdKey]: clientId }) }
     const keyStore = new ExtensionStore(`${accountPrefix}keypackages`)
-    const client = new MarmotClient({ signer, network, groupStateStore: new ExtensionStore(`${accountPrefix}groups`), rewindStore: new ExtensionStore(`${accountPrefix}rewind`), keyPackageStore: keyStore, clientId, historyFactory: makeKeyValueRumorHistoryFactory(groupId => new ExtensionStore(`${accountPrefix}history:${[...groupId].map(byte => byte.toString(16).padStart(2, '0')).join('')}`)), mediaFactory: groupId => createMediaStore(`${accountPrefix}media:${[...groupId].map(byte => byte.toString(16).padStart(2, '0')).join('')}`), getSignatureKeyPair: async ciphersuite => {
+    const client = new MarmotClient({ signer, network, groupStateStore: new ExtensionStore(`${accountPrefix}groups`), rewindStore: new ExtensionStore(`${accountPrefix}rewind`), keyPackageStore: keyStore, clientId, historyFactory: historyFactory(accountPrefix), mediaFactory: groupId => mediaCache.storeFor(`${accountPrefix}media:${[...groupId].map(byte => byte.toString(16).padStart(2, '0')).join('')}`), getSignatureKeyPair: async ciphersuite => {
       const saved = await keyStore.getItem('local-signature-key')
       if (saved?.signKey && saved?.publicKey) return { signKey: saved.signKey, publicKey: saved.publicKey }
       const pair = await ciphersuite.signature.keygen()
@@ -500,9 +522,10 @@ const api = {
     await client.groups.send(groupId, createApplicationMessageIntent(rumor))
     return rumor
   },
-  async sendMedia(client, groupId, files, caption, transport) {
+  async sendMedia(client, groupId, files, caption, transport, replyTo = null) {
     const group = await client.groups.get(groupId)
-    const prepared = await prepareMediaMessage(group, files, { transport, maxBytes: MEDIA_MAX_BYTES, caption })
+    const tags = replyTo?.id && replyTo?.pubkey ? [['q', replyTo.id, '', replyTo.pubkey]] : []
+    const prepared = await prepareMediaMessage(group, files, { transport, maxBytes: MEDIA_MAX_BYTES, caption, tags })
     await client.groups.send(groupId, prepared.intent)
     await group.history.saveRumor(prepared.rumor)
     return prepared.rumor
@@ -568,15 +591,9 @@ async function resolveBlossomServers(pubkey, relays) {
   return DEFAULT_BLOSSOM_SERVERS
 }
 
-function createMediaStore(prefix) {
-  const store = new ExtensionStore(prefix)
-  return {
-    addMedia: (key, value) => store.setItem(key, value),
-    getMedia: key => store.getItem(key),
-    removeMedia: key => store.removeItem(key),
-    async listMedia() { return Promise.all((await store.keys()).map(key => store.getItem(key))).then(entries => entries.filter(entry => entry?.attachment).map(entry => entry.attachment)) },
-    clearMedia: () => store.clear()
-  }
+async function removeStoredMedia() {
+  const stale = legacyMediaKeys(Object.keys(await chrome.storage.local.get(null)))
+  if (stale.length) await chrome.storage.local.remove(stale)
 }
 
 async function migrateLegacyAccountData(pubkey, accountPrefix) {
@@ -603,4 +620,4 @@ function createRumor({ pubkey, kind, content, tags }) {
   return rumor
 }
 
-window.MarmotCompanion = api
+window.MarmotCompanion = { ...api, coalesce }

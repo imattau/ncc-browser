@@ -206,6 +206,7 @@ export const EXTENSION_SHIM = String.raw`
 
   var nostr = {
     getPublicKey: function () { return bridge.invoke('nostr.getPublicKey', []) },
+    getProfile: function (pubkey, relays) { return bridge.invoke('nostr.getProfile', [pubkey, relays]) },
     signEvent: function (event) { return bridge.invoke('nostr.signEvent', [event]) },
     getRelays: function () { return bridge.invoke('nostr.getRelays', []) },
     requestEvents: function (relays, filters) { return bridge.invoke('nostr.requestEvents', [relays, filters]) },

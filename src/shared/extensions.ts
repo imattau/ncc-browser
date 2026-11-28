@@ -193,6 +193,7 @@ export const SUPPORTED_PERMISSIONS = new Set([
   'clipboardWrite',
   'blossom:group-image',
   'nostr:pubkey',
+  'nostr:profile',
   'nostr:sign',
   'nostr:nip04',
   'nostr:nip44'
@@ -208,6 +209,7 @@ const PERMISSION_WARNINGS: Record<string, string> = {
   clipboardWrite: 'Write to the clipboard',
   'blossom:group-image': 'Upload encrypted group photos to approved Blossom servers',
   'nostr:pubkey': 'Read your public key',
+  'nostr:profile': 'Read public profile names and photos',
   'nostr:sign': 'Ask you to sign Nostr events',
   'nostr:nip04': 'Encrypt and decrypt NIP-04 messages',
   'nostr:nip44': 'Encrypt and decrypt NIP-44 messages'

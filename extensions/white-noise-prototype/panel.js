@@ -22,6 +22,9 @@ let groupRefreshTimer = null
 let showArchived = false
 let pendingAttachments = []
 let renderedMediaUrls = []
+const mediaUrlCache = new Map()
+let mediaUrlCacheBytes = 0
+const MEDIA_URL_CACHE_LIMIT = 48 * 1024 * 1024
 let inviteRefreshTimer = null
 let signerWatchTimer = null
 let pendingInvites = []
@@ -30,6 +33,7 @@ let replyTarget = null
 let retentionRefreshTimeout = null
 let folders = []
 let selectedFolderId = 'all'
+const profileCache = new Map()
 
 function setStatus(text, connected = false) {
   $('statusText').textContent = text
@@ -117,6 +121,108 @@ async function load() {
   renderGroups()
 }
 
+async function profileFor(pubkey) {
+  if (!connection || !pubkey) return null
+  if (profileCache.has(pubkey)) return profileCache.get(pubkey)
+  profileCache.set(pubkey, null)
+  try {
+    const result = await ncc.nostr.getProfile(pubkey, connection.relays)
+    profileCache.set(pubkey, result)
+    if (pubkey === connection.pubkey && result) {
+      $('accountName').textContent = result.name || 'Your account'
+      const avatar = document.querySelector('.account .avatar')
+      setAvatar(avatar, result, '●')
+    }
+    return result
+  } catch (error) {
+    console.debug('[white-noise] profile lookup unavailable:', error?.message || error)
+    return null
+  }
+}
+
+function setAvatar(element, profile, fallback) {
+  element.classList.add('profile-avatar')
+  element.style.backgroundImage = ''
+  element.textContent = profile?.name?.slice(0, 1).toUpperCase() || fallback
+  if (profile?.pictureDataUrl) {
+    element.textContent = ''
+    element.style.backgroundImage = `url("${profile.pictureDataUrl}")`
+    element.classList.add('profile-photo')
+  }
+}
+
+function clearMediaUrlCache() {
+  for (const entry of mediaUrlCache.values()) URL.revokeObjectURL(entry.url)
+  mediaUrlCache.clear()
+  mediaUrlCacheBytes = 0
+  renderedMediaUrls = []
+}
+
+function rememberMediaUrl(key, attachment, data) {
+  const previous = mediaUrlCache.get(key)
+  if (previous) {
+    mediaUrlCacheBytes -= previous.size
+    URL.revokeObjectURL(previous.url)
+    mediaUrlCache.delete(key)
+  }
+  const size = data.byteLength
+  if (!size || size > MEDIA_URL_CACHE_LIMIT) return null
+  const url = URL.createObjectURL(new Blob([data], { type: attachment.mediaType }))
+  mediaUrlCache.set(key, { url, size, attachment })
+  mediaUrlCacheBytes += size
+  while (mediaUrlCacheBytes > MEDIA_URL_CACHE_LIMIT) {
+    const [oldestKey, oldest] = mediaUrlCache.entries().next().value
+    mediaUrlCache.delete(oldestKey)
+    mediaUrlCacheBytes -= oldest.size
+    URL.revokeObjectURL(oldest.url)
+  }
+  return url
+}
+
+function cachedMedia(key) {
+  const entry = mediaUrlCache.get(key)
+  if (!entry) return null
+  mediaUrlCache.delete(key)
+  mediaUrlCache.set(key, entry)
+  return entry
+}
+
+function appendMediaPreview(row, entry) {
+  const { url, attachment } = entry
+  if (attachment.mediaType.startsWith('video/')) {
+    const video = document.createElement('video')
+    video.src = url
+    video.controls = true
+    video.preload = 'metadata'
+    video.setAttribute('aria-label', attachment.filename)
+    video.className = 'attachment-video'
+    const caption = document.createElement('span')
+    caption.className = 'attachment-file'
+    caption.textContent = attachment.filename
+    const save = document.createElement('a')
+    save.href = url
+    save.download = attachment.filename
+    save.className = 'attachment-file'
+    save.textContent = 'Save video'
+    row.append(video, caption, save)
+    return
+  }
+  const link = document.createElement('a')
+  link.href = url
+  link.download = attachment.filename
+  link.className = 'attachment-file'
+  if (attachment.mediaType.startsWith('image/')) {
+    const img = document.createElement('img')
+    img.src = url
+    img.alt = attachment.filename
+    img.loading = 'lazy'
+    link.append(img)
+  } else {
+    link.textContent = `${attachment.filename} · ${attachment.mediaType} · click to save`
+  }
+  row.append(link)
+}
+
 function sameRelays(left, right) {
   return Array.isArray(left) && left.length === right.length && left.every(relay => right.includes(relay))
 }
@@ -140,7 +246,7 @@ function renderGroups(filter = '') {
     const empty = document.createElement('div')
     empty.className = 'empty'
     const title = query ? 'No chats match your search' : !showArchived && selectedFolderId !== 'all' ? 'This folder is empty' : connection ? 'No chats yet' : 'Connect to get started'
-    const description = query ? 'Try a different name.' : !showArchived && selectedFolderId !== 'all' ? 'Move a chat here from its chat options.' : connection ? 'Set up invitations so people can add you to a group.' : 'Connect your browser account to load your chats.'
+    const description = query ? 'Try a different name.' : !showArchived && selectedFolderId !== 'all' ? 'Move a chat here from its chat options.' : connection ? 'Groups from another device are not discovered from relays. Ask a member to invite this account; older messages may not be available on this device.' : 'Connect your browser account to load your chats.'
     empty.innerHTML = `<div class="empty-icon">◌</div><strong>${title}</strong><p>${description}</p>`
     if (!query) {
       const button = document.createElement('button')
@@ -161,6 +267,13 @@ function renderGroups(filter = '') {
     const row = document.createElement('button')
     row.className = `chat-row${group.unread ? ' unread' : ''}`
     row.innerHTML = `<span class="chat-avatar">${escapeHtml((group.name || 'W').slice(0, 1).toUpperCase())}</span><span class="chat-copy"><strong>${escapeHtml(group.name || 'Untitled group')}<span class="chat-flags">${group.pinned ? '<span title="Pinned">◆</span>' : ''}${group.muted ? '<span title="Muted">🔕</span>' : ''}</span></strong><small>${group.memberCount || 1} members · epoch ${group.epoch ?? '—'}${group.unread ? ' · Unread' : ''}</small><span class="last-message"></span></span><span class="row-menu" role="button" tabindex="0" aria-label="Chat options">⋯</span>`
+    const otherMembers = (group.instance.snapshot.members || []).filter(pubkey => pubkey !== connection?.pubkey).slice(0, 2)
+    if (!group.name || group.name === 'Encrypted group') {
+      void Promise.all(otherMembers.map(profileFor)).then(profiles => {
+        const names = profiles.filter(profile => profile?.name).map(profile => profile.name)
+        if (names.length && row.isConnected) row.querySelector('.chat-copy strong').prepend(document.createTextNode(`${names.join(', ')} · `))
+      })
+    }
     void loadGroupPhoto(group, row.querySelector('.chat-avatar'))
     if (group.last) row.querySelector('.last-message').textContent = group.last.content.slice(0, 48)
     row.addEventListener('click', event => {
@@ -279,8 +392,31 @@ function escapeHtml(value) {
   return span.innerHTML
 }
 
-async function refreshGroups() {
-  if (!connection) return
+// Many things ask for a refresh at once, such as each message while catching up.
+const refreshGroups = window.MarmotCompanion.coalesce(() => timed('chat list', loadGroups), 150)
+const showMessages = window.MarmotCompanion.coalesce(() => activeGroup ? timed('messages', () => renderMessages(activeGroup)) : undefined, 30)
+const refreshInvites = window.MarmotCompanion.coalesce(() => timed('invitations', loadInvites), 150)
+
+async function timed(label, task) {
+  const started = performance.now()
+  try { return await task() }
+  finally {
+    const elapsed = Math.round(performance.now() - started)
+    if (elapsed > 200) console.warn(`[white-noise] slow refresh: ${label} took ${elapsed} ms`)
+  }
+}
+
+function watchClient(client) {
+  for (const event of ['created', 'joined', 'imported', 'loaded', 'updated', 'removed', 'destroyed', 'left', 'disbanded', 'unloaded']) {
+    client.groups.on(event, () => void refreshGroups())
+  }
+  client.invites.on('decrypted', () => void refreshInvites())
+  client.invites.on('read', () => void refreshInvites())
+}
+
+async function loadGroups() {
+  const current = connection
+  if (!current) return
   const foldersKey = folderStorageKey()
   const storedFolders = (await chrome.storage.local.get(foldersKey))[foldersKey]
   folders = Array.isArray(storedFolders)
@@ -288,18 +424,23 @@ async function refreshGroups() {
     : []
   if (selectedFolderId !== 'all' && !folders.some(folder => folder.id === selectedFolderId)) selectedFolderId = 'all'
   const loaded = await window.MarmotCompanion.listGroups(connection.client)
-  groups = await Promise.all(loaded.map(async group => {
+  const loadedGroups = await Promise.all(loaded.map(async group => {
     const history = retainedHistory(group, await window.MarmotCompanion.history(group))
     if (!observedGroupInstances.has(group)) {
       observedGroupInstances.add(group)
       group.on('changed', () => void refreshGroups())
+      const historyChanged = () => {
+        void refreshGroups()
+        if (activeGroup?.idStr === group.idStr) void showMessages()
+      }
+      group.history.on('removed', historyChanged)
+      group.history.on('cleared', historyChanged)
       group.history.on('rumor', rumor => {
         if (activeGroup?.idStr !== group.idStr && (rumor?.kind === 9 || rumor?.kind === 1068) && rumorIsRetained(group, rumor)) {
           void setChatUiState(group.idStr, { unread: true })
           if (rumor.pubkey !== connection?.pubkey) void notifyIncomingMessage(rumor, group)
         }
-        void refreshGroups()
-        if (activeGroup?.idStr === group.idStr) void showMessages(activeGroup)
+        historyChanged()
       })
     }
     const key = `marmot:chat-ui:${connection.pubkey}:${group.idStr}`
@@ -308,6 +449,9 @@ async function refreshGroups() {
     const preview = lastChatMessage?.kind === 1068 ? `Poll: ${lastChatMessage.content}` : lastChatMessage?.content.startsWith('nostr:') ? 'Shared a contact' : lastChatMessage?.content
     return { id: group.snapshot.id, idStr: group.idStr, name: group.snapshot.groupData?.name || 'Encrypted group', memberCount: group.snapshot.members?.length, epoch: String(group.snapshot.epoch ?? '—'), instance: group, last: lastChatMessage ? { ...lastChatMessage, content: preview } : null, archived: Boolean(uiState.archived), pinned: Boolean(uiState.pinned), muted: Boolean(uiState.muted), unread: Boolean(uiState.unread), folderId: typeof uiState.folderId === 'string' ? uiState.folderId : null, order: Number.isFinite(uiState.order) ? uiState.order : loaded.indexOf(group) }
   }))
+  // The account may have been switched or disconnected while this was loading.
+  if (connection !== current) return
+  groups = loadedGroups
   renderGroups($('search').value)
 }
 
@@ -323,10 +467,13 @@ function notifyIncomingMessage(rumor, group) {
   }).catch(error => console.debug('[white-noise] notification unavailable:', error?.message || error))
 }
 
-async function refreshInvites() {
-  if (!connection) return
+async function loadInvites() {
+  const current = connection
+  if (!current) return
   try {
-    pendingInvites = await window.MarmotCompanion.getInvites(connection.client)
+    const invites = await window.MarmotCompanion.getInvites(current.client)
+    if (connection !== current) return
+    pendingInvites = invites
     renderInvites()
   } catch (error) {
     message(error?.message || String(error), true)
@@ -402,17 +549,21 @@ async function connect() {
     const runtime = await window.MarmotCompanion.connect(relays, null, fallbackRelays)
     connection = { ...runtime, relays, fallbackRelays }
     liveConnection = runtime.live
+    watchClient(runtime.client)
     await refreshGroups()
     await refreshInvites()
     if (groupRefreshTimer) clearInterval(groupRefreshTimer)
-    groupRefreshTimer = setInterval(() => { void refreshGroups() }, 5000)
+    // Changes arrive as events. These slow timers cover what nothing announces, such
+    // as a message passing its disappearing-message time.
+    groupRefreshTimer = setInterval(() => { void refreshGroups() }, 60_000)
     if (inviteRefreshTimer) clearInterval(inviteRefreshTimer)
-    inviteRefreshTimer = setInterval(() => { void refreshInvites() }, 5000)
+    inviteRefreshTimer = setInterval(() => { void refreshInvites() }, 60_000)
     if (signerWatchTimer) clearInterval(signerWatchTimer)
     signerWatchTimer = setInterval(() => { void checkActiveSigner() }, 5000)
     await chrome.storage.local.set({ connectedSignerPubkey: runtime.pubkey })
     setStatus(`Connected · ${relays.length} relays`, true)
     message('Account connected. Your chats and group invitations are ready.')
+    void profileFor(runtime.pubkey)
   } catch (error) {
     setStatus('Connection failed')
     message(error?.message || String(error), true)
@@ -433,6 +584,8 @@ async function disconnectCurrentAccount() {
   }
   groupRefreshTimer = inviteRefreshTimer = signerWatchTimer = null
   connection = null
+  profileCache.clear()
+  clearMediaUrlCache()
   activeGroup = null
   groups = []
   pendingInvites = []
@@ -475,7 +628,7 @@ async function publishKeyPackage() {
   finally { button.disabled = false }
 }
 
-async function showMessages(group) {
+async function renderMessages(group) {
   const allHistory = await window.MarmotCompanion.history(group.instance)
   const history = retainedHistory(group.instance, allHistory)
   if (retentionRefreshTimeout) clearTimeout(retentionRefreshTimeout)
@@ -489,14 +642,12 @@ async function showMessages(group) {
       .sort((left, right) => left - right)[0]
     if (Number.isFinite(nextExpiry)) {
       retentionRefreshTimeout = setTimeout(() => {
-        if (activeGroup?.idStr === group.idStr) void showMessages(group)
+        if (activeGroup?.idStr === group.idStr) void showMessages()
       }, Math.min(2147483647, Math.max(100, (nextExpiry - now) * 1000 + 50)))
     }
   }
   const visibleHistory = history.filter(rumor => rumor.kind === 9 || rumor.kind === 1068)
   const list = $('messageList')
-  for (const url of renderedMediaUrls) URL.revokeObjectURL(url)
-  renderedMediaUrls = []
   const query = $('messageSearch').value.trim().toLowerCase()
   const matches = visibleHistory.filter(rumor => !query || rumor.content.toLowerCase().includes(query) || (rumor.tags || []).some(tag => tag[0] === 'option' && String(tag[2] || '').toLowerCase().includes(query)) || window.MarmotCompanion.mediaAttachments(rumor).some(item => item.filename.toLowerCase().includes(query)))
   list.replaceChildren()
@@ -511,7 +662,8 @@ async function showMessages(group) {
     const row = document.createElement('article')
     row.className = 'message-bubble'
     const author = document.createElement('strong')
-    author.textContent = rumor.pubkey === connection.pubkey ? 'You' : `${rumor.pubkey.slice(0, 12)}…`
+    const senderProfile = await profileFor(rumor.pubkey)
+    author.textContent = rumor.pubkey === connection.pubkey ? (senderProfile?.name || 'You') : (senderProfile?.name || `${rumor.pubkey.slice(0, 12)}…`)
     row.append(author)
     if (rumor.kind === 1068) {
       renderPoll(row, rumor, history, group)
@@ -536,36 +688,30 @@ async function showMessages(group) {
     }
     const attachments = window.MarmotCompanion.mediaAttachments(rumor)
     if (attachments.length) {
+      const mediaKeys = attachments.map((attachment, index) => `${connection.pubkey}:${group.idStr}:${rumor.id}:${index}:${attachment.url}`)
+      const ready = mediaKeys.map(cachedMedia)
+      const mediaContent = document.createElement('div')
+      mediaContent.className = 'attachment-content'
+      for (const entry of ready) if (entry) appendMediaPreview(mediaContent, entry)
+      row.append(mediaContent)
       const open = document.createElement('button')
       open.type = 'button'
       open.className = 'attachment-download secondary'
-      open.textContent = `Download ${attachments.length === 1 ? attachments[0].filename : `${attachments.length} attachments`}`
+      open.textContent = ready.every(Boolean) ? 'Reload attachments' : `Load ${attachments.length === 1 ? attachments[0].filename : `${attachments.length} attachments`}`
       open.addEventListener('click', async () => {
         open.disabled = true
         open.textContent = 'Downloading and decrypting…'
         try {
           const results = await window.MarmotCompanion.downloadMedia(connection.client, group.id, rumor, connection.mediaTransport)
-          for (const result of results) {
+          mediaContent.replaceChildren()
+          for (const [index, result] of results.entries()) {
             if (result.status !== 'ready') continue
-            const blob = new Blob([result.data], { type: result.attachment.mediaType })
-            const url = URL.createObjectURL(blob)
-            renderedMediaUrls.push(url)
-            const link = document.createElement('a')
-            link.href = url
-            link.download = result.attachment.filename
-            link.className = 'attachment-file'
-            if (result.attachment.mediaType.startsWith('image/')) {
-              const img = document.createElement('img')
-              img.src = url
-              img.alt = result.attachment.filename
-              link.append(img)
-            } else {
-              link.textContent = `${result.attachment.filename} · ${result.attachment.mediaType} · click to save`
-            }
-            row.append(link)
+            const url = rememberMediaUrl(mediaKeys[index], result.attachment, result.data)
+            if (url) appendMediaPreview(mediaContent, { url, attachment: result.attachment })
           }
           if (results.some(result => result.status === 'unavailable')) message('Some attachments could not be downloaded or decrypted.', true)
-          open.remove()
+          open.disabled = false
+          open.textContent = 'Reload attachments'
         } catch (error) {
           open.disabled = false
           open.textContent = 'Retry download'
@@ -573,6 +719,14 @@ async function showMessages(group) {
         }
       })
       row.append(open)
+      if (attachments.some(attachment => attachment.mediaType.startsWith('image/') || attachment.mediaType.startsWith('video/')) && !ready.every(Boolean)) {
+        const observer = new IntersectionObserver(entries => {
+          if (!entries.some(entry => entry.isIntersecting)) return
+          observer.disconnect()
+          if (!open.disabled && open.textContent.startsWith('Load ')) open.click()
+        }, { root: list, rootMargin: '250px 0px' })
+        observer.observe(row)
+      }
     }
     list.append(row)
   }
@@ -688,7 +842,7 @@ function renderPoll(row, poll, history, group) {
       choice.disabled = true
       try {
         await window.MarmotCompanion.votePoll(connection.client, group.id, poll.id, next)
-        await showMessages(group)
+        await showMessages()
         message('Vote sent.')
       } catch (error) { message(error?.message || String(error), true) }
       finally { choice.disabled = false }
@@ -713,7 +867,7 @@ function renderPoll(row, poll, history, group) {
 }
 
 $('messageSearch').addEventListener('input', () => {
-  if (activeGroup) void showMessages(activeGroup)
+  if (activeGroup) void showMessages()
 })
 $('openMessageSearch').addEventListener('click', () => {
   const search = $('chatSearch')
@@ -723,12 +877,12 @@ $('openMessageSearch').addEventListener('click', () => {
   if (opening) $('messageSearch').focus()
   else {
     $('messageSearch').value = ''
-    if (activeGroup) void showMessages(activeGroup)
+    if (activeGroup) void showMessages()
   }
 })
 $('clearMessageSearch').addEventListener('click', () => {
   $('messageSearch').value = ''
-  if (activeGroup) void showMessages(activeGroup)
+  if (activeGroup) void showMessages()
 })
 
 async function openGroup(group) {
@@ -745,7 +899,7 @@ async function openGroup(group) {
   $('conversationTitle').textContent = group.name || 'Encrypted group'
   $('conversationView').classList.remove('hidden')
   mainView.classList.add('hidden')
-  await showMessages(group)
+  await showMessages()
 }
 
 async function manageGroup(group, action) {
@@ -797,7 +951,7 @@ async function manageGroup(group, action) {
       if (!confirm(`Clear local message history for "${group.name}"? This cannot be undone.`)) return
       await group.instance.history.purgeMessages()
       await refreshGroups()
-      if (activeGroup?.idStr === group.idStr) await showMessages(group)
+      if (activeGroup?.idStr === group.idStr) await showMessages()
       message('Local message history cleared.')
     } else if (action === 'delete') {
       if (!confirm(`Delete "${group.name}" from this device? This only removes local chat data.`)) return
@@ -1138,7 +1292,7 @@ $('groupSettingsForm').addEventListener('submit', async event => {
       if (activeGroup?.idStr === group.idStr) {
         activeGroup = refreshed
         $('conversationTitle').textContent = refreshed.name
-        await showMessages(refreshed)
+        await showMessages()
       }
       showGroupDetails(refreshed)
     }
@@ -1317,7 +1471,7 @@ $('pollForm').addEventListener('submit', async event => {
   try {
     await window.MarmotCompanion.createPoll(connection.client, activeGroup.id, $('pollQuestion').value, options, $('pollType').value)
     $('pollDialog').classList.add('hidden')
-    await showMessages(activeGroup)
+    await showMessages()
     message('Poll posted.')
   } catch (error) { message(error?.message || String(error), true) }
   finally { button.disabled = false }
@@ -1339,7 +1493,7 @@ $('inviteForm').addEventListener('submit', async event => {
     $('inviteForm').classList.add('hidden')
     $('contactAddress').value = ''
     if (contactAction === 'share') {
-      await showMessages(activeGroup)
+      await showMessages()
       message('Contact shared.')
       return
     }
@@ -1353,14 +1507,10 @@ $('inviteForm').addEventListener('submit', async event => {
 $('sendButton').addEventListener('click', async () => {
   const text = $('composer').value.trim()
   if ((!text && !pendingAttachments.length) || !activeGroup || !connection) return
-  if (replyTarget && pendingAttachments.length) {
-    message('Remove the attachment or cancel the reply before sending.', true)
-    return
-  }
   $('sendButton').disabled = true
   try {
     const rumor = pendingAttachments.length
-      ? await window.MarmotCompanion.sendMedia(connection.client, activeGroup.id, pendingAttachments.map(file => ({ blob: file, metadata: { filename: file.name, type: file.type || 'application/octet-stream' } })), text, connection.mediaTransport)
+      ? await window.MarmotCompanion.sendMedia(connection.client, activeGroup.id, pendingAttachments.map(file => ({ blob: file, metadata: { filename: file.name, type: file.type || 'application/octet-stream' } })), text, connection.mediaTransport, replyTarget)
       : await window.MarmotCompanion.send(connection.client, activeGroup.id, text, replyTarget)
     $('composer').value = ''
     const wasReply = Boolean(replyTarget)
@@ -1368,8 +1518,8 @@ $('sendButton').addEventListener('click', async () => {
     if (!window.MarmotCompanion.mediaAttachments(rumor).length) await activeGroup.instance.history.saveRumor(rumor)
     pendingAttachments = []
     renderPendingAttachments()
-    await showMessages(activeGroup)
-    message(window.MarmotCompanion.mediaAttachments(rumor).length ? 'Attachment sent.' : wasReply ? 'Reply sent.' : 'Message sent.')
+    await showMessages()
+    message(wasReply ? 'Reply sent.' : window.MarmotCompanion.mediaAttachments(rumor).length ? 'Attachment sent.' : 'Message sent.')
   } catch (error) { message(error?.message || String(error), true) }
   finally { $('sendButton').disabled = false }
 })

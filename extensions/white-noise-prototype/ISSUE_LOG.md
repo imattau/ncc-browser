@@ -5,6 +5,59 @@ Use this file to record issues reported during prototype work. Move entries to
 
 ## Open / in progress
 
+### Account and member profile names and photos
+
+- **Status:** Implemented and build checked; runtime display still needs a
+  connected profile check.
+- **Reported:** 2026-11-28
+- **Observed:** The companion showed “Connected account,” a placeholder avatar,
+  and abbreviated public keys for chat authors.
+- **Change:** Added a permissioned `nostr.getProfile` extension API. It queries
+  kind-0 metadata over the companion's approved relays, checks both the
+  canonical event hash and signature, validates
+  HTTPS picture URLs, rejects redirects, and returns only bounded image data
+  (up to 512 KB). The companion uses names/photos for its account header,
+  message authors, and unnamed group member labels.
+- **Check:** TypeScript check, extension build/manifest validation, and five
+  focused profile tests passed. Tests cover newest-event selection, altered
+  content/signatures, malformed metadata, bounded HTTPS image conversion,
+  unsupported MIME types, oversized declared images, and image-host failure.
+  Live metadata lookup and image rendering remain to be confirmed in NCC
+  Browser with a connected profile; the NCC Browser MCP endpoint is currently
+  unavailable.
+
+### Discovering groups created before the companion
+
+- **Status:** Marmot local-state limitation; UI explanation added and build
+  checked.
+- **Observed:** Groups created on another device do not appear automatically
+  after connecting the companion.
+- **Cause:** Marmot's group registry enumerates local stored MLS group state;
+  relay queries do not provide the secrets and complete state required to
+  reconstruct an existing MLS group on a new device.
+- **Current path:** Invite this NCC account as a new group member from a device
+  already in the group. Earlier messages may not be available to the new device.
+- **Check:** Confirmed the companion uses Marmot's local `loadAll()` registry
+  and added this explanation to the empty chat state. Runtime UX check remains
+  pending.
+
+### Received image and video presentation
+
+- **Status:** Automatic visible image/video loading and stable in-memory media
+  presentation implemented; runtime playback check remains.
+- **Observed:** Attachments were only shown as download links, with no inline
+  video player.
+- **Change:** Decrypted image/video attachments load automatically as their
+  messages approach the visible chat area; other files remain on demand. Images
+  render inline, videos use a controlled player, and save links are provided.
+  A 48 MB in-memory LRU cache preserves decrypted media through chat refreshes
+  without storing plaintext files in extension storage. The cache is cleared
+  on account change.
+- **Check:** TypeScript check, extension build and package validation passed.
+  The focused companion/profile runtime suite passed (17 tests) and ESLint
+  passed. Runtime image/video rendering remains to be checked in the desktop
+  companion.
+
 ### Partial relay publication is presented as failure
 
 - **Status:** Fixed and live verified in the isolated temporary profile.
@@ -251,15 +304,18 @@ Use this file to record issues reported during prototype work. Move entries to
 
 ### NIP-C7 text replies
 
-- **Status:** Implemented and verified in both directions with White Noise
-  Android.
+- **Status:** Text and attachment replies implemented; both verified with White
+  Noise Android.
 - **Change:** Replies are kind-9 rumors with one `q` tag. The panel previews
   the reply target, supports cancelling, and renders a contextual quote when
-  the parent is in loaded history. Attachment replies are currently disabled.
+  the parent is in loaded history. Media replies keep the same `q` tag alongside
+  their encrypted `imeta` attachment tags.
 - **Check:** Android displayed the companion reply in the expected quote
   context. An Android reply to a companion message rendered with its matching
-  quote in the companion. The q-only content change is pending a fresh Android
-  interop check (tracked above).
+  quote in the companion. The q-only content change was confirmed on Android in
+  the cross-device issue above. An encrypted PNG reply also rendered on Android
+  with the expected quote and caption; after restarting the dev browser, the
+  companion restored and decrypted the media reply from history.
 
 ### 3. Drag-resize the companion panel
 
@@ -363,16 +419,23 @@ Use this file to record issues reported during prototype work. Move entries to
 
 ### 8. Signer reconnect required after reopening the companion
 
-- **Status:** Fixed and runtime checked.
+- **Status:** Partially fixed; full browser-restart persistence needs runtime
+  verification.
 - **Observed:** Closing the panel clears its connection. Reopening required
   clicking **Connect NCC signer** again.
 - **Change:** After the first successful connection, the companion remembers
   the signer's public key and reconnects on open through NCC's normal approval
   flow. While open, it follows the active NCC profile and loads that profile's
   isolated chat state.
-- **Check:** Closed the companion through the toolbar action, reopened it, and
-  confirmed the NCC signer returned to Relay session active and all 13 saved
-  chats loaded without clicking Connect.
+- **Verified scope:** Closing and reopening the panel in the same browser
+  process restored the Relay session and saved chats without clicking Connect.
+  This does not verify persistence across a full browser restart.
+- **Persistence note:** NCC's signer prompt has an unchecked **Always allow this
+  service** option. Without that choice, signer approval is session-scoped and
+  can prompt again after restarting NCC Browser. The companion's saved public
+  key is only a reconnect hint; it is not a persistent signer authorization.
+- **Next check:** Test a full browser restart with both the session-only and
+  remembered approval paths, using the isolated development profile.
 
 ### Companion panel close button was rejected
 
@@ -384,7 +447,7 @@ Use this file to record issues reported during prototype work. Move entries to
   panel.
 - **Check:** Closed the companion with its own close action, reopened it from
   the toolbar action, and confirmed the current profile and all 13 chats
-  returned without another signer connection.
+  returned without another signer connection in the same browser process.
 
 ### 7. Android key-package decode error was reported as a lifetime failure
 

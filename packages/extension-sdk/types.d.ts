@@ -17,6 +17,7 @@ export interface NccManifest {
     | 'scripting'
     | 'clipboardWrite'
     | 'nostr:pubkey'
+    | 'nostr:profile'
     | 'nostr:sign'
     | 'nostr:nip04'
     | 'nostr:nip44'

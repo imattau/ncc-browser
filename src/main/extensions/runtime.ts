@@ -30,6 +30,7 @@ import type { IdentityProvider } from '../signer/provider'
 import type { RelayPool } from '../relay/pool'
 import type { ExtensionRegistry } from './registry'
 import { extensionPageUrl } from './protocol'
+import { publicProfileFromEvents } from './profile'
 import type { ExtensionStorage, StorageChanges } from './storage'
 
 export interface ExtensionServiceDeps {
@@ -439,6 +440,9 @@ export class ExtensionService {
       case 'nostr.getPublicKey':
         this.require(manifest, 'nostr:pubkey')
         return this.nostr().getPublicKey(this.caller(record, sender))
+      case 'nostr.getProfile':
+        this.require(manifest, 'nostr:profile')
+        return this.publicProfile(record.manifest, args[0], args[1])
       case 'blossom.groupImageRequest':
         this.require(manifest, 'blossom:group-image')
         return this.groupImageRequest(manifest, args[0])
@@ -666,6 +670,13 @@ export class ExtensionService {
     } finally {
       clearTimeout(timer)
     }
+  }
+
+  private async publicProfile(manifest: ExtensionManifest, pubkeyValue: unknown, relayValue: unknown): Promise<unknown> {
+    if (typeof pubkeyValue !== 'string' || !/^[0-9a-f]{64}$/i.test(pubkeyValue)) throw new Error('Invalid profile public key')
+    const relays = this.allowedRelays(manifest, relayValue)
+    const events = await this.deps.relays.query(relays, { kinds: [0], authors: [pubkeyValue.toLowerCase()], limit: 10 })
+    return publicProfileFromEvents(events, pubkeyValue)
   }
 
   private nostr(): Nip07Service {
