@@ -92,8 +92,12 @@ A tool call waits up to 25 seconds for the answer. If the prompt is still open i
 an error saying so, and leaves the prompt in place; the agent should ask the user to answer
 it and then repeat the call. Repeat calls reuse the same prompt.
 
-`NCC_AUTOMATION_AUTO_APPROVE=1` skips the prompt, for scripted tests only. **Stop agent**
-in Settings revokes every session grant at once; each site can also be revoked on its own.
+`NCC_AUTOMATION_AUTO_APPROVE=1` skips browser-control access prompts for scripted tests
+only. It does not approve NIP-07 signer requests. In an isolated local test profile that
+also needs signer requests automated, `NCC_SIGNER_AUTO_APPROVE=1` separately bypasses
+those prompts for the session; use it only with disposable profiles and test identities.
+**Stop agent** in Settings revokes every session grant at once; each site can also be
+revoked on its own.
 
 ## Signing in as the agent
 

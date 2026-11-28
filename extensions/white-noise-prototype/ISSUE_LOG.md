@@ -202,8 +202,8 @@ Use this file to record issues reported during prototype work. Move entries to
 ### Group photo upload server compatibility
 
 - **Status:** Multi-server upload and download fallback implemented and runtime
-  checked in an isolated desktop profile; server compatibility remains
-  host-specific.
+  checked against Ditto, Divine and Primal in an isolated desktop profile;
+  compatibility remains host-specific.
 - **Change:** Admins can choose or remove a group photo in group settings. The
   companion accepts JPEG, PNG and WebP up to 5 MB, calls Marmot's encrypted
   group-image APIs, uses the account's Blossom server list, and shows available
@@ -215,19 +215,18 @@ Use this file to record issues reported during prototype work. Move entries to
   Marmot image code was adapted to upload the same ciphertext to every
   configured endpoint and accept the MLS update if at least one endpoint
   validates the upload. Reads try authorized endpoints in order and stop after
-  the first successful decryption. In an isolated
-  dev user-data profile with a temporary identity, uploaded a tiny PNG through
-  `blossom.ditto.pub`, committed it to the one-member QA group's MLS state, and
-  read it back into the chat-list avatar. The group's MLS epoch advanced from 0
-  to 2 (one media enablement and one photo update). A redundancy pass with Ditto
-  and Primal configured attempted both uploads concurrently: Ditto returned
-  201 and Primal returned HTTP 415 for Marmot's opaque `application/octet-stream`
-  payload. The MLS update succeeded. A Primal-first read returned 404 there,
-  then downloaded and decrypted the image from Ditto (HTTP 200), stopping at
-  the first success. The temporary fallback list tries Ditto before Primal, but
-  account-published lists are all attempted. The disposable group's epoch
-  advanced from 3 to 4. This host pair verifies one accepted copy plus
-  fallback; two simultaneously accepting upload hosts remain to be checked.
+  the first successful decryption. In an isolated dev user-data profile with a
+  temporary identity, uploaded a tiny PNG through `blossom.ditto.pub`, committed
+  it to the one-member QA group's MLS state, and read it back into the chat-list
+  avatar. A redundancy pass with Ditto and Primal configured attempted both
+  uploads concurrently: Ditto returned 201 and Primal returned HTTP 415 for
+  Marmot's opaque `application/octet-stream` payload; the MLS update succeeded.
+  Then, with Ditto and Divine configured, both accepted the same encrypted
+  image hash (Ditto returned HTTP 201 and Divine returned HTTP 200) before the
+  MLS update committed. For download fallback, Primal was ordered before Ditto:
+  Primal returned 404, then Ditto returned 200 and the image decrypted
+  successfully. These checks confirm concurrent redundant uploads, fallback
+  after an individual upload failure, and stop-after-success download behavior.
   Typecheck, extension build and `git diff --check` passed.
 - **Safety note:** The prior real-profile run was accidental and is not counted
   as an approved isolated QA result. Per the user's instruction, no further
