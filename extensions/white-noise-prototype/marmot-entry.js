@@ -490,9 +490,10 @@ const api = {
     const pubkey = await client.signer.getPublicKey()
     let rumor
     if (replyTo?.id && replyTo?.pubkey) {
-      const relay = groupRelays.find(value => typeof value === 'string' && value.startsWith('wss://')) || ''
-      const pointer = nip19.neventEncode({ id: replyTo.id, author: replyTo.pubkey, kind: replyTo.kind || 9, ...(relay ? { relays: [relay] } : {}) })
-      const tag = ['q', replyTo.id, relay, replyTo.pubkey]
+      // The parent is an MLS rumor, not a standalone Nostr event on a relay.
+      // Do not put the group's encrypted-event relays in a public nevent hint.
+      const pointer = nip19.neventEncode({ id: replyTo.id, author: replyTo.pubkey, kind: replyTo.kind || 9 })
+      const tag = ['q', replyTo.id, '', replyTo.pubkey]
       rumor = createRumor({ pubkey, kind: 9, content: `nostr:${pointer}\n${text}`, tags: [tag] })
     } else {
       rumor = createChatRumor({ pubkey, content: text })

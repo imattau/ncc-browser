@@ -120,6 +120,17 @@ Use this file to record issues reported during prototype work. Move entries to
   emulator and determine whether White Noise should resolve the q-tagged event
   from MLS history or whether the companion's reference needs adjustment. The
   current outgoing event follows NIP-C7's single `q` tag plus `nevent` format.
+- **Protocol check:** The current NIP-C7 example uses exactly a kind-9 message
+  whose content begins with `nostr:nevent1...` and whose only reply tag is
+  `q`. In Marmot, that referenced kind-9 rumor is carried inside MLS and is not
+  independently retrievable as a public relay event. The companion had copied
+  the group's relay list into the `nevent` hint, although those relays serve
+  encrypted Marmot events rather than the referenced plaintext rumor. It now
+  omits the misleading relay hint while keeping the NIP-C7 reference shape. A
+  bundled-runtime check confirmed the sent kind-9 rumor contains exactly one
+  `q` tag and a `nostr:nevent` reference, with the relay slot empty. On the next
+  isolated Android interop run, verify whether the Android link preview still
+  reports the rumor as missing before closing this issue.
 
 ### 1. Cross-device Marmot compatibility
 
