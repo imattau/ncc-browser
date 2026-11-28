@@ -178,6 +178,15 @@ Use this file to record issues reported during prototype work. Move entries to
   saw a companion message, and the companion received an Android reply. The
   companion panel was closed and reopened; the group (2 members, epoch 2) and
   both reply histories loaded from extension storage.
+- **Latest isolated interop check:** A fresh API 37 emulator with White Noise
+  `2026.11.17-dev-debug` accepted the temporary companion group's invite and
+  sent `Android test prompt`. The companion received it and sent a q-only
+  reply. After closing and restarting `npm run dev` against the same temporary
+  profile, the companion reconnected without another signer prompt, restored
+  the two-member group, and loaded both messages and the reply context from
+  history. Android showed `Replying to You: Android test prompt` and no
+  `Event not found` preview. This run used the isolated AVD on port 5560 and
+  temporary identities/data only.
 - **Delayed Welcome check:** A fresh temporary recipient published a KeyPackage
   and kind-10050 inbox relay list, then was switched offline. The inviter sent
   a Welcome to a disposable group. After switching back, the recipient saw a
