@@ -58,7 +58,13 @@ const newSign = [
   '        }',
   oldSign,
 ].join('\n')
-if (publisherSource.includes(oldSign)) publisherSource = publisherSource.replace(oldSign, newSign)
+const legacyPublisherMarker = 'globalThis.__NCC_WHITE_NOISE_KEY_PACKAGE_ENCODING__ === "mdk08-raw"'
+if (!publisherSource.includes(legacyPublisherMarker)) {
+  if (!publisherSource.includes(oldSign)) {
+    throw new Error('Unsupported marmot-ts version: expected KeyPackage publisher sign boundary was not found')
+  }
+  publisherSource = publisherSource.replace(oldSign, newSign)
+}
 if (!publisherSource.includes('globalThis.__NCC_WHITE_NOISE_KEY_PACKAGE_ENCODING__ === "mdk08-raw"')) {
   throw new Error('Unsupported marmot-ts version: expected KeyPackage publisher sign boundary was not found')
 }

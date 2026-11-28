@@ -78,17 +78,16 @@ function renderGroups(filter = '') {
     const title = query ? 'No chats match your search' : connection ? 'No conversations yet' : 'Connect to get started'
     const description = query ? 'Try a different name.' : connection ? 'Create a key package so contacts can invite you to an encrypted group.' : 'Connect the NCC signer to load your Marmot conversations.'
     empty.innerHTML = `<div class="empty-icon">◌</div><strong>${title}</strong><p>${description}</p>`
-    if (connection && !query) {
+    if (!query) {
       const button = document.createElement('button')
       button.className = 'primary'
-      button.textContent = 'Create invite key package'
-      button.addEventListener('click', () => void publishKeyPackage())
-      empty.append(button)
-    } else {
-      const button = document.createElement('button')
-      button.className = 'primary'
-      button.textContent = 'Connect NCC signer'
-      button.addEventListener('click', () => void connect())
+      if (connection) {
+        button.textContent = 'Create invite key package'
+        button.addEventListener('click', () => void publishKeyPackage())
+      } else {
+        button.textContent = 'Connect NCC signer'
+        button.addEventListener('click', () => void connect())
+      }
       empty.append(button)
     }
     list.append(empty)

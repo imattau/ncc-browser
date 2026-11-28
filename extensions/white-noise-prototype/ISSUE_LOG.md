@@ -115,6 +115,18 @@ Use this file to record issues reported during prototype work. Move entries to
   then verify each profile reloads only its own chats after switching and after
   reopening the companion.
 
+### 6. Search results showed an invite-key action
+
+- **Status:** Implemented; runtime verification pending
+- **Reported:** 2026-11-28
+- **Observed:** After typing a few characters in Search chats, an empty result
+  state showed **Create invite key package**, which is unrelated to searching.
+- **Change:** Search misses show a search-specific empty state without a
+  connection or invite-key action. See `panel.js` (`renderGroups`).
+- **Check:** Extension build, typecheck, and JavaScript syntax checks pass.
+  Runtime check remains pending: test a matching and non-matching query in the
+  local dev panel.
+
 ## Fixed
 
 ### Chat file and media sharing
@@ -178,17 +190,6 @@ Use this file to record issues reported during prototype work. Move entries to
 
 ## Fixed
 
-### 6. Search results showed an invite-key action
-
-- **Status:** Fixed; behavior check pending
-- **Reported:** 2026-11-28
-- **Observed:** After typing a few characters in Search chats, an empty result
-  state showed **Create invite key package**, which is unrelated to searching.
-- **Change:** Search misses now show a search-specific empty state and omit the
-  invite-key action. See `panel.js` (`renderGroups`).
-- **Check:** Rebuild the extension and verify a query with no matches and a
-  query with matches in the local dev panel.
-
 ### 7. Android key-package decode error was reported as a lifetime failure
 
 - **Status:** Fixed for decoding; broader compatibility remains open in issue 1
@@ -201,3 +202,15 @@ Use this file to record issues reported during prototype work. Move entries to
   lifetime validation still runs. See `apply-marmot-compat.mjs`.
 - **Check:** Confirmed the Android package passed decoding and reached the
   subsequent account-identity-proof validation; the invite still failed there.
+
+### Repeated companion builds changed the Marmot compatibility bundle
+
+- **Status:** Fixed; repeat-build check passed
+- **Observed:** Rebuilding the extension repeatedly grew the generated Marmot
+  bundle because the MDK/0.8 publisher wrapper was inserted again on every run.
+- **Change:** `apply-marmot-compat.mjs` now checks for its wrapper marker before
+  patching the pinned Marmot publisher source and fails clearly if neither the
+  unpatched nor patched boundary is present.
+- **Check:** Reinstalled the pinned extension dependencies and built twice.
+  Both builds produced the same SHA-256 for `marmot.bundle.js`, and the patched
+  publisher source contains exactly one wrapper.
