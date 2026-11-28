@@ -1,8 +1,10 @@
-const defaults = { relays: ['wss://relay.eu.whitenoise.chat', 'wss://relay.us.whitenoise.chat', 'wss://relay.damus.io', 'wss://relay.primal.net', 'wss://relay.ditto.pub'], useBrowserIdentity: false }
+const defaults = { relays: ['wss://relay.damus.io', 'wss://relay.primal.net', 'wss://relay.ditto.pub', 'wss://relay.eu.whitenoise.chat', 'wss://relay.us.whitenoise.chat'], useBrowserIdentity: false, keyPackageEncoding: 'framed' }
 const previousDefaults = [
   ['wss://relay.damus.io', 'wss://relay.primal.net', 'wss://nos.lol'],
-  ['wss://relay.damus.io', 'wss://nos.lol']
+  ['wss://relay.damus.io', 'wss://nos.lol'],
+  ['wss://relay.eu.whitenoise.chat', 'wss://relay.us.whitenoise.chat', 'wss://relay.damus.io', 'wss://relay.primal.net', 'wss://relay.ditto.pub']
 ]
+const WHITE_NOISE_FALLBACK_RELAYS = ['wss://relay.eu.whitenoise.chat', 'wss://relay.us.whitenoise.chat']
 const $ = (id) => document.getElementById(id)
 const mainView = $('mainView')
 const settingsView = $('settingsView')
@@ -16,6 +18,8 @@ let groupRefreshTimer = null
 let showArchived = false
 let pendingAttachments = []
 let renderedMediaUrls = []
+let inviteRefreshTimer = null
+let pendingInvites = []
 
 function setStatus(text, connected = false) {
   $('statusText').textContent = text
@@ -32,6 +36,8 @@ function showMain() { settingsView.classList.add('hidden'); mainView.classList.r
 
 async function load() {
   const saved = await chrome.storage.local.get({ ...defaults, relaysConfigured: false })
+  $('keyPackageEncoding').value = saved.keyPackageEncoding
+  window.__NCC_WHITE_NOISE_KEY_PACKAGE_ENCODING__ = saved.keyPackageEncoding
   const savedRelays = saved.relays || defaults.relays
   selectedRelays = !saved.relaysConfigured && previousDefaults.some(relays => sameRelays(savedRelays, relays))
     ? defaults.relays
@@ -51,6 +57,10 @@ async function load() {
 
 function sameRelays(left, right) {
   return Array.isArray(left) && left.length === right.length && left.every(relay => right.includes(relay))
+}
+
+function withWhiteNoiseFallbacks(primaryRelays) {
+  return [...new Set([...primaryRelays, ...WHITE_NOISE_FALLBACK_RELAYS])]
 }
 
 function renderGroups(filter = '') {
@@ -120,6 +130,68 @@ async function refreshGroups() {
   renderGroups($('search').value)
 }
 
+async function refreshInvites() {
+  if (!connection) return
+  try {
+    pendingInvites = await window.MarmotCompanion.getInvites(connection.client)
+    renderInvites()
+  } catch (error) {
+    message(error?.message || String(error), true)
+  }
+}
+
+function renderInvites() {
+  const section = $('incomingInvites')
+  section.replaceChildren()
+  section.classList.toggle('hidden', pendingInvites.length === 0)
+  if (!pendingInvites.length) return
+  const heading = document.createElement('strong')
+  heading.className = 'incoming-heading'
+  heading.textContent = pendingInvites.length === 1 ? 'NEW INVITATION' : `${pendingInvites.length} NEW INVITATIONS`
+  section.append(heading)
+  for (const item of pendingInvites) {
+    const card = document.createElement('article')
+    card.className = 'invite-card'
+    const title = document.createElement('strong')
+    title.textContent = item.preview.group?.name || 'Encrypted group invitation'
+    const detail = document.createElement('small')
+    detail.textContent = item.canJoin
+      ? `${item.preview.group?.relays?.length || item.preview.relays?.length || 0} group relays`
+      : 'This invite does not match a saved key package.'
+    const actions = document.createElement('div')
+    actions.className = 'invite-card-actions'
+    const join = document.createElement('button')
+    join.className = 'primary'
+    join.textContent = 'Join'
+    join.disabled = !item.canJoin
+    join.addEventListener('click', () => void acceptInvite(item))
+    const dismiss = document.createElement('button')
+    dismiss.className = 'secondary'
+    dismiss.textContent = 'Dismiss'
+    dismiss.addEventListener('click', () => void dismissInvite(item))
+    actions.append(join, dismiss)
+    card.append(title, detail, actions)
+    section.append(card)
+  }
+}
+
+async function acceptInvite(item) {
+  try {
+    message('Joining the encrypted group…')
+    await window.MarmotCompanion.joinInvite(connection.client, item.rumor)
+    pendingInvites = pendingInvites.filter(invite => invite.rumor.id !== item.rumor.id)
+    renderInvites()
+    await refreshGroups()
+    message('Joined the encrypted group.')
+  } catch (error) { message(error?.message || String(error), true) }
+}
+
+async function dismissInvite(item) {
+  await window.MarmotCompanion.dismissInvite(connection.client, item.rumor)
+  pendingInvites = pendingInvites.filter(invite => invite.rumor.id !== item.rumor.id)
+  renderInvites()
+}
+
 async function connect(expectedPubkey, allowAccountChange = false) {
   if (connection || connectionAttempt) return
   connectionAttempt = true
@@ -134,15 +206,19 @@ async function connect(expectedPubkey, allowAccountChange = false) {
       return url.toString().replace(/\/$/, '')
     }))]
     const { connectedSignerPubkey } = await chrome.storage.local.get('connectedSignerPubkey')
-    const runtime = await window.MarmotCompanion.connect(relays, expectedPubkey || (allowAccountChange ? null : connectedSignerPubkey))
-    connection = { ...runtime, relays }
+    const fallbackRelays = withWhiteNoiseFallbacks(relays)
+    const runtime = await window.MarmotCompanion.connect(relays, expectedPubkey || (allowAccountChange ? null : connectedSignerPubkey), fallbackRelays)
+    connection = { ...runtime, relays, fallbackRelays }
     liveConnection = runtime.live
     await refreshGroups()
+    await refreshInvites()
     if (groupRefreshTimer) clearInterval(groupRefreshTimer)
     groupRefreshTimer = setInterval(() => { void refreshGroups() }, 5000)
+    if (inviteRefreshTimer) clearInterval(inviteRefreshTimer)
+    inviteRefreshTimer = setInterval(() => { void refreshInvites() }, 5000)
     await chrome.storage.local.set({ connectedSignerPubkey: runtime.pubkey })
     setStatus(`Connected · ${relays.length} relays`, true)
-    message('Signer approved. Marmot client loaded and listening for group traffic.')
+    message('Signer approved. Chats and incoming group invitations are listening on the selected relays.')
   } catch (error) {
     setStatus('Connection failed')
     message(error?.message || String(error), true)
@@ -157,15 +233,23 @@ async function publishKeyPackage() {
   const button = $('newChat')
   button.disabled = true
   try {
-    message('Publishing an invite key package. NCC will ask you to approve the Nostr signature.')
+    message('Publishing your invite key and inbox relay list. NCC will ask you to approve the Nostr signatures.')
     const entry = await window.MarmotCompanion.createKeyPackage(connection.client, connection.relays)
-  message('Invite key package published. Share your public key with a contact so they can invite you.')
+    const responses = Object.entries(entry.publication?.responses || {})
+    const accepted = responses.filter(([, result]) => result.ok).map(([relay]) => new URL(relay).hostname)
+    const failed = responses.filter(([, result]) => !result.ok).map(([relay, result]) => `${new URL(relay).hostname}${result.message ? ` (${result.message})` : ''}`)
+    const inboxAccepted = Object.values(entry.inboxPublication || {}).filter(result => result.ok).length
+    if (!accepted.length) {
+      message(`Key package created locally, but no relay acknowledged publication.${failed.length ? ` Failed: ${failed.join('; ')}` : ' No relay response was received.'}`, true)
+    } else {
+      message(`Invite key package published to ${accepted.length} relay(s); inbox relay list is available on ${inboxAccepted} relay(s). Share your public key with a contact so they can invite you.${failed.length ? ` Failed: ${failed.join('; ')}` : ''}`, failed.length > 0)
+    }
   } catch (error) { message(error?.message || String(error), true) }
   finally { button.disabled = false }
 }
 
 async function showMessages(group) {
-  const history = await window.MarmotCompanion.history(group.instance)
+  const history = (await window.MarmotCompanion.history(group.instance)).filter(rumor => rumor.kind === 9)
   const list = $('messageList')
   for (const url of renderedMediaUrls) URL.revokeObjectURL(url)
   renderedMediaUrls = []
@@ -512,12 +596,17 @@ $('backButton').addEventListener('click', showMain)
 $('connectButton').addEventListener('click', () => void connect())
 $('switchAccountButton').addEventListener('click', () => {
   liveConnection?.unsubscribe()
+  connection?.inviteListener?.unsubscribe()
   liveConnection = null
   if (groupRefreshTimer) clearInterval(groupRefreshTimer)
   groupRefreshTimer = null
+  if (inviteRefreshTimer) clearInterval(inviteRefreshTimer)
+  inviteRefreshTimer = null
   connection = null
   activeGroup = null
   groups = []
+  pendingInvites = []
+  renderInvites()
   $('conversationView').classList.add('hidden')
   mainView.classList.remove('hidden')
   void connect(null, true)
@@ -612,12 +701,18 @@ $('saveButton').addEventListener('click', async () => {
     if (url.protocol !== 'wss:' || !['relay.eu.whitenoise.chat', 'relay.us.whitenoise.chat', 'relay.damus.io', 'relay.primal.net', 'relay.ditto.pub', 'nos.lol'].includes(url.hostname) || url.port || url.username || url.password || url.pathname !== '/' || url.search || url.hash) throw new Error(`Relay host is not permitted by this prototype: ${url.hostname}`)
     return url.toString().replace(/\/$/, '')
   }))]
-  await chrome.storage.local.set({ relays: normalizedRelays, relaysConfigured: true, useBrowserIdentity: $('useBrowserIdentity').checked })
+  const keyPackageEncoding = $('keyPackageEncoding').value === 'mdk08-raw' ? 'mdk08-raw' : 'framed'
+  window.__NCC_WHITE_NOISE_KEY_PACKAGE_ENCODING__ = keyPackageEncoding
+  await chrome.storage.local.set({ relays: normalizedRelays, relaysConfigured: true, useBrowserIdentity: $('useBrowserIdentity').checked, keyPackageEncoding })
   selectedRelays = normalizedRelays
   if (connection) {
     liveConnection?.unsubscribe()
-    liveConnection = connection.client.groups.connectAll({ fallbackRelays: selectedRelays })
-    connection = { ...connection, relays: selectedRelays }
+    connection.inviteListener?.unsubscribe()
+    const fallbackRelays = withWhiteNoiseFallbacks(selectedRelays)
+    connection = { ...connection, fallbackRelays }
+    liveConnection = connection.client.groups.connectAll({ fallbackRelays })
+    const inviteListener = await connection.client.invites.listen(selectedRelays)
+    connection = { ...connection, relays: selectedRelays, fallbackRelays, inviteListener }
     const changedRelayGroups = []
     const failedRelayGroups = []
     for (const group of await connection.client.groups.loadAll()) {
@@ -634,13 +729,15 @@ $('saveButton').addEventListener('click', async () => {
       }
     }
     liveConnection?.unsubscribe()
-    liveConnection = connection.client.groups.connectAll({ fallbackRelays: selectedRelays })
+    liveConnection = connection.client.groups.connectAll({ fallbackRelays: connection.fallbackRelays })
     await refreshGroups()
+    await refreshInvites()
     const summary = [`Relay list saved and active group subscriptions refreshed. ${changedRelayGroups.length} group(s) updated.`]
     if (failedRelayGroups.length) summary.push(`Failed: ${failedRelayGroups.join('; ')}`)
     message(summary.join(' '), failedRelayGroups.length > 0)
   } else message('Relay list saved. It will be used when the NCC signer connects.')
 })
+$('relayInput').setAttribute('placeholder', 'Primary relays, one per line. White Noise EU/US are appended as fallbacks.')
 $('openWhiteNoise').addEventListener('click', () => message('White Noise desktop is not installed in this development profile.'))
 $('search').addEventListener('input', () => renderGroups($('search').value))
 async function initialize() {

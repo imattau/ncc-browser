@@ -21,6 +21,7 @@
       </div>
       <div class="connection-row"><span id="statusText">Not connected</span><button id="switchAccountButton" class="text-button hidden">Switch account</button><button id="connectButton" class="text-button">Connect</button></div>
       <div class="search"><span>⌕</span><input id="search" placeholder="Search chats" autocomplete="off"><kbd>⌘ K</kbd></div>
+      <section id="incomingInvites" class="incoming-invites hidden" aria-live="polite"></section>
       <div class="section-heading"><span id="chatSectionTitle">CHATS</span><button id="toggleArchived" class="text-button">Archived</button><button id="newChat" class="text-button">＋ New</button></div>
       <div id="createGroupForm" class="create-group hidden"><input id="groupName" value="Note to self" aria-label="Group name"><button id="createGroupButton" class="primary">Create</button></div>
       <div id="chatList" class="chat-list">
@@ -65,6 +66,12 @@
       <label for="relayInput">Nostr relays</label>
       <textarea id="relayInput" rows="3" placeholder="wss://relay.example"></textarea>
       <div class="field-hint">One relay URL per line. Stored in this extension profile.</div>
+      <label for="keyPackageEncoding">Key package interop</label>
+      <select id="keyPackageEncoding" class="settings-select">
+        <option value="framed">Current Marmot MLSMessage framing (recommended)</option>
+        <option value="mdk08-raw">Raw MDK/0.8 legacy format</option>
+      </select>
+      <div class="field-hint">The installed White Noise Android build publishes framed KeyPackages. Raw mode is only for older MDK/0.8 clients. The companion can read both formats.</div>
       <label class="check"><input id="useBrowserIdentity" type="checkbox" checked><span>Use NCC signer for Nostr signatures</span></label>
       <p class="field-hint">Signing uses NCC’s approval dialog. Private keys are never exposed to the extension.</p>
       <button id="connectButtonSettings" class="secondary full">Connect NCC signer</button>

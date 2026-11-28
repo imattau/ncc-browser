@@ -1,6 +1,6 @@
 import { MarmotClient, createApplicationMessageIntent, createChatRumor } from '@internet-privacy/marmot-ts'
 import { makeKeyValueRumorHistoryFactory } from '@internet-privacy/marmot-ts/extra'
-import { deserializeApplicationData, encryptedMediaBlossomDefaultV2, getInboxRelays, getMediaAttachments } from '@internet-privacy/marmot-ts/core'
+import { createInboxRelayListEvent, deserializeApplicationData, encryptedMediaBlossomDefaultV2, getInboxRelays, getMediaAttachments } from '@internet-privacy/marmot-ts/core'
 import { createBlossomMediaTransport, createInviteIntent, downloadMessageMedia, prepareMediaMessage, Proposals } from '@internet-privacy/marmot-ts/client'
 import { nip19, verifyEvent } from 'nostr-tools'
 
@@ -57,16 +57,69 @@ function relayUrl(value) {
   return url.toString().replace(/\/$/, '')
 }
 
+function sameRelayList(left, right) {
+  return Array.isArray(left) && left.length === right.length && left.every(relay => right.includes(relay))
+}
+
 const DEFAULT_RELAYS = ['wss://relay.eu.whitenoise.chat', 'wss://relay.us.whitenoise.chat', 'wss://relay.damus.io', 'wss://relay.primal.net', 'wss://relay.ditto.pub']
 let relayConfig = DEFAULT_RELAYS
+let lastKeyPackagePublication = null
+let activeSignerPubkey = null
 const DEFAULT_BLOSSOM_SERVERS = ['https://blossom.primal.net']
 const MEDIA_MAX_BYTES = 25 * 1024 * 1024
+
+async function publishWithNip42(relay, event) {
+  return new Promise((resolve, reject) => {
+    const socket = new WebSocket(relay)
+    let authEventId = null
+    let eventSent = false
+    let settled = false
+    const timer = setTimeout(() => finish(new Error(`Relay publish timed out: ${relay}`)), 12000)
+    const finish = (error, result) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      try { socket.close() } catch {}
+      error ? reject(error) : resolve(result)
+    }
+    const sendEvent = () => {
+      if (eventSent || socket.readyState !== WebSocket.OPEN) return
+      eventSent = true
+      socket.send(JSON.stringify(['EVENT', event]))
+    }
+    socket.onopen = sendEvent
+    socket.onerror = () => finish(new Error(`Relay connection failed: ${relay}`))
+    socket.onclose = () => { if (!settled) finish(new Error(`Relay closed the connection: ${relay}`)) }
+    socket.onmessage = async message => {
+      let frame
+      try { frame = JSON.parse(message.data) } catch { return }
+      if (frame[0] === 'AUTH') {
+        try {
+          const now = Math.floor(Date.now() / 1000)
+          const signed = await ncc.nostr.signEvent({ kind: 22242, created_at: now, tags: [['relay', relay], ['challenge', frame[1]], ['expiration', String(now + 600)]], content: '' })
+          if (!verifyEvent(signed) || signed.pubkey !== activeSignerPubkey) throw new Error('The active NCC profile changed during relay authentication.')
+          authEventId = signed.id
+          eventSent = false
+          socket.send(JSON.stringify(['AUTH', signed]))
+        } catch (error) { finish(error instanceof Error ? error : new Error(String(error))) }
+      } else if (frame[0] === 'OK' && frame[1] === authEventId) {
+        if (frame[2]) sendEvent()
+        else finish(new Error(`Relay AUTH rejected: ${frame[3] || relay}`))
+      } else if (frame[0] === 'OK' && frame[1] === event.id) {
+        if (frame[2]) finish(null, { from: relay, ok: true, message: frame[3] || 'accepted' })
+        else finish(new Error(`Relay rejected the event: ${frame[3] || relay}`))
+      } else if (frame[0] === 'NOTICE') finish(new Error(`Relay notice: ${frame[1]}`))
+    }
+  })
+}
 
 function relayRequest(url, filters) {
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(url)
     const events = new Map()
     const subId = crypto.randomUUID().replaceAll('-', '')
+    let requestSent = false
+    let authEventId = null
     let done = false
     const timer = setTimeout(() => finish(new Error(`Relay request timed out: ${url}`)), 12000)
     const finish = (error, value) => {
@@ -76,11 +129,34 @@ function relayRequest(url, filters) {
       try { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(['CLOSE', subId])); socket.close() } catch {}
       error ? reject(error) : resolve(value)
     }
-    socket.onopen = () => socket.send(JSON.stringify(['REQ', subId, ...filters]))
+    const sendRequest = () => {
+      if (requestSent || socket.readyState !== WebSocket.OPEN) return
+      requestSent = true
+      socket.send(JSON.stringify(['REQ', subId, ...filters]))
+    }
+    socket.onopen = sendRequest
     socket.onerror = () => finish(new Error(`Relay connection failed: ${url}`))
     socket.onmessage = event => {
       try {
         const message = JSON.parse(event.data)
+        if (message[0] === 'AUTH') {
+          void (async () => {
+            try {
+              const now = Math.floor(Date.now() / 1000)
+              const signed = await ncc.nostr.signEvent({ kind: 22242, created_at: now, tags: [['relay', url], ['challenge', message[1]], ['expiration', String(now + 600)]], content: '' })
+              if (!verifyEvent(signed) || signed.pubkey !== activeSignerPubkey) throw new Error('The active NCC profile changed during relay authentication.')
+              authEventId = signed.id
+              requestSent = false
+              socket.send(JSON.stringify(['AUTH', signed]))
+            } catch (error) { finish(error instanceof Error ? error : new Error(String(error))) }
+          })()
+          return
+        }
+        if (message[0] === 'OK' && message[1] === authEventId) {
+          if (message[2]) sendRequest()
+          else finish(new Error(`Relay AUTH rejected: ${message[3] || url}`))
+          return
+        }
         if (message[0] === 'EVENT' && message[1] === subId) events.set(message[2].id, message[2])
         if (message[0] === 'EOSE' && message[1] === subId) finish(null, [...events.values()])
         if (message[0] === 'CLOSED' && message[1] === subId) finish(new Error(`Relay refused request: ${message[2] || url}`))
@@ -95,13 +171,25 @@ const network = {
     // NCC returns URL.toString() keys with a trailing slash. Marmot's retained
     // commit retry compares response keys to its canonical relay list without a
     // slash, so preserve the exact normalized relay identity in the result map.
-    return Object.fromEntries(Object.entries(responses).map(([relay, response]) => {
+    const normalized = Object.fromEntries(Object.entries(responses).map(([relay, response]) => {
       const normalized = relayUrl(relay)
       return [normalized, { ...response, from: normalized }]
     }))
+    const retry = Object.entries(normalized).filter(([, response]) => !response.ok)
+    const retried = await Promise.all(retry.map(async ([relay, original]) => {
+      try { return [relay, await publishWithNip42(relay, event)] }
+      catch (error) { return [relay, { ...original, message: `${original.message || 'publish failed'}; authenticated retry failed: ${error instanceof Error ? error.message : String(error)}` }] }
+    }))
+    for (const [relay, response] of retried) normalized[relay] = response
+    if (event.kind === 30443) lastKeyPackagePublication = { eventId: event.id, responses: normalized }
+    return normalized
   },
   async request(relays, filters) {
-    return ncc.nostr.requestEvents(relays, Array.isArray(filters) ? filters : [filters])
+    const filterList = Array.isArray(filters) ? filters : [filters]
+    const results = await Promise.allSettled(relays.map(relay => relayRequest(relay, filterList)))
+    const successful = results.filter(result => result.status === 'fulfilled')
+    if (!successful.length) throw results.find(result => result.status === 'rejected')?.reason || new Error('No relay answered the request.')
+    return [...new Map(successful.flatMap(result => result.value).map(event => [event.id, event])).values()]
   },
   subscription(relays, filters) {
     let active = true
@@ -129,7 +217,7 @@ const network = {
 }
 
 const api = {
-  async connect(relays, expectedPubkey) {
+  async connect(relays, expectedPubkey, fallbackRelays = relays) {
     relayConfig = relays
     // Chromium extension contexts do not expose crypto.randomUUID() on all supported builds.
     if (!crypto.randomUUID) crypto.randomUUID = () => [...crypto.getRandomValues(new Uint8Array(16))].map((byte, index) => `${[4, 6, 8, 10].includes(index) ? '-' : ''}${byte.toString(16).padStart(2, '0')}`).join('')
@@ -142,6 +230,7 @@ const api = {
       }
     }
     const pubkey = await signer.getPublicKey()
+    activeSignerPubkey = pubkey
     if (expectedPubkey && pubkey !== expectedPubkey) throw new Error('The active NCC account has changed. Select the previous account to reopen its chats.')
     const accountPrefix = `account:${pubkey}:`
     await migrateLegacyAccountData(pubkey, accountPrefix)
@@ -150,7 +239,7 @@ const api = {
     let clientId = (await chrome.storage.local.get(clientIdKey))[clientIdKey]
     if (!clientId) { clientId = [...crypto.getRandomValues(new Uint8Array(32))].map(byte => byte.toString(16).padStart(2, '0')).join(''); await chrome.storage.local.set({ [clientIdKey]: clientId }) }
     const keyStore = new ExtensionStore(`${accountPrefix}keypackages`)
-    const client = new MarmotClient({ signer, network, groupStateStore: new ExtensionStore(`${accountPrefix}groups`), keyPackageStore: keyStore, clientId, historyFactory: makeKeyValueRumorHistoryFactory(groupId => new ExtensionStore(`${accountPrefix}history:${[...groupId].map(byte => byte.toString(16).padStart(2, '0')).join('')}`)), mediaFactory: groupId => createMediaStore(`${accountPrefix}media:${[...groupId].map(byte => byte.toString(16).padStart(2, '0')).join('')}`), getSignatureKeyPair: async ciphersuite => {
+    const client = new MarmotClient({ signer, network, groupStateStore: new ExtensionStore(`${accountPrefix}groups`), rewindStore: new ExtensionStore(`${accountPrefix}rewind`), keyPackageStore: keyStore, clientId, historyFactory: makeKeyValueRumorHistoryFactory(groupId => new ExtensionStore(`${accountPrefix}history:${[...groupId].map(byte => byte.toString(16).padStart(2, '0')).join('')}`)), mediaFactory: groupId => createMediaStore(`${accountPrefix}media:${[...groupId].map(byte => byte.toString(16).padStart(2, '0')).join('')}`), getSignatureKeyPair: async ciphersuite => {
       const saved = await keyStore.getItem('local-signature-key')
       if (saved?.signKey && saved?.publicKey) return { signKey: saved.signKey, publicKey: saved.publicKey }
       const pair = await ciphersuite.signature.keygen()
@@ -158,15 +247,50 @@ const api = {
       return pair
     }, inviteStore: new ExtensionStore(`${accountPrefix}invites`), ingestStateStore: new ExtensionStore(`${accountPrefix}ingest`) })
     await client.groups.loadAll()
-    const live = client.groups.connectAll({ fallbackRelays: relays })
+    const live = client.groups.connectAll({ fallbackRelays })
+    const inviteListener = await client.invites.listen(relays)
     const mediaTransport = createBlossomMediaTransport({ signer })
-    return { client, live, pubkey, blossomServers, mediaTransport }
+    return { client, live, inviteListener, pubkey, blossomServers, mediaTransport, fallbackRelays }
   },
   // This is an explicit user action. ensurePublished() may reuse an old local
   // package without publishing it to the currently selected relays. Create a
   // fresh slot occupant instead; prior private packages stay available for any
   // delayed Welcome addressed to them.
-  createKeyPackage(client, relays) { return client.keyPackages.create({ relays }) },
+  async createKeyPackage(client, relays) {
+    lastKeyPackagePublication = null
+    const inboxKey = `marmot:account:${await client.signer.getPublicKey()}:inboxRelays`
+    const savedInbox = (await chrome.storage.local.get(inboxKey))[inboxKey] || {}
+    let inboxPublication = savedInbox.publication || null
+    if (!sameRelayList(savedInbox.relays, relays)) {
+      const event = createInboxRelayListEvent({ pubkey: await client.signer.getPublicKey(), relays })
+      event.created_at = Math.max(event.created_at, Number(savedInbox.createdAt || 0) + 1)
+      const signed = await client.signer.signEvent(event)
+      if (!verifyEvent(signed) || signed.pubkey !== await client.signer.getPublicKey()) throw new Error('The signed inbox relay list did not match the active NCC profile.')
+      const responses = await client.network.publish(relays, signed)
+      const accepted = Object.values(responses).some(response => response.ok)
+      if (!accepted) throw new Error('No relay acknowledged the inbox relay list. Check the selected relays and retry.')
+      inboxPublication = responses
+      await chrome.storage.local.set({ [inboxKey]: { relays: [...relays], createdAt: signed.created_at, publication: responses } })
+    }
+    const keyPackage = await client.keyPackages.create({ relays })
+    return { keyPackage, publication: lastKeyPackagePublication, inboxPublication }
+  },
+  async getInvites(client) {
+    const invites = await client.invites.getUnread()
+    return Promise.all(invites.map(async rumor => ({
+      rumor,
+      preview: await client.previewWelcome(rumor),
+      canJoin: await client.canJoinInvite(rumor)
+    })))
+  },
+  async joinInvite(client, rumor) {
+    const result = await client.joinGroupFromWelcome({ welcomeRumor: rumor })
+    await client.invites.markAsRead(rumor.id)
+    return result.group
+  },
+  async dismissInvite(client, rumor) {
+    await client.invites.markAsRead(rumor.id)
+  },
   async createGroup(client, relays, name) {
     await client.keyPackages.ensurePublished({ relays })
     const servers = await resolveBlossomServers(await client.signer.getPublicKey(), relays)
