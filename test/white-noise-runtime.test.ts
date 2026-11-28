@@ -5,9 +5,72 @@ import { createMediaCache, legacyMediaKeys } from '../extensions/white-noise-pro
 import { coalesce } from '../extensions/white-noise-prototype/refresh-queue.js'
 // @ts-expect-error The extension is plain JavaScript without type declarations.
 import { createLiveRelays, resumeFilters } from '../extensions/white-noise-prototype/relay-live.js'
+// @ts-expect-error The extension is plain JavaScript without type declarations.
+import { ExtensionStore, packStoredValue, restoreStoredValue } from '../extensions/white-noise-prototype/extension-store.js'
 
 beforeEach(() => vi.useFakeTimers({ now: 1_800_000_000_000 }))
 afterEach(() => vi.useRealTimers())
+
+describe('Marmot extension storage', () => {
+  function memoryStorage() {
+    const values: Record<string, unknown> = {}
+    return {
+      values,
+      async get(key: string | null) {
+        if (key === null) return structuredClone(values)
+        return { [key]: structuredClone(values[key]) }
+      },
+      async set(items: Record<string, unknown>) { Object.assign(values, structuredClone(items)) },
+      async remove(key: string | string[]) {
+        for (const item of Array.isArray(key) ? key : [key]) delete values[item]
+      }
+    }
+  }
+
+  it('round-trips MLS binary and collection values through storage-safe data', () => {
+    const input = {
+      epoch: 42n,
+      tree: new Uint8Array([0, 1, 127, 255]),
+      data: new DataView(new Uint8Array([9, 8, 7]).buffer, 1, 2),
+      members: new Set(['alice', 'bob']),
+      secrets: new Map([[new Uint8Array([4, 5]), new Map([['generation', 6n]])]])
+    }
+
+    const packed = packStoredValue(input)
+    expect(JSON.stringify(packed)).toBeTruthy()
+    const restored = restoreStoredValue(packed) as {
+      epoch: bigint
+      tree: Uint8Array
+      data: Uint8Array
+      members: Set<string>
+      secrets: Map<Uint8Array, Map<string, bigint>>
+    }
+    expect(restored.epoch).toBe(42n)
+    expect(restored.tree).toEqual(new Uint8Array([0, 1, 127, 255]))
+    expect(restored.data).toEqual(new Uint8Array([8, 7]))
+    expect(restored.members).toEqual(new Set(['alice', 'bob']))
+    expect([...restored.secrets].map(([key, value]) => [[...key], [...value]])).toEqual([
+      [[4, 5], [['generation', 6n]]]
+    ])
+  })
+
+  it('isolates account stores and clears only the selected namespace', async () => {
+    const storage = memoryStorage()
+    const alice = new ExtensionStore('account:alice:groups', storage)
+    const bob = new ExtensionStore('account:bob:groups', storage)
+    await alice.setItem('group-1', { epoch: 3n, tree: new Uint8Array([1, 2]) })
+    await bob.setItem('group-2', { epoch: 9n, tree: new Uint8Array([8, 9]) })
+
+    expect(await alice.keys()).toEqual(['group-1'])
+    expect(await alice.getItem('group-1')).toEqual({ epoch: 3n, tree: new Uint8Array([1, 2]) })
+    expect(await alice.getItem('group-2')).toBeNull()
+    expect([...await bob.entries()].map(([key]) => key)).toEqual(['group-2'])
+
+    await alice.clear()
+    expect(await alice.keys()).toEqual([])
+    expect(await bob.getItem('group-2')).toEqual({ epoch: 9n, tree: new Uint8Array([8, 9]) })
+  })
+})
 
 describe('attachment cache', () => {
   const entry = (bytes: number, name: string): object => ({

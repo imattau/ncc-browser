@@ -144,6 +144,15 @@ Use this file to record issues reported during prototype work. Move entries to
   temporary signer. The group returned at epoch 0 and the note rendered from
   history. This confirms local restart persistence only; it does not test
   restoration from another device.
+- **Storage regression coverage:** Extracted the Chrome key-value adapter used
+  by Marmot's MLS, rewind, invite, ingest, and history stores into
+  `extension-store.js`. Focused tests confirm nested BigInt, binary, Map and Set
+  values round-trip and that clearing one account's group namespace leaves
+  another account's group state intact. The targeted runtime suite passed
+  (14 tests), the extension bundle built, and a `.nccx` package validated.
+  After the refactor, relaunched the dev app with the rebuilt extension against
+  the same temp profile and confirmed the pre-refactor group and encrypted note
+  still loaded.
 - **Current limit:** There is no supported recovery path for this companion to
   join a group where the same account is already a member on another device.
   The ordinary invite eligibility check rejects a second KeyPackage for that

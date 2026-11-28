@@ -3,27 +3,11 @@ import { KeyValueRumorHistoryBackend } from '@internet-privacy/marmot-ts/extra'
 import { createMediaCache, legacyMediaKeys } from './media-cache.js'
 import { coalesce } from './refresh-queue.js'
 import { createLiveRelays } from './relay-live.js'
+import { ExtensionStore, restoreStoredValue } from './extension-store.js'
 import { MarmotClient, createApplicationMessageIntent, createChatRumor } from '@internet-privacy/marmot-ts'
 import { createInboxRelayListEvent, deserializeApplicationData, encryptedMediaBlossomDefaultV2, getInboxRelays, getMediaAttachments } from '@internet-privacy/marmot-ts/core'
 import { createBlossomMediaTransport, createInviteIntent, downloadMessageMedia, prepareMediaMessage, Proposals } from '@internet-privacy/marmot-ts/client'
 import { getEventHash, nip19, verifyEvent } from 'nostr-tools'
-
-class ExtensionStore {
-  constructor(prefix) { this.prefix = `marmot:${prefix}:` }
-  async getItem(key) {
-    const value = (await chrome.storage.local.get(this.prefix + key))[this.prefix + key]
-    if (value == null) return null
-    return restore(value)
-  }
-  async setItem(key, value) {
-    await chrome.storage.local.set({ [this.prefix + key]: pack(value) })
-    return value
-  }
-  async removeItem(key) { await chrome.storage.local.remove(this.prefix + key) }
-  async clear() { for (const key of await this.keys()) await this.removeItem(key) }
-  async keys() { return Object.keys(await chrome.storage.local.get(null)).filter(key => key.startsWith(this.prefix)).map(key => key.slice(this.prefix.length)) }
-  async entries() { return new Map(Object.entries(await chrome.storage.local.get(null)).filter(([key]) => key.startsWith(this.prefix)).map(([key, value]) => [key.slice(this.prefix.length), value])) }
-}
 
 // The library's query asks for the keys and then for each message. Each call copies
 // data between processes (listing keys copies the whole store), so read it all once.
@@ -32,7 +16,7 @@ class SnapshotHistoryBackend extends KeyValueRumorHistoryBackend {
     const entries = await this.store.entries()
     return new KeyValueRumorHistoryBackend({
       keys: async () => [...entries.keys()],
-      getItem: async key => restore(entries.get(key))
+      getItem: async key => restoreStoredValue(entries.get(key))
     }).queryRumors(filters)
   }
 }
@@ -59,37 +43,6 @@ const groupImageTransport = async request => {
   const response = await ncc.blossom.groupImageRequest({ url: request.url, method: request.method, headers: request.headers, body: request.body, maxBytes: request.maxBytes })
   return response
 }
-
-function pack(value) {
-  if (typeof value === 'bigint') return { __nccType: 'bigint', value: value.toString() }
-  if (value instanceof Uint8Array) return { __nccType: 'u8', value: bytesToBase64(value) }
-  if (value instanceof ArrayBuffer) return { __nccType: 'u8', value: bytesToBase64(new Uint8Array(value)) }
-  if (ArrayBuffer.isView(value)) return { __nccType: 'u8', value: bytesToBase64(new Uint8Array(value.buffer, value.byteOffset, value.byteLength)) }
-  if (Array.isArray(value)) return value.map(pack)
-  if (value && typeof value === 'object') {
-    if (value instanceof Map) return { __nccType: 'map', entries: [...value].map(([key, item]) => [pack(key), pack(item)]) }
-    if (value instanceof Set) return { __nccType: 'set', values: [...value].map(pack) }
-    const result = {}
-    for (const [key, item] of Object.entries(value)) result[key] = pack(item)
-    return result
-  }
-  return value
-}
-
-function restore(value) {
-  if (Array.isArray(value)) return value.map(restore)
-  if (!value || typeof value !== 'object') return value
-  if (value.__nccType === 'bigint') return BigInt(value.value)
-  if (value.__nccType === 'u8') return base64ToBytes(value.value)
-  if (value.__nccType === 'map') return new Map(value.entries.map(([key, item]) => [restore(key), restore(item)]))
-  if (value.__nccType === 'set') return new Set(value.values.map(restore))
-  const result = {}
-  for (const [key, item] of Object.entries(value)) result[key] = restore(item)
-  return result
-}
-
-function bytesToBase64(bytes) { let binary = ''; for (let index = 0; index < bytes.length; index += 0x8000) binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000)); return btoa(binary) }
-function base64ToBytes(value) { const binary = atob(value); const bytes = new Uint8Array(binary.length); for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index); return bytes }
 
 function relayUrl(value) {
   const url = new URL(value)
