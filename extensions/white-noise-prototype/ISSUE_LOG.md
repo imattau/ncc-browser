@@ -317,9 +317,11 @@ Use this file to record issues reported during prototype work. Move entries to
   correctly. A mocked runtime check configured three upload endpoints, forced
   the second to fail, verified both successful locators were serialized into
   the rumor, then forced the first download copy to fail decryption and verified
-  the second copy decrypted successfully. Live multi-host chat-upload
-  redundancy remains to be checked against two Blossom hosts that both accept
-  the encrypted payload.
+  the second copy decrypted successfully. A live run through Marmot's chat
+  media preparation and Blossom transport uploaded the same random ciphertext
+  to `blossom.ditto.pub` and `cdn.divine.video`; both locators were included in
+  the rumor, both downloads matched the ciphertext hash, and both temporary
+  blobs were deleted successfully (HTTP 204).
 
 ### 5. Main-process exception when closing the browser
 
