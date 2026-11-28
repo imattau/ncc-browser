@@ -182,6 +182,14 @@ Use this file to record issues reported during prototype work. Move entries to
   After the refactor, relaunched the dev app with the rebuilt extension against
   the same temp profile and confirmed the pre-refactor group and encrypted note
   still loaded.
+- **Legacy migration gap (2026-11-29):** The pre-account namespace migration
+  copied MLS groups and message history but omitted Marmot rewind state. Added
+  rewind-state migration alongside the other Marmot stores. Regression coverage
+  verifies the old rewind entries move into the matching account namespace,
+  unrelated account data stays excluded, and a recorded different signer
+  blocks migration. The focused migration tests passed and the updated 0.1.3
+  `.nccx` package validates. This fixes local legacy-profile migration only;
+  it does not restore state that exists only on another device.
 
 - **Current limit:** There is no supported recovery path for this companion to
   join a group where the same account is already a member on another device.

@@ -6,6 +6,7 @@ import { createLiveRelays } from './relay-live.js'
 import { createOrReuseDirectChat } from './direct-chat.js'
 import { selectUsableKeyPackage } from './key-package-selection.js'
 import { planGroupRelayUpdates } from './group-relay-updates.js'
+import { planLegacyAccountMigration } from './legacy-storage-migration.js'
 import { ExtensionStore, restoreStoredValue } from './extension-store.js'
 import { MarmotClient, createApplicationMessageIntent, createChatRumor } from '@internet-privacy/marmot-ts'
 import { createInboxRelayListEvent, deserializeApplicationData, encryptedMediaBlossomDefaultV2, getInboxRelays, getMediaAttachments } from '@internet-privacy/marmot-ts/core'
@@ -576,18 +577,9 @@ async function removeStoredMedia() {
 async function migrateLegacyAccountData(pubkey, accountPrefix) {
   const marker = `marmot:account-migrated:${pubkey}`
   if ((await chrome.storage.local.get(marker))[marker]) return
-  const { connectedSignerPubkey } = await chrome.storage.local.get('connectedSignerPubkey')
-  if (connectedSignerPubkey && connectedSignerPubkey !== pubkey) return
-  const legacyPrefixes = ['groups', 'keypackages', 'invites', 'ingest', 'history:']
   const all = await chrome.storage.local.get(null)
-  const migrated = {}
-  for (const [key, value] of Object.entries(all)) {
-    const prefix = legacyPrefixes.find(item => key.startsWith(`marmot:${item}`))
-    if (!prefix) continue
-    const suffix = key.slice(`marmot:${prefix}`.length)
-    migrated[`marmot:${accountPrefix}${prefix}${suffix}`] = value
-  }
-  if (all['marmot:clientId']) migrated[`marmot:${accountPrefix}clientId`] = all['marmot:clientId']
+  const migrated = planLegacyAccountMigration(all, pubkey, accountPrefix)
+  if (migrated === null) return
   if (Object.keys(migrated).length) await chrome.storage.local.set(migrated)
   await chrome.storage.local.set({ [marker]: true })
 }
