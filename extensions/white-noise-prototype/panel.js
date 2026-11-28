@@ -218,7 +218,7 @@ async function connect() {
     if (inviteRefreshTimer) clearInterval(inviteRefreshTimer)
     inviteRefreshTimer = setInterval(() => { void refreshInvites() }, 5000)
     if (signerWatchTimer) clearInterval(signerWatchTimer)
-    signerWatchTimer = setInterval(() => { void checkActiveSigner() }, 2000)
+    signerWatchTimer = setInterval(() => { void checkActiveSigner() }, 5000)
     await chrome.storage.local.set({ connectedSignerPubkey: runtime.pubkey })
     setStatus(`Connected · ${relays.length} relays`, true)
     message('Signer approved. Chats and incoming group invitations are listening on the selected relays.')
