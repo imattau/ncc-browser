@@ -1,8 +1,9 @@
-const defaults = { relays: ['wss://relay.damus.io', 'wss://relay.primal.net', 'wss://relay.ditto.pub', 'wss://relay.eu.whitenoise.chat', 'wss://relay.us.whitenoise.chat'], useBrowserIdentity: false, keyPackageEncoding: 'framed' }
+const defaults = { relays: ['wss://relay.damus.io', 'wss://relay.primal.net', 'wss://relay.ditto.pub'], useBrowserIdentity: false, keyPackageEncoding: 'framed' }
 const previousDefaults = [
   ['wss://relay.damus.io', 'wss://relay.primal.net', 'wss://nos.lol'],
   ['wss://relay.damus.io', 'wss://nos.lol'],
-  ['wss://relay.eu.whitenoise.chat', 'wss://relay.us.whitenoise.chat', 'wss://relay.damus.io', 'wss://relay.primal.net', 'wss://relay.ditto.pub']
+  ['wss://relay.eu.whitenoise.chat', 'wss://relay.us.whitenoise.chat', 'wss://relay.damus.io', 'wss://relay.primal.net', 'wss://relay.ditto.pub'],
+  ['wss://relay.damus.io', 'wss://relay.primal.net', 'wss://relay.ditto.pub', 'wss://relay.eu.whitenoise.chat', 'wss://relay.us.whitenoise.chat']
 ]
 const WHITE_NOISE_FALLBACK_RELAYS = ['wss://relay.eu.whitenoise.chat', 'wss://relay.us.whitenoise.chat']
 const $ = (id) => document.getElementById(id)
@@ -19,6 +20,7 @@ let showArchived = false
 let pendingAttachments = []
 let renderedMediaUrls = []
 let inviteRefreshTimer = null
+let signerWatchTimer = null
 let pendingInvites = []
 
 function setStatus(text, connected = false) {
@@ -192,7 +194,7 @@ async function dismissInvite(item) {
   renderInvites()
 }
 
-async function connect(expectedPubkey, allowAccountChange = false) {
+async function connect() {
   if (connection || connectionAttempt) return
   connectionAttempt = true
   try {
@@ -205,9 +207,8 @@ async function connect(expectedPubkey, allowAccountChange = false) {
       if (url.protocol !== 'wss:' || !['relay.eu.whitenoise.chat', 'relay.us.whitenoise.chat', 'relay.damus.io', 'relay.primal.net', 'relay.ditto.pub', 'nos.lol'].includes(url.hostname) || url.port || url.username || url.password || url.pathname !== '/' || url.search || url.hash) throw new Error(`Relay host is not permitted by this prototype: ${url.hostname}`)
       return url.toString().replace(/\/$/, '')
     }))]
-    const { connectedSignerPubkey } = await chrome.storage.local.get('connectedSignerPubkey')
     const fallbackRelays = withWhiteNoiseFallbacks(relays)
-    const runtime = await window.MarmotCompanion.connect(relays, expectedPubkey || (allowAccountChange ? null : connectedSignerPubkey), fallbackRelays)
+    const runtime = await window.MarmotCompanion.connect(relays, null, fallbackRelays)
     connection = { ...runtime, relays, fallbackRelays }
     liveConnection = runtime.live
     await refreshGroups()
@@ -216,6 +217,8 @@ async function connect(expectedPubkey, allowAccountChange = false) {
     groupRefreshTimer = setInterval(() => { void refreshGroups() }, 5000)
     if (inviteRefreshTimer) clearInterval(inviteRefreshTimer)
     inviteRefreshTimer = setInterval(() => { void refreshInvites() }, 5000)
+    if (signerWatchTimer) clearInterval(signerWatchTimer)
+    signerWatchTimer = setInterval(() => { void checkActiveSigner() }, 2000)
     await chrome.storage.local.set({ connectedSignerPubkey: runtime.pubkey })
     setStatus(`Connected · ${relays.length} relays`, true)
     message('Signer approved. Chats and incoming group invitations are listening on the selected relays.')
@@ -225,6 +228,37 @@ async function connect(expectedPubkey, allowAccountChange = false) {
   } finally {
     connectionAttempt = false
     await load()
+  }
+}
+
+async function disconnectCurrentAccount() {
+  liveConnection?.unsubscribe()
+  connection?.inviteListener?.unsubscribe()
+  liveConnection = null
+  for (const timer of [groupRefreshTimer, inviteRefreshTimer, signerWatchTimer]) {
+    if (timer) clearInterval(timer)
+  }
+  groupRefreshTimer = inviteRefreshTimer = signerWatchTimer = null
+  connection = null
+  activeGroup = null
+  groups = []
+  pendingInvites = []
+  renderInvites()
+  $('conversationView').classList.add('hidden')
+  mainView.classList.remove('hidden')
+  await load()
+}
+
+async function checkActiveSigner() {
+  if (!connection || connectionAttempt) return
+  try {
+    const currentPubkey = await ncc.nostr.getPublicKey()
+    if (currentPubkey === connection.pubkey) return
+    await disconnectCurrentAccount()
+    message('NCC profile changed. Loading chats for the active profile…')
+    await connect()
+  } catch (error) {
+    message(`Could not refresh the active NCC profile: ${error?.message || String(error)}`, true)
   }
 }
 
@@ -595,21 +629,14 @@ $('setupButton').addEventListener('click', showSettings)
 $('backButton').addEventListener('click', showMain)
 $('connectButton').addEventListener('click', () => void connect())
 $('switchAccountButton').addEventListener('click', () => {
-  liveConnection?.unsubscribe()
-  connection?.inviteListener?.unsubscribe()
-  liveConnection = null
-  if (groupRefreshTimer) clearInterval(groupRefreshTimer)
-  groupRefreshTimer = null
-  if (inviteRefreshTimer) clearInterval(inviteRefreshTimer)
-  inviteRefreshTimer = null
-  connection = null
-  activeGroup = null
-  groups = []
-  pendingInvites = []
-  renderInvites()
-  $('conversationView').classList.add('hidden')
-  mainView.classList.remove('hidden')
-  void connect(null, true)
+  void (async () => {
+    if (connection && await ncc.nostr.getPublicKey() === connection.pubkey) {
+      message('Switch the active NCC profile in the browser. The companion will load its chats automatically.')
+      return
+    }
+    await disconnectCurrentAccount()
+    await connect()
+  })()
 })
 $('connectButtonSettings').addEventListener('click', () => { showMain(); void connect() })
 $('newChat').addEventListener('click', () => void publishKeyPackage())
@@ -742,7 +769,7 @@ $('openWhiteNoise').addEventListener('click', () => message('White Noise desktop
 $('search').addEventListener('input', () => renderGroups($('search').value))
 async function initialize() {
   const { connectedSignerPubkey } = await chrome.storage.local.get('connectedSignerPubkey')
-  if (connectedSignerPubkey) await connect(connectedSignerPubkey)
+  if (connectedSignerPubkey) await connect()
   else await load()
 }
 

@@ -61,7 +61,9 @@ function sameRelayList(left, right) {
   return Array.isArray(left) && left.length === right.length && left.every(relay => right.includes(relay))
 }
 
-const DEFAULT_RELAYS = ['wss://relay.eu.whitenoise.chat', 'wss://relay.us.whitenoise.chat', 'wss://relay.damus.io', 'wss://relay.primal.net', 'wss://relay.ditto.pub']
+// Keep the companion's general-purpose relay defaults primary. White Noise's
+// hosted relays are added by the panel as Marmot group connection fallbacks.
+const DEFAULT_RELAYS = ['wss://relay.damus.io', 'wss://relay.primal.net', 'wss://relay.ditto.pub']
 let relayConfig = DEFAULT_RELAYS
 let lastKeyPackagePublication = null
 let activeSignerPubkey = null

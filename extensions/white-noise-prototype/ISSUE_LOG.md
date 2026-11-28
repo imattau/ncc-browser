@@ -57,9 +57,10 @@ Use this file to record issues reported during prototype work. Move entries to
 - **Relay fallback:** User-configured relays stay primary. The companion adds
   White Noise EU and US hosted relays after them in Marmot's group connection
   fallback set. Key-package and kind-10050 inbox relay lists continue to publish
-  only the configured relay list. Defaults put Damus, Primal, and Ditto first,
-  with White Noise EU/US listed last for interop reachability. `nos.lol` is not
-  a default, but remains permitted when explicitly configured.
+  only the configured relay list. Defaults use Damus, Primal, and Ditto as
+  primary relays. White Noise EU/US are appended only to Marmot's group
+  connection fallback set. `nos.lol` is not a default, but remains permitted
+  when explicitly configured.
 - **Change:** The companion publishes the account's kind-10050 inbox relay list
   with the configured relay set when publishing an invite key.
   It listens for and decrypts incoming kind-1059 Welcome gifts, shows a pending
@@ -99,13 +100,20 @@ Use this file to record issues reported during prototype work. Move entries to
 
 ### 4. Multiple account profiles
 
-- **Status:** Open
+- **Status:** Implemented; runtime verification pending
 - **Reported:** 2026-11-28
 - **Expected:** Integrate White Noise's multiple accounts with NCC Browser's
   profile/account model cleanly, including clear account switching and isolated
   Marmot state per account.
-- **Next:** Map White Noise account switching and NCC profile identity behavior
-  before choosing the storage and signer boundaries.
+- **Change:** The companion reconnects using the active NCC signer and watches
+  its public key while open. When NCC's active profile changes, it tears down
+  the old listeners and reloads that profile's chats from its own account
+  namespace. It does not request or use the privileged profile-selection API;
+  switching remains an NCC Browser action. The Reload profile helper explains
+  this when the active profile has not changed.
+- **Check:** Build and typecheck; switch between two disposable NCC profiles,
+  then verify each profile reloads only its own chats after switching and after
+  reopening the companion.
 
 ## Fixed
 
