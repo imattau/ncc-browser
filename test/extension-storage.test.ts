@@ -2,7 +2,8 @@ import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { ExtensionStorage } from '../src/main/extensions/storage'
+import { ExtensionService } from '../src/main/extensions/runtime'
+import { ExtensionStorage, LARGE_LOCAL_QUOTA_BYTES } from '../src/main/extensions/storage'
 
 const roots: string[] = []
 
@@ -50,6 +51,55 @@ describe('ExtensionStorage', () => {
     expect(storage.set('ext', 'session', []).error).toBeTruthy()
     const huge = 'x'.repeat(1024 * 1024 + 1)
     expect(storage.set('ext', 'session', { huge }).error).toContain('quota')
+  })
+
+  it('grants a bounded larger local quota only when explicitly permissioned', () => {
+    const storage = new ExtensionStorage(root())
+    const large = 'x'.repeat(10 * 1024 * 1024 + 1)
+    expect(LARGE_LOCAL_QUOTA_BYTES).toBe(128 * 1024 * 1024)
+    expect(storage.set('standard', 'local', { history: large }).error).toContain('quota')
+    expect(storage.set('messenger', 'local', { history: large }, true).error).toBeUndefined()
+    expect(storage.set('messenger', 'sync', { history: large }, true).error).toContain('quota')
+  })
+
+  it('applies the manifest grant through the extension storage API', async () => {
+    const storage = new ExtensionStorage(root())
+    const manifest = (permissions: string[]) => ({
+      manifest_version: 3 as const,
+      name: 'Storage test',
+      version: '1.0.0',
+      description: '',
+      permissions,
+      host_permissions: [],
+      background: null,
+      content_scripts: [],
+      action: null,
+      options_page: null,
+      icons: {},
+      web_accessible_resources: [],
+      ncc: {}
+    })
+    const invoke = (extensionId: string, permissions: string[]) => {
+      const record = { id: extensionId, enabled: true, manifest: manifest(permissions) }
+      const service = new ExtensionService({
+        registry: { get: (id: string) => id === extensionId ? record : null },
+        storage,
+        host: { extensionPages: () => [], sendToContent: () => undefined }
+      } as never)
+      return (area: string, value: unknown) => service.invoke(
+        extensionId,
+        'storage.set',
+        [area, value],
+        { extensionId, from: 'page', tab: null, incognito: false }
+      )
+    }
+    const large = 'x'.repeat(10 * 1024 * 1024 + 1)
+    await expect(invoke('standard', ['storage'])('local', { history: large }))
+      .rejects.toThrow('storage.local quota exceeded')
+    await invoke('messenger', ['storage', 'storage:large'])('local', { history: large })
+    expect(storage.get('messenger', 'local', 'history')).toEqual({ history: large })
+    await expect(invoke('messenger', ['storage', 'storage:large'])('sync', { history: large }))
+      .rejects.toThrow('storage.sync quota exceeded')
   })
 })
 

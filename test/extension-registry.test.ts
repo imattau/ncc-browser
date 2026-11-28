@@ -78,6 +78,21 @@ describe('extension install review', () => {
     )
   })
 
+  it('marks the larger local-storage grant as added during extension updates', () => {
+    const { source, registry } = copyFixture()
+    expect(install(registry, source).ok).toBe(true)
+    editManifest(source, (manifest) => {
+      manifest.version = '2.0.0'
+      manifest.permissions.push('storage:large')
+    })
+    const update = review(registry, source)
+    expect(update.permissions.find((permission) => permission.id === 'storage:large')).toEqual({
+      id: 'storage:large',
+      label: 'Store up to 128 MB of local data',
+      added: true
+    })
+  })
+
   it('discards the staged copy on cancel, on a newer review and after a restart', () => {
     const { base, source, registry } = copyFixture()
     const staged = (): string[] =>

@@ -153,6 +153,7 @@ Use this file to record issues reported during prototype work. Move entries to
   After the refactor, relaunched the dev app with the rebuilt extension against
   the same temp profile and confirmed the pre-refactor group and encrypted note
   still loaded.
+
 - **Current limit:** There is no supported recovery path for this companion to
   join a group where the same account is already a member on another device.
   The ordinary invite eligibility check rejects a second KeyPackage for that
@@ -172,6 +173,28 @@ Use this file to record issues reported during prototype work. Move entries to
   asking a member to invite the same account. The checked-in `.nccx` had been
   stale at version 0.1.0, so it was rebuilt as 0.1.1 from the current source.
   The original disposable chat storage was restored after the check.
+
+### Local extension storage quota limits long-term chat state
+
+- **Status:** Mitigated with a bounded, reviewed larger-storage permission;
+  scalable storage remains a follow-up for very large histories.
+- **Cause:** NCC's default `storage.local` quota is 10 MB per extension, while
+  Marmot's MLS group state, rewind state and message history are all durable
+  companion data. A quota error could eventually stop new state from being
+  saved and break chat use or restart recovery.
+- **Change:** Added the optional `storage:large` permission. It raises only
+  `storage.local` to a hard 128 MB ceiling; other extension storage areas keep
+  their existing quotas. The permission is shown in install review, and updates
+  mark it as a newly added grant. The companion requests it in version 0.1.2.
+- **Check:** Storage unit tests verify the default 10 MB ceiling, the 128 MB
+  permission cap, and unchanged `storage.sync` limits. An extension-service API
+  test verifies the manifest permission actually selects the larger local
+  quota. Install-review tests verify the permission description and added-grant
+  flag. 29 targeted tests passed; the app typecheck passed; the 0.1.2 companion
+  package validated successfully.
+- **Current limit:** The backing store rewrites a JSON file on each change, so
+  the permission has a 128 MB ceiling. A database or per-key storage backend is
+  needed before raising that cap further.
 
 ### Received image and video presentation
 

@@ -75,6 +75,18 @@ describe('manifest normalization', () => {
     expect(permissionWarnings(result.manifest)).toContain('Read the active profile’s public contact list')
   })
 
+  it('exposes the bounded larger-local-storage permission in install review', () => {
+    const result = normalizeExtensionManifest({
+      manifest_version: 3,
+      name: 'Large storage test',
+      version: '1.0.0',
+      permissions: ['storage', 'storage:large']
+    })
+    expect(result.manifest.permissions).toContain('storage:large')
+    expect(result.warnings).not.toContain('Permission "storage:large" is not supported and will be ignored.')
+    expect(permissionWarnings(result.manifest)).toContain('Store up to 128 MB of local data')
+  })
+
   it('rejects MV2 and traversal paths', () => {
     expect(() =>
       normalizeExtensionManifest({ manifest_version: 2, name: 'x', version: '1' })

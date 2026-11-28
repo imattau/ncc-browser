@@ -69,6 +69,11 @@ package came from; only install code you trust. See
 `ncc` is optional metadata. `manifest_version` must be 3; MV2 manifests are rejected with
 a porting error.
 
+Local-first extensions that need more than the default 10 MB storage quota may request
+`storage:large`. The install review names the access explicitly; it raises only
+`storage.local` to a 128 MB hard limit. `sync`, `session`, and `private` quotas remain
+unchanged.
+
 Desktop extensions can opt into a browser-owned right side panel with
 `"ncc": { "side_panel": "panel.html" }`. The toolbar action toggles that packaged page
 in a sandboxed `WebContentsView`; its width can be changed through
@@ -124,7 +129,8 @@ after about 60 seconds of inactivity. Pending messages keep them alive.
 | `chrome.i18n` | `getMessage` (returns an empty string until locale files are wired) |
 | `chrome.extension` | `getURL`, `getBackgroundPage`, `lastError` |
 
-`chrome.storage.local` is capped at 10 MB per extension; `sync` at 5 MB and
+`chrome.storage.local` is capped at 10 MB per extension by default, or 128 MB when the
+extension has the reviewed `storage:large` permission; `sync` is capped at 5 MB and
 `session`/`private` at 1 MB. Storage is stored under the installed extension directory,
 not in `config.json`. `storage.sync` is a separate local area, not a cross-device sync
 service. Extension pages can only `fetch` hosts listed in `host_permissions`; the

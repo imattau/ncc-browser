@@ -26,6 +26,9 @@ const QUOTAS: Record<ExtensionStorageArea, number> = {
   private: 1024 * 1024
 }
 
+/** Explicitly permissioned ceiling that keeps the current whole-file store bounded. */
+export const LARGE_LOCAL_QUOTA_BYTES = 128 * 1024 * 1024
+
 /**
  * One area's values with each entry's JSON kept beside it. A write then only encodes
  * what changed, instead of the whole store, on the main process.
@@ -73,7 +76,8 @@ export class ExtensionStorage {
   set(
     id: string,
     area: ExtensionStorageArea,
-    values: unknown
+    values: unknown,
+    allowLargeLocalStorage = false
   ): { changes: StorageChanges; error?: string } {
     if (!values || typeof values !== 'object' || Array.isArray(values)) {
       return { changes: {}, error: 'storage.set expects an object' }
@@ -99,7 +103,10 @@ export class ExtensionStorage {
       return { changes: {}, error: 'storage.set values must be JSON-serialisable' }
     }
     if (Object.keys(changes).length === 0) return { changes }
-    if (storedBytes(next) > QUOTAS[area]) {
+    const quota = area === 'local' && allowLargeLocalStorage
+      ? LARGE_LOCAL_QUOTA_BYTES
+      : QUOTAS[area]
+    if (storedBytes(next) > quota) {
       return { changes: {}, error: `storage.${area} quota exceeded` }
     }
     this.write(id, area, next)

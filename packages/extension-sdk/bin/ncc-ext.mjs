@@ -5,6 +5,7 @@ import { deflateRawSync } from 'node:zlib'
 
 const SUPPORTED_PERMISSIONS = new Set([
   'storage',
+  'storage:large',
   'notifications',
   'contextMenus',
   'tabs',

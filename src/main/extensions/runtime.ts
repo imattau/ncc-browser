@@ -360,7 +360,8 @@ export class ExtensionService {
       case 'storage.set': {
         this.require(manifest, 'storage')
         const area = storageArea(args[0])
-        const result = this.deps.storage.set(extensionId, area, args[1])
+        const allowLargeLocalStorage = manifest.permissions.includes('storage:large')
+        const result = this.deps.storage.set(extensionId, area, args[1], allowLargeLocalStorage)
         if (result.error) throw new Error(result.error)
         this.broadcastStorage(extensionId, result.changes, area)
         return undefined

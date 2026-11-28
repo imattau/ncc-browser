@@ -185,6 +185,7 @@ export interface ExtensionSender {
 
 export const SUPPORTED_PERMISSIONS = new Set([
   'storage',
+  'storage:large',
   'notifications',
   'contextMenus',
   'tabs',
@@ -202,6 +203,7 @@ export const SUPPORTED_PERMISSIONS = new Set([
 
 const PERMISSION_WARNINGS: Record<string, string> = {
   storage: 'Store data locally',
+  'storage:large': 'Store up to 128 MB of local data',
   notifications: 'Show notifications',
   contextMenus: 'Add items to the page context menu',
   tabs: 'Read the address and title of your open tabs',
