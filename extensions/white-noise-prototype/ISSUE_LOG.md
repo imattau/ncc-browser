@@ -7,36 +7,54 @@ Use this file to record issues reported during prototype work. Move entries to
 
 ### Android group details parity
 
-- **Status:** Implemented and runtime checked.
-- **Change:** Added a Group details action showing group name, MLS epoch,
-  relay list, member count, member public keys, and admin roles from the
-  Marmot group snapshot. Admins can remove another member after an explicit
-  confirmation; Marmot `proposeRemoveUser` proposes removing all MLS leaves for
-  that Nostr user, and the client verifies the member disappeared after commit.
-- **Check:** The running dev companion displayed the details for the two-member
-  `Interop Primal Ditto` group, including epoch 2, relay list, member rows, and
-  the admin-only remove action. On a disposable two-member group, removing the
-  Android member succeeded, advanced the epoch from 1 to 2, and left only the
-  admin in the member snapshot. The disposable group was then deleted.
-- **Next:** Continue Android group-management parity checks as Marmot adds
-  operations.
+- **Status:** Core metadata and member controls implemented and runtime checked.
+- **Change:** Added a Group details action showing group name, description,
+  retention timer, relay list, member count, member public keys, and admin roles
+  from the Marmot group snapshot. Admins can edit name, description and the
+  supported retention timer, and remove another member after confirmation.
+  Marmot `proposeRemoveUser` proposes removing all MLS leaves for that Nostr
+  user, and the client verifies removal after commit.
+- **Check:** The dev companion displayed details for the two-member
+  `Interop Primal Ditto` group. Removing the Android member from a disposable
+  two-member group advanced the epoch from 1 to 2 and left only its admin. A
+  fresh one-member group was created with a description and one-hour retention;
+  editing it to a different description and one-day retention committed at
+  epoch 2 and showed those values in the snapshot and details view. After
+  setting a two-second timer on that one-member test group, a new message left
+  the transcript at expiry while its encrypted rumor remained in Marmot history.
+  The test group was deleted from the temporary profile afterward.
+- **Limit:** Group photo editing and the Android member step-down action are not
+  implemented yet. Expiration hides messages in this device's view but does not
+  securely erase cached or saved copies.
 
 ### Group and chat management parity
 
-- **Status:** Basic actions implemented. Archive and rename verified.
-- **Compared:** White Noise Android exposes group details and actions including
-  rename, archive, and leave. The current Marmot TypeScript package supports
-  metadata updates and leave, but has no archive operation.
+- **Status:** Group actions and core chat-list controls implemented; Android
+  parity remains incomplete.
+- **Compared:** White Noise Android includes local chat actions for archive,
+  pin, mute, read state and manual ordering, plus folders and rich group
+  settings. Marmot TypeScript supports group metadata updates and leave, while
+  archive, pin, mute and order are per-account companion state.
 - **Change:** Added group rename and leave through Marmot, local per-account
   archive state, an Archived list view, and group options from both the chat
-  list context menu and conversation header.
-- **Limit:** Archive only hides a group from the active chat list. It does not
-  change MLS membership or relay data.
+  list context menu and conversation header. Added pin/unpin ordering, move
+  up/down, local mute preference, and mark unread/read; incoming messages mark
+  inactive chats unread and opening a chat clears unread. Added group name,
+  description and disappearing-message configuration at creation and from
+  group details. Expired messages are hidden from the companion transcript and
+  chat preview; Marmot local history remains cached until the user clears it.
+- **Limit:** Archive, pin, mute preference, unread and ordering are local to
+  this NCC profile. Desktop notifications are not implemented, so mute does
+  not currently suppress notifications. Folders, group photo editing and
+  admin step-down remain to do.
 - **Check:** In the dev browser, archive removed a diagnostic group from the
   active list, it appeared in Archived, and restore returned it to Chats.
   Rename committed to the diagnostic group and restored its original name.
   Clear history removed message bubbles and displayed the empty state. Local
   delete removed a diagnostic chat from the list and closed its conversation.
+  Pin/unpin, mute/unmute preference, mark unread/open-to-read, and move-up then
+  move-down were exercised on `NCC_Interop_2026-11-28`; state changed as expected
+  and the original preferences and order were restored.
   Leave was attempted on a two-member diagnostic group but Marmot rejected it
   because the current member is an active admin. The group remained listed.
   An explicit admin handoff flow was added and verified on the disposable
@@ -44,6 +62,19 @@ Use this file to record issues reported during prototype work. Move entries to
   received leave acknowledgement, and removed the group from the local list.
 - **Next:** Continue testing remaining companion features and cross-device
   interoperability.
+
+### Android reply reference shows an unresolved event preview
+
+- **Status:** Open; quote rendering works, but Android showed an extra
+  `Event not found` link preview in one check.
+- **Observed:** The companion's NIP-C7 reply displayed its quote correctly in
+  White Noise Android, plus a separate preview for the `nostr:nevent` reference
+  that said the event could not be found. The Android reply in the reverse
+  direction rendered its quote correctly in the companion.
+- **Next:** Recheck against the Android release currently installed in the
+  emulator and determine whether White Noise should resolve the q-tagged event
+  from MLS history or whether the companion's reference needs adjustment. The
+  current outgoing event follows NIP-C7's single `q` tag plus `nevent` format.
 
 ### 1. Cross-device Marmot compatibility
 
@@ -138,6 +169,18 @@ Use this file to record issues reported during prototype work. Move entries to
   translation depend on Android-only services and are not exposed by this
   desktop extension API. Contact sharing currently accepts an npub or hex
   public key.
+
+### NIP-C7 text replies
+
+- **Status:** Implemented and verified in both directions with White Noise
+  Android.
+- **Change:** Replies are kind-9 rumors with one `q` tag and a
+  `nostr:nevent` reference followed by the reply text. The panel previews the
+  reply target, supports cancelling, and renders a contextual quote when the
+  parent is in loaded history. Attachment replies are currently disabled.
+- **Check:** Android displayed the companion reply in the expected quote
+  context. An Android reply to a companion message rendered with its matching
+  quote in the companion.
 
 ### 3. Drag-resize the companion panel
 

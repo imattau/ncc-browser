@@ -24,6 +24,8 @@ let inviteRefreshTimer = null
 let signerWatchTimer = null
 let pendingInvites = []
 let contactAction = 'invite'
+let replyTarget = null
+let retentionRefreshTimeout = null
 
 function setStatus(text, connected = false) {
   $('statusText').textContent = text
@@ -37,6 +39,24 @@ function message(text, error = false) {
 
 function showSettings() { mainView.classList.add('hidden'); settingsView.classList.remove('hidden') }
 function showMain() { settingsView.classList.add('hidden'); mainView.classList.remove('hidden') }
+
+function clearReplyTarget() {
+  replyTarget = null
+  $('replyPreview').classList.add('hidden')
+  $('composer').placeholder = 'Message'
+}
+
+function selectReplyTarget(rumor) {
+  replyTarget = rumor
+  const author = rumor.pubkey === connection.pubkey ? 'your message' : `message from ${rumor.pubkey.slice(0, 12)}…`
+  const attachments = window.MarmotCompanion.mediaAttachments(rumor)
+  const preview = rumor.content.replace(/^nostr:nevent1[^\s\r\n]*(?:\r?\n|$)/, '').trim()
+  $('replyTitle').textContent = `Replying to ${author}`
+  $('replyText').textContent = preview || (attachments.length ? attachments.map(item => item.filename).join(', ') : 'Message')
+  $('replyPreview').classList.remove('hidden')
+  $('composer').placeholder = 'Reply'
+  $('composer').focus()
+}
 
 function addPollOption(value = '') {
   const options = $('pollOptions')
@@ -102,7 +122,9 @@ function renderGroups(filter = '') {
   const list = $('chatList')
   list.replaceChildren()
   const query = filter.trim().toLowerCase()
-  const matching = groups.filter(group => Boolean(group.archived) === showArchived && (group.name || 'Untitled group').toLowerCase().includes(query))
+  const matching = groups
+    .filter(group => Boolean(group.archived) === showArchived && (group.name || 'Untitled group').toLowerCase().includes(query))
+    .sort((left, right) => Number(right.pinned) - Number(left.pinned) || left.order - right.order)
   $('toggleArchived').textContent = showArchived ? 'Chats' : 'Archived'
   $('chatSectionTitle').textContent = showArchived ? 'ARCHIVED' : 'CHATS'
   if (!matching.length) {
@@ -128,18 +150,19 @@ function renderGroups(filter = '') {
   }
   for (const group of matching) {
     const row = document.createElement('button')
-    row.className = 'chat-row'
-    row.innerHTML = `<span class="chat-avatar">${escapeHtml((group.name || 'W').slice(0, 1).toUpperCase())}</span><span class="chat-copy"><strong>${escapeHtml(group.name || 'Untitled group')}</strong><small>${group.memberCount || 1} members · epoch ${group.epoch ?? '—'}</small><span class="last-message"></span></span><span class="row-menu" role="button" tabindex="0" aria-label="Chat options">⋯</span>`
+    row.className = `chat-row${group.unread ? ' unread' : ''}`
+    row.innerHTML = `<span class="chat-avatar">${escapeHtml((group.name || 'W').slice(0, 1).toUpperCase())}</span><span class="chat-copy"><strong>${escapeHtml(group.name || 'Untitled group')}<span class="chat-flags">${group.pinned ? '<span title="Pinned">◆</span>' : ''}${group.muted ? '<span title="Muted">🔕</span>' : ''}</span></strong><small>${group.memberCount || 1} members · epoch ${group.epoch ?? '—'}${group.unread ? ' · Unread' : ''}</small><span class="last-message"></span></span><span class="row-menu" role="button" tabindex="0" aria-label="Chat options">⋯</span>`
     if (group.last) row.querySelector('.last-message').textContent = group.last.content.slice(0, 48)
     row.addEventListener('click', event => {
       if (event.target.closest('.row-menu')) {
         activeGroup = group
+        updateGroupMenu(group)
         $('groupMenu').classList.remove('hidden')
         return
       }
       openGroup(group)
     })
-    row.addEventListener('contextmenu', event => { event.preventDefault(); activeGroup = group; $('groupMenu').classList.remove('hidden') })
+    row.addEventListener('contextmenu', event => { event.preventDefault(); activeGroup = group; updateGroupMenu(group); $('groupMenu').classList.remove('hidden') })
     list.append(row)
   }
 }
@@ -154,11 +177,14 @@ async function refreshGroups() {
   if (!connection) return
   const loaded = await window.MarmotCompanion.listGroups(connection.client)
   groups = await Promise.all(loaded.map(async group => {
-    const history = await window.MarmotCompanion.history(group)
+    const history = retainedHistory(group, await window.MarmotCompanion.history(group))
     if (!observedGroupInstances.has(group)) {
       observedGroupInstances.add(group)
       group.on('changed', () => void refreshGroups())
-      group.history.on('rumor', () => {
+      group.history.on('rumor', rumor => {
+        if (activeGroup?.idStr !== group.idStr && (rumor?.kind === 9 || rumor?.kind === 1068) && rumorIsRetained(group, rumor)) {
+          void setChatUiState(group.idStr, { unread: true })
+        }
         void refreshGroups()
         if (activeGroup?.idStr === group.idStr) void showMessages(activeGroup)
       })
@@ -167,7 +193,7 @@ async function refreshGroups() {
     const uiState = (await chrome.storage.local.get(key))[key] || {}
     const lastChatMessage = history.find(rumor => rumor.kind === 9 || rumor.kind === 1068)
     const preview = lastChatMessage?.kind === 1068 ? `Poll: ${lastChatMessage.content}` : lastChatMessage?.content.startsWith('nostr:') ? 'Shared a contact' : lastChatMessage?.content
-    return { id: group.snapshot.id, idStr: group.idStr, name: group.snapshot.groupData?.name || 'Encrypted group', memberCount: group.snapshot.members?.length, epoch: String(group.snapshot.epoch ?? '—'), instance: group, last: lastChatMessage ? { ...lastChatMessage, content: preview } : null, archived: Boolean(uiState.archived) }
+    return { id: group.snapshot.id, idStr: group.idStr, name: group.snapshot.groupData?.name || 'Encrypted group', memberCount: group.snapshot.members?.length, epoch: String(group.snapshot.epoch ?? '—'), instance: group, last: lastChatMessage ? { ...lastChatMessage, content: preview } : null, archived: Boolean(uiState.archived), pinned: Boolean(uiState.pinned), muted: Boolean(uiState.muted), unread: Boolean(uiState.unread), order: Number.isFinite(uiState.order) ? uiState.order : loaded.indexOf(group) }
   }))
   renderGroups($('search').value)
 }
@@ -275,6 +301,8 @@ async function disconnectCurrentAccount() {
   liveConnection?.unsubscribe()
   connection?.inviteListener?.unsubscribe()
   liveConnection = null
+  if (retentionRefreshTimeout) clearTimeout(retentionRefreshTimeout)
+  retentionRefreshTimeout = null
   for (const timer of [groupRefreshTimer, inviteRefreshTimer, signerWatchTimer]) {
     if (timer) clearInterval(timer)
   }
@@ -323,7 +351,23 @@ async function publishKeyPackage() {
 }
 
 async function showMessages(group) {
-  const history = await window.MarmotCompanion.history(group.instance)
+  const allHistory = await window.MarmotCompanion.history(group.instance)
+  const history = retainedHistory(group.instance, allHistory)
+  if (retentionRefreshTimeout) clearTimeout(retentionRefreshTimeout)
+  retentionRefreshTimeout = null
+  const retention = Number(group.instance.snapshot.groupData?.messageRetention ?? 0n)
+  if (Number.isSafeInteger(retention) && retention > 0) {
+    const now = Math.floor(Date.now() / 1000)
+    const nextExpiry = allHistory
+      .map(rumor => Number.isSafeInteger(rumor.created_at) ? rumor.created_at + retention : Infinity)
+      .filter(expiration => expiration > now)
+      .sort((left, right) => left - right)[0]
+    if (Number.isFinite(nextExpiry)) {
+      retentionRefreshTimeout = setTimeout(() => {
+        if (activeGroup?.idStr === group.idStr) void showMessages(group)
+      }, Math.min(2147483647, Math.max(100, (nextExpiry - now) * 1000 + 50)))
+    }
+  }
   const visibleHistory = history.filter(rumor => rumor.kind === 9 || rumor.kind === 1068)
   const list = $('messageList')
   for (const url of renderedMediaUrls) URL.revokeObjectURL(url)
@@ -334,7 +378,7 @@ async function showMessages(group) {
   if (!matches.length) {
     const empty = document.createElement('p')
     empty.className = 'field-hint'
-    empty.textContent = query ? 'No messages match this search.' : 'No messages yet. Messages are end-to-end encrypted with MLS.'
+    empty.textContent = query ? 'No messages match this search.' : allHistory.length > history.length ? 'No messages remain under this group’s disappearing-message timer.' : 'No messages yet. Messages are end-to-end encrypted with MLS.'
     list.append(empty)
     return
   }
@@ -346,14 +390,25 @@ async function showMessages(group) {
     row.append(author)
     if (rumor.kind === 1068) {
       renderPoll(row, rumor, history, group)
-    } else if (!renderContactCard(row, rumor)) {
-      const content = document.createElement('p')
-      content.textContent = rumor.content
-      row.append(content)
+    } else {
+      renderReplyContext(row, rumor, history)
+      if (!renderContactCard(row, rumor)) {
+        const content = document.createElement('p')
+        content.textContent = visibleChatContent(rumor.content)
+        row.append(content)
+      }
     }
     const timestamp = document.createElement('time')
     timestamp.textContent = new Date(rumor.created_at * 1000).toLocaleString()
     row.append(timestamp)
+    if (rumor.kind === 9) {
+      const reply = document.createElement('button')
+      reply.type = 'button'
+      reply.className = 'message-action'
+      reply.textContent = 'Reply'
+      reply.addEventListener('click', () => selectReplyTarget(rumor))
+      row.append(reply)
+    }
     const attachments = window.MarmotCompanion.mediaAttachments(rumor)
     if (attachments.length) {
       const open = document.createElement('button')
@@ -397,6 +452,33 @@ async function showMessages(group) {
     list.append(row)
   }
   list.scrollTop = list.scrollHeight
+}
+
+function retainedHistory(group, history) {
+  const retention = Number(group.snapshot.groupData?.messageRetention ?? 0n)
+  if (!Number.isSafeInteger(retention) || retention <= 0) return history
+  return history.filter(rumor => rumorIsRetained(group, rumor))
+}
+
+function rumorIsRetained(group, rumor, now = Math.floor(Date.now() / 1000)) {
+  const retention = Number(group.snapshot.groupData?.messageRetention ?? 0n)
+  return !Number.isSafeInteger(retention) || retention <= 0 || !Number.isSafeInteger(rumor.created_at) || rumor.created_at + retention > now
+}
+
+function visibleChatContent(content) {
+  return content.replace(/^nostr:nevent1[^\s\r\n]*(?:\r?\n|$)/, '')
+}
+
+function renderReplyContext(row, rumor, history) {
+  const replyTag = (rumor.tags || []).find(tag => tag[0] === 'q' && /^[0-9a-f]{64}$/i.test(tag[1] || ''))
+  if (!replyTag) return
+  const parent = history.find(item => item.id === replyTag[1])
+  const quote = document.createElement('blockquote')
+  quote.className = 'reply-quote'
+  const author = parent?.pubkey === connection.pubkey ? 'You' : parent ? `${parent.pubkey.slice(0, 12)}…` : 'Original message'
+  const body = parent ? visibleChatContent(parent.content).trim() || window.MarmotCompanion.mediaAttachments(parent).map(item => item.filename).join(', ') || 'Message' : 'Message is not in the loaded history.'
+  quote.textContent = `${author}: ${body.slice(0, 140)}`
+  row.append(quote)
 }
 
 function renderContactCard(row, rumor) {
@@ -515,6 +597,10 @@ $('clearMessageSearch').addEventListener('click', () => {
 
 async function openGroup(group) {
   activeGroup = group
+  await setChatUiState(group.idStr, { unread: false })
+  group.unread = false
+  renderGroups($('search').value)
+  clearReplyTarget()
   pendingAttachments = []
   renderPendingAttachments()
   $('messageSearch').value = ''
@@ -531,51 +617,94 @@ async function manageGroup(group, action) {
     return
   }
   try {
-    if (action === 'rename') {
-    const name = prompt('New group name', group.name)?.trim()
-    if (!name) return
-    await window.MarmotCompanion.renameGroup(connection.client, group.id, name)
-    await refreshGroups()
-    message('Group renamed.')
+    if (action === 'pin' || action === 'mute' || action === 'unread') {
+      const field = action === 'pin' ? 'pinned' : action === 'mute' ? 'muted' : 'unread'
+      const value = !group[field]
+      await setChatUiState(group.idStr, { [field]: value })
+      await refreshGroups()
+      message(field === 'pinned'
+        ? (value ? 'Chat pinned.' : 'Chat unpinned.')
+        : field === 'muted'
+          ? (value ? 'Notification preference saved. Desktop notifications are not available yet.' : 'Chat unmuted on this device.')
+          : (value ? 'Chat marked unread.' : 'Chat marked read.'))
+    } else if (action === 'move-up' || action === 'move-down') {
+      const peers = groups
+        .filter(item => item.archived === group.archived && item.pinned === group.pinned)
+        .sort((a, b) => a.order - b.order)
+      const index = peers.findIndex(item => item.idStr === group.idStr)
+      const other = peers[index + (action === 'move-up' ? -1 : 1)]
+      if (!other) return
+      await Promise.all([
+        setChatUiState(group.idStr, { order: other.order }),
+        setChatUiState(other.idStr, { order: group.order })
+      ])
+      await refreshGroups()
+      message('Chat order updated.')
+    } else if (action === 'rename') {
+      const name = prompt('New group name', group.name)?.trim()
+      if (!name) return
+      await window.MarmotCompanion.renameGroup(connection.client, group.id, name)
+      await refreshGroups()
+      message('Group renamed.')
     } else if (action === 'archive' || action === 'restore') {
-    const key = `marmot:chat-ui:${connection.pubkey}:${group.idStr}`
-    await chrome.storage.local.set({ [key]: { archived: action === 'archive' } })
-    await refreshGroups()
-    message(action === 'archive' ? 'Chat archived.' : 'Chat restored.')
+      const shouldArchive = action === 'archive' && !group.archived
+      await setChatUiState(group.idStr, { archived: shouldArchive })
+      await refreshGroups()
+      message(shouldArchive ? 'Chat archived.' : 'Chat restored.')
     } else if (action === 'clear') {
-    if (!confirm(`Clear local message history for "${group.name}"? This cannot be undone.`)) return
-    await group.instance.history.purgeMessages()
-    await refreshGroups()
-    if (activeGroup?.idStr === group.idStr) await showMessages(group)
-    message('Local message history cleared.')
+      if (!confirm(`Clear local message history for "${group.name}"? This cannot be undone.`)) return
+      await group.instance.history.purgeMessages()
+      await refreshGroups()
+      if (activeGroup?.idStr === group.idStr) await showMessages(group)
+      message('Local message history cleared.')
     } else if (action === 'delete') {
-    if (!confirm(`Delete "${group.name}" from this device? This only removes local chat data.`)) return
-    await connection.client.groups.destroy(group.id)
-    activeGroup = null
-    $('conversationView').classList.add('hidden')
-    mainView.classList.remove('hidden')
-    await refreshGroups()
-    message('Local chat data deleted from this device.')
-    } else if (action === 'leave') {
-    const ownPubkey = connection.pubkey
-    const admins = group.instance.snapshot.groupData?.adminPubkeys || []
-    if (admins.includes(ownPubkey)) {
-      openAdminHandoff(group)
-      return
-    }
-    if (!confirm(`Leave "${group.name}"? Its local MLS state will be removed after a relay acknowledges the leave request.`)) return
-    await window.MarmotCompanion.leaveGroup(connection.client, group.id)
-    if (activeGroup?.idStr === group.idStr) {
+      if (!confirm(`Delete "${group.name}" from this device? This only removes local chat data.`)) return
+      await connection.client.groups.destroy(group.id)
       activeGroup = null
       $('conversationView').classList.add('hidden')
       mainView.classList.remove('hidden')
-    }
-    await refreshGroups()
-    message('Leave request acknowledged. Local group data removed.')
+      await refreshGroups()
+      message('Local chat data deleted from this device.')
+    } else if (action === 'leave') {
+      const ownPubkey = connection.pubkey
+      const admins = group.instance.snapshot.groupData?.adminPubkeys || []
+      if (admins.includes(ownPubkey)) {
+        openAdminHandoff(group)
+        return
+      }
+      if (!confirm(`Leave "${group.name}"? Its local MLS state will be removed after a relay acknowledges the leave request.`)) return
+      await window.MarmotCompanion.leaveGroup(connection.client, group.id)
+      if (activeGroup?.idStr === group.idStr) {
+        activeGroup = null
+        $('conversationView').classList.add('hidden')
+        mainView.classList.remove('hidden')
+      }
+      await refreshGroups()
+      message('Leave request acknowledged. Local group data removed.')
     }
   } catch (error) {
     message(error?.message || String(error), true)
   }
+}
+
+function updateGroupMenu(group) {
+  const labels = {
+    pin: group.pinned ? 'Unpin chat' : 'Pin chat',
+    mute: group.muted ? 'Unmute notifications' : 'Mute notifications',
+    unread: group.unread ? 'Mark as read' : 'Mark as unread',
+    archive: group.archived ? 'Restore chat' : 'Archive chat'
+  }
+  for (const [action, label] of Object.entries(labels)) {
+    const button = $('groupMenu').querySelector(`[data-group-action="${action}"]`)
+    if (button) button.textContent = label
+  }
+}
+
+async function setChatUiState(groupId, patch) {
+  if (!connection) return
+  const key = `marmot:chat-ui:${connection.pubkey}:${groupId}`
+  const current = (await chrome.storage.local.get(key))[key] || {}
+  await chrome.storage.local.set({ [key]: { ...current, ...patch } })
 }
 
 function showGroupDetails(group) {
@@ -594,10 +723,20 @@ function showGroupDetails(group) {
     content.append(row)
   }
   addDetail('Group', group.name)
+  addDetail('Description', snapshot.groupData?.description || 'No description')
   addDetail('MLS epoch', String(snapshot.epoch ?? '—'))
   addDetail('Members', String(snapshot.members.length))
   addDetail('Relays', (snapshot.groupData?.relays || []).join(', ') || 'No group relays')
+  addDetail('Disappearing messages', retentionLabel(snapshot.groupData?.messageRetention))
   addDetail('Encrypted media', snapshot.groupData?.encryptedMedia ? 'Enabled' : 'Not enabled for this group')
+  if (admins.has(connection.pubkey)) {
+    const edit = document.createElement('button')
+    edit.type = 'button'
+    edit.className = 'secondary full'
+    edit.textContent = 'Edit group details'
+    edit.addEventListener('click', () => openGroupSettings(group))
+    content.append(edit)
+  }
   if (!snapshot.groupData?.encryptedMedia && admins.has(connection.pubkey)) {
     const enable = document.createElement('button')
     enable.type = 'button'
@@ -629,6 +768,28 @@ function showGroupDetails(group) {
     content.append(row)
   }
   $('groupDetailsDialog').classList.remove('hidden')
+}
+
+function retentionLabel(value) {
+  const seconds = Number(value ?? 0)
+  const labels = new Map([[0, 'Off'], [3600, '1 hour'], [86400, '1 day'], [604800, '1 week'], [2419200, '4 weeks']])
+  return labels.get(seconds) || `${seconds} seconds`
+}
+
+function openGroupSettings(group) {
+  $('editGroupName').value = group.instance.snapshot.groupData?.name || group.name
+  $('editGroupDescription').value = group.instance.snapshot.groupData?.description || ''
+  const retention = String(group.instance.snapshot.groupData?.messageRetention ?? 0n)
+  const select = $('editGroupRetention')
+  if (![...select.options].some(option => option.value === retention)) {
+    const option = document.createElement('option')
+    option.value = retention
+    option.textContent = retentionLabel(BigInt(retention))
+    select.append(option)
+  }
+  select.value = retention
+  $('groupSettingsForm').dataset.groupId = group.idStr
+  $('groupSettingsDialog').classList.remove('hidden')
 }
 
 async function enableGroupMedia(group) {
@@ -742,18 +903,52 @@ $('adminHandoffForm').addEventListener('submit', async event => {
 
 $('settingsButton').addEventListener('click', showSettings)
 $('toggleArchived').addEventListener('click', () => { showArchived = !showArchived; renderGroups($('search').value) })
-$('groupActions').addEventListener('click', () => $('groupMenu').classList.toggle('hidden'))
+$('groupActions').addEventListener('click', () => {
+  if (activeGroup) updateGroupMenu(activeGroup)
+  $('groupMenu').classList.toggle('hidden')
+})
 $('groupMenu').addEventListener('click', event => {
   const action = event.target.closest('[data-group-action]')?.dataset.groupAction
   if (activeGroup && action) {
-    if (action === 'archive' && activeGroup.archived) return
-    if (action === 'restore' && !activeGroup.archived) return
     void manageGroup(activeGroup, action)
   }
 })
 $('closeGroupDetails').addEventListener('click', () => $('groupDetailsDialog').classList.add('hidden'))
+$('cancelGroupSettings').addEventListener('click', () => $('groupSettingsDialog').classList.add('hidden'))
+$('groupSettingsForm').addEventListener('submit', async event => {
+  event.preventDefault()
+  const form = event.currentTarget
+  const group = groups.find(item => item.idStr === form.dataset.groupId)
+  if (!group || !connection) return
+  const submit = form.querySelector('button[type="submit"]')
+  submit.disabled = true
+  try {
+    await window.MarmotCompanion.updateGroupMetadata(connection.client, group.id, {
+      name: $('editGroupName').value,
+      description: $('editGroupDescription').value,
+      messageRetention: Number($('editGroupRetention').value)
+    })
+    $('groupSettingsDialog').classList.add('hidden')
+    await refreshGroups()
+    const refreshed = groups.find(item => item.idStr === group.idStr)
+    if (refreshed) {
+      if (activeGroup?.idStr === group.idStr) {
+        activeGroup = refreshed
+        $('conversationTitle').textContent = refreshed.name
+        await showMessages(refreshed)
+      }
+      showGroupDetails(refreshed)
+    }
+    message('Group details updated for members.')
+  } catch (error) {
+    message(error?.message || String(error), true)
+  } finally {
+    submit.disabled = false
+  }
+})
 document.addEventListener('click', event => {
   if (!event.target.closest('#groupMenu, #groupActions, .row-menu')) $('groupMenu').classList.add('hidden')
+  if (!event.target.closest('#newChatMenu, #newChat')) $('newChatMenu').classList.add('hidden')
 })
 $('closeButton').addEventListener('click', () => void ncc.runtime.closePanel())
 const resizeHandle = $('resizeHandle')
@@ -797,8 +992,13 @@ $('switchAccountButton').addEventListener('click', () => {
   })()
 })
 $('connectButtonSettings').addEventListener('click', () => { showMain(); void connect() })
-$('newChat').addEventListener('click', () => void publishKeyPackage())
-$('newChat').addEventListener('contextmenu', event => { event.preventDefault(); $('createGroupForm').classList.toggle('hidden') })
+$('newChat').addEventListener('click', () => $('newChatMenu').classList.toggle('hidden'))
+$('newChatMenu').addEventListener('click', event => {
+  const action = event.target.closest('[data-new-action]')?.dataset.newAction
+  $('newChatMenu').classList.add('hidden')
+  if (action === 'group') $('createGroupForm').classList.toggle('hidden')
+  else if (action === 'keypackage') void publishKeyPackage()
+})
 $('createGroupButton').addEventListener('click', async () => {
   if (!connection) { message('Connect the NCC signer first.', true); return }
   const name = $('groupName').value.trim()
@@ -806,8 +1006,10 @@ $('createGroupButton').addEventListener('click', async () => {
   $('createGroupButton').disabled = true
   try {
     message(`Creating “${name}” and publishing the initial encrypted note… NCC will ask you to approve signatures.`)
-    const group = await window.MarmotCompanion.createGroup(connection.client, connection.relays, name)
+    const group = await window.MarmotCompanion.createGroup(connection.client, connection.relays, name, $('groupDescription').value, Number($('groupRetention').value))
     $('createGroupForm').classList.add('hidden')
+    $('groupDescription').value = ''
+    $('groupRetention').value = '0'
     await refreshGroups()
     const entry = groups.find(item => item.id === group.snapshot.id)
     if (entry) await openGroup(entry)
@@ -815,7 +1017,14 @@ $('createGroupButton').addEventListener('click', async () => {
   } catch (error) { message(error?.message || String(error), true) }
   finally { $('createGroupButton').disabled = false }
 })
-$('backConversation').addEventListener('click', () => { $('conversationView').classList.add('hidden'); showMain() })
+$('backConversation').addEventListener('click', () => {
+  $('conversationView').classList.add('hidden')
+  if (retentionRefreshTimeout) clearTimeout(retentionRefreshTimeout)
+  retentionRefreshTimeout = null
+  activeGroup = null
+  clearReplyTarget()
+  showMain()
+})
 $('plusButton').addEventListener('click', () => {
   const menu = $('composerMenu')
   const open = menu.classList.toggle('hidden') === false
@@ -855,6 +1064,7 @@ $('composer').addEventListener('paste', event => {
   addAttachments(files)
 })
 $('cancelInvite').addEventListener('click', () => $('inviteForm').classList.add('hidden'))
+$('cancelReply').addEventListener('click', clearReplyTarget)
 $('createPollButton').addEventListener('click', () => {
   $('composerMenu').classList.add('hidden')
   $('plusButton').setAttribute('aria-expanded', 'false')
@@ -912,17 +1122,23 @@ $('inviteForm').addEventListener('submit', async event => {
 $('sendButton').addEventListener('click', async () => {
   const text = $('composer').value.trim()
   if ((!text && !pendingAttachments.length) || !activeGroup || !connection) return
+  if (replyTarget && pendingAttachments.length) {
+    message('Remove the attachment or cancel the reply before sending.', true)
+    return
+  }
   $('sendButton').disabled = true
   try {
     const rumor = pendingAttachments.length
       ? await window.MarmotCompanion.sendMedia(connection.client, activeGroup.id, pendingAttachments.map(file => ({ blob: file, metadata: { filename: file.name, type: file.type || 'application/octet-stream' } })), text, connection.mediaTransport)
-      : await window.MarmotCompanion.send(connection.client, activeGroup.id, text)
+      : await window.MarmotCompanion.send(connection.client, activeGroup.id, text, replyTarget, activeGroup.instance.snapshot.groupData?.relays || [])
     $('composer').value = ''
+    const wasReply = Boolean(replyTarget)
+    clearReplyTarget()
     if (!window.MarmotCompanion.mediaAttachments(rumor).length) await activeGroup.instance.history.saveRumor(rumor)
     pendingAttachments = []
     renderPendingAttachments()
     await showMessages(activeGroup)
-    message(window.MarmotCompanion.mediaAttachments(rumor).length ? 'Encrypted attachment sent through MLS.' : 'Message sent through MLS.')
+    message(window.MarmotCompanion.mediaAttachments(rumor).length ? 'Encrypted attachment sent through MLS.' : wasReply ? 'Reply sent through MLS.' : 'Message sent through MLS.')
   } catch (error) { message(error?.message || String(error), true) }
   finally { $('sendButton').disabled = false }
 })

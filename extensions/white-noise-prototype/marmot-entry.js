@@ -293,10 +293,14 @@ const api = {
   async dismissInvite(client, rumor) {
     await client.invites.markAsRead(rumor.id)
   },
-  async createGroup(client, relays, name) {
+  async createGroup(client, relays, name, description = '', messageRetention = 0) {
     await client.keyPackages.ensurePublished({ relays })
     const servers = await resolveBlossomServers(await client.signer.getPublicKey(), relays)
-    const group = await client.groups.create(name, { description: '', relays, adminPubkeys: [await client.signer.getPublicKey()], encryptedMedia: encryptedMediaBlossomDefaultV2(servers) })
+    const group = await client.groups.create(name, { description: description.trim(), relays, adminPubkeys: [await client.signer.getPublicKey()], encryptedMedia: encryptedMediaBlossomDefaultV2(servers) })
+    if (Number.isSafeInteger(messageRetention) && messageRetention > 0) {
+      await group.propose(Proposals.proposeUpdateMetadata({ messageRetention }))
+      await client.groups.commit(group.snapshot.id)
+    }
     const sender = await client.signer.getPublicKey()
     const rumor = createChatRumor({ pubkey: sender, content: 'This is a private note to self.' })
     await client.groups.send(group.snapshot.id, createApplicationMessageIntent(rumor))
@@ -312,6 +316,30 @@ const api = {
     const group = await client.groups.get(groupId)
     await group.propose(Proposals.proposeUpdateMetadata({ name }))
     return client.groups.commit(groupId)
+  },
+  async updateGroupMetadata(client, groupId, metadata) {
+    const group = await client.groups.get(groupId)
+    const ownPubkey = await client.signer.getPublicKey()
+    if (!(group.snapshot.groupData?.adminPubkeys || []).includes(ownPubkey)) {
+      throw new Error('Only a group admin can edit group details.')
+    }
+    const update = {}
+    if (typeof metadata.name === 'string') update.name = metadata.name.trim()
+    if (typeof metadata.description === 'string') update.description = metadata.description.trim()
+    if (Number.isInteger(metadata.messageRetention) && metadata.messageRetention >= 0) {
+      update.messageRetention = metadata.messageRetention
+    }
+    if (!Object.keys(update).length) throw new Error('There are no group details to update.')
+    await group.propose(Proposals.proposeUpdateMetadata(update))
+    await client.groups.commit(groupId)
+    const updated = await client.groups.get(groupId)
+    const data = updated.snapshot.groupData
+    if ((update.name !== undefined && data?.name !== update.name) ||
+        (update.description !== undefined && data?.description !== update.description) ||
+        (update.messageRetention !== undefined && data?.messageRetention !== BigInt(update.messageRetention))) {
+      throw new Error('The group details update was not applied.')
+    }
+    return updated
   },
   async removeGroupMember(client, groupId, memberPubkey) {
     const group = await client.groups.get(groupId)
@@ -422,9 +450,17 @@ const api = {
     await group.history.saveRumor(rumor)
     return rumor
   },
-  async send(client, groupId, text) {
+  async send(client, groupId, text, replyTo = null, groupRelays = []) {
     const pubkey = await client.signer.getPublicKey()
-    const rumor = createChatRumor({ pubkey, content: text })
+    let rumor
+    if (replyTo?.id && replyTo?.pubkey) {
+      const relay = groupRelays.find(value => typeof value === 'string' && value.startsWith('wss://')) || ''
+      const pointer = nip19.neventEncode({ id: replyTo.id, author: replyTo.pubkey, kind: replyTo.kind || 9, ...(relay ? { relays: [relay] } : {}) })
+      const tag = ['q', replyTo.id, relay, replyTo.pubkey]
+      rumor = createRumor({ pubkey, kind: 9, content: `nostr:${pointer}\n${text}`, tags: [tag] })
+    } else {
+      rumor = createChatRumor({ pubkey, content: text })
+    }
     await client.groups.send(groupId, createApplicationMessageIntent(rumor))
     return rumor
   },

@@ -23,7 +23,8 @@
       <div class="search"><span>⌕</span><input id="search" placeholder="Search chats" autocomplete="off"><kbd>⌘ K</kbd></div>
       <section id="incomingInvites" class="incoming-invites hidden" aria-live="polite"></section>
       <div class="section-heading"><span id="chatSectionTitle">CHATS</span><button id="toggleArchived" class="text-button">Archived</button><button id="newChat" class="text-button">＋ New</button></div>
-      <div id="createGroupForm" class="create-group hidden"><input id="groupName" value="Note to self" aria-label="Group name"><button id="createGroupButton" class="primary">Create</button></div>
+      <div id="newChatMenu" class="new-chat-menu hidden" role="menu"><button data-new-action="group" role="menuitem">Create group</button><button data-new-action="keypackage" role="menuitem">Publish invite key</button></div>
+      <div id="createGroupForm" class="create-group hidden"><input id="groupName" value="Note to self" aria-label="Group name"><textarea id="groupDescription" rows="2" placeholder="Description (optional)" aria-label="Group description"></textarea><select id="groupRetention" aria-label="Disappearing messages"><option value="0">Messages stay</option><option value="3600">1 hour</option><option value="86400">1 day</option><option value="604800">1 week</option><option value="2419200">4 weeks</option></select><button id="createGroupButton" class="primary">Create</button></div>
       <div id="chatList" class="chat-list">
         <div class="empty"><div class="empty-icon">◌</div><strong>Connect to get started</strong><p>Connect the NCC signer to load your Marmot conversations.</p><button id="setupButton" class="primary">Open settings</button></div>
       </div>
@@ -35,8 +36,12 @@
       <div id="groupMenu" class="group-menu hidden" role="menu">
         <button data-group-action="details" role="menuitem">Group details</button>
         <button data-group-action="rename" role="menuitem">Rename group</button>
+        <button data-group-action="pin" role="menuitem">Pin chat</button>
+        <button data-group-action="mute" role="menuitem">Mute notifications</button>
+        <button data-group-action="unread" role="menuitem">Mark as unread</button>
+        <button data-group-action="move-up" role="menuitem">Move up</button>
+        <button data-group-action="move-down" role="menuitem">Move down</button>
         <button data-group-action="archive" role="menuitem">Archive chat</button>
-        <button data-group-action="restore" role="menuitem">Restore chat</button>
         <button data-group-action="clear" role="menuitem">Clear local history</button>
         <button data-group-action="delete" role="menuitem">Delete local chat</button>
         <button data-group-action="leave" role="menuitem">Leave group</button>
@@ -48,6 +53,19 @@
           <div class="invite-actions"><button id="closeGroupDetails" class="secondary">Close</button></div>
         </section>
       </div>
+      <div id="groupSettingsDialog" class="modal-backdrop hidden">
+        <section class="modal-card" aria-labelledby="groupSettingsTitle">
+          <h2 id="groupSettingsTitle">Edit group</h2>
+          <form id="groupSettingsForm" class="poll-form">
+            <label for="editGroupName">Group name</label><input id="editGroupName" maxlength="100" required>
+            <label for="editGroupDescription">Description <span class="optional">(optional)</span></label><textarea id="editGroupDescription" rows="3" maxlength="500"></textarea>
+            <label for="editGroupRetention">Disappearing messages</label>
+            <select id="editGroupRetention"><option value="0">Off</option><option value="3600">1 hour</option><option value="86400">1 day</option><option value="604800">1 week</option><option value="2419200">4 weeks</option></select>
+            <p class="field-hint">This changes the shared group policy. The companion hides expired messages in the chat, but cached or saved copies may remain on this device or other members' devices.</p>
+            <div class="invite-actions"><button id="cancelGroupSettings" type="button" class="secondary">Cancel</button><button type="submit" class="primary">Save group</button></div>
+          </form>
+        </section>
+      </div>
       <div id="messageList" class="message-list"></div>
       <div class="composer-wrap">
         <div id="composerMenu" class="composer-menu hidden" role="menu">
@@ -57,6 +75,7 @@
           <button id="createPollButton" class="menu-item" role="menuitem"><span>☷</span><span><strong>Create poll</strong><small>Single or multiple choice</small></span></button>
         </div>
         <input id="attachmentInput" type="file" multiple hidden>
+        <div id="replyPreview" class="reply-preview hidden"><div><strong id="replyTitle">Replying</strong><small id="replyText"></small></div><button id="cancelReply" class="icon-button" type="button" aria-label="Cancel reply">×</button></div>
         <div id="attachmentTray" class="attachment-tray hidden" aria-live="polite"></div>
         <div class="composer"><div class="composer-field"><button id="plusButton" class="plus-button" aria-label="More chat actions" aria-expanded="false" title="More chat actions">＋</button><textarea id="composer" rows="1" placeholder="Message"></textarea><button id="sendButton" class="send-button" aria-label="Send message" title="Send message">↑</button></div></div>
       </div>
