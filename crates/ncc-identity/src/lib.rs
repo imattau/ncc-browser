@@ -374,8 +374,7 @@ impl IdentityStore {
             };
             let keys = parse_secret(&secret)?;
             if keys.public_key().to_hex() != id { return Err(IdentityError::Codec("saved identity key does not match its profile".into())); }
-            let nsec = keys.secret_key().to_bech32().map_err(|error| IdentityError::Codec(error.to_string()))?;
-            result.push((id, nsec));
+            result.push((id, nsec_of(&keys)));
         }
         Ok(result)
     }
@@ -823,6 +822,14 @@ fn npub_of(keys: &Keys) -> Result<String, IdentityError> {
     // Encoding a valid public key cannot fail; the error type is `Infallible`.
     match keys.public_key().to_bech32() {
         Ok(npub) => Ok(npub),
+        Err(never) => match never {},
+    }
+}
+
+fn nsec_of(keys: &Keys) -> String {
+    // Encoding a valid secret key cannot fail either.
+    match keys.secret_key().to_bech32() {
+        Ok(nsec) => nsec,
         Err(never) => match never {},
     }
 }

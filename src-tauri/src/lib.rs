@@ -248,7 +248,11 @@ fn open_in_white_noise(app: tauri::AppHandle, npub: String) -> Result<(), String
     // Accepts hex or bech32 so the caller can hand over whichever form it has; White
     // Noise's deep link wants the bech32 npub, so normalize to that.
     let key = nostr::PublicKey::parse(&npub).map_err(|_| "Not a valid npub".to_string())?;
-    let npub = key.to_bech32().map_err(|e| e.to_string())?;
+    // Encoding a valid public key cannot fail; the error type is `Infallible`.
+    let npub = match key.to_bech32() {
+        Ok(npub) => npub,
+        Err(never) => match never {},
+    };
     app.opener()
         .open_url(format!("whitenoise://user/{npub}"), None::<&str>)
         .map_err(|e| e.to_string())
