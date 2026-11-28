@@ -112,6 +112,13 @@ Use this file to record issues reported during prototype work. Move entries to
   `@internet-privacy/marmot-ts` 0.9.0. The newer account-device and pairing
   protocol documents remain drafts; there is no newer published Marmot TS
   release to deploy to the emulator for linked-device restoration.
+- **White Noise release check (2026-11-29):** White Noise's current Android
+  release remains `android-v2026.11.17` (MarmotKit 0.17.0). Its compatibility
+  guide says linked devices are still in development and a second installation
+  does not sync history. Device-linking work visible in the upstream Android
+  source is therefore not evidence that the released emulator app can perform
+  the flow. Re-test against a release that includes the device-pairing and
+  history-delivery protocol before claiming companion interoperability.
 - **Next:** Add multi-device support only with a compatible implementation of
   same-account authorization plus the device-pairing/device-group flow. Do not
   copy MLS state or private KeyPackage material between devices.
