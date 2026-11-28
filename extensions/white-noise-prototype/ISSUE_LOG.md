@@ -76,11 +76,15 @@ Use this file to record issues reported during prototype work. Move entries to
   received the Welcome, displayed the group preview, and accepted it. Android
   saw a companion message, and the companion received an Android reply. The
   companion panel was closed and reopened; the group (2 members, epoch 2) and
-  both reply histories loaded from extension storage. In the earlier
-  offline-temp-profile run, the invite was initially absent from the UI but
-  later appeared as an unread decrypted kind-444 Welcome in that profile's
-  Marmot store. Delayed delivery was confirmed; joining from that delayed
-  Welcome was not tested.
+  both reply histories loaded from extension storage.
+- **Delayed Welcome check:** A fresh temporary recipient published a KeyPackage
+  and kind-10050 inbox relay list, then was switched offline. The inviter sent
+  a Welcome to a disposable group. After switching back, the recipient saw a
+  joinable invitation within the first 7-second check and joined; its snapshot
+  showed two members. It sent an MLS message that the inviter received. The
+  inviter then sent a reply while the recipient was offline; after switching
+  back, the recipient loaded that reply from the relay. Both test groups and
+  the temporary identity were removed afterward.
 - **Relay propagation check:** On a separate disposable group, changing the
   selected relays from Damus/Primal/Ditto to Damus/Ditto updated the group's
   MLS metadata to exactly those two relays. Restoring the three-relay list
