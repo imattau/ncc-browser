@@ -372,8 +372,9 @@ of `chrome.*`, and adds NCC-native APIs:
 - **Toolbar actions and popups**, an options page, and a Settings → Extensions manager.
 - **`ncc.nostr`** exposes `getPublicKey`, `signEvent`, `getRelays`, NIP-04 and NIP-44 to
   extensions, gated by manifest permissions and the normal approval sheet.
-- **Packages** install from a `.zip`/`.nccx` file or, in developer mode, an unpacked
-  folder. Packages are copied into `userData/extensions/<id>` before loading.
+- **Packages** install from a `.zip`/`.nccx` file, a signed npack release on Nostr or,
+  in developer mode, an unpacked folder. Every install is reviewed first, and packages
+  are copied into `userData/extensions/<id>` before loading.
 - **Private tabs** run extensions only with a per-extension grant; **Tor tabs** never run
   them and never expose their URLs. `ncc.storage.private` is ephemeral.
 - **Porting** is supported by `packages/extension-sdk`: `ncc-ext port` rewrites the
@@ -1235,7 +1236,8 @@ or SmartScreen prompts. The Flatpak bundle declares the flathub
 - **Extensions are a supported subset, not Chromium.** Content scripts run in the top
   frame only; `webRequest`, `declarativeNetRequest`, `cookies`, `history`, `bookmarks`,
   `downloads`, `identity`, message ports and Chrome-only UI surfaces are not implemented.
-  Packages are unsigned and have no auto-update. Private-tab access is a grant, and a
+  Local packages are unsigned. Signed releases are verified, but have no auto-update or
+  background revocation check. Private-tab access is a grant, and a
   shared background can still exfiltrate private page content; Tor tabs never run
   extensions. See [`docs/extensions.md`](./docs/extensions.md).
 - **Session restore stores addresses only** — no scroll position, form state or POST

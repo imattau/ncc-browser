@@ -43,9 +43,19 @@ export function ExtensionReview({
           Replaces {replaces.name} {replaces.version} and keeps its saved data.
         </p>
       ) : null}
-      <p className="mt-1 break-all font-mono text-ui-105 text-[color:var(--color-muted)]">
-        {review.sourcePath}
-      </p>
+      {review.signed ? (
+        <p
+          className="mt-1 break-all text-ui-105 text-[color:var(--color-muted)]"
+          data-extension-review-signer
+        >
+          Signed by <span className="font-mono">{review.signed.npub}</span> as{' '}
+          <span className="font-mono">{review.signed.name}</span>
+        </p>
+      ) : (
+        <p className="mt-1 break-all font-mono text-ui-105 text-[color:var(--color-muted)]">
+          {review.sourcePath}
+        </p>
+      )}
       {review.description ? (
         <p className="mt-1 text-ui-11 text-[color:var(--color-muted)]">{review.description}</p>
       ) : null}
@@ -70,7 +80,9 @@ export function ExtensionReview({
       </label>
 
       <p className="mt-2 text-ui-105 text-[color:var(--color-faint)]">
-        This package is not signed. Only install code you trust.
+        {review.signed
+          ? 'The signature shows who published this, not that it is safe. Check the publisher key and only install code you trust.'
+          : 'This package is not signed. Only install code you trust.'}
       </p>
 
       <div className="mt-3 flex justify-end gap-2">

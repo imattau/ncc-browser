@@ -6,6 +6,7 @@ import type { SyncPrefsPatch, SyncStatus, IdentityRemovalScope } from './sync-st
 import type {
   ExtensionInstallResult,
   ExtensionPrepareResult,
+  ExtensionUpdateResult,
   ExtensionsState
 } from './extensions'
 import type {
@@ -328,6 +329,10 @@ export interface NccApi {
   extensionsSetDeveloper(value: boolean): Promise<ExtensionsState>
   /** Choose a package and stage it for review. Installs nothing. */
   extensionsPrepare(kind: 'folder' | 'zip'): Promise<ExtensionPrepareResult>
+  /** Fetch and verify a signed release, then stage it for review. */
+  extensionsPrepareRelease(reference: string): Promise<ExtensionPrepareResult>
+  /** Check a signed install for a newer release or a revocation. */
+  extensionsCheckUpdate(id: string): Promise<ExtensionUpdateResult>
   extensionsConfirm(token: string, privateTabs: boolean): Promise<ExtensionInstallResult>
   extensionsCancel(token: string): Promise<void>
   extensionsRemove(id: string): Promise<ExtensionsState>

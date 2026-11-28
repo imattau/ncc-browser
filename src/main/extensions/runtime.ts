@@ -12,6 +12,7 @@ import {
   matchesAny,
   type ExtensionInstallResult,
   type ExtensionPrepareResult,
+  type ExtensionUpdateResult,
   type ExtensionInfo,
   type ExtensionManifest,
   type ExtensionPage,
@@ -20,6 +21,8 @@ import {
   type ExtensionStorageArea,
   type ExtensionsState
 } from '@shared/extensions'
+import { compareVersions, parseReleaseReference } from '@shared/extension-release'
+import type { ExtensionStore, Lookup } from './store'
 import type { TabKind } from '@shared/types'
 import type { BrowserShell } from '../shell'
 import type { Nip07Service } from '../signer/service'
@@ -30,6 +33,8 @@ import { extensionPageUrl } from './protocol'
 import type { ExtensionStorage, StorageChanges } from './storage'
 
 export interface ExtensionServiceDeps {
+  /** Source of signed releases. */
+  store?: ExtensionStore
   registry: ExtensionRegistry
   storage: ExtensionStorage
   host: BrowserShell
@@ -62,6 +67,12 @@ interface ContextMenuItem {
   contexts: string[]
   documentUrlPatterns: string[]
   extensionId: string
+}
+
+function revocationNotices(lookup: Lookup): string[] {
+  return lookup.revocation === 'unknown'
+    ? ['No relay answered the revocation check, so this release may have been revoked.']
+    : []
 }
 
 const BACKGROUND_IDLE_MS = 60_000
@@ -104,6 +115,74 @@ export class ExtensionService {
 
   prepareZip(path: string): ExtensionPrepareResult {
     return this.deps.registry.prepareZip(path)
+  }
+
+  async prepareRelease(reference: string): Promise<ExtensionPrepareResult> {
+    try {
+      const store = this.requireStore()
+      const lookup = await store.find(parseReleaseReference(reference))
+      if (lookup.revoked) return { ok: false, error: `The publisher revoked this release: ${lookup.revoked}` }
+      const files = await store.fetchFiles(lookup)
+      return this.deps.registry.prepareRelease(files, lookup.release, revocationNotices(lookup))
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  }
+
+  /** Look for a newer release of a signed install, and whether this one was revoked. */
+  async checkUpdate(id: string): Promise<ExtensionUpdateResult> {
+    const installed = this.deps.registry.get(id)
+    if (!installed?.store) return { ok: false, error: 'Only signed installs can be checked' }
+    const { publisher, name, releaseId, sha256 } = installed.store
+    const version = installed.manifest.version
+    try {
+      const store = this.requireStore()
+
+      // The installed release first, so a revocation is recorded even if nothing newer exists.
+      const current = await store.checkRevocation({
+        id: releaseId,
+        publisher,
+        name,
+        version,
+        sha256
+      })
+      if (current.revoked) {
+        this.deps.registry.markRevoked(id, current.revoked)
+        this.notify()
+      }
+      const revoked = this.deps.registry.get(id)?.store?.revoked
+      const status = revoked
+        ? `The publisher revoked the installed version: ${revoked}`
+        : current.checked
+          ? ''
+          : 'Could not check whether the installed version was revoked.'
+
+      let lookup
+      try {
+        lookup = await store.find({ type: 'package', publisher, name })
+      } catch (error) {
+        if (!revoked) throw error
+        return { ok: true, review: null, message: status }
+      }
+      if (compareVersions(lookup.release.version, version) <= 0) {
+        return { ok: true, review: null, message: status || 'No newer version was found.' }
+      }
+      const files = await store.fetchFiles(lookup)
+      const prepared = this.deps.registry.prepareRelease(files, lookup.release, [
+        ...(status ? [status] : []),
+        ...revocationNotices(lookup)
+      ])
+      return prepared.ok
+        ? { ok: true, review: prepared.review, message: status }
+        : prepared
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  }
+
+  private requireStore(): ExtensionStore {
+    if (!this.deps.store) throw new Error('Signed installs are not available')
+    return this.deps.store
   }
 
   confirmInstall(token: string, choices: { privateTabs: boolean }): ExtensionInstallResult {

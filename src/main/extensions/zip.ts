@@ -80,8 +80,12 @@ export function readZip(buffer: Buffer): ZipEntry[] {
 }
 
 export function extractZip(buffer: Buffer, destination: string): void {
+  writeEntries(readZip(buffer), destination)
+}
+
+export function writeEntries(entries: ZipEntry[], destination: string): void {
   const root = resolve(destination)
-  for (const entry of readZip(buffer)) {
+  for (const entry of entries) {
     const target = resolve(join(root, entry.name))
     if (target !== root && !target.startsWith(`${root}${sep}`)) {
       throw new Error(`Unsafe path in package: ${entry.name}`)
@@ -99,7 +103,7 @@ function findEndOfCentralDirectory(buffer: Buffer): number {
   return -1
 }
 
-function isSafeEntry(name: string): boolean {
+export function isSafeEntry(name: string): boolean {
   if (!name || name.startsWith('/') || /^[a-z]:/i.test(name)) return false
   if (name.includes('\u0000')) return false
   return !name.split('/').some((part) => part === '..' || part === '.' || part === '')

@@ -16,7 +16,7 @@ export const MAX_ICON_BYTES = 256 * 1024
 export const MAX_NAME = 100
 export const MAX_DESCRIPTION = 500
 
-export type ExtensionSource = 'folder' | 'zip' | 'test'
+export type ExtensionSource = 'folder' | 'zip' | 'store' | 'test'
 export type ExtensionRunAt = 'document_start' | 'document_end' | 'document_idle'
 export type ExtensionStorageArea = 'local' | 'sync' | 'session' | 'private'
 
@@ -56,6 +56,27 @@ export interface NormalizedManifest {
   warnings: string[]
 }
 
+/** A signed install. Its identity is the publisher key plus the package name. */
+export interface ExtensionStoreOrigin {
+  /** Hex public key. */
+  publisher: string
+  name: string
+  releaseId: string
+  /** Hash of the installed package, so a revocation of the same bytes is recognised. */
+  sha256: string
+  /** Set once the publisher revokes the installed release. */
+  revoked: string | null
+}
+
+export interface ExtensionSigner {
+  npub: string
+  name: string
+}
+
+export type ExtensionUpdateResult =
+  | { ok: true; review: ExtensionInstallReview | null; message: string }
+  | { ok: false; error: string }
+
 export interface ExtensionInfo {
   id: string
   name: string
@@ -78,6 +99,8 @@ export interface ExtensionInfo {
   hasBackground: boolean
   hasPopup: boolean
   contentScriptCount: number
+  /** Present for signed installs. */
+  signed: (ExtensionSigner & { revoked: string | null }) | null
 }
 
 export interface ExtensionActionInfo {
@@ -113,6 +136,8 @@ export interface ExtensionInstallReview {
   replaces: { name: string; version: string } | null
   permissions: ExtensionAccessItem[]
   sites: ExtensionAccessItem[]
+  /** Who signed the release, or null for an unsigned local package. */
+  signed: ExtensionSigner | null
   /** Problems in the manifest, such as unsupported permissions. */
   notices: string[]
   /** Starting value for the "Run in private tabs" choice. */

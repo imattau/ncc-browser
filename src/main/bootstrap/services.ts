@@ -7,7 +7,9 @@ import { registerAutomationIpc } from '../automation/ipc'
 import { AutomationSettings } from '../automation/settings'
 import { registerContactsIpc } from '../contacts/ipc'
 import { registerExtensionIpc } from '../extensions/ipc'
+import { downloadPublic } from '../extensions/download'
 import { ExtensionService } from '../extensions/runtime'
+import { ExtensionStore } from '../extensions/store'
 import { registerExternalAppsIpc } from '../external-apps-ipc'
 import { registerIpc } from '../ipc'
 import { registerNsitePublishIpc } from '../nsite-publish/ipc'
@@ -244,6 +246,11 @@ export function createServices(
     nip07: () => runtime.nip07Service,
     identity: () => identity.provider(),
     relays: foundation.relayPool,
+    store: new ExtensionStore({
+      relays: foundation.relayPool,
+      userRelays: () => foundation.config.getRelays(),
+      download: downloadPublic
+    }),
     preloadPath: join(__dirname, '../preload/content.js'),
     partition: EXTENSION_PARTITION
   })

@@ -269,6 +269,9 @@ const api: NccApi = {
   extensionsState: () => ipcRenderer.invoke('ncc:extensions-state'),
   extensionsSetDeveloper: (value) => ipcRenderer.invoke('ncc:extensions-set-developer', value),
   extensionsPrepare: (kind) => ipcRenderer.invoke('ncc:extensions-prepare', kind),
+  extensionsPrepareRelease: (reference) =>
+    ipcRenderer.invoke('ncc:extensions-prepare-release', reference),
+  extensionsCheckUpdate: (id) => ipcRenderer.invoke('ncc:extensions-check-update', id),
   extensionsConfirm: (token, privateTabs) =>
     ipcRenderer.invoke('ncc:extensions-confirm', token, privateTabs),
   extensionsCancel: (token) => ipcRenderer.invoke('ncc:extensions-cancel', token),

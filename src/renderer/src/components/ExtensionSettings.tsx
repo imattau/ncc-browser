@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
+  Download,
   ExternalLink,
   FolderOpen,
   PackagePlus,
@@ -22,6 +23,21 @@ export function ExtensionSettings() {
   const [notice, setNotice] = useState<string | null>(null)
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null)
   const [review, setReview] = useState<ExtensionInstallReview | null>(null)
+  const [reference, setReference] = useState('')
+  const [working, setWorking] = useState<string | null>(null)
+
+  // A download can finish after the page has gone; its staged copy must not linger.
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
+  const offer = (next: ExtensionInstallReview): void => {
+    if (mounted.current) setReview(next)
+    else void window.ncc.extensionsCancel(next.token)
+  }
 
   // Leaving the page with a review open discards the staged copy.
   const pendingToken = review?.token
@@ -74,6 +90,39 @@ export function ExtensionSettings() {
     }
   }
 
+  /** Run a network step that may end in a review. */
+  const fromNostr = async (label: string, step: () => Promise<void>): Promise<void> => {
+    setBusy(true)
+    setWorking(label)
+    setError(null)
+    setNotice(null)
+    setReview(null)
+    try {
+      await step()
+    } catch (stepError) {
+      setError(messageOf(stepError))
+    } finally {
+      setWorking(null)
+      setBusy(false)
+    }
+  }
+
+  const installRelease = (): Promise<void> =>
+    fromNostr('Fetching and checking the release…', async () => {
+      const result = await window.ncc.extensionsPrepareRelease(reference)
+      if (result.ok) offer(result.review)
+      else setError(result.error)
+    })
+
+  const checkUpdate = (id: string): Promise<void> =>
+    fromNostr('Checking for updates…', async () => {
+      const result = await window.ncc.extensionsCheckUpdate(id)
+      if (!result.ok) setError(result.error)
+      else if (result.review) offer(result.review)
+      else setNotice(result.message)
+      await load()
+    })
+
   const approve = async (token: string, privateTabs: boolean): Promise<void> => {
     setBusy(true)
     setError(null)
@@ -85,6 +134,7 @@ export function ExtensionSettings() {
         return
       }
       setNotice(`${result.extension?.name ?? 'Extension'} installed.`)
+      setReference('')
       await load()
     } catch (confirmError) {
       setError(messageOf(confirmError))
@@ -155,6 +205,33 @@ export function ExtensionSettings() {
           </div>
         </div>
 
+        <form
+          className="mt-3 flex flex-wrap items-center gap-2"
+          onSubmit={(event) => {
+            event.preventDefault()
+            if (reference.trim() && !busy) void installRelease()
+          }}
+        >
+          <input
+            type="text"
+            data-extension-reference
+            aria-label="Install a signed release from Nostr"
+            placeholder="Install from Nostr: npub1…/name or nevent1…"
+            value={reference}
+            spellCheck={false}
+            onChange={(event) => setReference(event.target.value)}
+            className="min-w-0 flex-1 rounded-lg border border-[color:var(--color-line)] bg-[color:var(--color-field)] px-2.5 py-1.5 font-mono text-ui-11 text-[color:var(--color-text-strong)]"
+          />
+          <button
+            type="submit"
+            data-extension-reference-submit
+            disabled={busy || !reference.trim()}
+            className="rounded-lg border border-[color:var(--color-line)] px-2.5 py-1.5 text-ui-11 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)] hover:text-[color:var(--color-text-strong)] disabled:opacity-40"
+          >
+            Check release
+          </button>
+        </form>
+
         <label className="mt-3 flex cursor-pointer items-start gap-2 text-ui-11 text-[color:var(--color-muted)]">
           <input
             type="checkbox"
@@ -173,6 +250,11 @@ export function ExtensionSettings() {
           </span>
         </label>
 
+        {working ? (
+          <p role="status" className="mt-3 text-ui-11 text-[color:var(--color-muted)]">
+            {working}
+          </p>
+        ) : null}
         {error ? (
           <p className="mt-3 rounded-lg border border-[color:var(--color-danger)]/25 bg-[color:var(--color-danger)]/10 px-2.5 py-2 text-ui-11 text-[color:var(--color-danger)]">
             {error}
@@ -222,6 +304,7 @@ export function ExtensionSettings() {
               onOptions={() => void window.ncc.extensionsOpenOptions(extension.id)}
               onReveal={() => void window.ncc.extensionsReveal(extension.id)}
               onRemove={() => void remove(extension.id)}
+              onCheckUpdate={() => void checkUpdate(extension.id)}
             />
           ))}
         </ul>
@@ -246,7 +329,10 @@ export function ExtensionSettings() {
             Nostr signing always goes through the approval sheet unless you choose “Always
             allow” for that extension.
           </li>
-          <li>Packages are not signed in this version; check the source path before installing.</li>
+          <li>
+            Local packages are unsigned. A signed release shows who published it, not that it is
+            safe. Updates and revocations are only checked when you ask.
+          </li>
         </ul>
       </div>
     </>
@@ -262,7 +348,8 @@ function ExtensionCard({
   onReload,
   onOptions,
   onReveal,
-  onRemove
+  onRemove,
+  onCheckUpdate
 }: {
   extension: ExtensionInfo
   busy: boolean
@@ -273,6 +360,7 @@ function ExtensionCard({
   onOptions: () => void
   onReveal: () => void
   onRemove: () => void
+  onCheckUpdate: () => void
 }) {
   return (
     <li
@@ -302,8 +390,16 @@ function ExtensionCard({
             )}
           </p>
           <p className="mt-0.5 truncate font-mono text-ui-105 text-[color:var(--color-muted)]">
-            {extension.source} · {extension.sourcePath}
+            {extension.signed ? 'signed' : extension.source} · {extension.sourcePath}
           </p>
+          {extension.signed?.revoked ? (
+            <p
+              role="alert"
+              className="mt-1 text-ui-11 font-semibold text-[color:var(--color-danger)]"
+            >
+              Revoked by its publisher: {extension.signed.revoked}
+            </p>
+          ) : null}
           {extension.description ? (
             <p className="mt-1 text-ui-11 leading-relaxed text-[color:var(--color-muted)]">
               {extension.description}
@@ -350,6 +446,11 @@ function ExtensionCard({
           >
             {extension.enabled ? 'On' : 'Off'}
           </button>
+          {extension.signed ? (
+            <IconButton label="Check for updates" onClick={onCheckUpdate} disabled={busy}>
+              <Download className="h-3.5 w-3.5" />
+            </IconButton>
+          ) : null}
           <IconButton label="Reload extension" onClick={onReload} disabled={busy}>
             <RefreshCw className="h-3.5 w-3.5" />
           </IconButton>

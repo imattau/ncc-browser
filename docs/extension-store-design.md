@@ -1,6 +1,6 @@
 # Extension store design
 
-Status: stage 1 is implemented. Stages 2 to 4 are proposals.
+Status: stages 1 and 2 are implemented. Stages 3 and 4 are proposals.
 
 ## Layers
 
@@ -22,7 +22,7 @@ Every install from the UI is staged, shown for approval, and installed from the 
 copy. The review lists permissions and every website pattern, and marks what an update
 adds. See [extensions.md](extensions.md).
 
-### 2. Signed packages
+### 2. Signed packages (implemented)
 
 **Package layout.** An `.npk` with npack kind `navigator-extension`, `os` and `arch`
 `any`, and the extension under `extension/`:
@@ -36,7 +36,9 @@ extension/...
 npack refuses to install a kind it does not know, so the system package manager cannot
 unpack an extension into the host. A local test with npack 0.11.4 packed the White
 Noise companion this way, `npack verify` accepted its manifest, and `npack install`
-refused it. Publishing and relay discovery for this kind are untested.
+refused it. `test/fixtures/signed-extension` holds a package that npack 0.11.4 packed
+and published, with the events it signed, and the tests verify them. Discovery on public
+relays is untested.
 
 **Verification.** Before the review opens, the browser checks:
 
@@ -48,8 +50,18 @@ refused it. Publishing and relay discovery for this kind are untested.
    `extension/manifest.json` matches too.
 
 Unpacking needs zstd, which Electron's Node provides, and a tar reader with the same
-path, link, file count and size limits as the ZIP reader. Download URLs come from a
-stranger: allow only HTTPS to public hosts, including after redirects.
+path, file count and size limits as the ZIP reader. It accepts only files, folders and
+GNU long names, so links are rejected. Releases that declare dependencies, runtime
+requirements or install actions are refused, because the browser cannot honour them.
+
+Download URLs come from a stranger. Only HTTPS to public addresses is allowed, checked
+on each redirect and on the address the socket connects to. Downloads send no cookies
+and use neither the system proxy nor Tor, so the file host sees the user's address.
+Relay hints and the publisher's relay list must be `wss://` host names.
+
+**Discovery.** A reference is `publisher/name`, or an `nevent`, `note` or event ID. The
+browser asks the user's relays, npack's default relays and the publisher's NIP-65 write
+relays, paging each relay separately. A relay can still withhold a revocation.
 
 **Identity.** A store install is identified by publisher key plus package name, never
 by path or display name. The same name from another publisher is another extension,
@@ -60,14 +72,30 @@ reverse is also true.
 
 - Every update goes through the review. Silent updates are out of scope.
 - An older version is not offered as an update.
-- A revoked installed release is flagged. Open question: should it also be disabled?
+- A revoked installed release is flagged, and the flag is kept. It is not disabled.
+  Open question: should it be?
+- Updates and revocations are checked only when the user presses **Check for updates**.
+  There is no background check.
 - If relays cannot be reached, say that revocation status is unknown. Do not report
   the release as safe.
 
 **Private tabs.** Default the grant to off for a first store install.
 
-**Publishing.** A script wraps `npack init`, `pack` and `publish`, reusing the file
-list in `scripts/package-white-noise-companion.mjs`.
+**Publishing.** `scripts/pack-extension-npk.mjs` turns a built `.nccx` into an `.npk`
+with `npack init`, `pack` and `verify`. It does not publish. The package name is a
+required argument, so changing an extension's display name does not change its identity.
+The White Noise companion's package name is `white-noise-ncc-companion`.
+
+```bash
+node scripts/package-white-noise-companion.mjs /tmp/white-noise.nccx
+node scripts/pack-extension-npk.mjs /tmp/white-noise.nccx white-noise-ncc-companion \
+  npub1g3vdg46zq7xpkmtdnta7l8u9684zd2p4e9wrp3xd7wv4xk7vq03svh653x release
+npack publish release/white-noise-ncc-companion-<version>-any-any.manifest.json \
+  --artifact-url <https-url> --relay <relay-url>
+```
+
+`npack publish` also uploads to any Blossom servers listed in the npack config, even
+with `--artifact-url` and no `--server`. Treat every publish as public.
 
 ### 3. Store page
 

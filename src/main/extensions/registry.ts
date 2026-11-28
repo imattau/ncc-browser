@@ -35,9 +35,12 @@ import {
   type ExtensionPrepareResult,
   type ExtensionManifest,
   type ExtensionSource,
+  type ExtensionStoreOrigin,
   type ExtensionsState
 } from '@shared/extensions'
-import { extractZip } from './zip'
+import { nip19 } from 'nostr-tools'
+import { compareVersions, type ExtensionRelease } from '@shared/extension-release'
+import { extractZip, writeEntries, type ZipEntry } from './zip'
 
 interface StoredExtension {
   id: string
@@ -50,6 +53,7 @@ interface StoredExtension {
   updatedAt: number
   manifest: ExtensionManifest
   warnings: string[]
+  store?: ExtensionStoreOrigin
 }
 
 interface RegistryFile {
@@ -65,6 +69,7 @@ interface PreparedInstall {
   sourcePath: string
   manifest: ExtensionManifest
   warnings: string[]
+  store?: ExtensionStoreOrigin
   /** The installed manifest the review compared against, to detect a stale approval. */
   reviewed: ExtensionManifest | null
 }
@@ -163,6 +168,55 @@ export class ExtensionRegistry {
     }
   }
 
+  /** Stage the files of a release that has already been verified. */
+  prepareRelease(
+    files: ZipEntry[],
+    release: ExtensionRelease,
+    notices: string[] = []
+  ): ExtensionPrepareResult {
+    const installed = this.findRelease(release.publisher, release.name)
+    if (installed && compareVersions(release.version, installed.manifest.version) < 0) {
+      return {
+        ok: false,
+        error: `Version ${installed.manifest.version} is installed. Remove it first to install the older ${release.version}.`
+      }
+    }
+    const temp = join(this.baseDir, `${UNPACK_PREFIX}${randomBytes(8).toString('hex')}`)
+    try {
+      mkdirSync(temp, { recursive: true })
+      writeEntries(files, temp)
+      return this.stage(temp, {
+        source: 'store',
+        sourcePath: `${nip19.npubEncode(release.publisher)}/${release.name}`,
+        notices,
+        store: {
+          publisher: release.publisher,
+          name: release.name,
+          releaseId: release.id,
+          sha256: release.sha256,
+          revoked: null
+        }
+      })
+    } catch (error) {
+      return { ok: false, error: messageOf(error) }
+    } finally {
+      rmSync(temp, { recursive: true, force: true })
+    }
+  }
+
+  markRevoked(id: string, reason: string): void {
+    const record = this.data.extensions[id]
+    if (!record?.store) return
+    record.store = { ...record.store, revoked: reason }
+    this.persist()
+  }
+
+  private findRelease(publisher: string, name: string): StoredExtension | undefined {
+    return Object.values(this.data.extensions).find(
+      (entry) => entry.store?.publisher === publisher && entry.store.name === name
+    )
+  }
+
   /** The installed extension a pending approval would replace, if any. */
   replacementFor(token: string): string | null {
     const pending = this.prepared.get(token)
@@ -199,11 +253,12 @@ export class ExtensionRegistry {
       sourcePath: pending.sourcePath,
       source: pending.source,
       enabled: previous?.enabled ?? true,
-      privateTabs: choices.privateTabs ?? previous?.privateTabs ?? true,
+      privateTabs: choices.privateTabs ?? previous?.privateTabs ?? !pending.store,
       installedAt: previous?.installedAt ?? now,
       updatedAt: now,
       manifest,
-      warnings: pending.warnings
+      warnings: pending.warnings,
+      ...(pending.store ? { store: pending.store } : {})
     }
     this.data.extensions[id] = record
     this.iconCache.delete(id)
@@ -221,7 +276,12 @@ export class ExtensionRegistry {
 
   private stage(
     from: string,
-    options: { source: ExtensionSource; sourcePath: string }
+    options: {
+      source: ExtensionSource
+      sourcePath: string
+      store?: ExtensionStoreOrigin
+      notices?: string[]
+    }
   ): ExtensionPrepareResult {
     for (const token of [...this.prepared.keys()]) this.discard(token)
 
@@ -238,11 +298,16 @@ export class ExtensionRegistry {
       const manifest = normalized.manifest
       validatePackageFiles(staging, manifest)
 
-      const existing = Object.values(this.data.extensions).find(
-        (entry) =>
-          entry.sourcePath === options.sourcePath &&
-          (options.source !== 'zip' || entry.source === 'zip')
-      )
+      // A signed install is matched by publisher and name; a local one by path.
+      // Neither can replace the other.
+      const existing = options.store
+        ? this.findRelease(options.store.publisher, options.store.name)
+        : Object.values(this.data.extensions).find(
+            (entry) =>
+              !entry.store &&
+              entry.sourcePath === options.sourcePath &&
+              (options.source !== 'zip' || entry.source === 'zip')
+          )
       const id = existing?.id ?? randomBytes(16).toString('hex')
       this.prepared.set(token, {
         staging,
@@ -251,7 +316,8 @@ export class ExtensionRegistry {
         sourcePath: options.sourcePath,
         manifest,
         warnings: [...normalized.warnings, ...permissionWarnings(manifest)],
-        reviewed: existing?.manifest ?? null
+        reviewed: existing?.manifest ?? null,
+        ...(options.store ? { store: options.store } : {})
       })
       return {
         ok: true,
@@ -267,8 +333,9 @@ export class ExtensionRegistry {
             ? { name: existing.manifest.name, version: existing.manifest.version }
             : null,
           ...reviewAccess(manifest, existing?.manifest ?? null),
-          notices: normalized.warnings,
-          privateTabs: existing?.privateTabs ?? true
+          signed: options.store ? signerOf(options.store) : null,
+          notices: [...(options.notices ?? []), ...normalized.warnings],
+          privateTabs: existing?.privateTabs ?? !options.store
         }
       }
     } catch (error) {
@@ -439,7 +506,10 @@ export class ExtensionRegistry {
       hasOptions: Boolean(record.manifest.options_page),
       hasBackground: Boolean(record.manifest.background),
       hasPopup: Boolean(record.manifest.action?.default_popup),
-      contentScriptCount: record.manifest.content_scripts.length
+      contentScriptCount: record.manifest.content_scripts.length,
+      signed: record.store
+        ? { ...signerOf(record.store), revoked: record.store.revoked }
+        : null
     }
   }
 
@@ -521,6 +591,10 @@ export class ExtensionRegistry {
     })
     renameSync(tmp, this.filePath)
   }
+}
+
+function signerOf(store: ExtensionStoreOrigin): { npub: string; name: string } {
+  return { npub: nip19.npubEncode(store.publisher), name: store.name }
 }
 
 function validatePackageFiles(root: string, manifest: ExtensionManifest): void {

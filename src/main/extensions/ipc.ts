@@ -52,6 +52,12 @@ export function registerExtensionIpc(service: ExtensionService, deps: ExtensionI
       ? service.prepareFolder(result.filePaths[0])
       : service.prepareZip(result.filePaths[0])
   })
+  handle('ncc:extensions-prepare-release', (reference) =>
+    service.prepareRelease(typeof reference === 'string' ? reference.slice(0, 1024) : '')
+  )
+  handle('ncc:extensions-check-update', (id) =>
+    service.checkUpdate(typeof id === 'string' ? id : '')
+  )
   handle('ncc:extensions-confirm', (token, privateTabs) =>
     service.confirmInstall(typeof token === 'string' ? token : '', {
       privateTabs: privateTabs === true

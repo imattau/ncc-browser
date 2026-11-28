@@ -24,7 +24,13 @@ The experimental White Noise Companion is shipped as a separate `.nccx` asset on
 version releases. Install it from **Settings → Extensions → Install package**; it is
 not installed or enabled automatically.
 
-Packages are unsigned in this version. The review and the settings page show where the
+- **Install from Nostr** accepts a signed release as `npub1…/name` or an `nevent`
+  link. The browser checks the signatures, file hash and revocations before the review,
+  which shows the publisher key. **Check for updates** on a signed install looks for a
+  newer version and for a revocation. Nothing is checked in the background. A signature
+  shows who published an extension, not that it is safe.
+
+Local packages and folders are unsigned. The review and the settings page show where the
 package came from; only install code you trust. See
 [extension-store-design.md](extension-store-design.md) for the signed distribution plan.
 
@@ -155,7 +161,8 @@ is the recommended place for state derived from private pages.
 ## Private and Tor tabs
 
 - **Private tabs:** extensions run only if the per-extension **Run in private tabs**
-  grant is enabled (on by default, and offered in the install review). Extension backgrounds are
+  grant is enabled (offered in the install review; off by default for a first signed install and on for a
+local one). Extension backgrounds are
   shared between normal and private contexts, so a content script can read private page
   content and send it over the network. Treat this as a deliberate trust decision.
 - **Tor tabs:** extensions never run, are not visible through `chrome.tabs`, and never
@@ -213,7 +220,8 @@ surfaces need real changes.
 
 ## Known limitations
 
-- Unsigned packages, no auto-update, no Nostr-published package registry yet.
+- Local packages are unsigned. Signed installs have no auto-update, background revocation
+  check or store page yet.
 - Top frame only; no iframe or shadow-DOM content-script support.
 - `runtime.connect` ports, `alarms`, locale files and `webRequest` are not implemented.
 - Private-tab isolation is weaker than Chromium's incognito model because the background
