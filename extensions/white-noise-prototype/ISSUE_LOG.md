@@ -128,10 +128,12 @@ Use this file to record issues reported during prototype work. Move entries to
   npub; a companion-shared contact appeared in Android as a profile card with
   **View profile**. An Android-created kind-1068 poll rendered in the companion.
   A companion-created poll rendered in Android; voting in Android updated the
-  companion's live tally to one vote. After restarting the dev browser, the
-  contact cards, poll and vote tally loaded again from saved history. The
-  companion hides vote events as standalone chat messages and folds them into
-  the poll results.
+  companion's live tally to one vote. A companion-created multiple-choice poll
+  also rendered in Android; selecting both options produced one vote for each,
+  and the companion showed both selections under one voter. After restarting
+  the dev browser, the contact cards, poll and vote tally loaded again from
+  saved history. The companion hides vote events as standalone chat messages
+  and folds them into the poll results.
 - **Limit:** Device contacts, camera, location, stickers, dictation and
   translation depend on Android-only services and are not exposed by this
   desktop extension API. Contact sharing currently accepts an npub or hex
