@@ -59,6 +59,11 @@ Use this file to record issues reported during prototype work. Move entries to
   relay set and did not deliver the welcome. After adding hosted relays, a
   second invite commit was accepted, but the recipient still did not display
   the group. Message exchange in both directions is not yet verified.
+- **Relay fallback:** White Noise EU and US hosted relays are first in the
+  default relay list. When no kind-10050 inbox list is found, the companion
+  falls back to its White Noise-first configured relay set. The NCC browser's
+  global default relay list now follows the same White Noise-first order;
+  `nos.lol` is not a default, but remains permitted when explicitly configured.
 - **Change:** The adapter now reads the recipient's kind-10050 inbox relay list,
   and the relay settings save path refreshes live subscriptions and proposes
   authenticated MLS relay metadata updates for existing groups. New groups use
@@ -72,7 +77,9 @@ Use this file to record issues reported during prototype work. Move entries to
   restricted environment, so it cannot determine whether that failure is the
   dev environment, the Electron app, or relay availability. A direct WebSocket probe with network access also failed for both hosted
   White Noise inbox relays, while Ditto opened. The companion now reports the
-  welcome delivery result separately from the group commit. Cross-device
+  welcome delivery result separately from the group commit. This means the
+  chosen fallback relays are in place, but the hosted relay fallback could not
+  be exercised successfully in this environment. Cross-device
   group appearance and two-way message exchange remain unverified.
 - **Next:** Repeat welcome publication from the running NCC dev browser where
   its relay networking is available, confirm a relay accepts the welcome, then
@@ -80,13 +87,25 @@ Use this file to record issues reported during prototype work. Move entries to
 
 ### 2. Chat file and media sharing
 
-- **Status:** In progress
+- **Status:** Implemented in the prototype; send/receive runtime check pending.
 - **Reported:** 2026-11-28
 - **Expected:** The in-composer plus menu should offer file/media sharing, and
   supported files or images pasted into the composer should be staged as
   attachments. Sending and receiving must use Marmot encrypted media.
-- **Next:** Implement staging, paste handling, encrypted upload/download, and
-  attachment rendering in the chat view.
+- **Change:** Connected marmot-ts 0.9.0's encrypted-media policy, Blossom
+  transport, media preparation/download, and `imeta` parsing. New groups use
+  the account's published kind-10063 Blossom server list, falling back to
+  `https://blossom.primal.net`; admins can enable media in older groups. The
+  chat plus menu opens a multi-file picker, clipboard image/file pastes stage
+  files beside the composer, and received attachments download on demand and
+  decrypt before display/save. Limits are 25 MB per file, 10 files and 100 MB
+  per message.
+- **Check:** The installed Marmot declarations/implementation expose the APIs
+  used, and the extension bundle builds. Cross-device upload, delivery, and
+  download/decryption have not been exercised in the running UI.
+- **Next:** Verify file picker and paste staging in the companion, then send a
+  small image/file from one profile and download it in a second White Noise
+  client. Confirm the Blossom server accepts the signed upload.
 
 ### 3. Drag-resize the companion panel
 

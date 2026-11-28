@@ -1,7 +1,7 @@
 import { MarmotClient, createApplicationMessageIntent, createChatRumor } from '@internet-privacy/marmot-ts'
 import { makeKeyValueRumorHistoryFactory } from '@internet-privacy/marmot-ts/extra'
-import { deserializeApplicationData, getInboxRelays } from '@internet-privacy/marmot-ts/core'
-import { createInviteIntent, Proposals } from '@internet-privacy/marmot-ts/client'
+import { deserializeApplicationData, encryptedMediaBlossomDefaultV2, getInboxRelays, getMediaAttachments } from '@internet-privacy/marmot-ts/core'
+import { createBlossomMediaTransport, createInviteIntent, downloadMessageMedia, prepareMediaMessage, Proposals } from '@internet-privacy/marmot-ts/client'
 import { nip19, verifyEvent } from 'nostr-tools'
 
 class ExtensionStore {
@@ -57,7 +57,10 @@ function relayUrl(value) {
   return url.toString().replace(/\/$/, '')
 }
 
-let relayConfig = []
+const DEFAULT_RELAYS = ['wss://relay.eu.whitenoise.chat', 'wss://relay.us.whitenoise.chat', 'wss://relay.damus.io', 'wss://relay.primal.net', 'wss://relay.ditto.pub']
+let relayConfig = DEFAULT_RELAYS
+const DEFAULT_BLOSSOM_SERVERS = ['https://blossom.primal.net']
+const MEDIA_MAX_BYTES = 25 * 1024 * 1024
 
 function relayRequest(url, filters) {
   return new Promise((resolve, reject) => {
@@ -121,7 +124,7 @@ const network = {
   async getUserInboxRelays(pubkey) {
     const events = await this.request(relayConfig, [{ kinds: [10050], authors: [pubkey], limit: 1 }])
     const latest = events.sort((a, b) => b.created_at - a.created_at)[0]
-    return latest ? getInboxRelays(latest) : relayConfig
+    return latest ? getInboxRelays(latest) : DEFAULT_RELAYS
   }
 }
 
@@ -142,11 +145,12 @@ const api = {
     if (expectedPubkey && pubkey !== expectedPubkey) throw new Error('The active NCC account has changed. Select the previous account to reopen its chats.')
     const accountPrefix = `account:${pubkey}:`
     await migrateLegacyAccountData(pubkey, accountPrefix)
+    const blossomServers = await resolveBlossomServers(pubkey, relays)
     const clientIdKey = `marmot:${accountPrefix}clientId`
     let clientId = (await chrome.storage.local.get(clientIdKey))[clientIdKey]
     if (!clientId) { clientId = [...crypto.getRandomValues(new Uint8Array(32))].map(byte => byte.toString(16).padStart(2, '0')).join(''); await chrome.storage.local.set({ [clientIdKey]: clientId }) }
     const keyStore = new ExtensionStore(`${accountPrefix}keypackages`)
-    const client = new MarmotClient({ signer, network, groupStateStore: new ExtensionStore(`${accountPrefix}groups`), keyPackageStore: keyStore, clientId, historyFactory: makeKeyValueRumorHistoryFactory(groupId => new ExtensionStore(`${accountPrefix}history:${[...groupId].map(byte => byte.toString(16).padStart(2, '0')).join('')}`)), getSignatureKeyPair: async ciphersuite => {
+    const client = new MarmotClient({ signer, network, groupStateStore: new ExtensionStore(`${accountPrefix}groups`), keyPackageStore: keyStore, clientId, historyFactory: makeKeyValueRumorHistoryFactory(groupId => new ExtensionStore(`${accountPrefix}history:${[...groupId].map(byte => byte.toString(16).padStart(2, '0')).join('')}`)), mediaFactory: groupId => createMediaStore(`${accountPrefix}media:${[...groupId].map(byte => byte.toString(16).padStart(2, '0')).join('')}`), getSignatureKeyPair: async ciphersuite => {
       const saved = await keyStore.getItem('local-signature-key')
       if (saved?.signKey && saved?.publicKey) return { signKey: saved.signKey, publicKey: saved.publicKey }
       const pair = await ciphersuite.signature.keygen()
@@ -155,7 +159,8 @@ const api = {
     }, inviteStore: new ExtensionStore(`${accountPrefix}invites`), ingestStateStore: new ExtensionStore(`${accountPrefix}ingest`) })
     await client.groups.loadAll()
     const live = client.groups.connectAll({ fallbackRelays: relays })
-    return { client, live, pubkey }
+    const mediaTransport = createBlossomMediaTransport({ signer })
+    return { client, live, pubkey, blossomServers, mediaTransport }
   },
   // This is an explicit user action. ensurePublished() may reuse an old local
   // package without publishing it to the currently selected relays. Create a
@@ -164,7 +169,8 @@ const api = {
   createKeyPackage(client, relays) { return client.keyPackages.create({ relays }) },
   async createGroup(client, relays, name) {
     await client.keyPackages.ensurePublished({ relays })
-    const group = await client.groups.create(name, { description: '', relays, adminPubkeys: [await client.signer.getPublicKey()] })
+    const servers = await resolveBlossomServers(await client.signer.getPublicKey(), relays)
+    const group = await client.groups.create(name, { description: '', relays, adminPubkeys: [await client.signer.getPublicKey()], encryptedMedia: encryptedMediaBlossomDefaultV2(servers) })
     const sender = await client.signer.getPublicKey()
     const rumor = createChatRumor({ pubkey: sender, content: 'This is a private note to self.' })
     await client.groups.send(group.snapshot.id, createApplicationMessageIntent(rumor))
@@ -198,6 +204,14 @@ const api = {
     }
     return updated
   },
+  async enableGroupMedia(client, groupId, servers) {
+    const group = await client.groups.get(groupId)
+    const ownPubkey = await client.signer.getPublicKey()
+    if (!(group.snapshot.groupData?.adminPubkeys || []).includes(ownPubkey)) throw new Error('Only a group admin can enable encrypted media.')
+    await group.propose(Proposals.proposeSetEncryptedMediaPolicy(encryptedMediaBlossomDefaultV2(normalizeBlossomServers(servers)), true))
+    await client.groups.commit(groupId)
+    return client.groups.get(groupId)
+  },
   async transferAdminAndLeave(client, groupId, successorPubkey) {
     const group = await client.groups.get(groupId)
     const ownPubkey = await client.signer.getPublicKey()
@@ -226,6 +240,22 @@ const api = {
     await client.groups.send(groupId, createApplicationMessageIntent(rumor))
     return rumor
   },
+  async sendMedia(client, groupId, files, caption, transport) {
+    const group = await client.groups.get(groupId)
+    const prepared = await prepareMediaMessage(group, files, { transport, maxBytes: MEDIA_MAX_BYTES, caption })
+    await client.groups.send(groupId, prepared.intent)
+    await group.history.saveRumor(prepared.rumor)
+    return prepared.rumor
+  },
+  async downloadMedia(client, groupId, rumor, transport) {
+    const group = await client.groups.get(groupId)
+    const attachments = getMediaAttachments(rumor.tags || [])
+    if (!attachments.length) return []
+    const sourceParent = await group.session.mediaSourceForRumor(rumor.id)
+    if (!sourceParent) throw new Error('The media encryption epoch for this message is unavailable on this device.')
+    return downloadMessageMedia(group, rumor.tags, sourceParent, { transport, maxBytes: MEDIA_MAX_BYTES })
+  },
+  mediaAttachments(rumor) { return getMediaAttachments(rumor.tags || []) },
   async inviteContact(client, groupId, address, relays) {
     let pubkey = address.trim()
     if (pubkey.startsWith('npub1')) {
@@ -256,6 +286,37 @@ const api = {
     }
   },
   decode: deserializeApplicationData
+}
+
+function normalizeBlossomServers(values) {
+  const servers = [...new Set((Array.isArray(values) ? values : []).map(value => {
+    const url = new URL(value)
+    if (url.protocol !== 'https:' || !url.hostname || url.username || url.password || url.pathname !== '/' || url.search || url.hash) throw new Error(`Invalid Blossom server URL: ${value}`)
+    return url.origin
+  }))].slice(0, 8)
+  if (!servers.length) throw new Error('Add at least one HTTPS Blossom server before enabling encrypted media.')
+  return servers
+}
+
+async function resolveBlossomServers(pubkey, relays) {
+  try {
+    const events = await network.request(relays, [{ kinds: [10063], authors: [pubkey], limit: 10 }])
+    const latest = events.sort((a, b) => b.created_at - a.created_at)[0]
+    const servers = normalizeBlossomServers((latest?.tags || []).filter(tag => tag[0] === 'server').map(tag => tag[1]).filter(Boolean))
+    if (servers.length) return servers
+  } catch (error) { console.warn('[white-noise] Blossom server-list lookup failed; using the public default:', error) }
+  return DEFAULT_BLOSSOM_SERVERS
+}
+
+function createMediaStore(prefix) {
+  const store = new ExtensionStore(prefix)
+  return {
+    addMedia: (key, value) => store.setItem(key, value),
+    getMedia: key => store.getItem(key),
+    removeMedia: key => store.removeItem(key),
+    async listMedia() { return Promise.all((await store.keys()).map(key => store.getItem(key))).then(entries => entries.filter(entry => entry?.attachment).map(entry => entry.attachment)) },
+    clearMedia: () => store.clear()
+  }
 }
 
 async function migrateLegacyAccountData(pubkey, accountPrefix) {

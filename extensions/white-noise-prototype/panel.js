@@ -14,6 +14,8 @@ let liveConnection = null
 let selectedRelays = defaults.relays
 let groupRefreshTimer = null
 let showArchived = false
+let pendingAttachments = []
+let renderedMediaUrls = []
 
 function setStatus(text, connected = false) {
   $('statusText').textContent = text
@@ -165,8 +167,10 @@ async function publishKeyPackage() {
 async function showMessages(group) {
   const history = await window.MarmotCompanion.history(group.instance)
   const list = $('messageList')
+  for (const url of renderedMediaUrls) URL.revokeObjectURL(url)
+  renderedMediaUrls = []
   const query = $('messageSearch').value.trim().toLowerCase()
-  const matches = history.filter(rumor => !query || rumor.content.toLowerCase().includes(query))
+  const matches = history.filter(rumor => !query || rumor.content.toLowerCase().includes(query) || window.MarmotCompanion.mediaAttachments(rumor).some(item => item.filename.toLowerCase().includes(query)))
   list.replaceChildren()
   if (!matches.length) {
     const empty = document.createElement('p')
@@ -180,6 +184,46 @@ async function showMessages(group) {
     row.className = 'message-bubble'
     row.innerHTML = `<strong>${rumor.pubkey === connection.pubkey ? 'You' : escapeHtml(rumor.pubkey.slice(0, 12) + '…')}</strong><p></p><time>${new Date(rumor.created_at * 1000).toLocaleString()}</time>`
     row.querySelector('p').textContent = rumor.content
+    const attachments = window.MarmotCompanion.mediaAttachments(rumor)
+    if (attachments.length) {
+      const open = document.createElement('button')
+      open.type = 'button'
+      open.className = 'attachment-download secondary'
+      open.textContent = `Download ${attachments.length === 1 ? attachments[0].filename : `${attachments.length} attachments`}`
+      open.addEventListener('click', async () => {
+        open.disabled = true
+        open.textContent = 'Downloading and decrypting…'
+        try {
+          const results = await window.MarmotCompanion.downloadMedia(connection.client, group.id, rumor, connection.mediaTransport)
+          for (const result of results) {
+            if (result.status !== 'ready') continue
+            const blob = new Blob([result.data], { type: result.attachment.mediaType })
+            const url = URL.createObjectURL(blob)
+            renderedMediaUrls.push(url)
+            const link = document.createElement('a')
+            link.href = url
+            link.download = result.attachment.filename
+            link.className = 'attachment-file'
+            if (result.attachment.mediaType.startsWith('image/')) {
+              const img = document.createElement('img')
+              img.src = url
+              img.alt = result.attachment.filename
+              link.append(img)
+            } else {
+              link.textContent = `${result.attachment.filename} · ${result.attachment.mediaType} · click to save`
+            }
+            row.append(link)
+          }
+          if (results.some(result => result.status === 'unavailable')) message('Some attachments could not be downloaded or decrypted.', true)
+          open.remove()
+        } catch (error) {
+          open.disabled = false
+          open.textContent = 'Retry download'
+          message(error?.message || String(error), true)
+        }
+      })
+      row.append(open)
+    }
     list.append(row)
   }
   list.scrollTop = list.scrollHeight
@@ -195,6 +239,8 @@ $('clearMessageSearch').addEventListener('click', () => {
 
 async function openGroup(group) {
   activeGroup = group
+  pendingAttachments = []
+  renderPendingAttachments()
   $('messageSearch').value = ''
   $('conversationTitle').textContent = group.name || 'Encrypted group'
   $('conversationView').classList.remove('hidden')
@@ -275,6 +321,15 @@ function showGroupDetails(group) {
   addDetail('MLS epoch', String(snapshot.epoch ?? '—'))
   addDetail('Members', String(snapshot.members.length))
   addDetail('Relays', (snapshot.groupData?.relays || []).join(', ') || 'No group relays')
+  addDetail('Encrypted media', snapshot.groupData?.encryptedMedia ? 'Enabled' : 'Not enabled for this group')
+  if (!snapshot.groupData?.encryptedMedia && admins.has(connection.pubkey)) {
+    const enable = document.createElement('button')
+    enable.type = 'button'
+    enable.className = 'secondary full'
+    enable.textContent = 'Enable encrypted photos and files'
+    enable.addEventListener('click', () => void enableGroupMedia(group))
+    content.append(enable)
+  }
   const memberHeading = document.createElement('h3')
   memberHeading.textContent = 'Members'
   content.append(memberHeading)
@@ -298,6 +353,55 @@ function showGroupDetails(group) {
     content.append(row)
   }
   $('groupDetailsDialog').classList.remove('hidden')
+}
+
+async function enableGroupMedia(group) {
+  const servers = connection.blossomServers || []
+  if (!confirm(`Enable encrypted media for “${group.name}”? Files are encrypted before upload to ${servers.join(', ')}. Server operators can see upload metadata and network requests, but not file contents.`)) return
+  try {
+    await window.MarmotCompanion.enableGroupMedia(connection.client, group.id, servers)
+    await refreshGroups()
+    const updated = groups.find(item => item.idStr === group.idStr)
+    if (updated) showGroupDetails(updated)
+    message('Encrypted media enabled for this group.')
+  } catch (error) { message(error?.message || String(error), true) }
+}
+
+function renderPendingAttachments() {
+  const tray = $('attachmentTray')
+  tray.replaceChildren()
+  tray.classList.toggle('hidden', pendingAttachments.length === 0)
+  for (const [index, file] of pendingAttachments.entries()) {
+    const chip = document.createElement('div')
+    chip.className = 'attachment-chip'
+    const label = document.createElement('span')
+    label.textContent = `${file.name} · ${formatBytes(file.size)}`
+    const remove = document.createElement('button')
+    remove.type = 'button'
+    remove.setAttribute('aria-label', `Remove ${file.name}`)
+    remove.textContent = '×'
+    remove.addEventListener('click', () => { pendingAttachments.splice(index, 1); renderPendingAttachments() })
+    chip.append(label, remove)
+    tray.append(chip)
+  }
+}
+
+function addAttachments(files) {
+  let remaining = [...files]
+  const rejected = []
+  while (remaining.length && pendingAttachments.length < 10) {
+    const file = remaining.shift()
+    const total = pendingAttachments.reduce((sum, item) => sum + item.size, 0)
+    if (file.size > 0 && file.size <= 25 * 1024 * 1024 && total + file.size <= 100 * 1024 * 1024) pendingAttachments.push(file)
+    else rejected.push(file)
+  }
+  rejected.push(...remaining)
+  renderPendingAttachments()
+  if (rejected.length) message('Choose up to 10 files, 25 MB each and 100 MB total.', true)
+}
+
+function formatBytes(size) {
+  return size < 1024 * 1024 ? `${Math.ceil(size / 1024)} KB` : `${(size / 1024 / 1024).toFixed(1)} MB`
 }
 
 async function removeGroupMember(group, pubkey) {
@@ -449,6 +553,21 @@ $('inviteContactButton').addEventListener('click', () => {
   $('inviteForm').classList.remove('hidden')
   $('contactAddress').focus()
 })
+$('addAttachmentButton').addEventListener('click', () => {
+  $('composerMenu').classList.add('hidden')
+  $('plusButton').setAttribute('aria-expanded', 'false')
+  $('attachmentInput').click()
+})
+$('attachmentInput').addEventListener('change', event => {
+  addAttachments(event.currentTarget.files || [])
+  event.currentTarget.value = ''
+})
+$('composer').addEventListener('paste', event => {
+  const files = [...(event.clipboardData?.files || [])]
+  if (!files.length) return
+  event.preventDefault()
+  addAttachments(files)
+})
 $('cancelInvite').addEventListener('click', () => $('inviteForm').classList.add('hidden'))
 $('inviteForm').addEventListener('submit', async event => {
   event.preventDefault()
@@ -469,14 +588,18 @@ $('inviteForm').addEventListener('submit', async event => {
 })
 $('sendButton').addEventListener('click', async () => {
   const text = $('composer').value.trim()
-  if (!text || !activeGroup || !connection) return
+  if ((!text && !pendingAttachments.length) || !activeGroup || !connection) return
   $('sendButton').disabled = true
   try {
-    const rumor = await window.MarmotCompanion.send(connection.client, activeGroup.id, text)
+    const rumor = pendingAttachments.length
+      ? await window.MarmotCompanion.sendMedia(connection.client, activeGroup.id, pendingAttachments.map(file => ({ blob: file, metadata: { filename: file.name, type: file.type || 'application/octet-stream' } })), text, connection.mediaTransport)
+      : await window.MarmotCompanion.send(connection.client, activeGroup.id, text)
     $('composer').value = ''
-    await activeGroup.instance.history.saveRumor(rumor)
+    if (!window.MarmotCompanion.mediaAttachments(rumor).length) await activeGroup.instance.history.saveRumor(rumor)
+    pendingAttachments = []
+    renderPendingAttachments()
     await showMessages(activeGroup)
-    message('Message sent through MLS.')
+    message(window.MarmotCompanion.mediaAttachments(rumor).length ? 'Encrypted attachment sent through MLS.' : 'Message sent through MLS.')
   } catch (error) { message(error?.message || String(error), true) }
   finally { $('sendButton').disabled = false }
 })

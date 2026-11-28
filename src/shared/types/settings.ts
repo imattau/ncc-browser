@@ -11,9 +11,11 @@ import type { RelayEntry } from './ncc'
 export const DEFAULT_HTTPS_MODE: HttpsMode = 'prefer'
 
 export const DEFAULT_RELAYS = [
+  'wss://relay.eu.whitenoise.chat',
+  'wss://relay.us.whitenoise.chat',
   'wss://relay.damus.io',
-  'wss://nos.lol',
-  'wss://relay.primal.net'
+  'wss://relay.primal.net',
+  'wss://relay.ditto.pub'
 ]
 
 export type ProtectionLevel = 'off' | 'standard' | 'strict'
