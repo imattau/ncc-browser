@@ -125,6 +125,25 @@ Use this file to record issues reported during prototype work. Move entries to
   reconstruct an existing MLS group on a new device. This is not caused by
   different KeyPackages: each device's KeyPackage is its invitation credential,
   while a Welcome initializes that device's independent MLS group state.
+- **Diagnostic distinction:** If a group was created or joined in this same
+  NCC profile, it should be returned by `groups.loadAll()` from the companion's
+  per-account local group-state store. If that same-profile group is missing,
+  investigate the extension profile/storage migration or load errors; creating
+  a fresh KeyPackage will not recover it. Groups present only on another device
+  require linked-device support and cannot be discovered from relay history.
+- **Protocol-age distinction:** A stale or incompatible KeyPackage can prevent
+  a new invite or Welcome from being accepted, but it does not determine which
+  already-stored groups `loadAll()` discovers. Separately, Marmot TS 0.9.0's
+  changelog documents protocol compatibility limits for legacy groups (for
+  example, legacy account-identity proofs and existing dictionary-first groups);
+  those can affect group traffic or cause a split without explaining an absent
+  group in a fresh device's local registry.
+- **Same-profile restart check (2026-11-29):** In the disposable dev profile,
+  created a one-member Note to self group and its encrypted note, stopped and
+  relaunched `npm run dev` against that same profile, then reconnected the same
+  temporary signer. The group returned at epoch 0 and the note rendered from
+  history. This confirms local restart persistence only; it does not test
+  restoration from another device.
 - **Current limit:** There is no supported recovery path for this companion to
   join a group where the same account is already a member on another device.
   The ordinary invite eligibility check rejects a second KeyPackage for that
