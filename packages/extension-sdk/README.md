@@ -25,6 +25,7 @@ Extensions → Install package**.
 | UI | `action.onClicked` (and `default_popup`), `contextMenus`, `notifications.create`, `i18n.getMessage` |
 | Nostr | `ncc.nostr.getPublicKey`, `getProfile` (with `nostr:profile` permission), `signEvent`, `getRelays`, `nip04`, `nip44` |
 | Blossom | `blossom:group-image` permits encrypted group-photo transport with the listed Blossom hosts |
+| Contacts | `contacts:read` reads the active profile’s public follow list and cached profile labels through `ncc.contacts.state()` / `refresh()` |
 
 Not supported in this version: `webRequest`, `declarativeNetRequest`, `cookies`,
 `history`, `bookmarks`, `downloads`, `identity`, `offscreen`, `sidePanel`, DevTools

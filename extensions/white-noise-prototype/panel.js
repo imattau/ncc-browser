@@ -46,6 +46,10 @@ function message(text, error = false, warning = false) {
   $('message').classList.toggle('warning', warning)
 }
 
+function shortPubkey(pubkey) {
+  return `${String(pubkey || '').slice(0, 10)}…${String(pubkey || '').slice(-6)}`
+}
+
 function showSettings() { mainView.classList.add('hidden'); settingsView.classList.remove('hidden') }
 function showMain() { settingsView.classList.add('hidden'); mainView.classList.remove('hidden') }
 
@@ -110,7 +114,8 @@ async function load() {
   $('relayInput').value = selectedRelays.join('\n')
   desktopNotifications = Boolean(saved.desktopNotifications)
   $('desktopNotifications').checked = desktopNotifications
-  $('accountName').textContent = connection ? 'Connected account' : 'Not connected'
+  const accountProfile = connection ? profileCache.get(connection.pubkey) : null
+  renderAccountProfile(accountProfile)
   $('accountKey').textContent = connection ? `Public key · ${connection.pubkey.slice(0, 12)}…${connection.pubkey.slice(-8)}` : 'Connect your browser account to begin'
   $('connectButton').textContent = 'Connect account'
   $('connectButton').classList.toggle('hidden', Boolean(connection))
@@ -128,11 +133,7 @@ async function profileFor(pubkey) {
   try {
     const result = await ncc.nostr.getProfile(pubkey, connection.relays)
     profileCache.set(pubkey, result)
-    if (pubkey === connection.pubkey && result) {
-      $('accountName').textContent = result.name || 'Your account'
-      const avatar = document.querySelector('.account .avatar')
-      setAvatar(avatar, result, '●')
-    }
+    if (pubkey === connection.pubkey) renderAccountProfile(result)
     return result
   } catch (error) {
     console.debug('[white-noise] profile lookup unavailable:', error?.message || error)
@@ -140,8 +141,16 @@ async function profileFor(pubkey) {
   }
 }
 
+function renderAccountProfile(profile) {
+  $('accountName').textContent = connection
+    ? profile?.name || (profile ? 'Your account' : 'Connected account')
+    : 'Not connected'
+  setAvatar(document.querySelector('.account .avatar'), profile, '●')
+}
+
 function setAvatar(element, profile, fallback) {
   element.classList.add('profile-avatar')
+  element.classList.remove('profile-photo')
   element.style.backgroundImage = ''
   element.textContent = profile?.name?.slice(0, 1).toUpperCase() || fallback
   if (profile?.pictureDataUrl) {
@@ -246,7 +255,7 @@ function renderGroups(filter = '') {
     const empty = document.createElement('div')
     empty.className = 'empty'
     const title = query ? 'No chats match your search' : !showArchived && selectedFolderId !== 'all' ? 'This folder is empty' : connection ? 'No chats yet' : 'Connect to get started'
-    const description = query ? 'Try a different name.' : !showArchived && selectedFolderId !== 'all' ? 'Move a chat here from its chat options.' : connection ? 'Groups from another device are not discovered from relays. Ask a member to invite this account; older messages may not be available on this device.' : 'Connect your browser account to load your chats.'
+    const description = query ? 'Try a different name.' : !showArchived && selectedFolderId !== 'all' ? 'Move a chat here from its chat options.' : connection ? 'Chats and group state are saved on each device. Groups this account already joined on another device cannot be restored here yet; linked-device support is still in development.' : 'Connect your browser account to load your chats.'
     empty.innerHTML = `<div class="empty-icon">◌</div><strong>${title}</strong><p>${description}</p>`
     if (!query) {
       const button = document.createElement('button')
@@ -1323,8 +1332,10 @@ document.addEventListener('keydown', event => {
   $('groupActions').setAttribute('aria-expanded', 'false')
   $('newChatMenu').classList.add('hidden')
   $('newChat').setAttribute('aria-expanded', 'false')
+  if (!$('createGroupButton').disabled) $('createGroupForm').classList.add('hidden')
   $('composerMenu').classList.add('hidden')
   $('plusButton').setAttribute('aria-expanded', 'false')
+  $('contactsPicker').classList.add('hidden')
 })
 $('closeButton').addEventListener('click', () => void ncc.runtime.closePanel())
 const resizeHandle = $('resizeHandle')
@@ -1377,7 +1388,115 @@ $('newChatMenu').addEventListener('click', event => {
   $('newChatMenu').classList.add('hidden')
   $('newChat').setAttribute('aria-expanded', 'false')
   if (action === 'group') $('createGroupForm').classList.toggle('hidden')
+  else if (action === 'chat') void openContactsPicker()
   else if (action === 'keypackage') void publishKeyPackage()
+})
+async function openContactsPicker() {
+  $('createGroupForm').classList.add('hidden')
+  $('contactsPicker').classList.remove('hidden')
+  $('contactSearch').focus()
+  await loadContacts(false)
+}
+let contactEntries = []
+async function loadContacts(refresh) {
+  const list = $('contactsList')
+  list.replaceChildren()
+  const loading = document.createElement('div')
+  loading.className = 'contacts-empty'
+  loading.textContent = refresh ? 'Refreshing contacts…' : 'Loading contacts…'
+  list.append(loading)
+  try {
+    let state = refresh ? await ncc.contacts.refresh() : await ncc.contacts.state()
+    if (!state?.list) state = await ncc.contacts.refresh()
+    contactEntries = Array.isArray(state?.list?.contacts) ? state.list.contacts : []
+    renderContactChoices($('contactSearch').value)
+  } catch (error) {
+    list.replaceChildren()
+    const empty = document.createElement('div')
+    empty.className = 'contacts-empty'
+    empty.textContent = error?.message || 'Contacts could not be loaded.'
+    list.append(empty)
+  }
+}
+function renderContactChoices(query = '') {
+  const list = $('contactsList')
+  list.replaceChildren()
+  const term = query.trim().toLocaleLowerCase()
+  const matches = contactEntries.filter(contact => [contact.displayName, contact.name, contact.nip05, contact.pubkey].some(value => String(value || '').toLocaleLowerCase().includes(term)))
+  if (!matches.length) {
+    const empty = document.createElement('div')
+    empty.className = 'contacts-empty'
+    empty.textContent = contactEntries.length ? 'No matching contacts.' : 'No contacts found. Follow someone or enter their npub below.'
+    list.append(empty)
+    return
+  }
+  for (const contact of matches.slice(0, 200)) {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'contact-choice'
+    const avatar = document.createElement('span')
+    avatar.className = 'chat-avatar'
+    const name = contact.displayName?.trim() || contact.name?.trim() || contact.nip05?.trim() || shortPubkey(contact.pubkey)
+    setAvatar(avatar, contact, name.slice(0, 1).toUpperCase())
+    const copy = document.createElement('span')
+    copy.className = 'contact-choice-copy'
+    const strong = document.createElement('strong')
+    strong.textContent = name
+    const small = document.createElement('small')
+    small.textContent = contact.nip05 || shortPubkey(contact.pubkey)
+    copy.append(strong, small)
+    button.append(avatar, copy)
+    button.addEventListener('click', () => void startDirectChat(contact.pubkey, name, button))
+    list.append(button)
+  }
+}
+async function startDirectChat(address, name, button = null) {
+  if (!connection) { message('Connect your browser account first.', true); return }
+  let pubkey
+  try { pubkey = window.MarmotCompanion.decodeContactNpub(address) }
+  catch (error) { message(error?.message || String(error), true); return }
+  if (!name || name === 'New chat') name = `Chat · ${shortPubkey(pubkey)}`
+  const existing = groups.find(group => {
+    const members = group.instance.snapshot.members || []
+    return members.length === 2 && members.includes(connection.pubkey) && members.includes(pubkey)
+  })
+  if (existing) {
+    $('contactsPicker').classList.add('hidden')
+    await openGroup(existing)
+    return
+  }
+  if (button) button.disabled = true
+  $('contactsList').setAttribute('aria-busy', 'true')
+  try {
+    message(`Starting an encrypted chat with ${name}. Approve the invite key lookup and group creation when prompted.`)
+    const group = await window.MarmotCompanion.createDirectChat(connection.client, connection.relays, pubkey, name)
+    $('contactsPicker').classList.add('hidden')
+    await refreshGroups()
+    const entry = groups.find(item => item.id === group.snapshot.id)
+    if (entry) await openGroup(entry)
+    message(`Chat started with ${name}.`)
+  } catch (error) { message(error?.message || String(error), true) }
+  finally {
+    $('contactsList').removeAttribute('aria-busy')
+    if (button) button.disabled = false
+  }
+}
+$('closeContactsPicker').addEventListener('click', () => $('contactsPicker').classList.add('hidden'))
+$('refreshContacts').addEventListener('click', () => void loadContacts(true))
+$('contactSearch').addEventListener('input', event => renderContactChoices(event.target.value))
+$('directAddressForm').addEventListener('submit', event => {
+  event.preventDefault()
+  const address = $('directAddress').value.trim()
+  if (!address) return
+  void startDirectChat(address, 'New chat')
+})
+$('cancelCreateGroup').addEventListener('click', () => {
+  if ($('createGroupButton').disabled) return
+  $('createGroupForm').classList.add('hidden')
+  $('groupName').value = 'Note to self'
+  $('groupDescription').value = ''
+  $('groupRetention').value = '0'
+  message('')
 })
 $('createGroupButton').addEventListener('click', async () => {
   if (!connection) { message('Connect your browser account first.', true); return }

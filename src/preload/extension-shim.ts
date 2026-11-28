@@ -233,10 +233,16 @@ export const EXTENSION_SHIM = String.raw`
     groupImageRequest: function (request) { return bridge.invoke('blossom.groupImageRequest', [request]) }
   }
 
+  var contacts = {
+    state: function () { return bridge.invoke('contacts.state', []) },
+    refresh: function () { return bridge.invoke('contacts.refresh', []) }
+  }
+
   var ncc = {
     version: 1,
     nostr: nostr,
     blossom: blossom,
+    contacts: contacts,
     runtime: {
       getURL: runtime.getURL,
       closePanel: runtime.closePanel,

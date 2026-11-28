@@ -5,10 +5,96 @@ Use this file to record issues reported during prototype work. Move entries to
 
 ## Open / in progress
 
+### Group creation cannot be cancelled
+
+- **Status:** Fixed and runtime checked.
+- **Reported:** 2026-11-29
+- **Observed:** There is no clear way to cancel or dismiss the group-creation
+  flow after it has been opened.
+- **Expected:** A visible Cancel or close action returns to the chat list without
+  creating a group or changing the active account.
+- **Change:** Added a visible Cancel button and Escape-key dismissal. Both are
+  disabled while group creation is in flight; cancel resets the form values.
+- **Check:** In the isolated dev profile, confirmed both Cancel and Escape hide
+  the form without creating a group; the existing Note to self chat remained.
+
+### Contacts are unavailable when starting a chat
+
+- **Status:** Fixed and cross-device runtime checked.
+- **Reported:** 2026-11-29
+- **Observed:** The companion does not offer a contact list when starting a
+  chat. Users can only enter a profile address in the invite flow.
+- **Expected:** Discover and select known contacts when creating a chat, with a
+  clear path to invite someone by profile address when they are not in contacts.
+- **Change:** Added the explicitly permissioned `contacts:read` bridge to NCC's
+  cached active-profile contact list, plus a searchable contact picker, refresh
+  action, npub entry, existing-chat reuse and direct MLS chat creation. The
+  contact's KeyPackage is checked before creating the group, so a missing or
+  unavailable invite key does not leave an empty new chat.
+- **Check:** In the isolated dev profiles, verified an empty contact list and
+  the npub entry; a synthetic nonexistent key showed the missing-KeyPackage
+  error without creating a group. Then added a second synthetic QA profile to
+  the first profile's public follow list and published its KeyPackage. The
+  contact appeared by profile name, the direct chat invite arrived on three
+  relays, the second profile joined (2 members, epoch 1), and subsequent
+  messages from each account appeared in the other account's open chat. The
+  initial note sent before the invite was not available to the joining member.
+
+### Same-account devices need separate group membership
+
+- **Status:** Open; Marmot multi-device linking and chat synchronization are
+  not implemented by the pinned `@internet-privacy/marmot-ts` 0.9.0 package.
+- **Reported:** 2026-11-29
+- **Observed:** The same npub on another device appears as a separate MLS
+  member and must be invited separately.
+- **Cause:** Each installation has its own KeyPackage, MLS state and private
+  keys. Signing in with the same npub therefore does not restore the other
+  installation's groups or make it the same MLS client; it remains the same
+  Nostr identity. The current companion package exposes no device-pairing,
+  device-roster or account-sync API.
+- **Current limit:** The normal invite path cannot add another device for an
+  pubkey that is already in the group. The pinned library's
+  `evaluateKeyPackageForGroup()` rejects a KeyPackage when the group's member
+  pubkey set already contains its author. So same-account device enrollment
+  is not currently available through the companion; ordinary invites work for
+  a different account only.
+- **UI guard:** The companion rejects an attempt to start a chat with its own
+  account or invite its own account into a group, with a message explaining
+  that linked-device support is unavailable.
+- **Live check (2026-11-29):** In a disposable NCC profile, created a Note to
+  self group and submitted the connected account's own npub from the in-chat
+  Invite member action. The companion showed the linked-device message before
+  querying or publishing a KeyPackage invite; the group remained unchanged.
+  No real profile or device was used.
+- **Compatibility research (2026-11-29):** The current Marmot protocol
+  repository has an adopted `0x800d` component that permits same-account leaf
+  adds when a group requires it, but the companion only recognizes its
+  data-less marker and does not implement the corresponding same-account
+  authorization or membership flow. Device pairing, the device roster and
+  account sync (including history transfer) remain draft features. White Noise
+  documents linked-device support as still in development.
+- **Next:** Add multi-device support only with a compatible implementation of
+  same-account authorization plus the device-pairing/device-group flow. Do not
+  copy MLS state or private KeyPackage material between devices.
+
+### No plain chat interface
+
+- **Status:** Direct-chat flow runtime checked; plain unencrypted chat is not
+  part of Marmot.
+- **Reported:** 2026-11-29
+- **Observed:** A one-to-one chat can now be started directly from a contact,
+  without asking the user to create a group and then invite them. It remains an
+  MLS group under Marmot; the protocol has no unencrypted/plain chat mode.
+- **Expected:** Provide a familiar one-to-one chat flow while keeping MLS
+  encryption visible in the UI.
+- **Check:** Started a one-to-one MLS chat from a contact in the isolated
+  profiles and confirmed both sides could exchange messages. Account B was
+  then restarted with the same temporary profile; it reconnected to the signer,
+  restored the two-member group, and reloaded both message histories.
+
 ### Account and member profile names and photos
 
-- **Status:** Implemented and build checked; runtime display still needs a
-  connected profile check.
+- **Status:** Fixed and runtime checked.
 - **Reported:** 2026-11-28
 - **Observed:** The companion showed “Connected account,” a placeholder avatar,
   and abbreviated public keys for chat authors.
@@ -17,29 +103,42 @@ Use this file to record issues reported during prototype work. Move entries to
   canonical event hash and signature, validates
   HTTPS picture URLs, rejects redirects, and returns only bounded image data
   (up to 512 KB). The companion uses names/photos for its account header,
-  message authors, and unnamed group member labels.
-- **Check:** TypeScript check, extension build/manifest validation, and five
-  focused profile tests passed. Tests cover newest-event selection, altered
+  message authors, and unnamed group member labels. The account header now
+  renders cached profile data after its asynchronous lookup completes and
+  clears stale avatar styling when the active account changes.
+- **Check:** In the isolated temp profile, after a full dev-browser restart the
+  account header showed `NCC White Noise Temp QA` with its profile image, and
+  retained both after the follow-up render. The self-chat author also showed
+  the same name. TypeScript check, extension validation, and five focused
+  profile tests passed. Tests cover newest-event selection, altered
   content/signatures, malformed metadata, bounded HTTPS image conversion,
   unsupported MIME types, oversized declared images, and image-host failure.
-  Live metadata lookup and image rendering remain to be confirmed in NCC
-  Browser with a connected profile; the NCC Browser MCP endpoint is currently
-  unavailable.
 
 ### Discovering groups created before the companion
 
-- **Status:** Marmot local-state limitation; UI explanation added and build
-  checked.
+- **Status:** Marmot local-state limitation; empty-state explanation corrected
+  and build checked. Runtime UX check remains pending.
 - **Observed:** Groups created on another device do not appear automatically
   after connecting the companion.
 - **Cause:** Marmot's group registry enumerates local stored MLS group state;
   relay queries do not provide the secrets and complete state required to
-  reconstruct an existing MLS group on a new device.
-- **Current path:** Invite this NCC account as a new group member from a device
-  already in the group. Earlier messages may not be available to the new device.
+  reconstruct an existing MLS group on a new device. This is not caused by
+  different KeyPackages: each device's KeyPackage is its invitation credential,
+  while a Welcome initializes that device's independent MLS group state.
+- **Current limit:** There is no supported recovery path for this companion to
+  join a group where the same account is already a member on another device.
+  The ordinary invite eligibility check rejects a second KeyPackage for that
+  pubkey. A normal invite can add an account that is not already a member, but
+  it cannot restore same-account device membership or history.
+- **UI change:** Removed the suggestion to ask a group member to invite the
+  same account. The empty state now explains that chat/group state is local to
+  each device and that linked-device restoration is not supported yet.
 - **Check:** Confirmed the companion uses Marmot's local `loadAll()` registry
-  and added this explanation to the empty chat state. Runtime UX check remains
-  pending.
+  and cross-checked the duplicate-member rejection in
+  `evaluateKeyPackageForGroup()`. A new temporary member did not receive a note
+  sent before its Welcome; messages sent after joining were delivered and
+  persisted locally. The corrected empty-state copy is build checked; runtime
+  UX check remains pending.
 
 ### Received image and video presentation
 
@@ -217,6 +316,16 @@ Use this file to record issues reported during prototype work. Move entries to
   history. Android showed `Replying to You: Android test prompt` and no
   `Event not found` preview. This run used the isolated AVD on port 5560 and
   temporary identities/data only.
+- **Temp desktop contact-chat interop (2026-11-29):** Two separate dev
+  instances used only temporary QA profiles and signers. The new contacts
+  permission loaded the second profile from the first profile's kind-3 list.
+  The companion discovered the contact, sent the KeyPackage invite, received
+  the Welcome on the second profile, and joined the two-member group. Each side
+  then sent a message that rendered in the other's open conversation. The
+  second profile correctly had no access to the note sent before it joined.
+  After closing and relaunching browser B with the same temp profile, the
+  companion reconnected to the signer automatically, restored the group, and
+  loaded both exchanged messages. Both renderer consoles had zero errors.
 - **Delayed Welcome check:** A fresh temporary recipient published a KeyPackage
   and kind-10050 inbox relay list, then was switched offline. The inviter sent
   a Welcome to a disposable group. After switching back, the recipient saw a

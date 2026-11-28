@@ -63,6 +63,18 @@ describe('manifest normalization', () => {
     expect(permissionWarnings(result.manifest)).toContain('Read and change data on https://example.com/*')
   })
 
+  it('keeps the permissioned NCC contacts API available to extensions', () => {
+    const result = normalizeExtensionManifest({
+      manifest_version: 3,
+      name: 'Contacts test',
+      version: '1.0.0',
+      permissions: ['contacts:read']
+    })
+    expect(result.manifest.permissions).toContain('contacts:read')
+    expect(result.warnings).not.toContain('Permission "contacts:read" is not supported and will be ignored.')
+    expect(permissionWarnings(result.manifest)).toContain('Read the active profile’s public contact list')
+  })
+
   it('rejects MV2 and traversal paths', () => {
     expect(() =>
       normalizeExtensionManifest({ manifest_version: 2, name: 'x', version: '1' })

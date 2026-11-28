@@ -32,6 +32,7 @@ import type { ExtensionRegistry } from './registry'
 import { extensionPageUrl } from './protocol'
 import { publicProfileFromEvents } from './profile'
 import type { ExtensionStorage, StorageChanges } from './storage'
+import type { ContactsService } from '../contacts/service'
 
 export interface ExtensionServiceDeps {
   /** Source of signed releases. */
@@ -42,6 +43,7 @@ export interface ExtensionServiceDeps {
   nip07: () => Nip07Service | null
   identity: () => IdentityProvider | null
   relays: RelayPool
+  contacts: Pick<ContactsService, 'state' | 'refresh'>
   preloadPath: string
   partition: string
   backgroundIdleMs?: number
@@ -443,6 +445,10 @@ export class ExtensionService {
       case 'nostr.getProfile':
         this.require(manifest, 'nostr:profile')
         return this.publicProfile(record.manifest, args[0], args[1])
+      case 'contacts.state':
+        return this.extensionContacts(record, sender, false)
+      case 'contacts.refresh':
+        return this.extensionContacts(record, sender, true)
       case 'blossom.groupImageRequest':
         this.require(manifest, 'blossom:group-image')
         return this.groupImageRequest(manifest, args[0])
@@ -613,6 +619,22 @@ export class ExtensionService {
     if (!manifest.permissions.includes(permission)) {
       throw new Error(`The extension does not have the "${permission}" permission`)
     }
+  }
+
+  private async extensionContacts(
+    record: { id: string; manifest: ExtensionManifest },
+    sender: ExtensionSender,
+    refresh: boolean
+  ): Promise<unknown> {
+    this.require(record.manifest, 'contacts:read')
+    const caller = this.caller(record, sender)
+    const pubkey = await this.nostr().getPublicKey(caller)
+    if (refresh) await this.deps.contacts.refresh(pubkey)
+    const state = this.deps.contacts.state()
+    // Never return a cached list belonging to a different active browser account.
+    return state.owner === pubkey
+      ? state
+      : { owner: pubkey, list: null, refreshing: false }
   }
 
   private async groupImageRequest(manifest: ExtensionManifest, input: unknown): Promise<unknown> {

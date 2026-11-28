@@ -246,6 +246,7 @@ export function createServices(
     nip07: () => runtime.nip07Service,
     identity: () => identity.provider(),
     relays: foundation.relayPool,
+    contacts: foundation.contacts,
     store: new ExtensionStore({
       relays: foundation.relayPool,
       userRelays: () => foundation.config.getRelays(),

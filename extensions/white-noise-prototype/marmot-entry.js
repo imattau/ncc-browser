@@ -41,6 +41,10 @@ const historyFactory = accountPrefix => GroupRumorHistory.makeFactory(groupId =>
 
 const mediaCache = createMediaCache()
 
+async function buildInviteIntent(client, keyPackageEvent) {
+  return createInviteIntent({ keyPackageEvent, actorPubkey: await client.signer.getPublicKey(), verifyEvent })
+}
+
 async function signRelayAuth(relay, challenge) {
   const now = Math.floor(Date.now() / 1000)
   const signed = await ncc.nostr.signEvent({ kind: 22242, created_at: now, tags: [['relay', relay], ['challenge', challenge], ['expiration', String(now + 600)]], content: '' })
@@ -539,7 +543,7 @@ const api = {
     return downloadMessageMedia(group, rumor.tags, sourceParent, { transport, maxBytes: MEDIA_MAX_BYTES })
   },
   mediaAttachments(rumor) { return getMediaAttachments(rumor.tags || []) },
-  async inviteContact(client, groupId, address, relays) {
+  decodeContactNpub(address) {
     let pubkey = address.trim()
     if (pubkey.startsWith('npub1')) {
       const decoded = nip19.decode(pubkey)
@@ -547,15 +551,19 @@ const api = {
       pubkey = decoded.data
     }
     if (!/^[0-9a-f]{64}$/i.test(pubkey)) throw new Error('Enter a valid npub or 64-character public key.')
-    const keyPackages = await client.network.request(relays, [{ kinds: [30443], authors: [pubkey.toLowerCase()], limit: 10 }])
-    const keyPackage = keyPackages.sort((left, right) => right.created_at - left.created_at)[0]
+    return pubkey.toLowerCase()
+  },
+  async inviteContact(client, groupId, address, relays, knownKeyPackage = null) {
+    const pubkey = this.decodeContactNpub(address)
+    const ownPubkey = await client.signer.getPublicKey()
+    if (pubkey === ownPubkey) {
+      throw new Error('This account is already in the group. Adding another device for the same account is not supported yet.')
+    }
+    const keyPackages = knownKeyPackage ? [] : await client.network.request(relays, [{ kinds: [30443], authors: [pubkey], limit: 10 }])
+    const keyPackage = knownKeyPackage || keyPackages.sort((left, right) => right.created_at - left.created_at)[0]
     if (!keyPackage) throw new Error('No invite key package found. Ask this contact to connect and publish one first.')
     try {
-      const intent = createInviteIntent({
-        keyPackageEvent: keyPackage,
-        actorPubkey: await client.signer.getPublicKey(),
-        verifyEvent
-      })
+      const intent = await buildInviteIntent(client, keyPackage)
       const [result] = await client.groups.send(groupId, intent)
       return result.welcomeDelivery
     } catch (error) {
@@ -567,6 +575,25 @@ const api = {
       }
       throw error
     }
+  },
+  async createDirectChat(client, relays, address, name) {
+    const pubkey = this.decodeContactNpub(address)
+    if (pubkey === await client.signer.getPublicKey()) {
+      throw new Error('This is your own account. To use White Noise on another device, linked-device support is needed; it is not available yet.')
+    }
+    const keyPackages = await client.network.request(relays, [{ kinds: [30443], authors: [pubkey], limit: 10 }])
+    const keyPackage = keyPackages.sort((left, right) => right.created_at - left.created_at)[0]
+    if (!keyPackage) throw new Error('No invite key package found. Ask this contact to connect and publish one first.')
+    try { await buildInviteIntent(client, keyPackage) }
+    catch (error) {
+      if (error instanceof Error && error.message.includes('KeyPackage lifetime exceeds cap or is not current')) {
+        throw new Error('The contact’s newest invite key is expired or not yet valid. Ask them to publish a new key package, then try again.')
+      }
+      throw error
+    }
+    const group = await this.createGroup(client, relays, (name || '').trim() || `Chat · ${pubkey.slice(0, 8)}`)
+    await this.inviteContact(client, group.snapshot.id, pubkey, relays, keyPackage)
+    return group
   },
   decode: deserializeApplicationData
 }

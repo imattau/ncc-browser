@@ -22,6 +22,7 @@ export interface NccManifest {
     | 'nostr:nip04'
     | 'nostr:nip44'
     | 'blossom:group-image'
+    | 'contacts:read'
     | (string & {})
   >
   host_permissions?: string[]
@@ -186,6 +187,21 @@ export interface EventTemplate {
   content?: string
 }
 
+export interface NccContactProfile {
+  pubkey: string
+  name?: string
+  displayName?: string
+  picture?: string
+  nip05?: string
+}
+
+export interface NccContactsState {
+  owner: string | null
+  list: { owner: string; contacts: NccContactProfile[]; contactsFetchedAt: number; profilesFetchedAt: number; stale: boolean; eventCreatedAt?: number } | null
+  refreshing: boolean
+  error?: string
+}
+
 export interface NccApi {
   version: number
   nostr: {
@@ -202,6 +218,10 @@ export interface NccApi {
       encrypt(peer: string, plaintext: string): Promise<string>
       decrypt(peer: string, ciphertext: string): Promise<string>
     }
+  }
+  contacts: {
+    state(): Promise<NccContactsState>
+    refresh(): Promise<NccContactsState>
   }
   runtime: {
     getURL(path: string): string

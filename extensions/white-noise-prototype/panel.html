@@ -25,10 +25,17 @@
       <div class="section-heading"><span id="chatSectionTitle">Chats</span><button id="toggleArchived" class="text-button">Archived</button><button id="newChat" class="text-button" aria-haspopup="menu" aria-expanded="false">＋ New</button></div>
       <div id="folderBar" class="folder-bar" aria-label="Chat folders"></div>
       <div id="newChatMenu" class="new-chat-menu hidden" role="menu">
+        <button class="menu-item" data-new-action="chat" role="menuitem"><span aria-hidden="true">◉</span><span><strong>New chat</strong><small>Start a private chat with a contact</small></span></button>
         <button class="menu-item" data-new-action="group" role="menuitem"><span aria-hidden="true">＋</span><span><strong>New group</strong><small>Start an encrypted group chat</small></span></button>
         <button class="menu-item" data-new-action="keypackage" role="menuitem"><span aria-hidden="true">↗</span><span><strong>Set up invitations</strong><small>Let others invite you to a group</small></span></button>
       </div>
-      <div id="createGroupForm" class="create-group hidden"><input id="groupName" value="Note to self" aria-label="Group name"><textarea id="groupDescription" rows="2" placeholder="Description (optional)" aria-label="Group description"></textarea><select id="groupRetention" aria-label="Disappearing messages"><option value="0">Messages stay</option><option value="3600">1 hour</option><option value="86400">1 day</option><option value="604800">1 week</option><option value="2419200">4 weeks</option></select><button id="createGroupButton" class="primary">Create group</button></div>
+      <section id="contactsPicker" class="contacts-picker hidden" aria-label="Start a chat">
+        <div class="contacts-picker-heading"><strong>New chat</strong><button id="closeContactsPicker" class="text-button" type="button">Cancel</button></div>
+        <div class="contacts-picker-tools"><input id="contactSearch" type="search" placeholder="Search contacts" aria-label="Search contacts"><button id="refreshContacts" class="secondary" type="button">Refresh</button></div>
+        <div id="contactsList" class="contacts-list" aria-live="polite"></div>
+        <form id="directAddressForm" class="direct-address-form"><input id="directAddress" autocomplete="off" placeholder="Or enter an npub" aria-label="Contact npub"><button class="secondary" type="submit">Start chat</button></form>
+      </section>
+      <div id="createGroupForm" class="create-group hidden"><input id="groupName" value="Note to self" aria-label="Group name"><textarea id="groupDescription" rows="2" placeholder="Description (optional)" aria-label="Group description"></textarea><select id="groupRetention" aria-label="Disappearing messages"><option value="0">Messages stay</option><option value="3600">1 hour</option><option value="86400">1 day</option><option value="604800">1 week</option><option value="2419200">4 weeks</option></select><button id="cancelCreateGroup" class="secondary" type="button">Cancel</button><button id="createGroupButton" class="primary">Create group</button></div>
       <div id="chatList" class="chat-list">
         <div class="empty"><div class="empty-icon">◌</div><strong>Connect to get started</strong><p>Connect your browser account to load your chats.</p><button id="setupButton" class="primary">Open settings</button></div>
       </div>
