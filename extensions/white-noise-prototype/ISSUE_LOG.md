@@ -46,7 +46,7 @@ Use this file to record issues reported during prototype work. Move entries to
 
 ### 1. Cross-device Marmot compatibility
 
-- **Status:** Core text interoperability verified; continuing edge-case and media coverage.
+- **Status:** Core text and media interoperability verified; protocol edge cases remain.
 - **Reported:** 2026-11-28
 - **Observed:** The installed White Noise Android `2026.11.17-dev-debug`
   profile created `NCC_Interop_2026-11-28`, invited the companion, and accepted
@@ -80,27 +80,26 @@ Use this file to record issues reported during prototype work. Move entries to
   the White Noise EU/US relays. The app's kind-446 push payload also appeared as
   raw JSON in chat history; the renderer now filters non-chat application
   messages from the conversation transcript.
-- **Next:** Continue protocol edge-case coverage and finish the encrypted
-  attachment send/receive check.
+- **Next:** Continue protocol edge-case coverage across additional White Noise
+  releases and group-management operations.
+
+## Fixed
 
 ### 3. Drag-resize the companion panel
 
-- **Status:** Implemented; drag gesture runtime check pending.
+- **Status:** Implemented and runtime checked.
 - **Reported:** 2026-11-28
 - **Expected:** Drag the panel's left edge to resize it. Width should not be a
   slider in the settings area.
 - **Change:** Added a keyboard-accessible left-edge resize handle backed by
   `ncc.runtime.setPanelWidth`; the BrowserWindow clamps widths to 280–600 px.
   No width slider is present in companion settings.
-- **Check:** In the running `npm run dev` browser, the panel width changed from
-  380 to 450 px through the API and was restored to 380 px. Pointer drag still
-  needs a direct runtime gesture check.
-- **Next:** Verify pointer drag changes the width and remains keyboard
-  accessible.
+- **Check:** A real pointer drag changed the panel from 380 to 410 px. ArrowLeft
+  changed it to 400 px. Restored the width to 380 px after both checks.
 
 ### 4. Multiple account profiles
 
-- **Status:** Implemented; runtime verification pending
+- **Status:** Implemented and runtime verified
 - **Reported:** 2026-11-28
 - **Expected:** Integrate White Noise's multiple accounts with NCC Browser's
   profile/account model cleanly, including clear account switching and isolated
@@ -111,23 +110,23 @@ Use this file to record issues reported during prototype work. Move entries to
   namespace. It does not request or use the privileged profile-selection API;
   switching remains an NCC Browser action. The Reload profile helper explains
   this when the active profile has not changed.
-- **Check:** Build and typecheck; switch between two disposable NCC profiles,
-  then verify each profile reloads only its own chats after switching and after
-  reopening the companion.
+- **Check:** In the local dev profile, generated a temporary second NCC
+  identity. The companion switched to it and showed zero chats; switching back
+  restored the original profile's 13 chats. Removed the temporary identity.
+  Closed and reopened the panel; the same original account and all 13 chats
+  returned without another signer connection.
 
 ### 6. Search results showed an invite-key action
 
-- **Status:** Implemented; runtime verification pending
+- **Status:** Fixed and runtime checked
 - **Reported:** 2026-11-28
 - **Observed:** After typing a few characters in Search chats, an empty result
   state showed **Create invite key package**, which is unrelated to searching.
 - **Change:** Search misses show a search-specific empty state without a
   connection or invite-key action. See `panel.js` (`renderGroups`).
-- **Check:** Extension build, typecheck, and JavaScript syntax checks pass.
-  Runtime check remains pending: test a matching and non-matching query in the
-  local dev panel.
-
-## Fixed
+- **Check:** In the running dev panel, a non-matching query showed the
+  search-specific empty state and no buttons. A matching query returned the
+  expected chat row.
 
 ### Chat file and media sharing
 
@@ -182,13 +181,23 @@ Use this file to record issues reported during prototype work. Move entries to
   clicking **Connect NCC signer** again.
 - **Change:** After the first successful connection, the companion remembers
   the signer's public key and reconnects on open through NCC's normal approval
-  flow. If the account changes, it asks the user to switch back before loading
-  chats.
+  flow. While open, it follows the active NCC profile and loads that profile's
+  isolated chat state.
 - **Check:** Closed the companion through the toolbar action, reopened it, and
-  confirmed the NCC signer returned to Relay session active and all 12 saved
+  confirmed the NCC signer returned to Relay session active and all 13 saved
   chats loaded without clicking Connect.
 
-## Fixed
+### Companion panel close button was rejected
+
+- **Status:** Fixed and runtime checked
+- **Observed:** The panel's **Close** action was rejected because extension
+  pages have no browser tab in the extension sender record.
+- **Change:** Close requests now require the calling extension page to match
+  that extension's declared side-panel path, then close only that extension's
+  panel.
+- **Check:** Closed the companion with its own close action, reopened it from
+  the toolbar action, and confirmed the current profile and all 13 chats
+  returned without another signer connection.
 
 ### 7. Android key-package decode error was reported as a lifetime failure
 

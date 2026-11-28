@@ -242,8 +242,12 @@ export class ExtensionService {
       }
       case 'ncc.panel.close': {
         if (sender.from !== 'page') throw new Error('Only extension pages can close a browser panel')
-        if (sender.tab?.kind !== 'normal' || sender.incognito) throw new Error('The companion panel is only available in a normal browser window')
-        if (!this.deps.registry.get(extensionId)?.manifest.ncc.side_panel) throw new Error('This extension has no browser side panel')
+        if (sender.incognito) throw new Error('The companion panel is only available in a normal browser window')
+        const sidePanel = this.deps.registry.get(extensionId)?.manifest.ncc.side_panel
+        if (!sidePanel) throw new Error('This extension has no browser side panel')
+        if (sender.extensionPagePath !== `/${sidePanel.replace(/^\/+/, '')}`) {
+          throw new Error('Only the extension side panel can close its browser panel')
+        }
         // Let Electron send the IPC response before destroying the calling page.
         setTimeout(() => this.deps.host.closeExtensionPanel(extensionId), 0)
         return undefined

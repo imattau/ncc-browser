@@ -179,7 +179,8 @@ function senderOf(
       extensionId,
       from: background ? 'background' : 'page',
       tab: null,
-      incognito: false
+      incognito: false,
+      extensionPagePath: url.pathname
     }
   }
 

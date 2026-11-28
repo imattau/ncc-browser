@@ -124,6 +124,7 @@ export interface ExtensionSender {
   from: 'content' | 'page' | 'background'
   tab: ExtensionPage | null
   incognito: boolean
+  extensionPagePath?: string
 }
 
 export const SUPPORTED_PERMISSIONS = new Set([
