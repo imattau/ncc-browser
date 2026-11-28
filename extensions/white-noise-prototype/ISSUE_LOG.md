@@ -58,8 +58,8 @@ Use this file to record issues reported during prototype work. Move entries to
   chat preview; Marmot local history remains cached until the user clears it.
 - **Limit:** Archive, pin, mute preference, unread and ordering are local to
   this NCC profile. Desktop notifications are not implemented, so mute does
-  not currently suppress notifications. Folders, group photo editing and
-  admin step-down remain to do.
+  not currently suppress notifications. Folders and admin step-down remain to
+  do. Group-photo runtime interop is tracked above.
 - **Check:** In the dev browser, archive removed a diagnostic group from the
   active list, it appeared in Archived, and restore returned it to Chats.
   Rename committed to the diagnostic group and restored its original name.
