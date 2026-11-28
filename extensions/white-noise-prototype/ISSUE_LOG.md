@@ -129,8 +129,10 @@ Use this file to record issues reported during prototype work. Move entries to
   NCC profile, it should be returned by `groups.loadAll()` from the companion's
   per-account local group-state store. If that same-profile group is missing,
   investigate the extension profile/storage migration or load errors; creating
-  a fresh KeyPackage will not recover it. Groups present only on another device
-  require linked-device support and cannot be discovered from relay history.
+  a fresh KeyPackage will not recover it. NCC storage now reports corrupt or
+  invalid storage files and leaves them untouched instead of treating them as
+  empty. Groups present only on another device require linked-device support
+  and cannot be discovered from relay history.
 - **Protocol-age distinction:** A stale or incompatible KeyPackage can prevent
   a new invite or Welcome from being accepted, but it does not determine which
   already-stored groups `loadAll()` discovers. Separately, Marmot TS 0.9.0's

@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -51,6 +51,23 @@ describe('ExtensionStorage', () => {
     expect(storage.set('ext', 'session', []).error).toBeTruthy()
     const huge = 'x'.repeat(1024 * 1024 + 1)
     expect(storage.set('ext', 'session', { huge }).error).toContain('quota')
+  })
+
+  it('surfaces corrupt stored data without treating it as empty or overwriting it', () => {
+    const base = root()
+    new ExtensionStorage(base).set('ext', 'local', { saved: true })
+    const path = join(base, 'ext', 'storage-local.json')
+    const original = '{"unfinished":'
+    writeFileSync(path, original)
+    const storage = new ExtensionStorage(base)
+
+    expect(() => storage.get('ext', 'local', null)).toThrow(
+      'storage.local data is corrupt or unreadable; existing data was left untouched'
+    )
+    expect(() => storage.set('ext', 'local', { newValue: true })).toThrow(
+      'storage.local data is corrupt or unreadable; existing data was left untouched'
+    )
+    expect(readFileSync(path, 'utf8')).toBe(original)
   })
 
   it('grants a bounded larger local quota only when explicitly permissioned', () => {

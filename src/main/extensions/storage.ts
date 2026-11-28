@@ -164,19 +164,21 @@ export class ExtensionStorage {
     if (cached) return cached
     const state = emptyState()
     const path = this.pathFor(id, area)
-    try {
-      if (existsSync(path)) {
-        const parsed = JSON.parse(readFileSync(path, 'utf8')) as unknown
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          state.values = parsed as StorageValues
-          for (const [name, value] of Object.entries(state.values)) {
-            const entry = encode(name, value)
-            if (entry) state.encoded.set(name, entry)
-          }
-        }
+    if (existsSync(path)) {
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(readFileSync(path, 'utf8')) as unknown
+      } catch {
+        throw new Error(`storage.${area} data is corrupt or unreadable; existing data was left untouched`)
       }
-    } catch {
-      // A corrupt storage file is better treated as empty than crashing the page.
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error(`storage.${area} data has an invalid format; existing data was left untouched`)
+      }
+      state.values = parsed as StorageValues
+      for (const [name, value] of Object.entries(state.values)) {
+        const entry = encode(name, value)
+        if (entry) state.encoded.set(name, entry)
+      }
     }
     this.cache.set(key, state)
     return state
