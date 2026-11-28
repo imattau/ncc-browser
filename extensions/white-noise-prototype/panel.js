@@ -13,6 +13,7 @@ let connection = null
 let connectionAttempt = false
 let groups = []
 let activeGroup = null
+const observedGroupInstances = new WeakSet()
 let liveConnection = null
 let selectedRelays = defaults.relays
 let groupRefreshTimer = null
@@ -122,11 +123,18 @@ async function refreshGroups() {
   const loaded = await window.MarmotCompanion.listGroups(connection.client)
   groups = await Promise.all(loaded.map(async group => {
     const history = await window.MarmotCompanion.history(group)
-    group.on('changed', () => void refreshGroups())
-    group.history.on('rumor', () => { void refreshGroups(); if (activeGroup?.id === group.snapshot.id) void showMessages(group) })
+    if (!observedGroupInstances.has(group)) {
+      observedGroupInstances.add(group)
+      group.on('changed', () => void refreshGroups())
+      group.history.on('rumor', () => {
+        void refreshGroups()
+        if (activeGroup?.idStr === group.idStr) void showMessages(activeGroup)
+      })
+    }
     const key = `marmot:chat-ui:${connection.pubkey}:${group.idStr}`
     const uiState = (await chrome.storage.local.get(key))[key] || {}
-    return { id: group.snapshot.id, idStr: group.idStr, name: group.snapshot.groupData?.name || 'Encrypted group', memberCount: group.snapshot.members?.length, epoch: String(group.snapshot.epoch ?? '—'), instance: group, last: history[0], archived: Boolean(uiState.archived) }
+    const lastChatMessage = history.find(rumor => rumor.kind === 9)
+    return { id: group.snapshot.id, idStr: group.idStr, name: group.snapshot.groupData?.name || 'Encrypted group', memberCount: group.snapshot.members?.length, epoch: String(group.snapshot.epoch ?? '—'), instance: group, last: lastChatMessage, archived: Boolean(uiState.archived) }
   }))
   renderGroups($('search').value)
 }

@@ -15,10 +15,11 @@ Use this file to record issues reported during prototype work. Move entries to
   that Nostr user, and the client verifies the member disappeared after commit.
 - **Check:** The running dev companion displayed the details for the two-member
   `Interop Primal Ditto` group, including epoch 2, relay list, member rows, and
-  the admin-only remove action. Member removal was not executed. A prior
-  screenshot path could not capture the embedded panel, but its DevTools target
-  confirmed it was open; the earlier pending status was stale.
-- **Next:** Verify member removal on a disposable multi-member test group.
+  the admin-only remove action. On a disposable two-member group, removing the
+  Android member succeeded, advanced the epoch from 1 to 2, and left only the
+  admin in the member snapshot. The disposable group was then deleted.
+- **Next:** Continue Android group-management parity checks as Marmot adds
+  operations.
 
 ### Group and chat management parity
 
@@ -70,6 +71,27 @@ Use this file to record issues reported during prototype work. Move entries to
   and recognizes Marmot `0x800d` as a data-less required component without
   enabling it by default in groups the companion creates. Groups and history
   reload from local extension storage after restart.
+- **Additional interop check:** With White Noise Android online, the companion
+  created `NCC_Online_Invite_2026-11-28` and invited the Android profile. Android
+  received the Welcome, displayed the group preview, and accepted it. Android
+  saw a companion message, and the companion received an Android reply. The
+  companion panel was closed and reopened; the group (2 members, epoch 2) and
+  both reply histories loaded from extension storage. In the earlier
+  offline-temp-profile run, the invite was initially absent from the UI but
+  later appeared as an unread decrypted kind-444 Welcome in that profile's
+  Marmot store. Delayed delivery was confirmed; joining from that delayed
+  Welcome was not tested.
+- **Relay propagation check:** On a separate disposable group, changing the
+  selected relays from Damus/Primal/Ditto to Damus/Ditto updated the group's
+  MLS metadata to exactly those two relays. Restoring the three-relay list
+  propagated the restored list to the group. The local test group was deleted.
+- **Live update fix:** An Android reply updated the chat-list preview but did
+  not render in an already-open conversation. The event listener compared
+  binary group IDs by object identity and was reattached on each group refresh.
+  It now compares stable group IDs and registers listeners once per group
+  instance. A new Android reply rendered in the open conversation without
+  reopening it. Chat previews now select kind-9 chat messages so Marmot kind-447
+  push-control payloads do not appear as message text.
 - **Check:** A fresh framed KeyPackage advertising `0x800d` was acknowledged on
   four relays. Android validated it; after the companion published its inbox
   relay list, Android's group-invite trace ended with `projection=success` and
