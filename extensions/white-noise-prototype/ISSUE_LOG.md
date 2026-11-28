@@ -123,9 +123,8 @@ Use this file to record issues reported during prototype work. Move entries to
 
 ### Android reply reference shows an unresolved event preview
 
-- **Status:** Candidate companion fix implemented; Android confirmation still
-  needed. Quote rendering worked, but Android showed an extra `Event not found`
-  link preview in one check.
+- **Status:** Fixed and cross-device verified on White Noise Android
+  `2026.11.17-dev-debug`.
 - **Observed:** The companion's NIP-C7 reply displayed its quote correctly in
   White Noise Android, plus a separate preview for the `nostr:nevent` reference
   that said the event could not be found. The Android reply in the reverse
@@ -139,10 +138,13 @@ Use this file to record issues reported during prototype work. Move entries to
   still renders a contextual quote from the `q` tag and loaded history.
 - **Check:** A bundled-runtime check confirmed a reply is kind 9, contains the
   reply text, and has one `q` tag with the correct id and author and no public
-  relay hint. The `/tmp/whitenoise.apk` used in the attempted isolated Android
-  run was version `2026.5.22`, not the target `2026.11.17`; the fresh QA AVD
-  also had no network route and was deleted. Verify the q-only reply on an
-  online isolated Android profile before closing this issue.
+  relay hint. On a fresh isolated Android API 37 emulator with White Noise
+  `2026.11.17-dev-debug`, accepted a companion-created group invite, sent an
+  Android message, then replied from the companion. Android displayed the
+  contextual quote `Replying to You: Android test prompt` and the reply text
+  `q-only reply interop check`; it showed no unresolved `Event not found`
+  preview. Both the companion and Android profile used temporary identities
+  and data directories.
 
 ### 1. Cross-device Marmot compatibility
 
