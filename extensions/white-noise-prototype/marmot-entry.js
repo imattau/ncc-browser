@@ -9,6 +9,7 @@ import { planGroupRelayUpdates } from './group-relay-updates.js'
 import { planLegacyAccountMigration } from './legacy-storage-migration.js'
 import { ExtensionStore, restoreStoredValue } from './extension-store.js'
 import { watchGroups } from './group-watch.js'
+import { createReactionRumor, QUICK_REACTIONS, reactionLabel, summarizeReactions } from './message-reactions.js'
 import { MarmotClient, createApplicationMessageIntent, createChatRumor } from '@internet-privacy/marmot-ts'
 import { createInboxRelayListEvent, deserializeApplicationData, encryptedMediaBlossomDefaultV2, getInboxRelays, getMediaAttachments } from '@internet-privacy/marmot-ts/core'
 import { createBlossomMediaTransport, createInviteIntent, downloadMessageMedia, prepareMediaMessage, Proposals } from '@internet-privacy/marmot-ts/client'
@@ -204,6 +205,9 @@ const network = {
 }
 
 const api = {
+  quickReactions: QUICK_REACTIONS,
+  reactionLabel,
+  summarizeReactions,
   async connect(relays, expectedPubkey, fallbackRelays = relays) {
     relayConfig = relays
     // Chromium extension contexts do not expose crypto.randomUUID() on all supported builds.
@@ -468,6 +472,17 @@ const api = {
       tags: [['e', pollId], ...ids.map(id => ['response', id])],
     })
     const group = await client.groups.get(groupId)
+    await client.groups.send(groupId, createApplicationMessageIntent(rumor))
+    await group.history.saveRumor(rumor)
+    return rumor
+  },
+  async react(client, groupId, target, emoji) {
+    if (![9, 1068].includes(target?.kind)) throw new Error('Reactions are available on chat messages and polls.')
+    const group = await client.groups.get(groupId)
+    const existing = await group.history.queryRumors({ limit: 200 })
+    if (!existing.some(rumor => rumor.id === target.id)) throw new Error('This message is no longer in the loaded chat history.')
+    const reaction = createReactionRumor({ pubkey: await client.signer.getPublicKey(), target, emoji })
+    const rumor = createRumor(reaction)
     await client.groups.send(groupId, createApplicationMessageIntent(rumor))
     await group.history.saveRumor(rumor)
     return rumor

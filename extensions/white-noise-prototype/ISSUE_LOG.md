@@ -28,6 +28,25 @@ Use this file to record issues reported during prototype work. Move entries to
   the permission review and again showed private-tab access unchecked. Both
   temporary QA profiles were removed after the checks.
 
+### Message reactions
+
+- **Status:** Kind-7 reaction sending and display implemented; Android
+  cross-client verification remains pending.
+- **Change:** Added a compact per-message reaction picker and reaction-count
+  chips. The companion sends reactions as kind-7 application messages with
+  NIP-25 `e`, `p` and `k` references, and aggregates the latest local history
+  by emoji and reacting account.
+- **Local check (2026-11-29):** In a disposable `npm run dev` profile, opened a
+  temporary Note to self chat, chose ❤️ from the picker, and confirmed the
+  bubble updated to `❤️ 1` with “Reaction sent.” The extension panel reported
+  no renderer errors; it logged only the existing expected fallback warning
+  because the temporary identity has no published Blossom server list.
+  Focused runtime tests, typecheck, lint, the extension bundle build, and
+  `.nccx` validation passed.
+- **Next:** Verify received reactions and replies between the companion and a
+  supported White Noise build, then implement reaction removal if the protocol
+  behavior interoperates.
+
 ### Group creation cannot be cancelled
 
 - **Status:** Fixed and runtime checked.

@@ -741,9 +741,75 @@ async function renderMessages(group) {
         observer.observe(row)
       }
     }
+    renderReactions(row, rumor, history, group)
     list.append(row)
   }
   list.scrollTop = list.scrollHeight
+}
+
+function renderReactions(row, target, history, group) {
+  const reactions = window.MarmotCompanion.summarizeReactions(history, target.id, connection.pubkey)
+  const area = document.createElement('div')
+  area.className = 'message-reactions'
+  if (reactions.length) {
+    const summary = document.createElement('div')
+    summary.className = 'reaction-summary'
+    for (const reaction of reactions) {
+      const chip = document.createElement('button')
+      chip.type = 'button'
+      chip.className = `reaction-chip${reaction.reacted ? ' reacted' : ''}`
+      chip.textContent = `${reaction.emoji} ${reaction.count}`
+      chip.title = reaction.reacted ? 'You reacted with this' : `React with ${window.MarmotCompanion.reactionLabel(reaction.emoji)}`
+      chip.setAttribute('aria-label', `${window.MarmotCompanion.reactionLabel(reaction.emoji)}, ${reaction.count}${reaction.reacted ? ', including you' : ''}`)
+      chip.disabled = reaction.reacted
+      if (!reaction.reacted) chip.addEventListener('click', () => sendReaction(target, reaction.emoji, group, chip))
+      summary.append(chip)
+    }
+    area.append(summary)
+  }
+
+  const controls = document.createElement('div')
+  controls.className = 'reaction-controls'
+  const open = document.createElement('button')
+  open.type = 'button'
+  open.className = 'message-action reaction-open'
+  open.textContent = 'React'
+  open.setAttribute('aria-expanded', 'false')
+  const picker = document.createElement('div')
+  picker.className = 'reaction-picker hidden'
+  picker.setAttribute('aria-label', 'Choose a reaction')
+  const ownReactions = new Set(reactions.filter(reaction => reaction.reacted).map(reaction => reaction.emoji))
+  for (const emoji of window.MarmotCompanion.quickReactions) {
+    const choice = document.createElement('button')
+    choice.type = 'button'
+    choice.className = 'reaction-choice'
+    choice.textContent = emoji
+    choice.title = `React with ${window.MarmotCompanion.reactionLabel(emoji)}`
+    choice.setAttribute('aria-label', choice.title)
+    choice.disabled = ownReactions.has(emoji)
+    if (!choice.disabled) choice.addEventListener('click', () => sendReaction(target, emoji, group, choice))
+    picker.append(choice)
+  }
+  open.addEventListener('click', () => {
+    const expanded = open.getAttribute('aria-expanded') === 'true'
+    open.setAttribute('aria-expanded', String(!expanded))
+    picker.classList.toggle('hidden', expanded)
+  })
+  controls.append(open, picker)
+  area.append(controls)
+  row.append(area)
+}
+
+async function sendReaction(target, emoji, group, control) {
+  control.disabled = true
+  try {
+    await window.MarmotCompanion.react(connection.client, group.id, target, emoji)
+    await showMessages()
+    message('Reaction sent.')
+  } catch (error) {
+    control.disabled = false
+    message(error?.message || String(error), true)
+  }
 }
 
 function retainedHistory(group, history) {

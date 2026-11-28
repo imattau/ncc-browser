@@ -20,6 +20,9 @@ import { planGroupRelayUpdates } from '../extensions/white-noise-prototype/group
 // @ts-expect-error The extension is plain JavaScript without type declarations.
 import { watchGroups } from '../extensions/white-noise-prototype/group-watch.js'
 
+// @ts-expect-error The extension is plain JavaScript without type declarations.
+import { createReactionRumor, reactionContent, summarizeReactions } from '../extensions/white-noise-prototype/message-reactions.js'
+
 beforeEach(() => vi.useFakeTimers({ now: 1_800_000_000_000 }))
 afterEach(() => vi.useRealTimers())
 
@@ -64,6 +67,38 @@ describe('Marmot group watcher', () => {
     stop()
     await Promise.resolve()
     expect(ignoredError).not.toHaveBeenCalled()
+  })
+})
+
+describe('Marmot chat reactions', () => {
+  it('aggregates reactions for the target message and deduplicates each author', () => {
+    const history = [
+      { id: 'r1', kind: 7, pubkey: 'alice', content: '❤️', tags: [['e', 'message-1']] },
+      { id: 'r2', kind: 7, pubkey: 'alice', content: '❤️', tags: [['e', 'message-1']] },
+      { id: 'r3', kind: 7, pubkey: 'bob', content: '+', tags: [['e', 'message-1']] },
+      { id: 'r4', kind: 7, pubkey: 'carol', content: '😂', tags: [['e', 'message-2']] },
+      { id: 'r5', kind: 9, pubkey: 'bob', content: 'not a reaction', tags: [['e', 'message-1']] }
+    ]
+    expect(summarizeReactions(history, 'message-1', 'alice')).toEqual([
+      { emoji: '❤️', count: 1, reacted: true },
+      { emoji: '👍', count: 1, reacted: false }
+    ])
+    expect(reactionContent('')).toBe('👍')
+    expect(reactionContent('-')).toBe('👎')
+  })
+
+  it('builds a kind-7 reaction with target author and kind references', () => {
+    const reaction = createReactionRumor({
+      pubkey: 'a'.repeat(64),
+      target: { id: 'b'.repeat(64), pubkey: 'c'.repeat(64), kind: 9 },
+      emoji: '🎉',
+      createdAt: 123
+    })
+    expect(reaction).toMatchObject({
+      pubkey: 'a'.repeat(64), created_at: 123, kind: 7, content: '🎉',
+      tags: [['e', 'b'.repeat(64), '', 'c'.repeat(64)], ['p', 'c'.repeat(64)], ['k', '9']]
+    })
+    expect(() => createReactionRumor({ pubkey: 'a', target: {}, emoji: '🎉' })).toThrow(/invalid/i)
   })
 })
 
