@@ -111,6 +111,32 @@ Use this file to record issues reported during prototype work. Move entries to
 
 ## Fixed
 
+### Android in-chat contact cards and polls
+
+- **Status:** Implemented and cross-device checked.
+- **Compared:** White Noise Android's composer menu shares contact cards and
+  creates single- or multiple-choice polls. Marmot accepts arbitrary serialized
+  application rumors, so these app-level Nostr events can travel inside the MLS
+  group without a Marmot library patch.
+- **Change:** Added Share contact to the in-composer plus menu. It sends the
+  Android-compatible kind-9 `nostr:npub…` card with its matching `p` tag and
+  renders received cards with a Copy npub action. Added poll creation for 2–10
+  distinct options, single/multiple choice, kind-1068 display and kind-1018
+  voting. Poll cards tally each member's latest vote, support changing a single
+  choice, and allow multiple-choice toggling while keeping at least one choice.
+- **Check:** A contact shared from Android appeared in the companion with its
+  npub; a companion-shared contact appeared in Android as a profile card with
+  **View profile**. An Android-created kind-1068 poll rendered in the companion.
+  A companion-created poll rendered in Android; voting in Android updated the
+  companion's live tally to one vote. After restarting the dev browser, the
+  contact cards, poll and vote tally loaded again from saved history. The
+  companion hides vote events as standalone chat messages and folds them into
+  the poll results.
+- **Limit:** Device contacts, camera, location, stickers, dictation and
+  translation depend on Android-only services and are not exposed by this
+  desktop extension API. Contact sharing currently accepts an npub or hex
+  public key.
+
 ### 3. Drag-resize the companion panel
 
 - **Status:** Implemented and runtime checked.

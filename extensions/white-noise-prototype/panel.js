@@ -23,6 +23,7 @@ let renderedMediaUrls = []
 let inviteRefreshTimer = null
 let signerWatchTimer = null
 let pendingInvites = []
+let contactAction = 'invite'
 
 function setStatus(text, connected = false) {
   $('statusText').textContent = text
@@ -36,6 +37,37 @@ function message(text, error = false) {
 
 function showSettings() { mainView.classList.add('hidden'); settingsView.classList.remove('hidden') }
 function showMain() { settingsView.classList.add('hidden'); mainView.classList.remove('hidden') }
+
+function addPollOption(value = '') {
+  const options = $('pollOptions')
+  if (options.children.length >= 10) return
+  const row = document.createElement('div')
+  row.className = 'poll-option-row'
+  const input = document.createElement('input')
+  input.type = 'text'
+  input.required = true
+  input.maxLength = 100
+  input.placeholder = `Option ${options.children.length + 1}`
+  input.value = value
+  input.setAttribute('aria-label', `Poll option ${options.children.length + 1}`)
+  const remove = document.createElement('button')
+  remove.type = 'button'
+  remove.className = 'icon-button poll-remove-option'
+  remove.setAttribute('aria-label', 'Remove poll option')
+  remove.textContent = '×'
+  remove.addEventListener('click', () => {
+    if (options.children.length <= 2) return
+    row.remove()
+    for (const [index, field] of [...options.querySelectorAll('input')].entries()) {
+      field.placeholder = `Option ${index + 1}`
+      field.setAttribute('aria-label', `Poll option ${index + 1}`)
+    }
+    $('addPollOption').disabled = options.children.length >= 10
+  })
+  row.append(input, remove)
+  options.append(row)
+  $('addPollOption').disabled = options.children.length >= 10
+}
 
 async function load() {
   const saved = await chrome.storage.local.get({ ...defaults, relaysConfigured: false })
@@ -133,8 +165,9 @@ async function refreshGroups() {
     }
     const key = `marmot:chat-ui:${connection.pubkey}:${group.idStr}`
     const uiState = (await chrome.storage.local.get(key))[key] || {}
-    const lastChatMessage = history.find(rumor => rumor.kind === 9)
-    return { id: group.snapshot.id, idStr: group.idStr, name: group.snapshot.groupData?.name || 'Encrypted group', memberCount: group.snapshot.members?.length, epoch: String(group.snapshot.epoch ?? '—'), instance: group, last: lastChatMessage, archived: Boolean(uiState.archived) }
+    const lastChatMessage = history.find(rumor => rumor.kind === 9 || rumor.kind === 1068)
+    const preview = lastChatMessage?.kind === 1068 ? `Poll: ${lastChatMessage.content}` : lastChatMessage?.content.startsWith('nostr:') ? 'Shared a contact' : lastChatMessage?.content
+    return { id: group.snapshot.id, idStr: group.idStr, name: group.snapshot.groupData?.name || 'Encrypted group', memberCount: group.snapshot.members?.length, epoch: String(group.snapshot.epoch ?? '—'), instance: group, last: lastChatMessage ? { ...lastChatMessage, content: preview } : null, archived: Boolean(uiState.archived) }
   }))
   renderGroups($('search').value)
 }
@@ -290,12 +323,13 @@ async function publishKeyPackage() {
 }
 
 async function showMessages(group) {
-  const history = (await window.MarmotCompanion.history(group.instance)).filter(rumor => rumor.kind === 9)
+  const history = await window.MarmotCompanion.history(group.instance)
+  const visibleHistory = history.filter(rumor => rumor.kind === 9 || rumor.kind === 1068)
   const list = $('messageList')
   for (const url of renderedMediaUrls) URL.revokeObjectURL(url)
   renderedMediaUrls = []
   const query = $('messageSearch').value.trim().toLowerCase()
-  const matches = history.filter(rumor => !query || rumor.content.toLowerCase().includes(query) || window.MarmotCompanion.mediaAttachments(rumor).some(item => item.filename.toLowerCase().includes(query)))
+  const matches = visibleHistory.filter(rumor => !query || rumor.content.toLowerCase().includes(query) || (rumor.tags || []).some(tag => tag[0] === 'option' && String(tag[2] || '').toLowerCase().includes(query)) || window.MarmotCompanion.mediaAttachments(rumor).some(item => item.filename.toLowerCase().includes(query)))
   list.replaceChildren()
   if (!matches.length) {
     const empty = document.createElement('p')
@@ -307,8 +341,19 @@ async function showMessages(group) {
   for (const rumor of [...matches].reverse()) {
     const row = document.createElement('article')
     row.className = 'message-bubble'
-    row.innerHTML = `<strong>${rumor.pubkey === connection.pubkey ? 'You' : escapeHtml(rumor.pubkey.slice(0, 12) + '…')}</strong><p></p><time>${new Date(rumor.created_at * 1000).toLocaleString()}</time>`
-    row.querySelector('p').textContent = rumor.content
+    const author = document.createElement('strong')
+    author.textContent = rumor.pubkey === connection.pubkey ? 'You' : `${rumor.pubkey.slice(0, 12)}…`
+    row.append(author)
+    if (rumor.kind === 1068) {
+      renderPoll(row, rumor, history, group)
+    } else if (!renderContactCard(row, rumor)) {
+      const content = document.createElement('p')
+      content.textContent = rumor.content
+      row.append(content)
+    }
+    const timestamp = document.createElement('time')
+    timestamp.textContent = new Date(rumor.created_at * 1000).toLocaleString()
+    row.append(timestamp)
     const attachments = window.MarmotCompanion.mediaAttachments(rumor)
     if (attachments.length) {
       const open = document.createElement('button')
@@ -352,6 +397,112 @@ async function showMessages(group) {
     list.append(row)
   }
   list.scrollTop = list.scrollHeight
+}
+
+function renderContactCard(row, rumor) {
+  const npub = rumor.content.match(/^nostr:(npub1[023456789acdefghjklmnpqrstuvwxyz]+)$/i)?.[1]
+  const taggedPubkey = (rumor.tags || []).find(tag => tag[0] === 'p')?.[1]
+  if (!npub || !/^[0-9a-f]{64}$/i.test(taggedPubkey || '') || window.MarmotCompanion.decodeContactNpub(npub) !== taggedPubkey.toLowerCase()) return false
+  const card = document.createElement('div')
+  card.className = 'contact-card'
+  const title = document.createElement('strong')
+  title.textContent = 'Shared contact'
+  const address = document.createElement('code')
+  address.textContent = `${npub.slice(0, 18)}…${npub.slice(-8)}`
+  const copy = document.createElement('button')
+  copy.type = 'button'
+  copy.className = 'secondary contact-copy'
+  copy.textContent = 'Copy npub'
+  copy.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(npub)
+      message('Contact npub copied.')
+    } catch (error) { message(error?.message || 'Could not copy the npub.', true) }
+  })
+  card.append(title, address, copy)
+  row.append(card)
+  return true
+}
+
+function pollOptions(poll) {
+  return (poll.tags || []).filter(tag => tag[0] === 'option' && tag.length >= 3).map(tag => ({ id: String(tag[1]), label: String(tag[2]) }))
+}
+
+function pollVotes(poll, history, options) {
+  const ids = new Set(options.map(option => option.id))
+  const endsAt = Number((poll.tags || []).find(tag => tag[0] === 'endsAt')?.[1])
+  const latestByMember = new Map()
+  const votes = history.filter(rumor => rumor.kind === 1018 && (rumor.tags || []).some(tag => tag[0] === 'e' && tag[1] === poll.id))
+    .filter(rumor => !Number.isFinite(endsAt) || endsAt <= 0 || rumor.created_at <= endsAt)
+    .sort((left, right) => left.created_at - right.created_at || left.id.localeCompare(right.id))
+  for (const vote of votes) {
+    const responses = (vote.tags || []).filter(tag => tag[0] === 'response' && ids.has(String(tag[1]))).map(tag => String(tag[1]))
+    if (responses.length) latestByMember.set(vote.pubkey, { vote, responses: [...new Set(responses)] })
+  }
+  return latestByMember
+}
+
+function renderPoll(row, poll, history, group) {
+  const options = pollOptions(poll)
+  const type = (poll.tags || []).find(tag => tag[0] === 'polltype')?.[1] === 'multiplechoice' ? 'multiplechoice' : 'singlechoice'
+  const heading = document.createElement('p')
+  heading.className = 'poll-question'
+  heading.textContent = poll.content
+  row.append(heading)
+  if (options.length < 2 || options.length > 10) {
+    const invalid = document.createElement('p')
+    invalid.className = 'field-hint'
+    invalid.textContent = 'This poll has an unsupported option list.'
+    row.append(invalid)
+    return
+  }
+  const latestVotes = pollVotes(poll, history, options)
+  const myVote = latestVotes.get(connection.pubkey)?.responses || []
+  const totals = new Map(options.map(option => [option.id, 0]))
+  for (const { responses } of latestVotes.values()) for (const id of responses) totals.set(id, (totals.get(id) || 0) + 1)
+  const choices = document.createElement('div')
+  choices.className = 'poll-choices'
+  for (const option of options) {
+    const choice = document.createElement('button')
+    choice.type = 'button'
+    choice.className = `poll-choice${myVote.includes(option.id) ? ' selected' : ''}`
+    choice.textContent = `${myVote.includes(option.id) ? '✓ ' : ''}${option.label} · ${totals.get(option.id) || 0}`
+    choice.disabled = Boolean((poll.tags || []).find(tag => tag[0] === 'endsAt' && Number(tag[1]) <= Math.floor(Date.now() / 1000)))
+    choice.addEventListener('click', async () => {
+      let next = myVote
+      if (type === 'multiplechoice') {
+        next = myVote.includes(option.id) ? myVote.filter(id => id !== option.id) : [...myVote, option.id]
+        if (!next.length) { message('Keep at least one option selected.', true); return }
+      } else if (myVote.length === 1 && myVote[0] === option.id) {
+        return
+      } else {
+        next = [option.id]
+      }
+      choice.disabled = true
+      try {
+        await window.MarmotCompanion.votePoll(connection.client, group.id, poll.id, next)
+        await showMessages(group)
+        message('Vote sent through MLS.')
+      } catch (error) { message(error?.message || String(error), true) }
+      finally { choice.disabled = false }
+    })
+    choices.append(choice)
+  }
+  const summary = document.createElement('small')
+  summary.className = 'poll-summary'
+  summary.textContent = `${latestVotes.size} ${latestVotes.size === 1 ? 'vote' : 'votes'} · ${type === 'singlechoice' ? 'Single choice' : 'Multiple choice'} · Votes are visible to group members`
+  const viewVotes = document.createElement('details')
+  viewVotes.className = 'poll-voters'
+  const viewTitle = document.createElement('summary')
+  viewTitle.textContent = 'View votes'
+  viewVotes.append(viewTitle)
+  for (const option of options) {
+    const voters = [...latestVotes.entries()].filter(([, entry]) => entry.responses.includes(option.id)).map(([pubkey]) => pubkey === connection.pubkey ? 'You' : `${pubkey.slice(0, 12)}…`)
+    const line = document.createElement('p')
+    line.textContent = `${option.label}: ${voters.length ? voters.join(', ') : 'No votes'}`
+    viewVotes.append(line)
+  }
+  row.append(choices, summary, viewVotes)
 }
 
 $('messageSearch').addEventListener('input', () => {
@@ -673,6 +824,18 @@ $('plusButton').addEventListener('click', () => {
 $('inviteContactButton').addEventListener('click', () => {
   $('composerMenu').classList.add('hidden')
   $('plusButton').setAttribute('aria-expanded', 'false')
+  contactAction = 'invite'
+  $('contactAddressLabel').textContent = 'Contact public key'
+  $('inviteForm').querySelector('button[type="submit"]').textContent = 'Invite'
+  $('inviteForm').classList.remove('hidden')
+  $('contactAddress').focus()
+})
+$('shareContactButton').addEventListener('click', () => {
+  $('composerMenu').classList.add('hidden')
+  $('plusButton').setAttribute('aria-expanded', 'false')
+  contactAction = 'share'
+  $('contactAddressLabel').textContent = 'Contact to share'
+  $('inviteForm').querySelector('button[type="submit"]').textContent = 'Share contact'
   $('inviteForm').classList.remove('hidden')
   $('contactAddress').focus()
 })
@@ -692,16 +855,53 @@ $('composer').addEventListener('paste', event => {
   addAttachments(files)
 })
 $('cancelInvite').addEventListener('click', () => $('inviteForm').classList.add('hidden'))
+$('createPollButton').addEventListener('click', () => {
+  $('composerMenu').classList.add('hidden')
+  $('plusButton').setAttribute('aria-expanded', 'false')
+  $('pollForm').reset()
+  $('pollOptions').replaceChildren()
+  addPollOption('Option 1')
+  addPollOption('Option 2')
+  $('pollDialog').classList.remove('hidden')
+  $('pollQuestion').focus()
+})
+$('addPollOption').addEventListener('click', () => addPollOption())
+$('cancelPoll').addEventListener('click', () => $('pollDialog').classList.add('hidden'))
+$('pollForm').addEventListener('submit', async event => {
+  event.preventDefault()
+  if (!connection || !activeGroup) { message('Open a group and connect the NCC signer first.', true); return }
+  const button = $('pollForm').querySelector('button[type="submit"]')
+  const options = [...$('pollOptions').querySelectorAll('input')].map(input => input.value)
+  button.disabled = true
+  try {
+    await window.MarmotCompanion.createPoll(connection.client, activeGroup.id, $('pollQuestion').value, options, $('pollType').value)
+    $('pollDialog').classList.add('hidden')
+    await showMessages(activeGroup)
+    message('Poll posted through MLS.')
+  } catch (error) { message(error?.message || String(error), true) }
+  finally { button.disabled = false }
+})
 $('inviteForm').addEventListener('submit', async event => {
   event.preventDefault()
   const button = $('inviteForm').querySelector('button[type="submit"]')
   if (!connection || !activeGroup) return
   button.disabled = true
   try {
-    message('Looking up the contact key package and sending an encrypted group invite…')
-    const outcome = await window.MarmotCompanion.inviteContact(connection.client, activeGroup.id, $('contactAddress').value, connection.relays)
+    let outcome
+    if (contactAction === 'share') {
+      message('Sharing the contact card through MLS…')
+      outcome = await window.MarmotCompanion.shareContact(connection.client, activeGroup.id, $('contactAddress').value)
+    } else {
+      message('Looking up the contact key package and sending an encrypted group invite…')
+      outcome = await window.MarmotCompanion.inviteContact(connection.client, activeGroup.id, $('contactAddress').value, connection.relays)
+    }
     $('inviteForm').classList.add('hidden')
     $('contactAddress').value = ''
+    if (contactAction === 'share') {
+      await showMessages(activeGroup)
+      message('Contact card sent through MLS.')
+      return
+    }
     const delivery = outcome?.kind === 'attempted' ? outcome.outcomes[0] : null
     if (delivery?.kind === 'succeeded') message('An inbox relay accepted the invite.')
     else message(delivery?.error || 'Invite delivery could not be confirmed.', true)

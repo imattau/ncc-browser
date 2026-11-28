@@ -52,13 +52,26 @@
       <div class="composer-wrap">
         <div id="composerMenu" class="composer-menu hidden" role="menu">
           <button id="inviteContactButton" class="menu-item" role="menuitem"><span>＋</span><span><strong>Add contact</strong><small>Invite by npub or public key</small></span></button>
+          <button id="shareContactButton" class="menu-item" role="menuitem"><span>◉</span><span><strong>Share contact</strong><small>Send a public npub card</small></span></button>
           <button id="addAttachmentButton" class="menu-item" role="menuitem"><span>▧</span><span><strong>Photo or file</strong><small>Encrypted before upload</small></span></button>
+          <button id="createPollButton" class="menu-item" role="menuitem"><span>☷</span><span><strong>Create poll</strong><small>Single or multiple choice</small></span></button>
         </div>
         <input id="attachmentInput" type="file" multiple hidden>
         <div id="attachmentTray" class="attachment-tray hidden" aria-live="polite"></div>
         <div class="composer"><div class="composer-field"><button id="plusButton" class="plus-button" aria-label="More chat actions" aria-expanded="false" title="More chat actions">＋</button><textarea id="composer" rows="1" placeholder="Message"></textarea><button id="sendButton" class="send-button" aria-label="Send message" title="Send message">↑</button></div></div>
       </div>
-      <form id="inviteForm" class="invite-form hidden"><label for="contactAddress">Contact public key</label><input id="contactAddress" autocomplete="off" placeholder="npub1… or hex public key"><div class="invite-actions"><button type="button" id="cancelInvite" class="secondary">Cancel</button><button class="primary" type="submit">Invite</button></div></form>
+      <form id="inviteForm" class="invite-form hidden"><label for="contactAddress" id="contactAddressLabel">Contact public key</label><input id="contactAddress" autocomplete="off" placeholder="npub1… or hex public key"><div class="invite-actions"><button type="button" id="cancelInvite" class="secondary">Cancel</button><button class="primary" type="submit">Invite</button></div></form>
+      <div id="pollDialog" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="pollDialogTitle">
+        <form id="pollForm" class="modal-card poll-form">
+          <h2 id="pollDialogTitle">Create poll</h2>
+          <label for="pollQuestion">Question</label><input id="pollQuestion" required maxlength="500" autocomplete="off">
+          <label for="pollType">Voting</label><select id="pollType"><option value="singlechoice">Single choice</option><option value="multiplechoice">Multiple choice</option></select>
+          <div id="pollOptions" class="poll-options"></div>
+          <button id="addPollOption" type="button" class="secondary">＋ Add option</button>
+          <p class="field-hint">Polls are visible to group members. Votes are not anonymous.</p>
+          <div class="invite-actions"><button id="cancelPoll" type="button" class="secondary">Cancel</button><button class="primary" type="submit">Post poll</button></div>
+        </form>
+      </div>
     </section>
     <section id="settingsView" class="hidden">
       <div class="view-heading"><button id="backButton" class="icon-button" aria-label="Back">←</button><h1>Messenger setup</h1></div>

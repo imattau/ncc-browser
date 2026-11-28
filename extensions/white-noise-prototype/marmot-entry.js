@@ -2,7 +2,7 @@ import { MarmotClient, createApplicationMessageIntent, createChatRumor } from '@
 import { makeKeyValueRumorHistoryFactory } from '@internet-privacy/marmot-ts/extra'
 import { createInboxRelayListEvent, deserializeApplicationData, encryptedMediaBlossomDefaultV2, getInboxRelays, getMediaAttachments } from '@internet-privacy/marmot-ts/core'
 import { createBlossomMediaTransport, createInviteIntent, downloadMessageMedia, prepareMediaMessage, Proposals } from '@internet-privacy/marmot-ts/client'
-import { nip19, verifyEvent } from 'nostr-tools'
+import { getEventHash, nip19, verifyEvent } from 'nostr-tools'
 
 class ExtensionStore {
   constructor(prefix) { this.prefix = `marmot:${prefix}:` }
@@ -360,6 +360,68 @@ const api = {
   leaveGroup(client, groupId) { return client.groups.leave(groupId) },
   async listGroups(client) { return client.groups.loadAll() },
   async history(group) { return group.history.queryRumors({ limit: 200 }) },
+  decodeContactNpub(value) {
+    try {
+      const decoded = nip19.decode(value)
+      return decoded.type === 'npub' ? decoded.data.toLowerCase() : null
+    } catch { return null }
+  },
+  async shareContact(client, groupId, input) {
+    const address = input.trim()
+    let pubkey = address
+    if (address.startsWith('npub1')) {
+      const decoded = nip19.decode(address)
+      if (decoded.type !== 'npub') throw new Error('Enter a public npub address.')
+      pubkey = decoded.data
+    }
+    if (!/^[0-9a-f]{64}$/i.test(pubkey)) throw new Error('Enter a valid npub or 64-character public key.')
+    pubkey = pubkey.toLowerCase()
+    const rumor = createRumor({
+      pubkey: await client.signer.getPublicKey(),
+      kind: 9,
+      content: `nostr:${nip19.npubEncode(pubkey)}`,
+      tags: [['p', pubkey]],
+    })
+    const group = await client.groups.get(groupId)
+    await client.groups.send(groupId, createApplicationMessageIntent(rumor))
+    await group.history.saveRumor(rumor)
+    return rumor
+  },
+  async createPoll(client, groupId, question, options, pollType) {
+    const normalizedQuestion = question.trim()
+    if (!normalizedQuestion) throw new Error('Enter a poll question.')
+    const normalizedOptions = options.map(option => option.trim())
+    if (normalizedOptions.length < 2 || normalizedOptions.length > 10 || normalizedOptions.some(option => !option)) {
+      throw new Error('A poll needs between 2 and 10 non-empty options.')
+    }
+    if (new Set(normalizedOptions.map(option => option.toLocaleLowerCase())).size !== normalizedOptions.length) {
+      throw new Error('Poll options must be different.')
+    }
+    const rumor = createRumor({
+      pubkey: await client.signer.getPublicKey(),
+      kind: 1068,
+      content: normalizedQuestion,
+      tags: [...normalizedOptions.map((option, index) => ['option', String(index), option]), ['polltype', pollType === 'multiplechoice' ? 'multiplechoice' : 'singlechoice']],
+    })
+    const group = await client.groups.get(groupId)
+    await client.groups.send(groupId, createApplicationMessageIntent(rumor))
+    await group.history.saveRumor(rumor)
+    return rumor
+  },
+  async votePoll(client, groupId, pollId, optionIds) {
+    const ids = [...new Set(optionIds.map(String))]
+    if (!ids.length) throw new Error('Select at least one poll option.')
+    const rumor = createRumor({
+      pubkey: await client.signer.getPublicKey(),
+      kind: 1018,
+      content: '',
+      tags: [['e', pollId], ...ids.map(id => ['response', id])],
+    })
+    const group = await client.groups.get(groupId)
+    await client.groups.send(groupId, createApplicationMessageIntent(rumor))
+    await group.history.saveRumor(rumor)
+    return rumor
+  },
   async send(client, groupId, text) {
     const pubkey = await client.signer.getPublicKey()
     const rumor = createChatRumor({ pubkey, content: text })
@@ -463,4 +525,10 @@ async function migrateLegacyAccountData(pubkey, accountPrefix) {
   if (Object.keys(migrated).length) await chrome.storage.local.set(migrated)
   await chrome.storage.local.set({ [marker]: true })
 }
+function createRumor({ pubkey, kind, content, tags }) {
+  const rumor = { id: '', pubkey, created_at: Math.floor(Date.now() / 1000), kind, tags, content }
+  rumor.id = getEventHash(rumor)
+  return rumor
+}
+
 window.MarmotCompanion = api
