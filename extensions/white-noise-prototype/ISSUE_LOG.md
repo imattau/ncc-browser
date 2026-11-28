@@ -87,7 +87,9 @@ Use this file to record issues reported during prototype work. Move entries to
   received leave acknowledgement, and removed the group from the local list.
   In the isolated temporary profile, created “QA Folder,” assigned the
   disposable QA chat, filtered to the folder, restarted the dev browser, then
-  selected the folder again and confirmed its chat still appeared.
+  selected the folder again and confirmed its chat still appeared. Renamed the
+  folder and confirmed the assignment stayed intact; deleting it returned the
+  chat to All without deleting the chat.
 - **Next:** Continue testing remaining companion features and cross-device
   interoperability.
 

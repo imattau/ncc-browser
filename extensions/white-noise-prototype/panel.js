@@ -225,10 +225,10 @@ function renderFolderManager() {
     rename.className = 'secondary'
     rename.textContent = 'Rename'
     rename.addEventListener('click', async () => {
-      const next = prompt('Rename folder', folder.name)?.trim()
+      const next = prompt('Rename folder', folder.name)?.trim().slice(0, 40)
       if (!next || next === folder.name) return
       if (folders.some(item => item.id !== folder.id && item.name.toLowerCase() === next.toLowerCase())) { message('A folder with that name already exists.', true); return }
-      folder.name = next.slice(0, 40)
+      folder.name = next
       await saveFolders()
       renderFolderManager()
       renderGroups($('search').value)
@@ -277,7 +277,10 @@ function escapeHtml(value) {
 async function refreshGroups() {
   if (!connection) return
   const foldersKey = folderStorageKey()
-  folders = (await chrome.storage.local.get(foldersKey))[foldersKey] || []
+  const storedFolders = (await chrome.storage.local.get(foldersKey))[foldersKey]
+  folders = Array.isArray(storedFolders)
+    ? storedFolders.filter(folder => folder && typeof folder.id === 'string' && typeof folder.name === 'string' && folder.name.trim()).slice(0, 100)
+    : []
   if (selectedFolderId !== 'all' && !folders.some(folder => folder.id === selectedFolderId)) selectedFolderId = 'all'
   const loaded = await window.MarmotCompanion.listGroups(connection.client)
   groups = await Promise.all(loaded.map(async group => {
