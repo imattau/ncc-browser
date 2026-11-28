@@ -297,6 +297,10 @@ Use this file to record issues reported during prototype work. Move entries to
   and decrypt before display/save. A durable per-account Marmot `rewindStore`
   retains authenticated source epochs across restarts. Limits are 25 MB per
   file, 10 files and 100 MB per message.
+  Chat uploads now attempt every configured Blossom endpoint and attach all
+  successful locators to the same encrypted rumor; downloads try each locator
+  and stop at the first copy that decrypts. If one upload host fails, the
+  remaining successful copies are still used.
 - **Clipboard check:** Pasted an image file through the composer event path; the
   default paste was prevented and the file appeared in the attachment tray
   without being sent.
@@ -310,7 +314,12 @@ Use this file to record issues reported during prototype work. Move entries to
   `blossom.ditto.pub` after the first advertised endpoint was unreachable. One
   older test attachment received before rewind persistence was enabled remains
   undecryptable in this disposable profile; new incoming attachments persist
-  correctly.
+  correctly. A mocked runtime check configured three upload endpoints, forced
+  the second to fail, verified both successful locators were serialized into
+  the rumor, then forced the first download copy to fail decryption and verified
+  the second copy decrypted successfully. Live multi-host chat-upload
+  redundancy remains to be checked against two Blossom hosts that both accept
+  the encrypted payload.
 
 ### 5. Main-process exception when closing the browser
 
