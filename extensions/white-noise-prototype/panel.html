@@ -23,6 +23,7 @@
       <div class="search"><span>⌕</span><input id="search" placeholder="Search chats" autocomplete="off"><kbd>⌘ K</kbd></div>
       <section id="incomingInvites" class="incoming-invites hidden" aria-live="polite"></section>
       <div class="section-heading"><span id="chatSectionTitle">CHATS</span><button id="toggleArchived" class="text-button">Archived</button><button id="newChat" class="text-button">＋ New</button></div>
+      <div id="folderBar" class="folder-bar" aria-label="Chat folders"></div>
       <div id="newChatMenu" class="new-chat-menu hidden" role="menu"><button data-new-action="group" role="menuitem">Create group</button><button data-new-action="keypackage" role="menuitem">Publish invite key</button></div>
       <div id="createGroupForm" class="create-group hidden"><input id="groupName" value="Note to self" aria-label="Group name"><textarea id="groupDescription" rows="2" placeholder="Description (optional)" aria-label="Group description"></textarea><select id="groupRetention" aria-label="Disappearing messages"><option value="0">Messages stay</option><option value="3600">1 hour</option><option value="86400">1 day</option><option value="604800">1 week</option><option value="2419200">4 weeks</option></select><button id="createGroupButton" class="primary">Create</button></div>
       <div id="chatList" class="chat-list">
@@ -39,6 +40,7 @@
         <button data-group-action="pin" role="menuitem">Pin chat</button>
         <button data-group-action="mute" role="menuitem">Mute notifications</button>
         <button data-group-action="unread" role="menuitem">Mark as unread</button>
+        <button data-group-action="folder" role="menuitem">Move to folder</button>
         <button data-group-action="move-up" role="menuitem">Move up</button>
         <button data-group-action="move-down" role="menuitem">Move down</button>
         <button data-group-action="archive" role="menuitem">Archive chat</button>
@@ -125,6 +127,21 @@
           <button type="button" id="cancelAdminHandoff" class="secondary">Cancel</button>
           <button type="submit" class="primary">Transfer and leave</button>
         </div>
+      </form>
+    </div>
+    <div id="folderManagerDialog" class="modal-backdrop hidden">
+      <section class="modal-card" aria-labelledby="folderManagerTitle">
+        <h2 id="folderManagerTitle">Chat folders</h2>
+        <form id="createFolderForm" class="folder-create-form"><input id="newFolderName" maxlength="40" placeholder="Folder name" aria-label="Folder name" required><button class="primary" type="submit">Create</button></form>
+        <div id="folderManagerList" class="folder-manager-list"></div>
+        <div class="invite-actions"><button id="closeFolderManager" class="secondary">Done</button></div>
+      </section>
+    </div>
+    <div id="folderAssignmentDialog" class="modal-backdrop hidden">
+      <form id="folderAssignmentForm" class="modal-card">
+        <h2>Move chat to folder</h2>
+        <label for="folderAssignmentSelect">Folder</label><select id="folderAssignmentSelect"></select>
+        <div class="invite-actions"><button type="button" id="cancelFolderAssignment" class="secondary">Cancel</button><button class="primary" type="submit">Save</button></div>
       </form>
     </div>
     <p id="message" class="message" role="status"></p>

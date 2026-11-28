@@ -1,5 +1,5 @@
 import { app } from 'electron'
-import { join } from 'node:path'
+import { isAbsolute, join, resolve } from 'node:path'
 import { createBrowserStack } from './bootstrap/browser'
 import { createFoundation } from './bootstrap/foundation'
 import {
@@ -28,7 +28,17 @@ app.commandLine.appendSwitch('disable-features', 'FedCm,FedCmIdPRegistration')
 app.setName('Nostr Navigator')
 installDefaultUserAgent()
 // Keep the profile created by earlier NCC Browser builds across the rename.
-app.setPath('userData', join(app.getPath('appData'), 'NCC Browser'))
+// Development/e2e runs can opt into an isolated profile without touching the
+// user's normal NCC Browser data directory.
+const devUserDataDir = !app.isPackaged ? process.env.NCC_DEV_USER_DATA_DIR?.trim() : undefined
+app.setPath(
+  'userData',
+  devUserDataDir
+    ? isAbsolute(devUserDataDir)
+      ? devUserDataDir
+      : resolve(devUserDataDir)
+    : join(app.getPath('appData'), 'NCC Browser')
+)
 
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {

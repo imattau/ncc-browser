@@ -27,23 +27,34 @@ Use this file to record issues reported during prototype work. Move entries to
   securely erase cached or saved copies. Admin handoff before leaving is
   implemented and runtime checked in the group-management section below.
 
-### Group photos are not yet interop-verified
+### Group photo upload server compatibility
 
-- **Status:** UI and Marmot upload/read/clear wiring implemented; runtime check
-  remains open.
+- **Status:** Implemented and runtime checked in an isolated desktop profile;
+  server compatibility remains host-specific.
 - **Change:** Admins can choose or remove a group photo in group settings. The
   companion accepts JPEG, PNG and WebP up to 5 MB, calls Marmot's encrypted
   group-image APIs, uses the account's Blossom server list, and shows available
   photos in the chat list and editor.
-- **Check:** Extension build, JavaScript syntax checks and diff whitespace
-  checks passed. The `npm run dev` process started, but the browser MCP showed a
-  blank renderer and did not expose the companion panel, so upload, relay
-  publication and cross-device image reads were not exercised.
+- **Check:** Added a dedicated `blossom:group-image` permission and a narrow
+  main-process HTTPS bridge that bounds response bytes, rejects redirects, checks
+  upload hashes and signed Blossom authorization, and limits requests to the
+  extension's declared hosts and Marmot's upload/download paths. In an isolated
+  dev user-data profile with a temporary identity, uploaded a tiny PNG through
+  `blossom.ditto.pub`, committed it to the one-member QA group's MLS state, and
+  read it back into the chat-list avatar. The group's MLS epoch advanced from 0
+  to 2 (one media enablement and one photo update). `blossom.primal.net` returned
+  HTTP 415 for Marmot's opaque `application/octet-stream` payload, so the
+  temporary fallback server order now tries Ditto first and Primal second.
+  Typecheck, extension build and `git diff --check` passed.
+- **Safety note:** The prior real-profile run was accidental and is not counted
+  as an approved isolated QA result. Per the user's instruction, no further
+  work has been performed on the real profile or device; current results are
+  exclusively from a temporary identity and user-data directory.
 
 ### Group and chat management parity
 
-- **Status:** Group actions and core chat-list controls implemented; Android
-  parity remains incomplete.
+- **Status:** Group actions and core chat-list controls implemented; local
+  folders now cover the remaining Android chat-list action identified so far.
 - **Compared:** White Noise Android includes local chat actions for archive,
   pin, mute, read state and manual ordering, plus folders and rich group
   settings. Marmot TypeScript supports group metadata updates and leave, while
@@ -54,12 +65,13 @@ Use this file to record issues reported during prototype work. Move entries to
   up/down, local mute preference, and mark unread/read; incoming messages mark
   inactive chats unread and opening a chat clears unread. Added group name,
   description and disappearing-message configuration at creation and from
-  group details. Expired messages are hidden from the companion transcript and
+  group details. Added per-profile chat folders with create, rename, delete,
+  assignment, and folder filtering. Expired messages are hidden from the companion transcript and
   chat preview; Marmot local history remains cached until the user clears it.
 - **Limit:** Archive, pin, mute preference, unread and ordering are local to
   this NCC profile. Desktop notifications are not implemented, so mute does
-  not currently suppress notifications. Folders remain to do. Group-photo
-  runtime interop is tracked above.
+  not currently suppress notifications. Folders are also local to this NCC
+  profile. Group-photo runtime interop is tracked above.
 - **Check:** In the dev browser, archive removed a diagnostic group from the
   active list, it appeared in Archived, and restore returned it to Chats.
   Rename committed to the diagnostic group and restored its original name.
@@ -73,6 +85,9 @@ Use this file to record issues reported during prototype work. Move entries to
   An explicit admin handoff flow was added and verified on the disposable
   NIP42 Result Trace group. It transferred admin rights to the other member,
   received leave acknowledgement, and removed the group from the local list.
+  In the isolated temporary profile, created “QA Folder,” assigned the
+  disposable QA chat, filtered to the folder, restarted the dev browser, then
+  selected the folder again and confirmed its chat still appeared.
 - **Next:** Continue testing remaining companion features and cross-device
   interoperability.
 

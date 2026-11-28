@@ -5,7 +5,7 @@
  */
 
 import { BrowserWindow, Notification, screen } from 'electron'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { verifyEvent, type Event, type EventTemplate } from 'nostr-tools'
 import {
@@ -344,6 +344,9 @@ export class ExtensionService {
       case 'nostr.getPublicKey':
         this.require(manifest, 'nostr:pubkey')
         return this.nostr().getPublicKey(this.caller(record, sender))
+      case 'blossom.groupImageRequest':
+        this.require(manifest, 'blossom:group-image')
+        return this.groupImageRequest(manifest, args[0])
       case 'nostr.signEvent':
         this.require(manifest, 'nostr:sign')
         return this.nostr().signEvent(this.caller(record, sender), args[0])
@@ -508,6 +511,65 @@ export class ExtensionService {
   private require(manifest: ExtensionManifest, permission: string): void {
     if (!manifest.permissions.includes(permission)) {
       throw new Error(`The extension does not have the "${permission}" permission`)
+    }
+  }
+
+  private async groupImageRequest(manifest: ExtensionManifest, input: unknown): Promise<unknown> {
+    if (!input || typeof input !== 'object') throw new Error('Invalid group image request')
+    const request = input as Record<string, unknown>
+    const method = request.method
+    if (method !== 'GET' && method !== 'PUT') throw new Error('Unsupported group image method')
+    if (typeof request.url !== 'string' || request.url.length > 2048) throw new Error('Invalid group image URL')
+    const url = new URL(request.url)
+    if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || url.port && url.port !== '443') throw new Error('Only standard HTTPS Blossom URLs are allowed')
+    if (method === 'PUT' ? url.pathname !== '/upload' : !/^\/[a-f0-9]{64}$/.test(url.pathname)) throw new Error('Invalid group image path')
+    if (!matchesAny(manifest.host_permissions, `https://${url.host}/`)) throw new Error(`The extension has no permission for ${url.host}`)
+    const headers = request.headers
+    if (!headers || typeof headers !== 'object' || Array.isArray(headers)) throw new Error('Invalid group image headers')
+    const normalized = new Map(Object.entries(headers as Record<string, unknown>).map(([key, value]) => [key.toLowerCase(), value]))
+    let body: Uint8Array | undefined
+    if (method === 'PUT') {
+      if (normalized.size !== 3 || normalized.get('content-type') !== 'application/octet-stream' || typeof normalized.get('x-sha-256') !== 'string' || !/^[a-f0-9]{64}$/.test(normalized.get('x-sha-256') as string) || typeof normalized.get('authorization') !== 'string' || !(request.body instanceof Uint8Array)) throw new Error('Invalid Blossom upload request')
+      body = request.body
+      if (body.byteLength < 16 || body.byteLength > 5 * 1024 * 1024 || createHash('sha256').update(body).digest('hex') !== normalized.get('x-sha-256')) throw new Error('Blossom image hash or size is invalid')
+      const authorization = normalized.get('authorization') as string
+      if (authorization.length > 8192 || !/^Nostr [A-Za-z0-9_-]+$/.test(authorization)) throw new Error('Invalid Blossom upload authorization')
+      try {
+        const event = JSON.parse(Buffer.from(authorization.slice(6), 'base64url').toString('utf8')) as Event
+        const now = Math.floor(Date.now() / 1000)
+        const expiration = event.tags.find((tag) => tag[0] === 'expiration')?.[1]
+        if (!verifyEvent(event) || event.kind !== 24242 || event.content !== 'Upload Blob' || event.created_at >= now || event.created_at < now - 600 || !expiration || !/^\d+$/.test(expiration) || Number(expiration) <= now || Number(expiration) > now + 600 || JSON.stringify(event.tags) !== JSON.stringify([
+          ['t', 'upload'],
+          ['expiration', expiration],
+          ['x', normalized.get('x-sha-256')],
+          ['server', url.hostname.toLowerCase()]
+        ])) throw new Error()
+      } catch {
+        throw new Error('Invalid Blossom upload authorization')
+      }
+    } else if (Object.keys(headers).length !== 0 || request.body !== undefined) {
+      throw new Error('Invalid Blossom download request')
+    }
+    const maxBytes = method === 'PUT' ? 16 * 1024 : 5 * 1024 * 1024
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 30_000)
+    try {
+      const response = await fetch(url, { method, headers: headers as Record<string, string>, body: body ? Buffer.from(body) : undefined, signal: controller.signal, redirect: 'manual', credentials: 'omit', referrerPolicy: 'no-referrer', cache: 'no-store' })
+      if (response.status >= 300 && response.status < 400 || !response.body) throw new Error('Blossom server returned an invalid response')
+      const reader = response.body.getReader()
+      const byteLimit = response.status >= 200 && response.status < 300 ? maxBytes : Math.min(maxBytes, 1024)
+      const chunks: Uint8Array[] = []
+      let total = 0
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        total += value.byteLength
+        if (total > byteLimit) { await reader.cancel(); throw new Error('Blossom response exceeded the size limit') }
+        chunks.push(value)
+      }
+      return { status: response.status, body: Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))), headers: {} }
+    } finally {
+      clearTimeout(timer)
     }
   }
 

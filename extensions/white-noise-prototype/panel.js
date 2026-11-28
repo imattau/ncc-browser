@@ -26,6 +26,8 @@ let pendingInvites = []
 let contactAction = 'invite'
 let replyTarget = null
 let retentionRefreshTimeout = null
+let folders = []
+let selectedFolderId = 'all'
 
 function setStatus(text, connected = false) {
   $('statusText').textContent = text
@@ -123,16 +125,17 @@ function renderGroups(filter = '') {
   for (const image of list.querySelectorAll('[data-image-url]')) URL.revokeObjectURL(image.dataset.imageUrl)
   list.replaceChildren()
   const query = filter.trim().toLowerCase()
+  renderFolderBar()
   const matching = groups
-    .filter(group => Boolean(group.archived) === showArchived && (group.name || 'Untitled group').toLowerCase().includes(query))
+    .filter(group => Boolean(group.archived) === showArchived && (showArchived || selectedFolderId === 'all' || group.folderId === selectedFolderId) && (group.name || 'Untitled group').toLowerCase().includes(query))
     .sort((left, right) => Number(right.pinned) - Number(left.pinned) || left.order - right.order)
   $('toggleArchived').textContent = showArchived ? 'Chats' : 'Archived'
   $('chatSectionTitle').textContent = showArchived ? 'ARCHIVED' : 'CHATS'
   if (!matching.length) {
     const empty = document.createElement('div')
     empty.className = 'empty'
-    const title = query ? 'No chats match your search' : connection ? 'No conversations yet' : 'Connect to get started'
-    const description = query ? 'Try a different name.' : connection ? 'Create a key package so contacts can invite you to an encrypted group.' : 'Connect the NCC signer to load your Marmot conversations.'
+    const title = query ? 'No chats match your search' : !showArchived && selectedFolderId !== 'all' ? 'This folder is empty' : connection ? 'No conversations yet' : 'Connect to get started'
+    const description = query ? 'Try a different name.' : !showArchived && selectedFolderId !== 'all' ? 'Move a chat here from its chat options.' : connection ? 'Create a key package so contacts can invite you to an encrypted group.' : 'Connect the NCC signer to load your Marmot conversations.'
     empty.innerHTML = `<div class="empty-icon">◌</div><strong>${title}</strong><p>${description}</p>`
     if (!query) {
       const button = document.createElement('button')
@@ -169,6 +172,102 @@ function renderGroups(filter = '') {
   }
 }
 
+function renderFolderBar() {
+  const bar = $('folderBar')
+  bar.replaceChildren()
+  bar.classList.toggle('hidden', showArchived)
+  if (showArchived) return
+  const addFilter = (id, label) => {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = `folder-chip${selectedFolderId === id ? ' active' : ''}`
+    button.textContent = label
+    button.addEventListener('click', () => { selectedFolderId = id; renderGroups($('search').value) })
+    bar.append(button)
+  }
+  addFilter('all', 'All')
+  for (const folder of folders) addFilter(folder.id, folder.name)
+  const manage = document.createElement('button')
+  manage.type = 'button'
+  manage.className = 'folder-manage text-button'
+  manage.textContent = 'Manage'
+  manage.addEventListener('click', () => { renderFolderManager(); $('folderManagerDialog').classList.remove('hidden') })
+  bar.append(manage)
+}
+
+function folderStorageKey() {
+  return connection ? `marmot:folders:${connection.pubkey}` : null
+}
+
+async function saveFolders() {
+  const key = folderStorageKey()
+  if (!key) return
+  await chrome.storage.local.set({ [key]: folders })
+}
+
+function renderFolderManager() {
+  const list = $('folderManagerList')
+  list.replaceChildren()
+  if (!folders.length) {
+    const empty = document.createElement('p')
+    empty.className = 'field-hint'
+    empty.textContent = 'Create folders to organize chats on this profile.'
+    list.append(empty)
+    return
+  }
+  for (const folder of folders) {
+    const row = document.createElement('div')
+    row.className = 'folder-manager-row'
+    const name = document.createElement('strong')
+    name.textContent = folder.name
+    const rename = document.createElement('button')
+    rename.type = 'button'
+    rename.className = 'secondary'
+    rename.textContent = 'Rename'
+    rename.addEventListener('click', async () => {
+      const next = prompt('Rename folder', folder.name)?.trim()
+      if (!next || next === folder.name) return
+      if (folders.some(item => item.id !== folder.id && item.name.toLowerCase() === next.toLowerCase())) { message('A folder with that name already exists.', true); return }
+      folder.name = next.slice(0, 40)
+      await saveFolders()
+      renderFolderManager()
+      renderGroups($('search').value)
+    })
+    const remove = document.createElement('button')
+    remove.type = 'button'
+    remove.className = 'secondary'
+    remove.textContent = 'Delete'
+    remove.addEventListener('click', async () => {
+      if (!confirm(`Delete “${folder.name}”? Chats will stay in All.`)) return
+      folders = folders.filter(item => item.id !== folder.id)
+      await Promise.all(groups.filter(group => group.folderId === folder.id).map(group => setChatUiState(group.idStr, { folderId: null })))
+      if (selectedFolderId === folder.id) selectedFolderId = 'all'
+      await saveFolders()
+      await refreshGroups()
+      renderFolderManager()
+    })
+    row.append(name, rename, remove)
+    list.append(row)
+  }
+}
+
+function openFolderAssignment(group) {
+  const select = $('folderAssignmentSelect')
+  select.replaceChildren()
+  const addOption = (id, label) => {
+    const option = document.createElement('option')
+    option.value = id
+    option.textContent = label
+    select.append(option)
+  }
+  addOption('', 'No folder')
+  for (const folder of folders) addOption(folder.id, folder.name)
+  select.value = group.folderId || ''
+  $('folderAssignmentForm').dataset.groupId = group.idStr
+  $('groupMenu').classList.add('hidden')
+  $('folderAssignmentDialog').classList.remove('hidden')
+}
+
 function escapeHtml(value) {
   const span = document.createElement('span')
   span.textContent = value
@@ -177,6 +276,9 @@ function escapeHtml(value) {
 
 async function refreshGroups() {
   if (!connection) return
+  const foldersKey = folderStorageKey()
+  folders = (await chrome.storage.local.get(foldersKey))[foldersKey] || []
+  if (selectedFolderId !== 'all' && !folders.some(folder => folder.id === selectedFolderId)) selectedFolderId = 'all'
   const loaded = await window.MarmotCompanion.listGroups(connection.client)
   groups = await Promise.all(loaded.map(async group => {
     const history = retainedHistory(group, await window.MarmotCompanion.history(group))
@@ -195,7 +297,7 @@ async function refreshGroups() {
     const uiState = (await chrome.storage.local.get(key))[key] || {}
     const lastChatMessage = history.find(rumor => rumor.kind === 9 || rumor.kind === 1068)
     const preview = lastChatMessage?.kind === 1068 ? `Poll: ${lastChatMessage.content}` : lastChatMessage?.content.startsWith('nostr:') ? 'Shared a contact' : lastChatMessage?.content
-    return { id: group.snapshot.id, idStr: group.idStr, name: group.snapshot.groupData?.name || 'Encrypted group', memberCount: group.snapshot.members?.length, epoch: String(group.snapshot.epoch ?? '—'), instance: group, last: lastChatMessage ? { ...lastChatMessage, content: preview } : null, archived: Boolean(uiState.archived), pinned: Boolean(uiState.pinned), muted: Boolean(uiState.muted), unread: Boolean(uiState.unread), order: Number.isFinite(uiState.order) ? uiState.order : loaded.indexOf(group) }
+    return { id: group.snapshot.id, idStr: group.idStr, name: group.snapshot.groupData?.name || 'Encrypted group', memberCount: group.snapshot.members?.length, epoch: String(group.snapshot.epoch ?? '—'), instance: group, last: lastChatMessage ? { ...lastChatMessage, content: preview } : null, archived: Boolean(uiState.archived), pinned: Boolean(uiState.pinned), muted: Boolean(uiState.muted), unread: Boolean(uiState.unread), folderId: typeof uiState.folderId === 'string' ? uiState.folderId : null, order: Number.isFinite(uiState.order) ? uiState.order : loaded.indexOf(group) }
   }))
   renderGroups($('search').value)
 }
@@ -618,6 +720,10 @@ async function manageGroup(group, action) {
     showGroupDetails(group)
     return
   }
+  if (action === 'folder') {
+    openFolderAssignment(group)
+    return
+  }
   try {
     if (action === 'pin' || action === 'mute' || action === 'unread') {
       const field = action === 'pin' ? 'pinned' : action === 'mute' ? 'muted' : 'unread'
@@ -923,7 +1029,7 @@ $('adminHandoffForm').addEventListener('submit', async event => {
 })
 
 $('settingsButton').addEventListener('click', showSettings)
-$('toggleArchived').addEventListener('click', () => { showArchived = !showArchived; renderGroups($('search').value) })
+$('toggleArchived').addEventListener('click', () => { showArchived = !showArchived; selectedFolderId = 'all'; renderGroups($('search').value) })
 $('groupActions').addEventListener('click', () => {
   if (activeGroup) updateGroupMenu(activeGroup)
   $('groupMenu').classList.toggle('hidden')
@@ -933,6 +1039,29 @@ $('groupMenu').addEventListener('click', event => {
   if (activeGroup && action) {
     void manageGroup(activeGroup, action)
   }
+})
+$('createFolderForm').addEventListener('submit', async event => {
+  event.preventDefault()
+  const name = $('newFolderName').value.trim().slice(0, 40)
+  if (!name) return
+  if (folders.some(folder => folder.name.toLowerCase() === name.toLowerCase())) { message('A folder with that name already exists.', true); return }
+  folders.push({ id: crypto.randomUUID(), name })
+  await saveFolders()
+  $('newFolderName').value = ''
+  renderFolderManager()
+  renderGroups($('search').value)
+})
+$('closeFolderManager').addEventListener('click', () => $('folderManagerDialog').classList.add('hidden'))
+$('cancelFolderAssignment').addEventListener('click', () => $('folderAssignmentDialog').classList.add('hidden'))
+$('folderAssignmentForm').addEventListener('submit', async event => {
+  event.preventDefault()
+  const groupId = event.currentTarget.dataset.groupId
+  const folderId = $('folderAssignmentSelect').value || null
+  await setChatUiState(groupId, { folderId })
+  $('folderAssignmentDialog').classList.add('hidden')
+  await refreshGroups()
+  const folder = folders.find(item => item.id === folderId)
+  message(folder ? `Chat moved to ${folder.name}.` : 'Chat removed from its folder.')
 })
 $('closeGroupDetails').addEventListener('click', () => $('groupDetailsDialog').classList.add('hidden'))
 $('cancelGroupSettings').addEventListener('click', () => $('groupSettingsDialog').classList.add('hidden'))

@@ -228,9 +228,14 @@ export const EXTENSION_SHIM = String.raw`
     }
   }
 
+  var blossom = {
+    groupImageRequest: function (request) { return bridge.invoke('blossom.groupImageRequest', [request]) }
+  }
+
   var ncc = {
     version: 1,
     nostr: nostr,
+    blossom: blossom,
     runtime: {
       getURL: runtime.getURL,
       closePanel: runtime.closePanel,

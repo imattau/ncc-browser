@@ -1,7 +1,7 @@
 import { MarmotClient, createApplicationMessageIntent, createChatRumor } from '@internet-privacy/marmot-ts'
 import { makeKeyValueRumorHistoryFactory } from '@internet-privacy/marmot-ts/extra'
 import { createInboxRelayListEvent, deserializeApplicationData, encryptedMediaBlossomDefaultV2, getInboxRelays, getMediaAttachments } from '@internet-privacy/marmot-ts/core'
-import { createBlossomMediaTransport, createInviteIntent, downloadMessageMedia, fetchGroupImageTransport, prepareMediaMessage, Proposals } from '@internet-privacy/marmot-ts/client'
+import { createBlossomMediaTransport, createInviteIntent, downloadMessageMedia, prepareMediaMessage, Proposals } from '@internet-privacy/marmot-ts/client'
 import { getEventHash, nip19, verifyEvent } from 'nostr-tools'
 
 class ExtensionStore {
@@ -18,6 +18,11 @@ class ExtensionStore {
   async removeItem(key) { await chrome.storage.local.remove(this.prefix + key) }
   async clear() { for (const key of await this.keys()) await this.removeItem(key) }
   async keys() { return Object.keys(await chrome.storage.local.get(null)).filter(key => key.startsWith(this.prefix)).map(key => key.slice(this.prefix.length)) }
+}
+
+const groupImageTransport = async request => {
+  const response = await ncc.blossom.groupImageRequest({ url: request.url, method: request.method, headers: request.headers, body: request.body, maxBytes: request.maxBytes })
+  return response
 }
 
 function pack(value) {
@@ -67,7 +72,7 @@ const DEFAULT_RELAYS = ['wss://relay.damus.io', 'wss://relay.primal.net', 'wss:/
 let relayConfig = DEFAULT_RELAYS
 let lastKeyPackagePublication = null
 let activeSignerPubkey = null
-const DEFAULT_BLOSSOM_SERVERS = ['https://blossom.primal.net']
+const DEFAULT_BLOSSOM_SERVERS = ['https://blossom.ditto.pub', 'https://blossom.primal.net']
 const MEDIA_MAX_BYTES = 25 * 1024 * 1024
 
 async function publishWithNip42(relay, event) {
@@ -345,8 +350,9 @@ const api = {
     const group = await client.groups.get(groupId)
     const result = await group.image.read({
       endpoints: normalizeBlossomServers(endpoints),
-      transport: fetchGroupImageTransport,
+      transport: groupImageTransport,
       maxDownloadBytes: 5 * 1024 * 1024,
+      maxEndpointCandidates: 8,
       contactPolicy: ({ url, method }) => method === 'GET' && normalizeBlossomServers(endpoints).some(endpoint => new URL(url).origin === new URL(endpoint).origin)
     })
     return result.kind === 'available' ? { kind: 'available', bytes: result.bytes, mediaType: result.mediaType } : result
@@ -358,7 +364,7 @@ const api = {
     if (!(bytes instanceof Uint8Array) || bytes.byteLength > 5 * 1024 * 1024) throw new Error('Choose an image smaller than 5 MB.')
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(mediaType)) throw new Error('Choose a JPEG, PNG or WebP image.')
     const servers = normalizeBlossomServers(endpoints)
-    const profile = { endpoints: servers, transport: fetchGroupImageTransport, maxUploadBytes: 5 * 1024 * 1024, contactPolicy: ({ url, method }) => method === 'PUT' && servers.some(endpoint => new URL(url).origin === new URL(endpoint).origin) }
+    const profile = { endpoints: servers, transport: groupImageTransport, maxUploadBytes: 5 * 1024 * 1024, maxEndpointCandidates: 8, contactPolicy: ({ url, method }) => method === 'PUT' && servers.some(endpoint => new URL(url).origin === new URL(endpoint).origin) }
     const result = await client.groups.replaceGroupImage(groupId, bytes, mediaType, profile)
     if (result.kind !== 'published') throw new Error(`Group photo could not be saved (${result.reason}).`)
     return result
