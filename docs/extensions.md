@@ -10,6 +10,13 @@ scheme, so the browser ships its own host: the same manifest and a supported sub
 - **Settings → Extensions → Install package** accepts a `.zip`/`.nccx` package.
 - **Load unpacked** requires developer mode and accepts a folder containing
   `manifest.json`.
+- Choosing a package or folder installs nothing. It is copied to a staging folder and
+  shown for review: permissions, every website it can act on, and the **Run in private
+  tabs** choice. Approving installs the reviewed copy, even if the source has changed
+  since. Cancelling, leaving the page or restarting discards it.
+- Installing again from the same path replaces that extension and keeps its saved data.
+  The review names the version being replaced and marks new access. A package cannot
+  supply its own storage files.
 - Installed packages are copied to `userData/extensions/<id>` and loaded from there.
   Removing an extension deletes that directory and its storage files.
 
@@ -17,8 +24,11 @@ The experimental White Noise Companion is shipped as a separate `.nccx` asset on
 version releases. Install it from **Settings → Extensions → Install package**; it is
 not installed or enabled automatically.
 
-Packages are unsigned in this version. The install dialog shows the source path and the
-settings page shows the package origin; only install code you trust.
+Packages are unsigned in this version. The review and the settings page show where the
+package came from; only install code you trust. See
+[extension-store-design.md](extension-store-design.md) for the signed distribution plan.
+
+`NCC_EXTENSION_DIR` is a development helper that installs its folder without a review.
 
 ## Manifest
 
@@ -145,7 +155,7 @@ is the recommended place for state derived from private pages.
 ## Private and Tor tabs
 
 - **Private tabs:** extensions run only if the per-extension **Run in private tabs**
-  grant is enabled (on by default, and shown at install). Extension backgrounds are
+  grant is enabled (on by default, and offered in the install review). Extension backgrounds are
   shared between normal and private contexts, so a content script can read private page
   content and send it over the network. Treat this as a deliberate trust decision.
 - **Tor tabs:** extensions never run, are not visible through `chrome.tabs`, and never
@@ -153,7 +163,7 @@ is the recommended place for state derived from private pages.
 
 ## Permissions
 
-Install shows a plain-language summary derived from the manifest:
+The install review shows a plain-language summary derived from the manifest:
 
 - `storage` — store data locally
 - `tabs` — read open tab addresses and titles
@@ -161,7 +171,8 @@ Install shows a plain-language summary derived from the manifest:
 - `contextMenus`, `notifications`, `clipboardWrite`
 - `nostr:pubkey`, `nostr:sign`, `nostr:nip04`, `nostr:nip44`
 
-Host permissions add “read and change data on …”. Unknown permissions are ignored and
+Websites come from both `host_permissions` and `content_scripts[].matches`, because
+either one lets an extension act on a page. Unknown permissions are ignored and
 reported; they do not grant anything.
 
 ## Authoring and porting

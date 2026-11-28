@@ -29,7 +29,7 @@ export function registerExtensionIpc(service: ExtensionService, deps: ExtensionI
     service.setDeveloperMode(value === true)
     return service.state()
   })
-  handle('ncc:extensions-install', async (kind) => {
+  handle('ncc:extensions-prepare', async (kind) => {
     if (kind === 'folder' && !service.state().developerMode) {
       return { ok: false, error: 'Enable developer mode to load an unpacked extension' }
     }
@@ -49,8 +49,16 @@ export function registerExtensionIpc(service: ExtensionService, deps: ExtensionI
           })
     if (result.canceled || !result.filePaths[0]) return { ok: false, error: 'Install cancelled' }
     return kind === 'folder'
-      ? service.installFolder(result.filePaths[0])
-      : service.installZip(result.filePaths[0])
+      ? service.prepareFolder(result.filePaths[0])
+      : service.prepareZip(result.filePaths[0])
+  })
+  handle('ncc:extensions-confirm', (token, privateTabs) =>
+    service.confirmInstall(typeof token === 'string' ? token : '', {
+      privateTabs: privateTabs === true
+    })
+  )
+  handle('ncc:extensions-cancel', (token) => {
+    if (typeof token === 'string') service.cancelInstall(token)
   })
   handle('ncc:extensions-remove', (id) => {
     if (typeof id === 'string') service.remove(id)

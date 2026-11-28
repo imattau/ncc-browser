@@ -27,10 +27,12 @@ import {
   MAX_SCRIPT_BYTES,
   normalizeExtensionManifest,
   permissionWarnings,
+  reviewAccess,
   safeRelativePath,
   type ExtensionActionInfo,
   type ExtensionInfo,
   type ExtensionInstallResult,
+  type ExtensionPrepareResult,
   type ExtensionManifest,
   type ExtensionSource,
   type ExtensionsState
@@ -56,12 +58,32 @@ interface RegistryFile {
   extensions: Record<string, StoredExtension>
 }
 
+interface PreparedInstall {
+  staging: string
+  id: string
+  source: ExtensionSource
+  sourcePath: string
+  manifest: ExtensionManifest
+  warnings: string[]
+  /** The installed manifest the review compared against, to detect a stale approval. */
+  reviewed: ExtensionManifest | null
+}
+
+interface InstallOptions {
+  source?: ExtensionSource
+  sourcePath?: string
+}
+
+const STAGING_PREFIX = '.staging-'
+const UNPACK_PREFIX = '.unpack-'
+const STORAGE_FILES = ['storage-local.json', 'storage-sync.json']
 const SKIP_NAMES = new Set(['.git', 'node_modules', '__MACOSX', '.DS_Store'])
 
 export class ExtensionRegistry {
   private data: RegistryFile
   private readonly iconCache = new Map<string, string | null>()
   private readonly fileCache = new Map<string, { key: string; value: string }>()
+  private readonly prepared = new Map<string, PreparedInstall>()
 
   constructor(
     private readonly baseDir: string,
@@ -70,6 +92,7 @@ export class ExtensionRegistry {
     mkdirSync(baseDir, { recursive: true })
     this.data = this.load()
     this.repair()
+    this.clearLeftovers()
   }
 
   state(): ExtensionsState {
@@ -101,15 +124,11 @@ export class ExtensionRegistry {
     return this.data.extensions[id] ?? null
   }
 
-  installFolder(
-    sourcePath: string,
-    options: {
-      source?: ExtensionSource
-      enable?: boolean
-      id?: string
-      sourcePath?: string
-    } = {}
-  ): ExtensionInstallResult {
+  /**
+   * Copy a package into staging and describe it. Nothing is installed until
+   * `commit`. Only one review is open at a time.
+   */
+  prepareFolder(sourcePath: string, options: InstallOptions = {}): ExtensionPrepareResult {
     let source: string
     try {
       source = realpathSync(resolve(sourcePath))
@@ -117,35 +136,56 @@ export class ExtensionRegistry {
     } catch (error) {
       return { ok: false, error: messageOf(error) }
     }
+    return this.stage(source, {
+      source: options.source ?? 'folder',
+      sourcePath: options.sourcePath ?? source
+    })
+  }
 
-    let manifest: ExtensionManifest
-    let warnings: string[]
+  prepareZip(zipPath: string): ExtensionPrepareResult {
+    let source: string
     try {
-      const normalized = normalizeExtensionManifest(
-        JSON.parse(readFileSync(join(source, 'manifest.json'), 'utf8'))
-      )
-      manifest = normalized.manifest
-      warnings = [...normalized.warnings, ...permissionWarnings(normalized.manifest)]
-      validatePackageFiles(source, manifest)
+      source = realpathSync(resolve(zipPath))
+      if (!statSync(source).isFile()) throw new Error('Choose a .zip or .nccx package')
     } catch (error) {
       return { ok: false, error: messageOf(error) }
     }
 
-    const existing = Object.values(this.data.extensions).find(
-      (entry) => entry.sourcePath === source
-    )
-    const id = options.id ?? existing?.id ?? randomBytes(16).toString('hex')
-    const previous = options.id ? this.data.extensions[options.id] : existing
-    const installPath = join(this.baseDir, id)
-    const staging = `${installPath}.tmp`
-    const now = Date.now()
-
+    const temp = join(this.baseDir, `${UNPACK_PREFIX}${randomBytes(8).toString('hex')}`)
     try {
+      mkdirSync(temp, { recursive: true })
+      extractZip(readFileSync(source), temp)
+      return this.stage(temp, { source: 'zip', sourcePath: source })
+    } catch (error) {
+      return { ok: false, error: messageOf(error) }
+    } finally {
+      rmSync(temp, { recursive: true, force: true })
+    }
+  }
+
+  /** The installed extension a pending approval would replace, if any. */
+  replacementFor(token: string): string | null {
+    const pending = this.prepared.get(token)
+    return pending && this.data.extensions[pending.id] ? pending.id : null
+  }
+
+  /** Install exactly what was reviewed. */
+  commit(token: string, choices: { privateTabs?: boolean } = {}): ExtensionInstallResult {
+    const pending = this.prepared.get(token)
+    if (!pending) return { ok: false, error: 'That review has expired. Choose the package again.' }
+    this.prepared.delete(token)
+    const { id, staging, manifest } = pending
+    const previous = this.data.extensions[id]
+    if ((previous?.manifest ?? null) !== pending.reviewed) {
       rmSync(staging, { recursive: true, force: true })
-      mkdirSync(staging, { recursive: true })
-      copyTree(source, staging)
+      return { ok: false, error: 'The installed extension changed. Choose the package again.' }
+    }
+
+    const installPath = join(this.baseDir, id)
+    const now = Date.now()
+    try {
+      // Copied now, not at review time, so nothing written meanwhile is lost.
       preserveStorage(installPath, staging)
-      validatePackageFiles(staging, manifest)
       rmSync(installPath, { recursive: true, force: true })
       renameSync(staging, installPath)
     } catch (error) {
@@ -156,14 +196,14 @@ export class ExtensionRegistry {
     const record: StoredExtension = {
       id,
       installPath,
-      sourcePath: options.sourcePath ?? source,
-      source: options.source ?? 'folder',
-      enabled: options.enable ?? previous?.enabled ?? true,
-      privateTabs: previous?.privateTabs ?? true,
+      sourcePath: pending.sourcePath,
+      source: pending.source,
+      enabled: previous?.enabled ?? true,
+      privateTabs: choices.privateTabs ?? previous?.privateTabs ?? true,
       installedAt: previous?.installedAt ?? now,
       updatedAt: now,
       manifest,
-      warnings
+      warnings: pending.warnings
     }
     this.data.extensions[id] = record
     this.iconCache.delete(id)
@@ -172,32 +212,76 @@ export class ExtensionRegistry {
     return { ok: true, extension: this.toInfo(record) }
   }
 
-  installZip(zipPath: string, options: { enable?: boolean } = {}): ExtensionInstallResult {
-    let source: string
+  discard(token: string): void {
+    const pending = this.prepared.get(token)
+    if (!pending) return
+    this.prepared.delete(token)
+    rmSync(pending.staging, { recursive: true, force: true })
+  }
+
+  private stage(
+    from: string,
+    options: { source: ExtensionSource; sourcePath: string }
+  ): ExtensionPrepareResult {
+    for (const token of [...this.prepared.keys()]) this.discard(token)
+
+    const token = randomBytes(16).toString('hex')
+    const staging = join(this.baseDir, `${STAGING_PREFIX}${token}`)
     try {
-      source = realpathSync(resolve(zipPath))
-      if (!statSync(source).isFile()) throw new Error('Choose a .zip or .nccx package')
+      mkdirSync(staging, { recursive: true })
+      copyTree(from, staging)
+      // A package must not seed its own storage.
+      for (const name of STORAGE_FILES) rmSync(join(staging, name), { recursive: true, force: true })
+      const normalized = normalizeExtensionManifest(
+        JSON.parse(readFileSync(join(staging, 'manifest.json'), 'utf8'))
+      )
+      const manifest = normalized.manifest
+      validatePackageFiles(staging, manifest)
+
+      const existing = Object.values(this.data.extensions).find(
+        (entry) =>
+          entry.sourcePath === options.sourcePath &&
+          (options.source !== 'zip' || entry.source === 'zip')
+      )
+      const id = existing?.id ?? randomBytes(16).toString('hex')
+      this.prepared.set(token, {
+        staging,
+        id,
+        source: options.source,
+        sourcePath: options.sourcePath,
+        manifest,
+        warnings: [...normalized.warnings, ...permissionWarnings(manifest)],
+        reviewed: existing?.manifest ?? null
+      })
+      return {
+        ok: true,
+        review: {
+          token,
+          name: manifest.name,
+          version: manifest.version,
+          description: manifest.description,
+          author: manifest.author ?? '',
+          source: options.source,
+          sourcePath: options.sourcePath,
+          replaces: existing
+            ? { name: existing.manifest.name, version: existing.manifest.version }
+            : null,
+          ...reviewAccess(manifest, existing?.manifest ?? null),
+          notices: normalized.warnings,
+          privateTabs: existing?.privateTabs ?? true
+        }
+      }
     } catch (error) {
+      rmSync(staging, { recursive: true, force: true })
       return { ok: false, error: messageOf(error) }
     }
+  }
 
-    const temp = join(this.baseDir, `.unpack-${randomBytes(8).toString('hex')}`)
-    const existing = Object.values(this.data.extensions).find(
-      (entry) => entry.source === 'zip' && entry.sourcePath === source
-    )
-    try {
-      mkdirSync(temp, { recursive: true })
-      extractZip(readFileSync(source), temp)
-      return this.installFolder(temp, {
-        source: 'zip',
-        ...options,
-        ...(existing ? { id: existing.id } : {}),
-        sourcePath: source
-      })
-    } catch (error) {
-      return { ok: false, error: messageOf(error) }
-    } finally {
-      rmSync(temp, { recursive: true, force: true })
+  private clearLeftovers(): void {
+    for (const name of readdirSync(this.baseDir)) {
+      if (name.startsWith(STAGING_PREFIX) || name.startsWith(UNPACK_PREFIX)) {
+        rmSync(join(this.baseDir, name), { recursive: true, force: true })
+      }
     }
   }
 
@@ -324,8 +408,11 @@ export class ExtensionRegistry {
   /** Development helper: `NCC_EXTENSION_DIR` installs a fixture on every launch. */
   autoInstallFromEnv(path: string | undefined): void {
     if (!path?.trim()) return
-    const result = this.installFolder(path.trim(), { source: 'test', enable: true })
-    if (!result.ok) {
+    // The developer named this folder on the command line, so there is no review.
+    const staged = this.prepareFolder(path.trim(), { source: 'test' })
+    const result: ExtensionInstallResult = staged.ok ? this.commit(staged.review.token) : staged
+    if (result.ok) this.setEnabled(result.extension!.id, true)
+    else {
       console.warn('[extensions] could not install NCC_EXTENSION_DIR:', result.error)
     }
   }
@@ -474,7 +561,7 @@ function validatePackageFiles(root: string, manifest: ExtensionManifest): void {
 
 function preserveStorage(from: string, to: string): void {
   if (!existsSync(from)) return
-  for (const name of ['storage-local.json', 'storage-sync.json']) {
+  for (const name of STORAGE_FILES) {
     const source = join(from, name)
     if (existsSync(source)) copyFileSync(source, join(to, name))
   }

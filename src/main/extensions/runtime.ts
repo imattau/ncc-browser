@@ -11,6 +11,7 @@ import { verifyEvent, type Event, type EventTemplate } from 'nostr-tools'
 import {
   matchesAny,
   type ExtensionInstallResult,
+  type ExtensionPrepareResult,
   type ExtensionInfo,
   type ExtensionManifest,
   type ExtensionPage,
@@ -97,12 +98,27 @@ export class ExtensionService {
     return this.deps.registry.info(id)
   }
 
-  installFolder(path: string): ExtensionInstallResult {
-    return this.finishInstall(this.deps.registry.installFolder(path, { source: 'folder' }))
+  prepareFolder(path: string): ExtensionPrepareResult {
+    return this.deps.registry.prepareFolder(path)
   }
 
-  installZip(path: string): ExtensionInstallResult {
-    return this.finishInstall(this.deps.registry.installZip(path))
+  prepareZip(path: string): ExtensionPrepareResult {
+    return this.deps.registry.prepareZip(path)
+  }
+
+  confirmInstall(token: string, choices: { privateTabs: boolean }): ExtensionInstallResult {
+    const replaced = this.deps.registry.replacementFor(token)
+    if (replaced) {
+      // The old version must not keep running over the new files.
+      this.reloadTabsFor(replaced)
+      this.closeBackground(replaced)
+      this.contextMenus.delete(replaced)
+    }
+    return this.finishInstall(this.deps.registry.commit(token, choices))
+  }
+
+  cancelInstall(token: string): void {
+    this.deps.registry.discard(token)
   }
 
   remove(id: string): void {

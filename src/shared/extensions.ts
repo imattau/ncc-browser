@@ -99,6 +99,37 @@ export interface ExtensionInstallResult {
   extension?: ExtensionInfo
 }
 
+/** What the user is asked to approve. Nothing is installed until they do. */
+export interface ExtensionInstallReview {
+  /** Main-process handle for the staged copy; the bytes reviewed are the bytes installed. */
+  token: string
+  name: string
+  version: string
+  description: string
+  author: string
+  source: ExtensionSource
+  sourcePath: string
+  /** Set when approving would replace an installed extension. */
+  replaces: { name: string; version: string } | null
+  permissions: ExtensionAccessItem[]
+  sites: ExtensionAccessItem[]
+  /** Problems in the manifest, such as unsupported permissions. */
+  notices: string[]
+  /** Starting value for the "Run in private tabs" choice. */
+  privateTabs: boolean
+}
+
+export interface ExtensionAccessItem {
+  id: string
+  label: string
+  /** True when this is an update and the installed version did not have it. */
+  added: boolean
+}
+
+export type ExtensionPrepareResult =
+  | { ok: true; review: ExtensionInstallReview }
+  | { ok: false; error: string }
+
 export interface ExtensionPage {
   /** Chrome-style numeric tab id: the WebContents id. */
   id: number
@@ -164,10 +195,47 @@ export function permissionWarnings(manifest: ExtensionManifest): string[] {
     if (label) warnings.push(label)
     else warnings.push(`Unknown permission "${permission}" (ignored)`)
   }
-  for (const host of manifest.host_permissions) {
-    warnings.push(`Read and change data on ${host}`)
+  for (const site of siteAccess(manifest)) {
+    warnings.push(`Read and change data on ${site}`)
   }
   return warnings
+}
+
+/**
+ * Every pattern that lets an extension act on a page. A content script match grants
+ * access on its own, so `host_permissions` alone would understate it.
+ */
+export function siteAccess(manifest: ExtensionManifest): string[] {
+  return [
+    ...new Set([
+      ...manifest.host_permissions,
+      ...manifest.content_scripts.flatMap((script) => script.matches)
+    ])
+  ]
+}
+
+/**
+ * The access to show for approval. Patterns are compared as text, so a rewritten
+ * pattern is reported as new even if it covers no more than before.
+ */
+export function reviewAccess(
+  manifest: ExtensionManifest,
+  installed: ExtensionManifest | null
+): { permissions: ExtensionAccessItem[]; sites: ExtensionAccessItem[] } {
+  const hadPermissions = new Set(installed?.permissions ?? [])
+  const hadSites = new Set(installed ? siteAccess(installed) : [])
+  return {
+    permissions: [...new Set(manifest.permissions)].map((id) => ({
+      id,
+      label: PERMISSION_WARNINGS[id] ?? `Unknown permission "${id}" (ignored)`,
+      added: installed !== null && !hadPermissions.has(id)
+    })),
+    sites: siteAccess(manifest).map((id) => ({
+      id,
+      label: id,
+      added: installed !== null && !hadSites.has(id)
+    }))
+  }
 }
 
 export function hasPermission(manifest: ExtensionManifest, permission: string): boolean {

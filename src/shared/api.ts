@@ -5,6 +5,7 @@ import type { CommandId } from './commands'
 import type { SyncPrefsPatch, SyncStatus, IdentityRemovalScope } from './sync-status'
 import type {
   ExtensionInstallResult,
+  ExtensionPrepareResult,
   ExtensionsState
 } from './extensions'
 import type {
@@ -325,7 +326,10 @@ export interface NccApi {
   onPasswordToast(listener: (toast: PasswordToast) => void): () => void
   extensionsState(): Promise<ExtensionsState>
   extensionsSetDeveloper(value: boolean): Promise<ExtensionsState>
-  extensionsInstall(kind: 'folder' | 'zip'): Promise<ExtensionInstallResult>
+  /** Choose a package and stage it for review. Installs nothing. */
+  extensionsPrepare(kind: 'folder' | 'zip'): Promise<ExtensionPrepareResult>
+  extensionsConfirm(token: string, privateTabs: boolean): Promise<ExtensionInstallResult>
+  extensionsCancel(token: string): Promise<void>
   extensionsRemove(id: string): Promise<ExtensionsState>
   extensionsSetEnabled(id: string, value: boolean): Promise<ExtensionsState>
   extensionsSetPrivate(id: string, value: boolean): Promise<ExtensionsState>

@@ -268,7 +268,10 @@ const api: NccApi = {
   },
   extensionsState: () => ipcRenderer.invoke('ncc:extensions-state'),
   extensionsSetDeveloper: (value) => ipcRenderer.invoke('ncc:extensions-set-developer', value),
-  extensionsInstall: (kind) => ipcRenderer.invoke('ncc:extensions-install', kind),
+  extensionsPrepare: (kind) => ipcRenderer.invoke('ncc:extensions-prepare', kind),
+  extensionsConfirm: (token, privateTabs) =>
+    ipcRenderer.invoke('ncc:extensions-confirm', token, privateTabs),
+  extensionsCancel: (token) => ipcRenderer.invoke('ncc:extensions-cancel', token),
   extensionsRemove: (id) => ipcRenderer.invoke('ncc:extensions-remove', id),
   extensionsSetEnabled: (id, value) => ipcRenderer.invoke('ncc:extensions-set-enabled', id, value),
   extensionsSetPrivate: (id, value) => ipcRenderer.invoke('ncc:extensions-set-private', id, value),

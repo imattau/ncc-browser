@@ -1,7 +1,16 @@
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  cpSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import type { ExtensionInstallResult, ExtensionInstallReview } from '../src/shared/extensions'
 import { ExtensionRegistry } from '../src/main/extensions/registry'
 
 const fixture = join(process.cwd(), 'test/fixtures/hello-extension')
@@ -17,13 +26,140 @@ afterEach(() => {
   for (const dir of roots.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
 
+/** Review a folder and approve it. */
+function install(registry: ExtensionRegistry, source: string): ExtensionInstallResult {
+  const prepared = registry.prepareFolder(source)
+  return prepared.ok ? registry.commit(prepared.review.token) : prepared
+}
+
+function review(registry: ExtensionRegistry, source: string): ExtensionInstallReview {
+  const prepared = registry.prepareFolder(source)
+  if (!prepared.ok) throw new Error(prepared.error)
+  return prepared.review
+}
+
+function editManifest(source: string, edit: (manifest: Record<string, any>) => void): void {
+  const path = join(source, 'manifest.json')
+  const manifest = JSON.parse(readFileSync(path, 'utf8'))
+  edit(manifest)
+  writeFileSync(path, JSON.stringify(manifest))
+}
+
+function copyFixture(): { base: string; source: string; registry: ExtensionRegistry } {
+  const base = root()
+  const source = join(base, 'hello')
+  cpSync(fixture, source, { recursive: true })
+  return { base, source, registry: new ExtensionRegistry(join(base, 'data')) }
+}
+
+describe('extension install review', () => {
+  it('installs nothing until the review is approved', () => {
+    const { source, registry } = copyFixture()
+    const pending = review(registry, source)
+    expect(registry.state().extensions).toHaveLength(0)
+    expect(pending.replaces).toBeNull()
+    expect(pending.permissions.map((item) => item.id)).toContain('nostr:sign')
+    expect(pending.sites.every((item) => !item.added)).toBe(true)
+    expect(registry.commit(pending.token, { privateTabs: false }).extension?.privateTabs).toBe(false)
+    expect(registry.commit(pending.token).ok).toBe(false)
+  })
+
+  it('lists sites that only a content script asks for', () => {
+    const { source, registry } = copyFixture()
+    editManifest(source, (manifest) => {
+      manifest.host_permissions = []
+      manifest.content_scripts[0].matches = ['https://example.com/*']
+    })
+    expect(review(registry, source).sites.map((item) => item.id)).toEqual([
+      'https://example.com/*'
+    ])
+    expect(install(registry, source).extension!.warnings).toContain(
+      'Read and change data on https://example.com/*'
+    )
+  })
+
+  it('discards the staged copy on cancel, on a newer review and after a restart', () => {
+    const { base, source, registry } = copyFixture()
+    const staged = (): string[] =>
+      readdirSync(join(base, 'data')).filter((name) => name.startsWith('.'))
+
+    const first = review(registry, source)
+    const second = review(registry, source)
+    expect(staged()).toHaveLength(1)
+    expect(registry.commit(first.token).ok).toBe(false)
+    registry.discard(second.token)
+    expect(staged()).toHaveLength(0)
+
+    review(registry, source)
+    new ExtensionRegistry(join(base, 'data'))
+    expect(staged()).toHaveLength(0)
+  })
+
+  it('installs the reviewed files even if the source changes afterwards', () => {
+    const { source, registry } = copyFixture()
+    const pending = review(registry, source)
+    editManifest(source, (manifest) => {
+      manifest.host_permissions = ['https://*/*']
+    })
+    writeFileSync(join(source, 'content.js'), '// swapped\n')
+    const installed = registry.commit(pending.token).extension!
+    expect(installed.hostPermissions).not.toContain('https://*/*')
+    expect(readFileSync(join(installed.installPath, 'content.js'), 'utf8')).not.toContain('swapped')
+  })
+
+  it('marks new access on an update and keeps the old version until approval', () => {
+    const { source, registry } = copyFixture()
+    editManifest(source, (manifest) => {
+      manifest.permissions = ['storage']
+    })
+    const id = install(registry, source).extension!.id
+    registry.setEnabled(id, false)
+    registry.setPrivateTabs(id, false)
+    editManifest(source, (manifest) => {
+      manifest.version = '1.1.0'
+      manifest.permissions = ['storage', 'nostr:sign']
+      manifest.content_scripts[0].matches.push('https://example.com/*')
+    })
+
+    const pending = review(registry, source)
+    expect(pending.replaces).toEqual({ name: 'Hello NCC', version: '1.0.0' })
+    expect(pending.permissions.filter((item) => item.added).map((item) => item.id)).toEqual([
+      'nostr:sign'
+    ])
+    expect(pending.sites.filter((item) => item.added).map((item) => item.id)).toEqual([
+      'https://example.com/*'
+    ])
+    expect(pending.privateTabs).toBe(false)
+    expect(registry.get(id)?.manifest.version).toBe('1.0.0')
+
+    const updated = registry.commit(pending.token).extension!
+    expect(updated).toMatchObject({ id, version: '1.1.0', enabled: false, privateTabs: false })
+  })
+
+  it('refuses an approval if the installed extension changed meanwhile', () => {
+    const { source, registry } = copyFixture()
+    const id = install(registry, source).extension!.id
+    const pending = review(registry, source)
+    registry.remove(id)
+    expect(registry.commit(pending.token).ok).toBe(false)
+    expect(registry.state().extensions).toHaveLength(0)
+  })
+
+  it('does not let a package supply its own storage', () => {
+    const { source, registry } = copyFixture()
+    writeFileSync(join(source, 'storage-local.json'), '{"seeded":true}\n')
+    const installed = install(registry, source).extension!
+    expect(existsSync(join(installed.installPath, 'storage-local.json'))).toBe(false)
+  })
+})
+
 describe('ExtensionRegistry', () => {
   it('installs a folder, persists state and loads its icon', () => {
     const base = root()
     const source = join(base, 'hello')
     cpSync(fixture, source, { recursive: true })
     const registry = new ExtensionRegistry(join(base, 'data'))
-    const result = registry.installFolder(source, { source: 'folder' })
+    const result = install(registry, source)
     expect(result.ok).toBe(true)
     const info = result.extension!
     expect(info.name).toBe('Hello NCC')
@@ -45,7 +181,7 @@ describe('ExtensionRegistry', () => {
     const source = join(base, 'hello')
     cpSync(fixture, source, { recursive: true })
     const registry = new ExtensionRegistry(join(base, 'data'))
-    const id = registry.installFolder(source).extension!.id
+    const id = install(registry, source).extension!.id
     registry.setEnabled(id, false)
     registry.setPrivateTabs(id, false)
     registry.setDeveloperMode(true)
@@ -64,12 +200,12 @@ describe('ExtensionRegistry', () => {
     manifest.content_scripts[0].js = ['../evil.js']
     writeFileSync(manifestPath, JSON.stringify(manifest))
     const registry = new ExtensionRegistry(join(base, 'data'))
-    const result = registry.installFolder(source)
+    const result = install(registry, source)
     expect(result.ok).toBe(false)
 
     const good = join(base, 'good')
     cpSync(fixture, good, { recursive: true })
-    const installed = registry.installFolder(good).extension!
+    const installed = install(registry, good).extension!
     registry.remove(installed.id)
     expect(registry.state().extensions).toHaveLength(0)
     expect(() => readFileSync(join(installed.installPath, 'manifest.json'))).toThrow()
@@ -80,9 +216,9 @@ describe('ExtensionRegistry', () => {
     const source = join(base, 'hello')
     cpSync(fixture, source, { recursive: true })
     const registry = new ExtensionRegistry(join(base, 'data'))
-    const first = registry.installFolder(source).extension!
+    const first = install(registry, source).extension!
     writeFileSync(join(first.installPath, 'storage-local.json'), '{"count":7}\n')
-    const second = registry.installFolder(source).extension!
+    const second = install(registry, source).extension!
     expect(second.id).toBe(first.id)
     expect(readFileSync(join(second.installPath, 'storage-local.json'), 'utf8')).toContain('7')
   })
@@ -92,7 +228,7 @@ describe('ExtensionRegistry', () => {
     const source = join(base, 'hello')
     cpSync(fixture, source, { recursive: true })
     const registry = new ExtensionRegistry(join(base, 'data'))
-    const id = registry.installFolder(source).extension!.id
+    const id = install(registry, source).extension!.id
     expect(registry.resolveFile(id, '../manifest.json')).toBeNull()
     expect(registry.resolveFile(id, '/etc/passwd')).toBeNull()
     expect(registry.resolveFile(id, 'manifest.json')).toContain(id)

@@ -10,7 +10,8 @@ import {
   ShieldCheck,
   Trash2
 } from 'lucide-react'
-import type { ExtensionInfo, ExtensionsState } from '@shared/extensions'
+import type { ExtensionInfo, ExtensionInstallReview, ExtensionsState } from '@shared/extensions'
+import { ExtensionReview } from './ExtensionReview'
 import { cn } from '../lib/cn'
 import { messageOf } from '../lib/format'
 
@@ -20,6 +21,14 @@ export function ExtensionSettings() {
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null)
+  const [review, setReview] = useState<ExtensionInstallReview | null>(null)
+
+  // Leaving the page with a review open discards the staged copy.
+  const pendingToken = review?.token
+  useEffect(() => {
+    if (!pendingToken) return
+    return () => void window.ncc.extensionsCancel(pendingToken)
+  }, [pendingToken])
 
   const load = useCallback(async (): Promise<void> => {
     setState(await window.ncc.extensionsState())
@@ -47,18 +56,38 @@ export function ExtensionSettings() {
     }
   }
 
-  const install = async (kind: 'folder' | 'zip'): Promise<void> => {
+  const choose = async (kind: 'folder' | 'zip'): Promise<void> => {
     setBusy(true)
     setError(null)
     setNotice(null)
     try {
-      const result = await window.ncc.extensionsInstall(kind)
+      const result = await window.ncc.extensionsPrepare(kind)
+      if (result.ok) setReview(result.review)
+      else {
+        setReview(null)
+        if (result.error !== 'Install cancelled') setError(result.error)
+      }
+    } catch (prepareError) {
+      setError(messageOf(prepareError))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const approve = async (token: string, privateTabs: boolean): Promise<void> => {
+    setBusy(true)
+    setError(null)
+    try {
+      const result = await window.ncc.extensionsConfirm(token, privateTabs)
+      setReview(null)
       if (!result.ok) {
-        if (result.error !== 'Install cancelled') setError(result.error ?? 'Could not install')
+        setError(result.error ?? 'Could not install')
         return
       }
       setNotice(`${result.extension?.name ?? 'Extension'} installed.`)
       await load()
+    } catch (confirmError) {
+      setError(messageOf(confirmError))
     } finally {
       setBusy(false)
     }
@@ -102,7 +131,7 @@ export function ExtensionSettings() {
             <button
               type="button"
               disabled={busy || !state.developerMode}
-              onClick={() => void install('folder')}
+              onClick={() => void choose('folder')}
               className="inline-flex items-center gap-1.5 rounded-lg border border-[color:var(--color-line)] px-2.5 py-1.5 text-ui-11 text-[color:var(--color-muted)] hover:bg-[color:var(--color-hover)] hover:text-[color:var(--color-text-strong)] disabled:opacity-40"
               title={
                 state.developerMode
@@ -117,7 +146,7 @@ export function ExtensionSettings() {
               type="button"
               data-extension-install-zip
               disabled={busy}
-              onClick={() => void install('zip')}
+              onClick={() => void choose('zip')}
               className="inline-flex items-center gap-1.5 rounded-lg bg-[color:var(--color-accent)] px-2.5 py-1.5 text-ui-11 font-semibold text-[color:var(--color-on-accent)] disabled:opacity-40"
             >
               <PackagePlus className="h-3.5 w-3.5" />
@@ -151,6 +180,16 @@ export function ExtensionSettings() {
         ) : null}
         {notice ? <p className="mt-3 text-ui-11 text-[color:var(--color-ok)]">{notice}</p> : null}
       </div>
+
+      {review ? (
+        <ExtensionReview
+          key={review.token}
+          review={review}
+          busy={busy}
+          onApprove={(privateTabs) => void approve(review.token, privateTabs)}
+          onCancel={() => setReview(null)}
+        />
+      ) : null}
 
       {state.extensions.length === 0 ? (
         <div className="rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel-raised)] px-4 py-10 text-center">
