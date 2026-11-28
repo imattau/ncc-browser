@@ -141,6 +141,7 @@ function contentSecurityPolicy(manifest: ExtensionManifest): string {
     "script-src 'self'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob:",
+    "media-src 'self' blob:",
     "font-src 'self' data:",
     `connect-src ${[...connect].join(' ')}`,
     "object-src 'none'",

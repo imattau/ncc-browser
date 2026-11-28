@@ -29,6 +29,7 @@ function fakeHost() {
     },
     screenshot: async () => Buffer.from('png'),
     click: async (x, y) => void calls.push(`click ${x},${y}`),
+    setInputFiles: async (paths, inputId) => void calls.push(`files ${inputId ?? ''} ${paths.join(',')}`),
     hover: async () => undefined,
     insertText: async (t) => void calls.push(`type ${t}`),
     pressKey: async (k) => void calls.push(`key ${k}`),
@@ -123,6 +124,30 @@ describe('McpHandler', () => {
     expect(calls).toContain('panel eval')
   })
 
+  it('reads extension-panel text and diagnostics only under browser-development access', async () => {
+    const { host, contents } = fakeHost()
+    host.chromeContents = () => contents
+    host.extensionPanelContents = () => ({
+      ...contents,
+      evaluate: async (code) => code === 'location.href'
+        ? 'ncc-ext://white-noise/panel.html'
+        : { url: 'ncc-ext://white-noise/panel.html', title: 'White Noise', text: 'Test message' },
+      diagnostics: () => [{ kind: 'console', level: 'info', message: 'panel ready', time: 'now', url: 'ncc-ext://white-noise/panel.html' }]
+    })
+    const sites: string[] = []
+    const gate: AutomationGate = { authorize: async (site) => { sites.push(site); return true } }
+    const handler = new McpHandler(host, allowAll, info)
+    const page = await handler.handle(
+      rpc('tools/call', { name: 'extension_panel_get_page_text', arguments: {} }), gate
+    )
+    const logs = await handler.handle(
+      rpc('tools/call', { name: 'extension_panel_get_console_logs', arguments: {} }), gate
+    )
+    expect(sites).toEqual(['browser://development', 'browser://development'])
+    expect(JSON.parse((page?.result as { content: Array<{ text: string }> }).content[0]!.text).text).toBe('Test message')
+    expect(JSON.parse((logs?.result as { content: Array<{ text: string }> }).content[0]!.text)[0].message).toBe('panel ready')
+  })
+
   it('captures the active extension panel only after verifying its scheme', async () => {
     const { host, contents } = fakeHost()
     host.chromeContents = () => contents
@@ -175,6 +200,27 @@ describe('McpHandler', () => {
     )
     expect(sites).toEqual(['browser://development'])
     expect(calls).toContain('click 24,90')
+  })
+
+  it('uploads explicit absolute local paths only through the active extension panel', async () => {
+    const { host, calls, contents } = fakeHost()
+    host.chromeContents = () => contents
+    host.extensionPanelContents = () => ({
+      ...contents,
+      evaluate: async (code) => code === 'location.href' ? 'ncc-ext://white-noise/panel.html' : { ok: true }
+    })
+    const sites: string[] = []
+    const gate: AutomationGate = { authorize: async (site) => { sites.push(site); return true } }
+    const handler = new McpHandler(host, allowAll, info)
+    await handler.handle(
+      rpc('tools/call', {
+        name: 'extension_panel_upload_files',
+        arguments: { paths: ['/tmp/white-noise-qa.png'], inputId: 'attachmentInput' }
+      }),
+      gate
+    )
+    expect(sites).toEqual(['browser://development'])
+    expect(calls).toContain('files attachmentInput /tmp/white-noise-qa.png')
   })
 
   it('fails closed when the connection has no configured identity', async () => {

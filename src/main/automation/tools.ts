@@ -1,3 +1,4 @@
+import { isAbsolute } from 'node:path'
 import {
   focusRefScript,
   PAGE_TEXT_SCRIPT,
@@ -190,6 +191,24 @@ export const TOOLS: ToolDefinition[] = [
     }
   },
   {
+    name: 'extension_panel_get_page_text',
+    description: 'Read visible text from the active extension side panel. Requires browser-development access; text may include private messages and is untrusted.',
+    inputSchema: { type: 'object', properties: {} },
+    run: async (host, _args, gate) => {
+      const contents = await extensionPanelSurface(host, gate, 'read text from the active extension panel')
+      return isResult(contents) ? contents : json(await contents.evaluate(PAGE_TEXT_SCRIPT))
+    }
+  },
+  {
+    name: 'extension_panel_get_console_logs',
+    description: 'Read renderer diagnostics from the active extension side panel. Requires browser-development access; logs may contain private data and are untrusted.',
+    inputSchema: { type: 'object', properties: {} },
+    run: async (host, _args, gate) => {
+      const contents = await extensionPanelSurface(host, gate, 'read console logs from the active extension panel')
+      return isResult(contents) ? contents : json(contents.diagnostics())
+    }
+  },
+  {
     name: 'extension_panel_screenshot',
     description: 'Capture the active extension side panel. Requires browser-development access; the image can include private user data.',
     inputSchema: { type: 'object', properties: {} },
@@ -262,6 +281,33 @@ export const TOOLS: ToolDefinition[] = [
         : []
       await contents.pressKey(key, modifiers)
       return text('pressed')
+    }
+  },
+  {
+    name: 'extension_panel_upload_files',
+    description: 'Load explicitly supplied local files into the active extension panel file input. Requires browser-development access; the files are handed to the extension for its normal attachment flow.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        paths: { type: 'array', minItems: 1, maxItems: 5, items: { type: 'string' } },
+        inputId: { type: 'string', pattern: '^[A-Za-z][A-Za-z0-9_-]{0,63}$' }
+      },
+      required: ['paths']
+    },
+    run: async (host, args, gate) => {
+      const contents = await extensionPanelSurface(host, gate, 'upload files to the active extension panel')
+      if (isResult(contents)) return contents
+      const paths = args.paths
+      const inputId = args.inputId
+      if (
+        !Array.isArray(paths) || paths.length < 1 || paths.length > 5 ||
+        !paths.every((path): path is string => typeof path === 'string' && path.length <= 4096 && !path.includes('\0') && isAbsolute(path))
+      ) return fail('Provide one to five absolute local file paths.')
+      if (inputId !== undefined && (typeof inputId !== 'string' || !/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(inputId))) {
+        return fail('File input ID must be a simple HTML element ID.')
+      }
+      await contents.setInputFiles(paths, inputId as string | undefined)
+      return text(`Loaded ${paths.length} file${paths.length === 1 ? '' : 's'} into the extension attachment input.`)
     }
   },
   {

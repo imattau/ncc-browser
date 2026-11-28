@@ -43,20 +43,22 @@ Use this file to record issues reported during prototype work. Move entries to
 
 ### Received image and video presentation
 
-- **Status:** Automatic visible image/video loading and stable in-memory media
-  presentation implemented; runtime playback check remains.
+- **Status:** Fixed and runtime checked.
 - **Observed:** Attachments were only shown as download links, with no inline
   video player.
 - **Change:** Decrypted image/video attachments load automatically as their
   messages approach the visible chat area; other files remain on demand. Images
   render inline, videos use a controlled player, and save links are provided.
   A 48 MB in-memory LRU cache preserves decrypted media through chat refreshes
-  without storing plaintext files in extension storage. The cache is cleared
-  on account change.
-- **Check:** TypeScript check, extension build and package validation passed.
-  The focused companion/profile runtime suite passed (17 tests) and ESLint
-  passed. Runtime image/video rendering remains to be checked in the desktop
-  companion.
+  without storing plaintext files in extension storage. The extension-page CSP
+  now explicitly allows `blob:` media URLs for decrypted video previews.
+  The cache is cleared on account change.
+- **Check:** In the isolated temp profile, sent a PNG and MP4 through the chat's
+  **Photos & videos** action, restarted the dev browser, downloaded and
+  decrypted both, and verified the image rendered inline and the video rendered
+  in its player. The extension console had no CSP or renderer errors after the
+  CSP fix. Typecheck, lint, and the focused extension/automation/signer suite
+  passed.
 
 ### Partial relay publication is presented as failure
 
@@ -419,8 +421,9 @@ Use this file to record issues reported during prototype work. Move entries to
 
 ### 8. Signer reconnect required after reopening the companion
 
-- **Status:** Fixed for remembered signer approval; session-only approvals will
-  ask again after a full browser restart by design.
+- **Status:** Reconnect is implemented; user has reported the signer prompt
+  reappearing on startup and after closing/reopening. Regression not reproduced
+  in the isolated profile yet.
 - **Observed:** Closing the panel clears its connection. Reopening required
   clicking **Connect NCC signer** again.
 - **Change:** After the first successful connection, the companion remembers
@@ -436,6 +439,12 @@ Use this file to record issues reported during prototype work. Move entries to
   service** option. Without that choice, signer approval is session-scoped and
   can prompt again after restarting NCC Browser. The companion's saved public
   key is only a reconnect hint; it is not a persistent signer authorization.
+- **Follow-up evidence (2026-11-29):** The isolated temp profile currently has
+  both `connectedSignerPubkey` and a trusted permission for its installed
+  `extension:<id>` origin. This supports automatic reconnect for that same
+  profile and extension install, but does not reproduce the user's reported
+  prompt. Recheck the prompt's action and whether **Always allow** was selected;
+  reconnecting after a profile switch or from a private session may ask again.
 - **Scope:** These checks used only the disposable local signer/profile. They
   verify local account and chat-state persistence, not cross-device delivery.
 

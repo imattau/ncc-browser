@@ -146,6 +146,45 @@ function wrap(contents: WebContents): AutomationContents {
         mouse('mouseUp', x, y, { button, clickCount: count })
       }
     },
+    setInputFiles: async (paths, inputId) => {
+      const debugging = contents.debugger
+      const wasAttached = debugging.isAttached()
+      if (!wasAttached) debugging.attach('1.3')
+      try {
+        await debugging.sendCommand('DOM.enable')
+        const document = await debugging.sendCommand('DOM.getDocument', { depth: -1, pierce: true }) as {
+          root?: { nodeId?: number }
+        }
+        const rootNodeId = document.root?.nodeId
+        if (!rootNodeId) throw new Error('Could not inspect the extension panel document.')
+        const selector = inputId ? `#${inputId}` : 'input[type="file"]'
+        const query = await debugging.sendCommand('DOM.querySelector', {
+          nodeId: rootNodeId,
+          selector
+        }) as { nodeId?: number }
+        if (!query.nodeId) throw new Error('The extension panel has no file attachment input.')
+        const description = await debugging.sendCommand('DOM.describeNode', { nodeId: query.nodeId }) as {
+          node?: { nodeName?: string; attributes?: string[] }
+        }
+        const attributes = description.node?.attributes ?? []
+        const inputType = attributes[attributes.indexOf('type') + 1]
+        if (description.node?.nodeName?.toLowerCase() !== 'input' || inputType !== 'file') {
+          throw new Error('The extension panel attachment target is not a file input.')
+        }
+        await debugging.sendCommand('DOM.setFileInputFiles', { nodeId: query.nodeId, files: paths })
+        await debugging.sendCommand('Runtime.evaluate', {
+          expression: `(() => {
+            const input = document.querySelector(${JSON.stringify(selector)});
+            if (!input) throw new Error('The extension panel file input disappeared.');
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+          })()`,
+          returnByValue: true
+        })
+      } finally {
+        if (!wasAttached && debugging.isAttached()) debugging.detach()
+      }
+    },
     hover: async (x, y) => {
       mouse('mouseMove', x, y)
     },

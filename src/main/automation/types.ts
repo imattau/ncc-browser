@@ -37,6 +37,8 @@ export interface AutomationContents {
   screenshot(): Promise<Buffer>
   /** Move, then press and release, at viewport CSS coordinates. */
   click(x: number, y: number, options?: MouseOptions): Promise<void>
+  /** Set the page's file input from explicitly supplied local paths. */
+  setInputFiles(paths: string[], inputId?: string): Promise<void>
   hover(x: number, y: number): Promise<void>
   insertText(text: string): Promise<void>
   /** Press a key by its Electron accelerator name, e.g. `Enter`, `Tab`, `A`. */
