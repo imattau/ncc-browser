@@ -301,3 +301,83 @@ if (!groupImageServiceSource.includes(imageFetchMarker)) {
   throw new Error('Unsupported marmot-ts version: group image download fallback boundary was not found')
 }
 writeFileSync(groupImageService, groupImageServiceSource)
+
+// Regular chat attachments should have the same redundancy as group photos:
+// upload the one encrypted blob to every configured Blossom endpoint and put
+// every successful locator on the MLS rumor. The stock media-transfer helper
+// stops after the first successful endpoint, which leaves the attachment
+// unavailable when that one host later goes down. Its download helper already
+// tries locators in order and continues after fetch/decrypt failures.
+const mediaTransfer = resolve(import.meta.dirname, 'node_modules/@internet-privacy/marmot-ts/dist/client/group/media-transfer.js')
+let mediaTransferSource = readFileSync(mediaTransfer, 'utf8')
+const oldMediaUpload = [
+  '        let lastError;',
+  '        for (const endpoint of policy.defaultBlobEndpoints) {',
+  '            if (endpoint.locatorKind !== "blossom-v1" ||',
+  '                !policy.allowedLocatorKinds.includes(endpoint.locatorKind))',
+  '                continue;',
+  '            group.session.assertOutboundOpen();',
+  '            if (group.session.parentToken !== expectedParent)',
+  '                throw new StaleMediaPreparationError();',
+  '            try {',
+  '                const value = await cancellable(signal, () => options.transport.upload({',
+  '                    baseUrl: endpoint.baseUrl,',
+  '                    data: prepared.encrypted,',
+  '                    ciphertextSha256: prepared.attachment.ciphertextSha256,',
+  '                    signal,',
+  '                    maxBytes,',
+  '                }));',
+  '                const attachment = {',
+  '                    ...prepared.attachment,',
+  '                    locators: [{ kind: "blossom-v1", value }],',
+  '                };',
+  '                encodeMediaImetaTag(attachment);',
+  '                prepared.attachment = attachment;',
+  '                lastError = undefined;',
+  '                break;',
+  '            }',
+  '            catch (error) {',
+  '                lastError = error;',
+  '                signal.throwIfAborted();',
+  '            }',
+  '        }',
+  '        if (!prepared.attachment.locators.length)',
+  '            throw lastError ?? new Error("No usable media upload endpoint");'
+].join('\n')
+const redundantMediaUpload = [
+  '        const uploadEndpoints = policy.defaultBlobEndpoints.filter((endpoint) =>',
+  '            endpoint.locatorKind === "blossom-v1" &&',
+  '            policy.allowedLocatorKinds.includes(endpoint.locatorKind));',
+  '        const uploadResults = await Promise.allSettled(uploadEndpoints.map(async (endpoint) => {',
+  '            group.session.assertOutboundOpen();',
+  '            if (group.session.parentToken !== expectedParent)',
+  '                throw new StaleMediaPreparationError();',
+  '            const value = await cancellable(signal, () => options.transport.upload({',
+  '                baseUrl: endpoint.baseUrl,',
+  '                data: prepared.encrypted,',
+  '                ciphertextSha256: prepared.attachment.ciphertextSha256,',
+  '                signal,',
+  '                maxBytes,',
+  '            }));',
+  '            const locator = { kind: "blossom-v1", value };',
+  '            encodeMediaImetaTag({ ...prepared.attachment, locators: [locator] });',
+  '            return locator;',
+  '        }));',
+  '        signal.throwIfAborted();',
+  '        group.session.assertOutboundOpen();',
+  '        if (group.session.parentToken !== expectedParent)',
+  '            throw new StaleMediaPreparationError();',
+  '        const locators = uploadResults.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);',
+  '        if (locators.length === 0) {',
+  '            const lastFailure = uploadResults.at(-1);',
+  '            throw lastFailure?.status === "rejected" ? lastFailure.reason : new Error("No usable media upload endpoint");',
+  '        }',
+  '        prepared.attachment = { ...prepared.attachment, locators };',
+  '        encodeMediaImetaTag(prepared.attachment);'
+].join('\n')
+if (mediaTransferSource.includes(oldMediaUpload)) mediaTransferSource = mediaTransferSource.replace(oldMediaUpload, redundantMediaUpload)
+if (!mediaTransferSource.includes('const uploadResults = await Promise.allSettled(uploadEndpoints.map(async (endpoint) => {') ||
+    !mediaTransferSource.includes('const locators = uploadResults.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);')) {
+  throw new Error('Unsupported marmot-ts version: regular media upload redundancy boundary was not found')
+}
+writeFileSync(mediaTransfer, mediaTransferSource)
