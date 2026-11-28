@@ -49,7 +49,7 @@ import {
   showTabMenu
 } from './shell/menus'
 import { browserShellFor, browserShellForTabContents, browserShells, registerShell, unregisterShell } from './shell/registry'
-import { restoredTabPlan, savedWindowSession } from './shell/session'
+import { isEmptyTab, restoredTabPlan, savedWindowSession } from './shell/session'
 import { buildNavState, tabSummaries } from './shell/state'
 import { contentWebPreferences, type Tab } from './shell/types'
 
@@ -244,10 +244,14 @@ export class BrowserShell {
     }
   }
 
-  /** Live contents for automation. Private and Tor tabs are never handed out. */
-  automationContents(tabId: string): WebContents | null {
+  /**
+   * Live contents for automation. Private and Tor tabs are never handed out. With
+   * `load`, a restored tab that has not been loaded yet is shown and loaded first.
+   */
+  automationContents(tabId: string, options: { load?: boolean } = {}): WebContents | null {
     const tab = this.tabs.find((entry) => entry.id === tabId)
     if (!tab || tab.kind !== 'normal') return null
+    if (options.load && tab.pendingUrl) this.activateTab(tab.id)
     const contents = tab.view.webContents
     return contents.isDestroyed() ? null : contents
   }
@@ -389,7 +393,10 @@ export class BrowserShell {
     if (this.activeId === target.id) {
       const next = this.tabs[index] ?? this.tabs[index - 1] ?? null
       this.activeId = next?.id ?? null
-      if (next) this.showOnly(next.id)
+      if (next) {
+        this.showOnly(next.id)
+        this.loadPendingTab(next)
+      }
     }
 
     this.releaseKindIfUnused(target.kind)
@@ -431,7 +438,10 @@ export class BrowserShell {
     if (this.activeId === tab.id) {
       const replacement = this.tabs[previousIndex] ?? this.tabs[previousIndex - 1] ?? null
       this.activeId = replacement?.id ?? null
-      if (replacement) this.showOnly(replacement.id)
+      if (replacement) {
+        this.showOnly(replacement.id)
+        this.loadPendingTab(replacement)
+      }
     }
     tab.id = `t${target.nextTabId++}`
     tab.owner = target
@@ -448,7 +458,7 @@ export class BrowserShell {
     if (!source) return null
     const tab = this.createTab(source.kind)
     this.activateTab(tab.id)
-    if (source.mode !== 'blank' && source.displayUrl) {
+    if (!isEmptyTab(source) && source.displayUrl) {
       void this.navigateInTab(tab, source.displayUrl)
     }
     return tab.id
@@ -806,7 +816,7 @@ export class BrowserShell {
   suggest(input: string): OmniboxSuggestion[] {
     const kind = this.activeTab()?.kind ?? 'normal'
     const tabs: OmniboxTab[] = this.tabs
-      .filter((tab) => tab.mode !== 'blank' && tab.displayUrl && !tab.view.webContents.isDestroyed())
+      .filter((tab) => !isEmptyTab(tab) && tab.displayUrl && !tab.view.webContents.isDestroyed())
       .map((tab) => ({
         id: tab.id,
         kind: tab.kind,
@@ -830,7 +840,7 @@ export class BrowserShell {
     return this.tabs
       .filter((tab) =>
         tab.kind === 'normal' &&
-        tab.mode !== 'blank' &&
+        !isEmptyTab(tab) &&
         tab.displayUrl &&
         !/^nccsearch:\/\//i.test(tab.displayUrl)
       )
@@ -1115,6 +1125,15 @@ export class BrowserShell {
     this.showOnly(id)
     this.scheduleSessionSave()
     this.syncState()
+    const shown = this.activeTab()
+    if (shown) this.loadPendingTab(shown)
+  }
+
+  private loadPendingTab(tab: Tab): void {
+    const url = tab.pendingUrl
+    if (!url) return
+    tab.pendingUrl = null
+    void this.navigateInTab(tab, url)
   }
 
   private showOnly(id: string): void {
@@ -1264,9 +1283,14 @@ export class BrowserShell {
 
   private restoreTabs(session?: SavedSession | null): void {
     const plan = restoredTabPlan(session)
+    // Only the active tab loads now; the others load when first shown, so a large
+    // session does not compete with itself at startup.
     const tabs = plan.tabs.map((entry) => {
       const tab = this.createTab()
-      if (entry.url) void this.navigateInTab(tab, entry.url)
+      if (entry.url) {
+        tab.pendingUrl = entry.url
+        tab.displayUrl = formatDisplayUrl(entry.url)
+      }
       return tab
     })
     const active = tabs[plan.activeIndex]

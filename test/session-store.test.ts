@@ -1,8 +1,10 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { nip19 } from 'nostr-tools'
 import { afterEach, describe, expect, it } from 'vitest'
 import { SessionStore } from '../src/main/session-store'
+import { buildNsiteUrl, parseNsiteAddress } from '../src/shared/nsite-url'
 
 const directories: string[] = []
 
@@ -30,6 +32,26 @@ describe('SessionStore', () => {
     expect(loaded?.tabs).toEqual([{ url: 'ncc://npub1abc/web' }, { url: '' }])
     expect(loaded?.activeIndex).toBe(1)
     expect(loaded?.window).toMatchObject({ width: 1100, height: 700, x: 20, y: 30 })
+  })
+
+  it('keeps nsite addresses, in a form that reads back as the same site', () => {
+    const pubkey = nip19.npubEncode('1'.repeat(64))
+    const tabs = [
+      { url: buildNsiteUrl({ pubkey }) },
+      { url: buildNsiteUrl({ pubkey, site: 'blog', path: '/posts/one', search: '?a=1' }) }
+    ]
+    const { store: sessions, path } = store()
+    sessions.save({ tabs, activeIndex: 1, window: { width: 1100, height: 700, maximized: false } })
+
+    const loaded = new SessionStore(path).load()
+    expect(loaded?.tabs).toEqual(tabs)
+    expect(parseNsiteAddress(loaded!.tabs[0]!.url)).toMatchObject({ pubkey, site: null, path: '/' })
+    expect(parseNsiteAddress(loaded!.tabs[1]!.url)).toMatchObject({
+      pubkey,
+      site: 'blog',
+      path: '/posts/one',
+      search: '?a=1'
+    })
   })
 
   it('drops non-web urls and clamps the active index', () => {

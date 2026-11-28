@@ -6,6 +6,7 @@ export interface SessionTabView {
   kind: TabKind
   mode: PageMode
   displayUrl: string
+  pendingUrl?: string | null
 }
 
 export interface WindowGeometry {
@@ -29,7 +30,8 @@ export function savedWindowSession(
   const normalTabs = tabs.filter((tab) => tab.kind === 'normal')
   const savedTabs: SavedTab[] = normalTabs.length
     ? normalTabs.map((tab) => ({
-        url: tab.mode === 'blank' ? '' : tab.displayUrl
+        // A tab that was never shown is still blank but must keep its address.
+        url: tab.pendingUrl || (tab.mode === 'blank' ? '' : tab.displayUrl)
       }))
     : [{ url: '' }]
   const activeIndex = Math.max(
@@ -47,6 +49,11 @@ export function savedWindowSession(
       maximized
     }
   }
+}
+
+/** A tab with nothing to show: not even an address waiting to be loaded. */
+export function isEmptyTab(tab: { mode: PageMode; pendingUrl?: string | null }): boolean {
+  return tab.mode === 'blank' && !tab.pendingUrl
 }
 
 /** The tab list to recreate and the index that should be active. */

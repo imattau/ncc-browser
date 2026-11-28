@@ -11,6 +11,7 @@ import {
 import { createRuntime } from './bootstrap/runtime'
 import { createServices } from './bootstrap/services'
 import { createShellStack } from './bootstrap/shell'
+import { createPerfLog } from './perf'
 import { registerPrivilegedSchemes } from './schemes'
 import { installDefaultUserAgent } from './user-agents'
 
@@ -53,15 +54,23 @@ installUrlOpener(runtime)
 installWindowLifecycle(runtime)
 installShutdown(runtime)
 
+const perf = createPerfLog(process.env.NCC_PERF === '1')
+perf.watchStalls()
+
 app.whenReady().then(async () => {
+  perf.mark('app ready')
   // Register as an available handler so the operating system can offer Nostr
   // Navigator in its default-browser chooser. The user still selects the default.
   for (const scheme of ['http', 'https']) app.setAsDefaultProtocolClient(scheme)
 
   const foundation = await createFoundation(runtime)
+  perf.mark('identity and stores ready')
   const browser = await createBrowserStack(runtime, foundation)
+  perf.mark('sessions ready')
   const shellStack = createShellStack(runtime, foundation, browser)
 
+  shellStack.shell.window.once('ready-to-show', () => perf.mark('window first paint'))
   createServices(runtime, foundation, browser, shellStack)
+  perf.mark('services ready')
   installSecondInstance(runtime)
 })

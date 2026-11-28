@@ -1,6 +1,7 @@
 import { requestText } from './http-text'
+import { LIST_MAX_BYTES, cosmeticHideScript, isListStale, isUsableList } from './protection-lists'
 import { app, type Session } from 'electron'
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import adblock from 'adblock-rs'
 import { anonymiseTorHeaders } from '@shared/tor-identity'
@@ -56,10 +57,7 @@ export class ProtectionService {
 
   constructor(private readonly config: ConfigStore) {
     mkdirSync(this.dataDir, { recursive: true })
-    const cached = LISTS.map(([name]) => {
-      const path = join(this.dataDir, `${name}.txt`)
-      try { return readFileSync(path, 'utf8') } catch { return '' }
-    })
+    const cached = LISTS.map(([name]) => this.readList(name))
     if (cached.some(Boolean)) this.install(cached)
     void this.refreshLists()
   }
@@ -119,7 +117,7 @@ export class ProtectionService {
       const result = engine.urlCosmeticResources(url)
       const selectors = Array.isArray(result.hide_selectors) ? result.hide_selectors : []
       if (!selectors.length) return ''
-      return `(()=>{const s=${JSON.stringify(selectors.join(','))};const apply=()=>{try{document.querySelectorAll(s).forEach(e=>e.remove())}catch{}};apply();new MutationObserver(apply).observe(document.documentElement,{childList:true,subtree:true})})()`
+      return cosmeticHideScript(selectors)
     } catch { return '' }
   }
 
@@ -166,23 +164,29 @@ export class ProtectionService {
   }
 
   private async refreshLists(): Promise<void> {
-    const fresh = LISTS.every(([name]) => {
-      try { return Date.now() - statSync(join(this.dataDir, `${name}.txt`)).mtimeMs < 24 * 60 * 60 * 1000 } catch { return false }
-    })
-    if (fresh) return
-    const lists = LISTS.map(([name]) => {
-      try { return readFileSync(join(this.dataDir, `${name}.txt`), 'utf8') } catch { return '' }
-    })
+    const lists = LISTS.map(([name]) => this.readList(name))
+    let changed = false
     await Promise.all(LISTS.map(async ([name, url], index) => {
+      const path = join(this.dataDir, `${name}.txt`)
+      let modified: number | null = null
+      try { modified = statSync(path).mtimeMs } catch { /* never saved */ }
+      // Each list is judged on its own, so one failing source does not force the rest.
+      if (!isListStale(modified, Date.now())) return
       try {
-        const response = await requestText(url, { timeoutMs: 15_000, maxBytes: 12_000_000 })
+        const response = await requestText(url, { timeoutMs: 15_000, maxBytes: LIST_MAX_BYTES })
         if (response.status < 200 || response.status >= 300) return
         const body = response.text
-        if (body.length < 100 || body.length > 12_000_000) return
-        writeFileSync(join(this.dataDir, `${name}.txt`), body, 'utf8')
+        if (!isUsableList(body)) return
+        writeFileSync(path, body, 'utf8')
+        if (body !== lists[index]) changed = true
         lists[index] = body
       } catch { /* retain the last known good lists */ }
     }))
-    this.install(lists)
+    // Compiling blocks the main process, so only do it for new rules.
+    if (changed) this.install(lists)
+  }
+
+  private readList(name: string): string {
+    try { return readFileSync(join(this.dataDir, `${name}.txt`), 'utf8') } catch { return '' }
   }
 }

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -50,5 +50,37 @@ describe('ExtensionStorage', () => {
     expect(storage.set('ext', 'session', []).error).toBeTruthy()
     const huge = 'x'.repeat(1024 * 1024 + 1)
     expect(storage.set('ext', 'session', { huge }).error).toContain('quota')
+  })
+})
+
+describe('incremental encoding', () => {
+  it('keeps the file equal to the stored object across changes and reloads', () => {
+    const base = mkdtempSync(join(tmpdir(), 'ncc-ext-storage-'))
+    const storage = new ExtensionStorage(base)
+    storage.set('a', 'local', { one: 1, 'quo"te': { text: 'é ✓' }, two: [2] })
+    storage.set('a', 'local', { one: 10 })
+    storage.remove('a', 'local', 'two')
+    const file = readFileSync(join(base, 'a', 'storage-local.json'), 'utf8')
+    expect(JSON.parse(file)).toEqual({ one: 10, 'quo"te': { text: 'é ✓' } })
+    const reloaded = new ExtensionStorage(base)
+    reloaded.set('a', 'local', { three: 3 })
+    expect(reloaded.get('a', 'local', null)).toEqual({
+      one: 10,
+      'quo"te': { text: 'é ✓' },
+      three: 3
+    })
+    rmSync(base, { recursive: true, force: true })
+  })
+
+  it('reports no change, and writes nothing, for a value already stored', () => {
+    const base = mkdtempSync(join(tmpdir(), 'ncc-ext-storage-'))
+    const storage = new ExtensionStorage(base)
+    storage.set('a', 'local', { message: { id: 'x', tags: [] } })
+    const path = join(base, 'a', 'storage-local.json')
+    const before = statSync(path).ino
+    expect(storage.set('a', 'local', { message: { id: 'x', tags: [] } }).changes).toEqual({})
+    expect(storage.remove('a', 'local', 'missing').changes).toEqual({})
+    expect(statSync(path).ino).toBe(before)
+    rmSync(base, { recursive: true, force: true })
   })
 })

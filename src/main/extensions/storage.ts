@@ -26,14 +26,29 @@ const QUOTAS: Record<ExtensionStorageArea, number> = {
   private: 1024 * 1024
 }
 
+/**
+ * One area's values with each entry's JSON kept beside it. A write then only encodes
+ * what changed, instead of the whole store, on the main process.
+ */
+interface AreaState {
+  values: StorageValues
+  encoded: Map<string, Encoded>
+}
+
+interface Encoded {
+  /** The entry as it appears inside the stored object: `"name":json`. */
+  text: string
+  bytes: number
+}
+
 export class ExtensionStorage {
-  private readonly memory = new Map<string, StorageValues>()
-  private readonly cache = new Map<string, StorageValues>()
+  private readonly memory = new Map<string, AreaState>()
+  private readonly cache = new Map<string, AreaState>()
 
   constructor(private readonly baseDir: string) {}
 
   get(id: string, area: ExtensionStorageArea, keys: unknown): StorageValues {
-    const values = this.read(id, area)
+    const { values } = this.read(id, area)
     if (keys == null) return { ...values }
     if (typeof keys === 'string') {
       return keys in values ? { [keys]: values[keys] } : {}
@@ -64,20 +79,27 @@ export class ExtensionStorage {
       return { changes: {}, error: 'storage.set expects an object' }
     }
     const current = this.read(id, area)
-    const next = { ...current }
+    const next: AreaState = { values: { ...current.values }, encoded: new Map(current.encoded) }
     const changes: StorageChanges = {}
-    for (const [key, value] of Object.entries(values as StorageValues)) {
-      if (value === undefined) continue
-      changes[key] = { ...(key in current ? { oldValue: current[key] } : {}), newValue: value }
-      next[key] = value
-    }
-    let size: number
     try {
-      size = byteLength(next)
+      for (const [key, value] of Object.entries(values as StorageValues)) {
+        if (value === undefined) continue
+        const entry = encode(key, value)
+        // Writing back what is already stored is not a change.
+        if (entry && entry.text === current.encoded.get(key)?.text) continue
+        changes[key] = {
+          ...(key in current.values ? { oldValue: current.values[key] } : {}),
+          newValue: value
+        }
+        next.values[key] = value
+        if (entry) next.encoded.set(key, entry)
+        else next.encoded.delete(key)
+      }
     } catch {
       return { changes: {}, error: 'storage.set values must be JSON-serialisable' }
     }
-    if (size > QUOTAS[area]) {
+    if (Object.keys(changes).length === 0) return { changes }
+    if (storedBytes(next) > QUOTAS[area]) {
       return { changes: {}, error: `storage.${area} quota exceeded` }
     }
     this.write(id, area, next)
@@ -90,23 +112,24 @@ export class ExtensionStorage {
     keys: unknown
   ): { changes: StorageChanges } {
     const current = this.read(id, area)
-    const next = { ...current }
+    const next: AreaState = { values: { ...current.values }, encoded: new Map(current.encoded) }
     const changes: StorageChanges = {}
     const list = typeof keys === 'string' ? [keys] : Array.isArray(keys) ? keys : []
     for (const key of list) {
-      if (typeof key !== 'string' || !(key in next)) continue
-      changes[key] = { oldValue: next[key] }
-      delete next[key]
+      if (typeof key !== 'string' || !(key in next.values)) continue
+      changes[key] = { oldValue: next.values[key] }
+      delete next.values[key]
+      next.encoded.delete(key)
     }
-    this.write(id, area, next)
+    if (Object.keys(changes).length > 0) this.write(id, area, next)
     return { changes }
   }
 
   clear(id: string, area: ExtensionStorageArea): { changes: StorageChanges } {
     const current = this.read(id, area)
     const changes: StorageChanges = {}
-    for (const [key, value] of Object.entries(current)) changes[key] = { oldValue: value }
-    this.write(id, area, {})
+    for (const [key, value] of Object.entries(current.values)) changes[key] = { oldValue: value }
+    this.write(id, area, emptyState())
     return { changes }
   }
 
@@ -125,42 +148,47 @@ export class ExtensionStorage {
     }
   }
 
-  private read(id: string, area: ExtensionStorageArea): StorageValues {
+  private read(id: string, area: ExtensionStorageArea): AreaState {
     const key = cacheKey(id, area)
     if (area === 'session' || area === 'private') {
-      return { ...(this.memory.get(key) ?? {}) }
+      return this.memory.get(key) ?? emptyState()
     }
     const cached = this.cache.get(key)
-    if (cached) return { ...cached }
+    if (cached) return cached
+    const state = emptyState()
     const path = this.pathFor(id, area)
     try {
       if (existsSync(path)) {
         const parsed = JSON.parse(readFileSync(path, 'utf8')) as unknown
         if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          const values = parsed as StorageValues
-          this.cache.set(key, values)
-          return { ...values }
+          state.values = parsed as StorageValues
+          for (const [name, value] of Object.entries(state.values)) {
+            const entry = encode(name, value)
+            if (entry) state.encoded.set(name, entry)
+          }
         }
       }
     } catch {
       // A corrupt storage file is better treated as empty than crashing the page.
     }
-    this.cache.set(key, {})
-    return {}
+    this.cache.set(key, state)
+    return state
   }
 
-  private write(id: string, area: ExtensionStorageArea, values: StorageValues): void {
+  private write(id: string, area: ExtensionStorageArea, state: AreaState): void {
     const key = cacheKey(id, area)
     if (area === 'session' || area === 'private') {
-      this.memory.set(key, { ...values })
+      this.memory.set(key, state)
       return
     }
-    this.cache.set(key, { ...values })
     const path = this.pathFor(id, area)
     mkdirSync(dirname(path), { recursive: true })
     const tmp = `${path}.tmp`
-    writeFileSync(tmp, `${JSON.stringify(values)}\n`, { encoding: 'utf8', mode: 0o600 })
+    const body = Array.from(state.encoded.values(), (entry) => entry.text).join(',')
+    writeFileSync(tmp, `{${body}}\n`, { encoding: 'utf8', mode: 0o600 })
     renameSync(tmp, path)
+    // Only after the write: a failed one must not be remembered as saved.
+    this.cache.set(key, state)
   }
 
   private pathFor(id: string, area: ExtensionStorageArea): string {
@@ -172,6 +200,21 @@ function cacheKey(id: string, area: ExtensionStorageArea): string {
   return `${id}:${area}`
 }
 
-function byteLength(value: unknown): number {
-  return Buffer.byteLength(JSON.stringify(value), 'utf8')
+function emptyState(): AreaState {
+  return { values: {}, encoded: new Map() }
+}
+
+/** Null for values JSON leaves out of an object, such as functions. Throws for BigInt. */
+function encode(name: string, value: unknown): Encoded | null {
+  const json = JSON.stringify(value) as string | undefined
+  if (json === undefined) return null
+  const text = `${JSON.stringify(name)}:${json}`
+  return { text, bytes: Buffer.byteLength(text, 'utf8') }
+}
+
+/** The size of the stored object: its braces, its entries and the commas between. */
+function storedBytes(state: AreaState): number {
+  let total = 2 + Math.max(0, state.encoded.size - 1)
+  for (const entry of state.encoded.values()) total += entry.bytes
+  return total
 }

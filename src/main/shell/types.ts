@@ -11,6 +11,8 @@ export interface Tab {
   view: WebContentsView
   mode: PageMode
   displayUrl: string
+  /** A restored background tab's address, until the tab is first shown. */
+  pendingUrl?: string | null
   pubkey: string | null
   service: string | null
   security: SecurityInfo | null

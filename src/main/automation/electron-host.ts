@@ -195,7 +195,8 @@ function settled(contents: WebContents): Promise<void> {
 }
 
 export function createElectronHost(shell: BrowserShell): AutomationHost {
-  const live = (tabId: string): WebContents | null => shell.automationContents(tabId)
+  const live = (tabId: string): WebContents | null =>
+    shell.automationContents(tabId, { load: true })
   const observeTabs = (): void => {
     for (const page of shell.extensionPages()) {
       if (page.kind === 'normal') {
@@ -225,7 +226,8 @@ export function createElectronHost(shell: BrowserShell): AutomationHost {
     closeTab: (tabId) => shell.closeTab(tabId),
     selectTab: (tabId) => shell.selectTab(tabId),
     navigate: async (tabId, input) => {
-      const contents = live(tabId)
+      // No `load`: a restored address is about to be replaced.
+      const contents = shell.automationContents(tabId)
       if (!contents) return
       // Register before starting so a fast load is not missed.
       const wait = settled(contents)
@@ -250,7 +252,7 @@ export function createElectronHost(shell: BrowserShell): AutomationHost {
     },
     openSettings: (section) => shell.openAutomationSettings(section),
     tagAgentTab: (tabId, agentId) => {
-      const contents = live(tabId)
+      const contents = shell.automationContents(tabId)
       if (contents) tagTab(contents, agentId)
     }
   }

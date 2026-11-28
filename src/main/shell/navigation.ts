@@ -19,6 +19,8 @@ export async function navigateInTab(
   const text = input.trim()
   if (!text) return
 
+  // Any navigation replaces a restored address that has not been loaded yet.
+  tab.pendingUrl = null
   internals.activateTab(tab.id)
 
   if (tab.kind === 'tor') {

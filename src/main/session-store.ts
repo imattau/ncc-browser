@@ -34,7 +34,7 @@ function validUrl(url: unknown): string {
   const value = url.trim()
   if (!value) return ''
   if (value.length > 4096) return ''
-  return /^(ncc:\/\/|https?:\/\/)/i.test(value) ? value : ''
+  return /^(ncc:\/\/|nsite:\/\/|https?:\/\/)/i.test(value) ? value : ''
 }
 
 function finite(value: unknown, min: number, max: number, fallback: number): number {
