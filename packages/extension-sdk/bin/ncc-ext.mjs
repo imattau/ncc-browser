@@ -13,7 +13,8 @@ const SUPPORTED_PERMISSIONS = new Set([
   'nostr:pubkey',
   'nostr:sign',
   'nostr:nip04',
-  'nostr:nip44'
+  'nostr:nip44',
+  'blossom:group-image'
 ])
 
 const SUPPORTED_APIS = [

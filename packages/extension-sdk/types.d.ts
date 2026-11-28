@@ -20,6 +20,7 @@ export interface NccManifest {
     | 'nostr:sign'
     | 'nostr:nip04'
     | 'nostr:nip44'
+    | 'blossom:group-image'
     | (string & {})
   >
   host_permissions?: string[]

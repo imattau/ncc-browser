@@ -1,5 +1,31 @@
 # Release notes
 
+## 0.48.0 — White Noise companion (experimental)
+
+### Added
+
+- **Desktop:** an experimental White Noise Companion extension for encrypted group
+  chats. The installable `.nccx` package is attached to this release; install it from
+  **Settings → Extensions → Install package**. It is not installed automatically.
+- **Companion:** group invitations, chat and group management, replies, polls, contact
+  sharing, encrypted file and image sharing, and optional generic desktop alerts.
+- **Companion:** per-profile chat state and restart recovery. Tested message and invite
+  interoperability with White Noise Android, including encrypted media and relay
+  fallback.
+
+### Changed
+
+- **Extensions:** `blossom:group-image` is recognized by the SDK validator for the
+  companion's restricted encrypted group-photo transport.
+- **Companion:** White Noise EU and US relays are used as group-connection fallbacks;
+  the default relay list is Damus, Primal and Ditto.
+
+### Notes
+
+- The companion is experimental and installed separately. Camera capture, device
+  contacts, location, stickers, dictation and translation remain Android-only features.
+- Archive, pin, mute, read state, ordering and folders are local to the NCC profile.
+
 ## 0.47.29 — MCP identity check
 
 ### Added

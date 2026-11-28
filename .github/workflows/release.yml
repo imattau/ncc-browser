@@ -329,9 +329,33 @@ jobs:
           path: release/android/
           if-no-files-found: error
 
+  white-noise-companion:
+    name: White Noise companion extension
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm ci --prefix extensions/white-noise-prototype
+      - run: npm run build --prefix extensions/white-noise-prototype
+      - run: node packages/extension-sdk/bin/ncc-ext.mjs validate extensions/white-noise-prototype
+      - name: Package the installable extension
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./extensions/white-noise-prototype/manifest.json').version")"
+          node scripts/package-white-noise-companion.mjs "release/ncc-white-noise-companion-${VERSION}.nccx"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: white-noise-companion
+          path: release/ncc-white-noise-companion-*.nccx
+          if-no-files-found: error
+
   release:
     name: Publish GitHub release
-    needs: [linux, macos, windows, android]
+    needs: [linux, macos, windows, android, white-noise-companion]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:

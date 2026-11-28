@@ -13,6 +13,10 @@ scheme, so the browser ships its own host: the same manifest and a supported sub
 - Installed packages are copied to `userData/extensions/<id>` and loaded from there.
   Removing an extension deletes that directory and its storage files.
 
+The experimental White Noise Companion is shipped as a separate `.nccx` asset on
+version releases. Install it from **Settings → Extensions → Install package**; it is
+not installed or enabled automatically.
+
 Packages are unsigned in this version. The install dialog shows the source path and the
 settings page shows the package origin; only install code you trust.
 
