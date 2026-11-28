@@ -8,6 +8,15 @@ import { createLiveRelays, resumeFilters } from '../extensions/white-noise-proto
 // @ts-expect-error The extension is plain JavaScript without type declarations.
 import { ExtensionStore, packStoredValue, restoreStoredValue } from '../extensions/white-noise-prototype/extension-store.js'
 
+// @ts-expect-error The extension is plain JavaScript without type declarations.
+import { createOrReuseDirectChat, findDirectChat } from '../extensions/white-noise-prototype/direct-chat.js'
+
+// @ts-expect-error The extension is plain JavaScript without type declarations.
+import { selectUsableKeyPackage } from '../extensions/white-noise-prototype/key-package-selection.js'
+
+// @ts-expect-error The extension is plain JavaScript without type declarations.
+import { planGroupRelayUpdates } from '../extensions/white-noise-prototype/group-relay-updates.js'
+
 beforeEach(() => vi.useFakeTimers({ now: 1_800_000_000_000 }))
 afterEach(() => vi.useRealTimers())
 
@@ -143,6 +152,119 @@ describe('refresh queue', () => {
     const next = refresh()
     await vi.advanceTimersByTimeAsync(1)
     await next
+  })
+})
+
+describe('direct chat lookup', () => {
+  it('reuses only a group containing exactly the active account and selected contact', () => {
+    const account = 'a'.repeat(64)
+    const contact = 'b'.repeat(64)
+    const matching = { snapshot: { members: [account, contact] } }
+    const groups = [
+      { snapshot: { members: [account, contact, 'c'.repeat(64)] } },
+      { snapshot: { members: [account, 'c'.repeat(64)] } },
+      matching
+    ]
+
+    expect(findDirectChat(groups, account, contact)).toBe(matching)
+    expect(findDirectChat(groups.slice(0, 2), account, contact)).toBeNull()
+  })
+
+  it('reuses a persisted direct chat before looking up a key package or creating a group', async () => {
+    const account = 'a'.repeat(64)
+    const contact = 'b'.repeat(64)
+    const existing = { snapshot: { id: 'stored-group', members: [account, contact] } }
+    const client = {
+      signer: { getPublicKey: async () => account },
+      groups: { loadAll: async () => [existing] },
+      network: { request: vi.fn() }
+    }
+    const createGroup = vi.fn()
+    const result = await createOrReuseDirectChat({
+      client,
+      relays: ['wss://relay.example'],
+      address: contact,
+      name: 'Contact',
+      decodeAddress: (value: string) => value,
+      createGroup
+    })
+
+    expect(result).toBe(existing)
+    expect(client.network.request).not.toHaveBeenCalled()
+    expect(createGroup).not.toHaveBeenCalled()
+  })
+
+  it('coalesces concurrent start-chat requests for the same account pair', async () => {
+    const account = 'a'.repeat(64)
+    const contact = 'b'.repeat(64)
+    const created = { snapshot: { id: 'new-group', members: [account, contact] } }
+    let finishCreate: (group: typeof created) => void = () => undefined
+    const client = {
+      signer: { getPublicKey: async () => account },
+      groups: { loadAll: vi.fn(async () => []) },
+      network: { request: vi.fn() }
+    }
+    const createGroup = vi.fn(() => new Promise<typeof created>(resolve => { finishCreate = resolve }))
+    const options = {
+      client,
+      relays: ['wss://relay.example'],
+      address: contact,
+      name: 'Contact',
+      decodeAddress: (value: string) => value,
+      createGroup
+    }
+
+    const first = createOrReuseDirectChat(options)
+    const second = createOrReuseDirectChat(options)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(client.groups.loadAll).toHaveBeenCalledTimes(1)
+    expect(createGroup).toHaveBeenCalledTimes(1)
+    finishCreate(created)
+    await expect(Promise.all([first, second])).resolves.toEqual([created, created])
+  })
+})
+
+describe('published KeyPackage selection', () => {
+  it('falls back from an expired newest slot to the newest usable slot', async () => {
+    const newest = { id: 'newest', created_at: 20 }
+    const usable = { id: 'usable', created_at: 10 }
+    const buildInviteIntent = vi.fn(async event => {
+      if (event.id === 'newest') throw new Error('createInviteIntent: KeyPackage lifetime exceeds cap or is not current')
+      return { kind: 'commit', eventId: event.id }
+    })
+
+    await expect(selectUsableKeyPackage([usable, newest, newest], buildInviteIntent)).resolves.toEqual({
+      keyPackage: usable,
+      intent: { kind: 'commit', eventId: 'usable' }
+    })
+    expect(buildInviteIntent.mock.calls.map(([event]) => event.id)).toEqual(['newest', 'usable'])
+  })
+
+  it('reports expired packages only when no published slot is usable', async () => {
+    const buildInviteIntent = vi.fn(async () => { throw new Error('createInviteIntent: KeyPackage lifetime exceeds cap or is not current') })
+    await expect(selectUsableKeyPackage([{ id: 'a', created_at: 2 }, { id: 'b', created_at: 1 }], buildInviteIntent))
+      .rejects.toThrow('The contact’s available invite keys are expired or not yet valid.')
+  })
+})
+
+describe('group relay updates', () => {
+  it('updates changed relay metadata only for groups administered by this account', () => {
+    const relays = ['wss://relay.new']
+    const account = 'a'.repeat(64)
+    const other = 'b'.repeat(64)
+    const adminGroup = { idStr: 'admin-id', id: new Uint8Array([1]), snapshot: { groupData: { name: 'My group', relays: ['wss://relay.old'], adminPubkeys: [account] } } }
+    const memberGroup = { idStr: 'member-id', id: new Uint8Array([2]), snapshot: { groupData: { name: 'Shared group', relays: ['wss://relay.old'], adminPubkeys: [other] } } }
+    const unchangedGroup = { idStr: 'same-id', id: new Uint8Array([3]), snapshot: { groupData: { name: 'Already current', relays, adminPubkeys: [other] } } }
+
+    const plan = planGroupRelayUpdates([adminGroup, memberGroup, unchangedGroup], account, relays)
+    expect(plan.update).toEqual([{ group: adminGroup, name: 'My group' }])
+    expect(plan.adminRequired).toEqual(['Shared group'])
+  })
+
+  it('uses the group ID as the label when metadata has no name', () => {
+    const group = { idStr: 'unnamed-group', snapshot: { groupData: { relays: ['wss://relay.old'], adminPubkeys: [] } } }
+    expect(planGroupRelayUpdates([group], 'account', ['wss://relay.new']).adminRequired).toEqual(['unnamed-group'])
   })
 })
 

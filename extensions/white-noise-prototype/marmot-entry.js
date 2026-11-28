@@ -3,6 +3,9 @@ import { KeyValueRumorHistoryBackend } from '@internet-privacy/marmot-ts/extra'
 import { createMediaCache, legacyMediaKeys } from './media-cache.js'
 import { coalesce } from './refresh-queue.js'
 import { createLiveRelays } from './relay-live.js'
+import { createOrReuseDirectChat } from './direct-chat.js'
+import { selectUsableKeyPackage } from './key-package-selection.js'
+import { planGroupRelayUpdates } from './group-relay-updates.js'
 import { ExtensionStore, restoreStoredValue } from './extension-store.js'
 import { MarmotClient, createApplicationMessageIntent, createChatRumor } from '@internet-privacy/marmot-ts'
 import { createInboxRelayListEvent, deserializeApplicationData, encryptedMediaBlossomDefaultV2, getInboxRelays, getMediaAttachments } from '@internet-privacy/marmot-ts/core'
@@ -296,6 +299,7 @@ const api = {
     await group.propose(Proposals.proposeUpdateMetadata({ relays }))
     return client.groups.commit(groupId)
   },
+  planGroupRelayUpdates,
   async renameGroup(client, groupId, name) {
     const group = await client.groups.get(groupId)
     await group.propose(Proposals.proposeUpdateMetadata({ name }))
@@ -512,41 +516,34 @@ const api = {
     if (pubkey === ownPubkey) {
       throw new Error('This account is already in the group. Adding another device for the same account is not supported yet.')
     }
-    const keyPackages = knownKeyPackage ? [] : await client.network.request(relays, [{ kinds: [30443], authors: [pubkey], limit: 10 }])
-    const keyPackage = knownKeyPackage || keyPackages.sort((left, right) => right.created_at - left.created_at)[0]
-    if (!keyPackage) throw new Error('No invite key package found. Ask this contact to connect and publish one first.')
+    const keyPackages = knownKeyPackage ? [knownKeyPackage] : await client.network.request(relays, [{ kinds: [30443], authors: [pubkey], limit: 10 }])
+    const { intent } = await selectUsableKeyPackage(keyPackages, keyPackage => buildInviteIntent(client, keyPackage))
     try {
-      const intent = await buildInviteIntent(client, keyPackage)
       const [result] = await client.groups.send(groupId, intent)
       return result.welcomeDelivery
     } catch (error) {
       if (error instanceof Error && error.message.includes('leaf carries no app_data_dictionary extension')) {
         throw new Error('This White Noise profile’s key package predates the account identity proof required by this Marmot v2 group. Update White Noise to a compatible release, then publish a fresh key package.')
       }
-      if (error instanceof Error && error.message.includes('KeyPackage lifetime exceeds cap or is not current')) {
-        throw new Error('The contact’s newest invite key is expired or not yet valid. Ask them to publish a new key package, then try again.')
-      }
       throw error
     }
   },
   async createDirectChat(client, relays, address, name) {
-    const pubkey = this.decodeContactNpub(address)
-    if (pubkey === await client.signer.getPublicKey()) {
-      throw new Error('This is your own account. To use White Noise on another device, linked-device support is needed; it is not available yet.')
-    }
-    const keyPackages = await client.network.request(relays, [{ kinds: [30443], authors: [pubkey], limit: 10 }])
-    const keyPackage = keyPackages.sort((left, right) => right.created_at - left.created_at)[0]
-    if (!keyPackage) throw new Error('No invite key package found. Ask this contact to connect and publish one first.')
-    try { await buildInviteIntent(client, keyPackage) }
-    catch (error) {
-      if (error instanceof Error && error.message.includes('KeyPackage lifetime exceeds cap or is not current')) {
-        throw new Error('The contact’s newest invite key is expired or not yet valid. Ask them to publish a new key package, then try again.')
+    return createOrReuseDirectChat({
+      client,
+      relays,
+      address,
+      name: (name || '').trim(),
+      decodeAddress: value => this.decodeContactNpub(value),
+      createGroup: async (targetClient, targetRelays, groupName) => {
+        const pubkey = this.decodeContactNpub(address)
+        const keyPackages = await targetClient.network.request(targetRelays, [{ kinds: [30443], authors: [pubkey], limit: 10 }])
+        const { keyPackage } = await selectUsableKeyPackage(keyPackages, candidate => buildInviteIntent(targetClient, candidate))
+        const group = await this.createGroup(targetClient, targetRelays, groupName)
+        await this.inviteContact(targetClient, group.snapshot.id, pubkey, targetRelays, keyPackage)
+        return group
       }
-      throw error
-    }
-    const group = await this.createGroup(client, relays, (name || '').trim() || `Chat · ${pubkey.slice(0, 8)}`)
-    await this.inviteContact(client, group.snapshot.id, pubkey, relays, keyPackage)
-    return group
+    })
   },
   decode: deserializeApplicationData
 }

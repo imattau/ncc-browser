@@ -67,12 +67,28 @@ Use this file to record issues reported during prototype work. Move entries to
   querying or publishing a KeyPackage invite; the group remained unchanged.
   No real profile or device was used.
 - **Compatibility research (2026-11-29):** The current Marmot protocol
-  repository has an adopted `0x800d` component that permits same-account leaf
-  adds when a group requires it, but the companion only recognizes its
-  data-less marker and does not implement the corresponding same-account
-  authorization or membership flow. Device pairing, the device roster and
-  account sync (including history transfer) remain draft features. White Noise
-  documents linked-device support as still in development.
+  repository has an adopted `0x800d` account-devices component that permits
+  same-account membership operations when a group requires it. The companion's
+  Marmot compatibility patch recognizes and advertises the data-less `0x800d`
+  marker and validates its presence in Welcomes and group state; that is only
+  protocol-marker compatibility, not device enrollment. The installed
+  `@internet-privacy/marmot-ts` 0.9.0 implementation still has
+  `evaluateKeyPackageForGroup()` reject a KeyPackage whose Nostr account is
+  already a member, and the companion has no API for the required authorized
+  same-account add. The library's commit authorization also permits a
+  non-admin only to self-update or self-remove; it does not authorize the
+  `0x800d` same-account commit shape. Therefore, on a group that requires
+  `0x800d`, accepting the data-less marker does not guarantee that this client
+  can process or produce device-membership commits. Upstream's device-pairing,
+  hidden device-group/roster and account-sync features (including history
+  delivery) are still marked draft. White Noise's compatibility guide also
+  says linked-device support is still in development and importing the same
+  identity does not sync history or encryption state.
+- **Release check (2026-11-29):** The upstream `marmot-ts` GitHub releases page
+  still marks v0.9.0 as latest. This repository is also pinned to
+  `@internet-privacy/marmot-ts` 0.9.0. The newer account-device and pairing
+  protocol documents remain drafts; there is no newer published Marmot TS
+  release to deploy to the emulator for linked-device restoration.
 - **Next:** Add multi-device support only with a compatible implementation of
   same-account authorization plus the device-pairing/device-group flow. Do not
   copy MLS state or private KeyPackage material between devices.
@@ -87,10 +103,21 @@ Use this file to record issues reported during prototype work. Move entries to
   MLS group under Marmot; the protocol has no unencrypted/plain chat mode.
 - **Expected:** Provide a familiar one-to-one chat flow while keeping MLS
   encryption visible in the UI.
+- **Duplicate prevention:** Starting a one-to-one chat now checks Marmot's
+  loaded local groups for the exact two-member account pair before querying a
+  fresh invite key or creating a group. This avoids duplicate direct groups
+  after a list refresh or repeated start-chat action. Concurrent starts for
+  the same pair are coalesced so they cannot create two groups at once; it
+  does not transfer a conversation from another device.
 - **Check:** Started a one-to-one MLS chat from a contact in the isolated
   profiles and confirmed both sides could exchange messages. Account B was
   then restarted with the same temporary profile; it reconnected to the signer,
   restored the two-member group, and reloaded both message histories.
+  Regression coverage verifies only the exact two-member pair is reused,
+  larger groups are not mistaken for direct chats, and concurrent requests
+  share one group creation. The focused runtime suite passed (17 tests), the
+  extension bundle built, app typecheck and lint passed. Packaged companion
+  version 0.1.3 and validated the extracted package with the extension SDK.
 
 ### Account and member profile names and photos
 
@@ -305,7 +332,9 @@ Use this file to record issues reported during prototype work. Move entries to
   messages; alerts omit chat names and content, skip the open conversation, and
   respect the per-chat mute preference. Expired messages are hidden from the
   companion transcript and chat preview; Marmot local history remains cached
-  until the user clears it.
+  until the user clears it. Relay settings commit shared group relay metadata
+  only when the active account is an admin; the UI explains why other groups
+  retain their admin-controlled relay list.
 - **Limit:** Archive, pin, mute preference, unread, ordering and folders are
   local to this NCC profile. Group-photo runtime interop is tracked above.
 - **Check:** In the dev browser, archive removed a diagnostic group from the
@@ -329,6 +358,12 @@ Use this file to record issues reported during prototype work. Move entries to
   notification option was off by default, persisted after restart, and was
   turned off again after verification. A synthetic incoming message produced
   one generic alert in an unmuted chat; a second produced no alert after mute.
+- **Relay-list regression check (2026-11-29):** Focused tests confirmed changed
+  relay metadata is planned only for groups administered by the active account,
+  unchanged groups are ignored, and unnamed groups receive a stable fallback
+  label for the permission explanation. The runtime suite passed (21 tests),
+  typecheck and lint passed, the extension bundle built, and the regenerated
+  0.1.3 `.nccx` validated with the SDK.
 - **Next:** Continue testing remaining companion features and cross-device
   interoperability.
 
@@ -357,7 +392,18 @@ Use this file to record issues reported during prototype work. Move entries to
   patch accepts raw MDK/0.8 incoming KeyPackages, publishes framed KeyPackages,
   and recognizes Marmot `0x800d` as a data-less required component without
   enabling it by default in groups the companion creates. Groups and history
-  reload from local extension storage after restart.
+  reload from local extension storage after restart. Invite selection now
+  validates published package slots newest-first and falls back to an older
+  current package when a newer slot is expired or otherwise unusable. Direct
+  chat still checks package usability before creating a group.
+- **KeyPackage fallback check (2026-11-29):** A focused regression test supplies
+  a duplicated expired newest slot followed by a current slot. The companion
+  skips the unusable event and chooses the newest valid package before creating
+  a direct-chat group. When all available slots are expired, it gives a clear
+  refresh-package message. The focused runtime suite passed (19 tests), the
+  extension bundle built, and the 0.1.3 `.nccx` validated with the extension
+  SDK. This checks candidate selection; live Android interop still depends on
+  the recipient publishing at least one compatible current KeyPackage.
 - **Additional interop check:** With White Noise Android online, the companion
   created `NCC_Online_Invite_2026-11-28` and invited the Android profile. Android
   received the Welcome, displayed the group preview, and accepted it. Android
@@ -383,6 +429,21 @@ Use this file to record issues reported during prototype work. Move entries to
   After closing and relaunching browser B with the same temp profile, the
   companion reconnected to the signer automatically, restored the group, and
   loaded both exchanged messages. Both renderer consoles had zero errors.
+- **Two-profile direct-chat and restart check (2026-11-29):** Two separate
+  `npm run dev` instances used disposable profile A and B, separate temporary
+  identities and automation ports. B published its invite KeyPackage to two
+  relays; `relay.damus.io` failed, and the companion correctly kept the partial
+  success. A entered B's temporary npub in **New chat**, created the direct MLS
+  group and sent the Welcome. B received the invitation and joined at epoch 1.
+  A's pre-join note was not available to B; A's post-join test message rendered
+  in B's chat list and transcript. Repeating **New chat** with the same npub
+  reopened the existing conversation; both profiles still showed one group row
+  and B had no second invitation. A was restarted with the same temporary
+  user-data directory and identity; it reconnected, restored the group and
+  transcript, and received a reply sent from B after the restart. These checks
+  used separate Nostr accounts and do not test same-account linked-device
+  restoration. Both dev processes and temporary profiles were cleaned up after
+  verification.
 - **Delayed Welcome check:** A fresh temporary recipient published a KeyPackage
   and kind-10050 inbox relay list, then was switched offline. The inviter sent
   a Welcome to a disposable group. After switching back, the recipient saw a
@@ -587,30 +648,42 @@ Use this file to record issues reported during prototype work. Move entries to
 
 ### 8. Signer reconnect required after reopening the companion
 
-- **Status:** Reconnect is implemented; user has reported the signer prompt
-  reappearing on startup and after closing/reopening. Regression not reproduced
-  in the isolated profile yet.
+- **Status:** Fixed when **Always allow** is selected. A session-only signer
+  grant can prompt again after a full browser restart.
 - **Observed:** Closing the panel clears its connection. Reopening required
   clicking **Connect NCC signer** again.
 - **Change:** After the first successful connection, the companion remembers
   the signer's public key and reconnects on open through NCC's normal approval
   flow. While open, it follows the active NCC profile and loads that profile's
   isolated chat state.
-- **Check:** In the isolated dev profile, selected **Always allow** for the
-  companion signer request, created a Note to self group, and sent an encrypted
-  message. Closed and reopened the panel, then restarted the full dev browser.
-  It reconnected without another signer prompt, restored the group list, and
-  reopened the conversation with both the initial note and sent message.
+- **Check:** In a fresh isolated dev profile with signer auto-approval disabled,
+  connected a generated temporary identity and selected **Always allow** on the
+  actual browser signer prompt. The panel connected. Closing and reopening the
+  panel reconnected without another prompt. After restarting `npm run dev` with
+  the same temp profile and identity, opening the panel restored the connected
+  account without a prompt. The browser's signer-permissions store confirmed a
+  trusted grant for the companion extension origin. No real profile or device
+  was used.
 - **Persistence note:** NCC's signer prompt has an unchecked **Always allow this
-  service** option. Without that choice, signer approval is session-scoped and
-  can prompt again after restarting NCC Browser. The companion's saved public
-  key is only a reconnect hint; it is not a persistent signer authorization.
+  option. Without that choice, signer approval is session-scoped and can prompt
+  again after restarting NCC Browser. The companion's saved public key is only
+  a reconnect hint; it is not a persistent signer authorization.
 - **Follow-up evidence (2026-11-29):** The isolated temp profile currently has
   both `connectedSignerPubkey` and a trusted permission for its installed
   `extension:<id>` origin. This supports automatic reconnect for that same
   profile and extension install, but does not reproduce the user's reported
   prompt. Recheck the prompt's action and whether **Always allow** was selected;
   reconnecting after a profile switch or from a private session may ask again.
+- **Current dev smoke (2026-11-29):** With a generated disposable browser
+  identity, temporary automation agent and `NCC_SIGNER_AUTO_APPROVE=1`, the
+  companion connected and published its invitation and inbox relay list to 3
+  relays. Closing/reopening the panel reconnected automatically on its next
+  poll; after a full `npm run dev` restart with the same temp profile and test
+  identity, opening the panel restored the connected account without another
+  Connect action. The extension panel console had no errors. Because signer
+  prompts were auto-approved for this run, it does not establish whether a
+  normal user's unchecked **Always allow** choice persists across
+  a full browser restart.
 - **Scope:** These checks used only the disposable local signer/profile. They
   verify local account and chat-state persistence, not cross-device delivery.
 
@@ -651,3 +724,15 @@ Use this file to record issues reported during prototype work. Move entries to
 - **Check:** Reinstalled the pinned extension dependencies and built twice.
   Both builds produced the same SHA-256 for `marmot.bundle.js`, and the patched
   publisher source contains exactly one wrapper.
+
+### Tracked companion package lagged behind the tested source
+
+- **Status:** Fixed; packaged artifact refreshed and validated.
+- **Observed:** The tracked `extensions/white-noise-prototype.nccx` was version
+  0.1.1 while the companion source and release notes were at 0.1.3. Users could
+  therefore install a package missing later fixes and permissions.
+- **Change:** Rebuilt the tracked `.nccx` from the current 0.1.3 source.
+- **Check:** The packaging script validated the staged extension, packed the
+  artifact, and the extracted package passed SDK validation as version 0.1.3.
+  Its manifest includes the current `storage:large` and
+  `blossom:group-image` permissions.

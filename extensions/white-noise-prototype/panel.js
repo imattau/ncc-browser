@@ -1666,17 +1666,17 @@ $('saveButton').addEventListener('click', async () => {
     connection = { ...connection, relays: selectedRelays, fallbackRelays, inviteListener }
     const changedRelayGroups = []
     const failedRelayGroups = []
-    for (const group of await connection.client.groups.loadAll()) {
-      const current = group.snapshot.groupData?.relays || []
-      if (current.length && !sameRelays(current, selectedRelays)) {
-        const label = group.snapshot.groupData?.name || group.idStr
-        try {
-          const result = await window.MarmotCompanion.updateGroupRelays(connection.client, group.id, selectedRelays)
-          if (Object.values(result || {}).some(relay => relay.ok)) changedRelayGroups.push(label)
-          else failedRelayGroups.push(`${label} (no relay acknowledged)`)
-        } catch (error) {
-          failedRelayGroups.push(`${label} (${error?.message || String(error)})`)
-        }
+    const accountPubkey = await connection.client.signer.getPublicKey()
+    const relayPlan = window.MarmotCompanion.planGroupRelayUpdates(
+      await connection.client.groups.loadAll(), accountPubkey, selectedRelays
+    )
+    for (const { group, name } of relayPlan.update) {
+      try {
+        const result = await window.MarmotCompanion.updateGroupRelays(connection.client, group.id, selectedRelays)
+        if (Object.values(result || {}).some(relay => relay.ok)) changedRelayGroups.push(name)
+        else failedRelayGroups.push(`${name} (no relay acknowledged)`)
+      } catch (error) {
+        failedRelayGroups.push(`${name} (${error?.message || String(error)})`)
       }
     }
     liveConnection?.unsubscribe()
@@ -1684,6 +1684,9 @@ $('saveButton').addEventListener('click', async () => {
     await refreshGroups()
     await refreshInvites()
     const summary = [`Relay list saved and active group subscriptions refreshed. ${changedRelayGroups.length} group(s) updated.`]
+    if (relayPlan.adminRequired.length) {
+      summary.push(`${relayPlan.adminRequired.length} group(s) kept their shared relay list because only a group admin can change it.`)
+    }
     if (failedRelayGroups.length) summary.push(`Failed: ${failedRelayGroups.join('; ')}`)
     message(summary.join(' '), failedRelayGroups.length > 0)
   } else message('Relay list saved. It will be used when you connect your browser account.')
